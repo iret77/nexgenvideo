@@ -818,7 +818,8 @@ jobs:
           ditto .build/NexGenVideo.dSYM .build/diagnostic-symbols/NexGenVideo.dSYM
           ditto .build/NexGenVideoDiagnostics.dSYM .build/diagnostic-symbols/NexGenVideoDiagnostics.dSYM
           ditto .build/NexGenEngine.dSYM .build/diagnostic-symbols/NexGenEngine.dSYM
-          dsymutil .build/release/libMusicvideoPlugin.dylib -o .build/diagnostic-symbols/MusicvideoPlugin.dSYM
+          SYMBOL_BIN="$(swift build -c release --show-bin-path)"
+          dsymutil "$SYMBOL_BIN/libMusicvideoPlugin.dylib" -o .build/diagnostic-symbols/MusicvideoPlugin.dSYM
           ditto -c -k --keepParent .build/diagnostic-symbols .build/diagnostic-symbols.zip
           dwarfdump --uuid .build/NexGenVideo.app/Contents/MacOS/NexGenVideo
           dwarfdump --uuid .build/NexGenVideo.dSYM

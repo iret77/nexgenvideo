@@ -19,30 +19,6 @@ struct CaptureStatus: Codable {
     var processLost = false
 }
 
-func capture(number: Int, incident: URL) -> String {
-    guard getppid() == target else { return "target-exited" }
-    let file = incident.appendingPathComponent("threads-\(number).sample.txt")
-    let sample = Process()
-    let completed = DispatchSemaphore(value: 0)
-    sample.executableURL = URL(fileURLWithPath: "/usr/bin/sample")
-    sample.arguments = [String(target), "3", "-mayDie", "-file", file.path]
-    sample.standardOutput = FileHandle.nullDevice
-    sample.standardError = FileHandle.nullDevice
-    sample.terminationHandler = { _ in completed.signal() }
-    do {
-        try sample.run()
-        if completed.wait(timeout: .now() + 8) != .success {
-            sample.terminate()
-            if completed.wait(timeout: .now() + 1) != .success { kill(sample.processIdentifier, SIGKILL) }
-            return "timeout"
-        }
-        guard sample.terminationStatus == 0,
-              let size = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize,
-              size > 100 else { return "failed-\(sample.terminationStatus)" }
-        return "captured"
-    } catch { return "launch-failed" }
-}
-
 var state = DiagnosticHangState()
 var incident: URL?
 var status: CaptureStatus?

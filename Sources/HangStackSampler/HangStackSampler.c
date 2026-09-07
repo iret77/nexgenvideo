@@ -9,11 +9,56 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <sys/resource.h>
 #include <stdint.h>
 #include <string.h>
 #include <ptrauth.h>
 
 enum { NGV_MAX_THREADS = 512, NGV_MAX_FRAMES = 256 };
+struct NGVImage { const struct mach_header *address; uint8_t uuid[16]; };
+static struct NGVImage image_map[2048];
+static pthread_mutex_t image_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_once_t initialize_once = PTHREAD_ONCE_INIT;
+static uint64_t main_thread_id = 0;
+
+static void ngv_add_image(const struct mach_header *header, intptr_t slide) {
+    (void)slide;
+    if (header->magic != MH_MAGIC_64) return;
+    const struct load_command *command = (const struct load_command *)((const struct mach_header_64 *)header + 1);
+    for (uint32_t j = 0; j < header->ncmds; j++) {
+        if (command->cmd == LC_UUID) {
+            const struct uuid_command *uuid = (const struct uuid_command *)command;
+            pthread_mutex_lock(&image_lock);
+            for (size_t i = 0; i < 2048; i++) {
+                if (!image_map[i].address) {
+                    image_map[i].address = header;
+                    memcpy(image_map[i].uuid, uuid->uuid, 16);
+                    break;
+                }
+            }
+            pthread_mutex_unlock(&image_lock);
+            return;
+        }
+        command = (const struct load_command *)((const char *)command + command->cmdsize);
+    }
+}
+
+static void ngv_remove_image(const struct mach_header *header, intptr_t slide) {
+    (void)slide;
+    pthread_mutex_lock(&image_lock);
+    for (size_t i = 0; i < 2048; i++) if (image_map[i].address == header) image_map[i].address = NULL;
+    pthread_mutex_unlock(&image_lock);
+}
+
+static void ngv_initialize(void) {
+    _dyld_register_func_for_add_image(ngv_add_image);
+    _dyld_register_func_for_remove_image(ngv_remove_image);
+}
+
+void ngv_sampler_initialize(void) {
+    if (pthread_main_np()) pthread_threadid_np(NULL, &main_thread_id);
+    pthread_once(&initialize_once, ngv_initialize);
+}
 struct NGVThreadSample {
     uint64_t id;
     kern_return_t status;
@@ -26,6 +71,7 @@ static uintptr_t ngv_strip(uintptr_t address) {
 }
 
 int ngv_capture_self(const char *path) {
+    ngv_sampler_initialize();
     struct NGVThreadSample *samples = calloc(NGV_MAX_THREADS, sizeof(*samples));
     if (!samples) return 1;
     thread_act_array_t threads = NULL;
@@ -74,6 +120,11 @@ int ngv_capture_self(const char *path) {
     int fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
     if (fd < 0) { free(samples); return 3; }
     dprintf(fd, "NGV_SELF_STACKS_V1 threads=%u captured=%u\n", count, used);
+    struct rusage usage = {0};
+    getrusage(RUSAGE_SELF, &usage);
+    dprintf(fd, "main-thread %llu user-cpu %ld.%06d system-cpu %ld.%06d max-rss %ld\n",
+            main_thread_id, usage.ru_utime.tv_sec, usage.ru_utime.tv_usec,
+            usage.ru_stime.tv_sec, usage.ru_stime.tv_usec, usage.ru_maxrss);
     for (uint32_t i = 0; i < used; i++) {
         dprintf(fd, "thread %llu status=%d frames=%u\n", samples[i].id,
                 samples[i].status, samples[i].count);
@@ -81,21 +132,15 @@ int ngv_capture_self(const char *path) {
             dprintf(fd, "0x%llx\n", (uint64_t)samples[i].frames[j]);
     }
     free(samples);
-    for (uint32_t i = 0; i < _dyld_image_count(); i++) {
-        const struct mach_header_64 *header = (const struct mach_header_64 *)_dyld_get_image_header(i);
-        if (!header || header->magic != MH_MAGIC_64) continue;
-        const struct load_command *command = (const struct load_command *)(header + 1);
-        for (uint32_t j = 0; j < header->ncmds; j++) {
-            if (command->cmd == LC_UUID) {
-                const struct uuid_command *uuid = (const struct uuid_command *)command;
-                const char *name = _dyld_get_image_name(i);
-                const char *basename = name ? strrchr(name, '/') : NULL;
-                dprintf(fd, "image 0x%llx ", (uint64_t)header);
-                for (int k = 0; k < 16; k++) dprintf(fd, "%02x", uuid->uuid[k]);
-                dprintf(fd, " %s\n", basename ? basename + 1 : "unknown");
-            }
-            command = (const struct load_command *)((const char *)command + command->cmdsize);
-        }
+    struct NGVImage images[2048];
+    pthread_mutex_lock(&image_lock);
+    memcpy(images, image_map, sizeof(images));
+    pthread_mutex_unlock(&image_lock);
+    for (size_t i = 0; i < 2048; i++) {
+        if (!images[i].address) continue;
+        dprintf(fd, "image 0x%llx ", (uint64_t)images[i].address);
+        for (int k = 0; k < 16; k++) dprintf(fd, "%02x", images[i].uuid[k]);
+        dprintf(fd, "\n");
     }
     int failed = fsync(fd);
     close(fd);

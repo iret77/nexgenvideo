@@ -200,7 +200,6 @@ final class ClaudeCodeRuntime {
                     events = ready
                 }
                 for event in events { mapper.ingest(event) }
-                HangDiagnosticTranscript.capture(messages: mapper.messages, streaming: true, sessionID: appSessionId)
                 if !reportedSessionId, let sid = mapper.sessionId {
                     reportedSessionId = true
                     onSessionId?(sid)

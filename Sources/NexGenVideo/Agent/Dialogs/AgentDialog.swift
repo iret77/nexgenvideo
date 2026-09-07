@@ -122,23 +122,23 @@ struct AgentControlTurn: Equatable, Sendable {
     }
 }
 
-struct AgentDialog: Identifiable, Equatable, Sendable {
+struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
 
     /// Routes every dialog through the single submission handler.
-    enum Purpose: Equatable, Sendable {
+    enum Purpose: Equatable, Sendable, Codable {
         case chatClarification
         case generationIntent
         case workflowIntake
     }
 
-    enum WorkflowDecision: String, Equatable, Hashable, Sendable {
+    enum WorkflowDecision: String, Equatable, Hashable, Sendable, Codable {
         case analysisTempo = "analysis_tempo"
         case analysisInterpretationReview = "analysis_interpretation_review"
         case analysisTrackReplacement = "analysis_track_replacement"
         case treatmentPath = "treatment_path"
     }
 
-    struct Choice: Identifiable, Equatable, Sendable {
+    struct Choice: Identifiable, Equatable, Sendable, Codable {
         let id: String
         let label: String
         /// Compact transcript value without explanatory copy.
@@ -174,7 +174,7 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
 
     /// A candidate that projects onto the canonical timeline (A3): while the dialog is pending it is
     /// drawn as a labeled, clickable highlight; the click selects the matching choice.
-    struct TimelineRangeCandidate: Identifiable, Equatable, Sendable {
+    struct TimelineRangeCandidate: Identifiable, Equatable, Sendable, Codable {
         let id: String
         let label: String
         let startFrame: Int
@@ -183,7 +183,7 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
 
     /// Where a pending dialog's visual candidates live on the canonical surfaces (A3). Empty means a
     /// plain compact card with no projection.
-    struct Projection: Equatable, Sendable {
+    struct Projection: Equatable, Sendable, Codable {
         var timelineRanges: [TimelineRangeCandidate] = []
         /// A shot id to reveal in the Review gallery (cockpit) while the dialog is pending.
         var reviewShot: String?
@@ -191,8 +191,8 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
         var isEmpty: Bool { timelineRanges.isEmpty && reviewShot == nil }
     }
 
-    struct Section: Identifiable, Equatable, Sendable {
-        enum Kind: Equatable, Sendable {
+    struct Section: Identifiable, Equatable, Sendable, Codable {
+        enum Kind: Equatable, Sendable, Codable {
             case choices(options: [Choice], multiSelect: Bool)
             case toggle(defaultOn: Bool)
         }
@@ -230,13 +230,13 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
     }
 
     /// The dialog's single free-text field. Explicit rather than always-on and sized to its job.
-    struct DialogTextField: Equatable, Sendable {
+    struct DialogTextField: Equatable, Sendable, Codable {
         let placeholder: String
         let multiline: Bool
     }
 
     /// File intake shown as a drop zone and native picker.
-    struct FileIntake: Equatable, Sendable {
+    struct FileIntake: Equatable, Sendable, Codable {
         /// Accepted tokens — a kind ("audio", "video"/"movie", "image", "text") or a bare extension
         /// ("mp3", "txt"). Empty ⇒ any file.
         let accept: [String]

@@ -814,6 +814,11 @@ final class EditorViewModel {
 
     /// Refresh every engine-read snapshot (pipeline state, Bible, shotlist) in one pass.
     func refreshEngineState() async {
+        let diagnosticID = HangDiagnosticRecorder.shared.record(.pipelineRefresh)
+        defer {
+            HangDiagnosticRecorder.shared.record(.pipelineRefresh, correlation: diagnosticID, end: true)
+            agentService.captureDiagnosticTranscript()
+        }
         engineRefreshRequested &+= 1
         let request = engineRefreshRequested
         if engineRefreshTask == nil {
@@ -833,6 +838,27 @@ final class EditorViewModel {
             engineRefreshCompleted = request
         }
         engineRefreshTask = nil
+    }
+
+    var diagnosticProjectContext: HangDiagnosticTranscript.ProjectContext {
+        var manifest = mediaManifest
+        for index in manifest.entries.indices {
+            manifest.entries[index].cachedRemoteURL = nil
+            manifest.entries[index].cachedRemoteURLExpiresAt = nil
+            manifest.entries[index].generationInput = nil
+            if case .external = manifest.entries[index].source {
+                manifest.entries[index].source = .project(relativePath: "unavailable/\(manifest.entries[index].id)")
+            }
+        }
+        return .init(timeline: timeline, manifest: manifest, pipeline: projectState,
+                     binding: declaredPluginBinding, revision: engineStateRevision)
+    }
+
+    func restoreDiagnosticProject(_ snapshot: HangDiagnosticTranscript.ProjectContext) {
+        guard ProcessInfo.processInfo.environment["NGV_DIAGNOSTIC_REPLAY"] != nil else { return }
+        timeline = snapshot.timeline
+        mediaManifest = snapshot.manifest
+        projectState = snapshot.pipeline
     }
 
     private func performEngineStateRefresh() async {

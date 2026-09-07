@@ -90,7 +90,8 @@ jobs:
           test "$(cat capture.sample.txt.self.status)" = 0
           test -s capture.sample.txt.self.txt
           ditto -x -k symbols.zip .
-          BASE="$(awk '/image .*CaptureProbe$/ {print $2; exit}' capture.sample.txt.self.txt)"
+          PROBE_UUID="$(dwarfdump --uuid CaptureProbe.dSYM | awk '{print $2}' | tr -d '-' | tr '[:upper:]' '[:lower:]')"
+          BASE="$(awk -v uuid="$PROBE_UUID" '$1 == "image" && $3 == uuid {print $2; exit}' capture.sample.txt.self.txt)"
           test -n "$BASE"
           awk '/^0x/ {print $1}' capture.sample.txt.self.txt | xargs atos -arch arm64 -o CaptureProbe.dSYM/Contents/Resources/DWARF/CaptureProbe -l "$BASE" > symbolized.txt
           grep 'knownMainThreadWait' symbolized.txt

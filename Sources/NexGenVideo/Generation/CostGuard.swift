@@ -68,7 +68,7 @@ enum SpendOptionBuilder {
 }
 
 /// One exact model/provider combination the user can approve and dispatch unchanged.
-struct SpendOption: Identifiable, Equatable, Sendable {
+struct SpendOption: Identifiable, Equatable, Sendable, Codable {
     let modelId: String
     let modelName: String
     let target: ResolvedGenerationTarget
@@ -124,7 +124,7 @@ struct SpendPipelineScope: Equatable, Sendable {
     }
 }
 
-enum SpendSelectionScope: String, Equatable, Sendable {
+enum SpendSelectionScope: String, Equatable, Sendable, Codable {
     case image
     case video
     case audio
@@ -191,7 +191,7 @@ enum SpendSelectionPreferences {
 }
 
 /// The pending spend confirmation surfaced in the composer dock (never a modal — LOCKED placement).
-struct SpendApproval: Identifiable, Equatable, Sendable {
+struct SpendApproval: Identifiable, Equatable, Sendable, Codable {
     let id: String
     let recommendedOptionId: String
     /// Valid model/provider combinations for this exact operation. The recommended option is first.

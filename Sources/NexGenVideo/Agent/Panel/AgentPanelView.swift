@@ -93,8 +93,7 @@ struct AgentPanelView: View {
                 context.isStreaming ? 1 : 0, context.hasDialog ? 1 : 0,
                 context.hasGateApproval ? 1 : 0, context.hasSpendApproval ? 1 : 0,
             ])
-            HangDiagnosticTranscript.capture(messages: service.messages, streaming: service.isStreaming,
-                                             sessionID: service.currentSessionId)
+            service.captureDiagnosticTranscript()
         }
         .onChange(of: surfaceState.dockOwner) { previous, current in
             if previous != .composer, current == .composer {

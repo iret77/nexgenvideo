@@ -12,16 +12,17 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
     private let enabled = Atomic<Bool>(false)
     private let mainPulse = Atomic<UInt64>(0)
     private let loopPulse = Atomic<UInt64>(0)
-    private let pendingPing = Atomic<Bool>(false)
     private let stopping = Atomic<Bool>(false)
     private let startRequested = Atomic<Bool>(false)
     private let ring = DiagnosticRing()
     private let writer = DispatchQueue(label: "de.h5ventures.nexgenvideo.diagnostic-writer", qos: .utility)
+    private let pulseQueue = DispatchQueue(label: "de.h5ventures.nexgenvideo.diagnostic-heartbeat", qos: .utility)
     private let snapshotSlots = DispatchSemaphore(value: 2)
     private let snapshotLosses = Atomic<UInt64>(0)
     private var session: URL?
     private var startupID = UUID()
     private var timer: DispatchSourceTimer?
+    private var pulseTimer: DispatchSourceTimer?
     private var helper: Process?
     private var segment: UInt64 = 0
     private var files: [(URL, Int, Double)] = []
@@ -29,10 +30,17 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
     private var contentBytes = 0
     private var key: SymmetricKey?
     private var previousSnapshot: Data?
+    private var snapshotOrdinal: UInt64 = 0
+    private var replayEpochs: [(began: Double, files: [(URL, Int)])] = []
+    private let contentEnabled = Atomic<Bool>(false)
     private var failure: String?
     @MainActor private var observer: CFRunLoopObserver?
+    @MainActor private var mainTimer: Timer?
+
+    init() {}
 
     var isEnabled: Bool { enabled.load(ordering: .relaxed) }
+    var recordsContent: Bool { isEnabled && contentEnabled.load(ordering: .relaxed) }
 
     @discardableResult
     func record(_ operation: DiagnosticOperation, correlation: UInt64 = 0,
@@ -43,6 +51,18 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
 
     @MainActor
     func configure() {
+        if startRequested.load(ordering: .relaxed) {
+            let alert = NSAlert()
+            alert.messageText = "Restart to change recording mode"
+            alert.informativeText = "Stop recording now, then restart NexGenVideo to choose a different mode. Existing recordings are kept."
+            alert.addButton(withTitle: "Cancel")
+            alert.addButton(withTitle: "Stop recording")
+            if alert.runModal() == .alertSecondButtonReturn {
+                stop()
+                UserDefaults.standard.removeObject(forKey: "hangDiagnosticMode")
+            }
+            return
+        }
         let alert = NSAlert()
         alert.messageText = "Record UI hang diagnostics"
         alert.informativeText = "Diagnostics stay on this Mac until you export them. Structural recording includes UI timing and thread stacks. Replay recording also includes displayed chat text and images, encrypted on disk. Recordings expire after seven days."
@@ -62,6 +82,7 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
     @MainActor
     func start(includeContent: Bool) {
         guard !startRequested.exchange(true, ordering: .relaxed) else { return }
+        ngv_sampler_initialize()
         let id = UUID()
         let contentKey = includeContent ? SymmetricKey(size: .bits256) : nil
         if let contentKey {
@@ -96,6 +117,18 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
             self?.loopPulse.store(DispatchTime.now().uptimeNanoseconds, ordering: .relaxed)
         }
         if let observer { CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes) }
+        let mainTimer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.mainPulse.store(DispatchTime.now().uptimeNanoseconds, ordering: .relaxed)
+                for window in NSApp.windows where window.isVisible {
+                    self.record(.window, values: [Double(window.windowNumber), window.frame.width,
+                        window.frame.height, window.backingScaleFactor, NSApp.modalWindow == nil ? 0 : 1])
+                }
+            }
+        }
+        self.mainTimer = mainTimer
+        RunLoop.main.add(mainTimer, forMode: .common)
         writer.async { [self] in
             do {
                 try DiagnosticFiles.directory(Self.root)
@@ -105,6 +138,7 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
                 startupID = id
                 session = folder
                 key = contentKey
+                contentEnabled.store(includeContent, ordering: .relaxed)
                 helper = process
                 try process.run()
                 enabled.store(true, ordering: .relaxed)
@@ -113,6 +147,7 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
                 timer.setEventHandler { [weak self] in self?.flush() }
                 self.timer = timer
                 timer.resume()
+                startHeartbeat(folder: folder, id: id)
                 startSampler(folder: folder)
             } catch {
                 failure = "setup-failed"
@@ -127,21 +162,21 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
         stopping.store(true, ordering: .relaxed)
         if let observer { CFRunLoopRemoveObserver(CFRunLoopGetMain(), observer, .commonModes) }
         observer = nil
+        mainTimer?.invalidate()
+        mainTimer = nil
         writer.async { [self] in
             flush()
             timer?.cancel()
             timer = nil
         }
+        pulseQueue.async { [self] in
+            pulseTimer?.cancel()
+            pulseTimer = nil
+        }
     }
 
     private func flush() {
         guard let session else { return }
-        if !pendingPing.exchange(true, ordering: .relaxed) {
-            DispatchQueue.main.async { [self] in
-                mainPulse.store(DispatchTime.now().uptimeNanoseconds, ordering: .relaxed)
-                pendingPing.store(false, ordering: .relaxed)
-            }
-        }
         let now = ProcessInfo.processInfo.systemUptime
         do {
             let records = ring.drain()
@@ -162,13 +197,6 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
                     files.removeFirst()
                 }
             }
-            try DiagnosticFiles.replace(DiagnosticHeartbeat(
-                startupID: startupID, processID: getpid(), writerUptime: now,
-                mainUptime: Double(mainPulse.load(ordering: .relaxed)) / 1_000_000_000,
-                runLoopUptime: Double(loopPulse.load(ordering: .relaxed)) / 1_000_000_000,
-                dropped: ring.dropped + snapshotLosses.load(ordering: .relaxed),
-                stopped: stopping.load(ordering: .relaxed)
-            ), at: session.appendingPathComponent("heartbeat.json"))
             if let failure {
                 try DiagnosticFiles.replace(failure, at: session.appendingPathComponent("capture-error.json"))
             }
@@ -176,6 +204,24 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
                 failure = "helper-exited"
             }
         } catch { failure = "write-failed" }
+    }
+
+    private func startHeartbeat(folder: URL, id: UUID) {
+        pulseQueue.async { [self] in
+            let timer = DispatchSource.makeTimerSource(queue: pulseQueue)
+            timer.schedule(deadline: .now(), repeating: .milliseconds(500))
+            timer.setEventHandler { [self] in
+                try? DiagnosticFiles.replace(DiagnosticHeartbeat(
+                    startupID: id, processID: getpid(), writerUptime: ProcessInfo.processInfo.systemUptime,
+                    mainUptime: Double(mainPulse.load(ordering: .relaxed)) / 1_000_000_000,
+                    runLoopUptime: Double(loopPulse.load(ordering: .relaxed)) / 1_000_000_000,
+                    dropped: ring.dropped + snapshotLosses.load(ordering: .relaxed),
+                    stopped: stopping.load(ordering: .relaxed)
+                ), at: folder.appendingPathComponent("heartbeat.json"))
+            }
+            pulseTimer = timer
+            timer.resume()
+        }
     }
 
     private func startSampler(folder: URL) {
@@ -188,7 +234,9 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
                     lastRequest = request
                     for index in 0..<3 {
                         let output = folder.appendingPathComponent("self-\(request)-\(index).stacks")
-                        let result = output.path.withCString { ngv_capture_self($0) }
+                        let partial = output.appendingPathExtension("partial")
+                        let result = partial.path.withCString { ngv_capture_self($0) }
+                        if result == 0 { try? FileManager.default.moveItem(at: partial, to: output) }
                         if result != 0 {
                             try? DiagnosticFiles.replace(result, at: folder.appendingPathComponent("self-capture-error.json"))
                         }
@@ -201,8 +249,8 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
     }
 
     func snapshot<T: Encodable & Sendable>(_ value: T, correlation: UInt64) {
-        guard isEnabled, snapshotSlots.wait(timeout: .now()) == .success else {
-            if isEnabled { snapshotLosses.wrappingAdd(1, ordering: .relaxed) }
+        guard recordsContent, snapshotSlots.wait(timeout: .now()) == .success else {
+            if recordsContent { snapshotLosses.wrappingAdd(1, ordering: .relaxed) }
             return
         }
         writer.async { [self] in
@@ -214,12 +262,27 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
                     failure = "privacy-filter-rejected-snapshot"
                     return
                 }
+                let now = ProcessInfo.processInfo.systemUptime
+                let pinned = FileManager.default.fileExists(atPath: session.appendingPathComponent("pinned.json").path)
+                if !pinned, replayEpochs.last.map({ now - $0.began >= 60 }) ?? true {
+                    replayEpochs.append((now, []))
+                    previousSnapshot = nil
+                }
+                if replayEpochs.isEmpty { replayEpochs.append((now, [])) }
+                while !pinned, replayEpochs.count > 1, now - replayEpochs[1].began > 120 {
+                    for (file, size) in replayEpochs[0].files {
+                        try FileManager.default.removeItem(at: file)
+                        contentBytes -= size
+                    }
+                    replayEpochs.removeFirst()
+                }
                 guard bytes.count <= 32 * 1024 * 1024,
                       contentBytes < 256 * 1024 * 1024 else {
                     failure = "content-limit"
                     return
                 }
-                let delta = DiagnosticReplayDelta(sequence: correlation, previous: previousSnapshot, current: bytes)
+                snapshotOrdinal &+= 1
+                let delta = DiagnosticReplayDelta(sequence: snapshotOrdinal, previous: previousSnapshot, current: bytes)
                 let encoded = try JSONEncoder().encode(delta)
                 let encrypted = try AES.GCM.seal(encoded, using: key,
                     authenticating: Data(startupID.uuidString.utf8)).combined!
@@ -227,10 +290,12 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
                     failure = "content-limit"
                     return
                 }
-                let name = "replay-\(correlation)-\(UUID().uuidString).enc"
+                let name = String(format: "replay-%012llu.enc", snapshotOrdinal)
                 try DiagnosticFiles.write(encrypted, to: session.appendingPathComponent(name))
+                replayEpochs[replayEpochs.count - 1].files.append((session.appendingPathComponent(name), encrypted.count))
                 contentBytes += encrypted.count
                 previousSnapshot = bytes
+                record(.replaySnapshot, correlation: correlation, end: true, values: [Double(snapshotOrdinal)])
             } catch { failure = "snapshot-failed" }
         }
     }

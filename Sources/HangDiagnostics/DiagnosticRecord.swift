@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 import Synchronization
 
@@ -139,19 +140,32 @@ public enum DiagnosticFiles {
     }
 
     public static func write(_ data: Data, to url: URL) throws {
-        try data.write(to: url, options: .withoutOverwriting)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        guard !FileManager.default.fileExists(atPath: url.path) else { throw CocoaError(.fileWriteFileExists) }
+        try atomic(data, at: url)
     }
 
     public static func replace<T: Encodable>(_ value: T, at url: URL) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        try encoder.encode(value).write(to: url, options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        try atomic(encoder.encode(value), at: url)
     }
 
     public static func digest(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func atomic(_ data: Data, at url: URL) throws {
+        let temporary = url.deletingLastPathComponent().appendingPathComponent(".\(UUID().uuidString).partial")
+        let fd = open(temporary.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+        guard fd >= 0 else { throw CocoaError(.fileWriteUnknown) }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        defer {
+            try? handle.close()
+            try? FileManager.default.removeItem(at: temporary)
+        }
+        try handle.write(contentsOf: data)
+        try handle.synchronize()
+        guard rename(temporary.path, url.path) == 0 else { throw CocoaError(.fileWriteUnknown) }
     }
 }
 

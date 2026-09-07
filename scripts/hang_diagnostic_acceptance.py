@@ -44,7 +44,8 @@ def main():
             text = stack.read_text()
             assert "NGV_SELF_STACKS_V1" in text
             images = [line.split() for line in text.splitlines() if line.startswith("image ")]
-            host = next(image for image in images if image[-1] == "NexGenVideo")
+            symbol_uuid = subprocess.check_output(["dwarfdump", "--uuid", str(args.symbols)], text=True).split()[1].replace("-", "").lower()
+            host = next(image for image in images if image[2] == symbol_uuid)
             addresses = [line for line in text.splitlines() if line.startswith("0x")]
             output = subprocess.check_output(["atos", "-arch", "arm64", "-o",
                 str(args.symbols / "Contents/Resources/DWARF/NexGenVideo"), "-l", host[1],

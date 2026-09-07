@@ -195,9 +195,12 @@ final class AgentService {
 
     var sessions: [ChatSession] = []
     var currentSessionId: UUID?
-    var messages: [AgentMessage] = []
+    var messages: [AgentMessage] = [] {
+        didSet { captureDiagnosticTranscript() }
+    }
     var isStreaming: Bool = false {
         didSet {
+            captureDiagnosticTranscript()
             if oldValue, !isStreaming {
                 // A turn finished: flush its messages into the active chat and mark the document edited
                 // (`onSessionsChanged`) so ⌘S / the close-warning actually persists the transcript AND
@@ -279,6 +282,7 @@ final class AgentService {
     /// The one dialog currently owning the composer input surface.
     private(set) var pendingDialog: AgentDialog? {
         didSet {
+            captureDiagnosticTranscript()
             guard oldValue?.id != pendingDialog?.id else { return }
             dialogChoiceSelections = [:]
             dialogSubmissionError = nil
@@ -288,6 +292,24 @@ final class AgentService {
 
     @ObservationIgnored
     private var dialogOrigins: [String: ToolCallOrigin] = [:]
+
+    func captureDiagnosticTranscript() {
+        guard HangDiagnosticRecorder.shared.recordsContent else { return }
+        HangDiagnosticTranscript.capture(messages: messages, streaming: isStreaming,
+                                         sessionID: currentSessionId, dialog: pendingDialog,
+                                         spend: pendingSpendApproval, project: editor?.diagnosticProjectContext)
+    }
+
+    func restoreDiagnosticTranscript(_ state: HangDiagnosticTranscript) throws {
+        guard ProcessInfo.processInfo.environment["NGV_DIAGNOSTIC_REPLAY"] != nil else { return }
+        abandonDialog()
+        pendingSpendApproval = nil
+        currentSessionId = state.sessionID
+        messages = state.messages
+        isStreaming = state.streaming
+        if let dialog = state.dialog { try presentDialog(dialog) }
+        pendingSpendApproval = state.spend
+    }
 
     func presentDialog(
         _ dialog: AgentDialog,
@@ -1251,7 +1273,9 @@ final class AgentService {
     /// The ONE pending spend confirmation (locked provider architecture — user has the final word on
     /// paid agent renders). Set while an agent render waits for approval; the composer dock renders a
     /// `SpendApprovalCard` above the input, exactly where the generative dialog lives (never a modal).
-    private(set) var pendingSpendApproval: SpendApproval?
+    private(set) var pendingSpendApproval: SpendApproval? {
+        didSet { captureDiagnosticTranscript() }
+    }
     private(set) var spendApprovalError: String?
     private(set) var runningSpendStatus: SpendRunStatus?
 
@@ -2764,7 +2788,6 @@ final class AgentService {
                     let diagnosticID = HangDiagnosticRecorder.shared.record(.apiApply)
                     defer {
                         HangDiagnosticRecorder.shared.record(.apiApply, correlation: diagnosticID, end: true)
-                        HangDiagnosticTranscript.capture(messages: messages, streaming: true, sessionID: currentSessionId)
                     }
                     try Task.checkCancellation()
                     switch event {
