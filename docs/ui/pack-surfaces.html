@@ -71,10 +71,6 @@
   .tab { position: relative; padding: var(--s-sm) var(--s-md); font-size: var(--f-xs); color: var(--text-3);
     border-bottom: 2px solid transparent; cursor: default; white-space: nowrap; }
   .tab.sel { color: var(--text); border-bottom-color: var(--accent); }
-  .tab.pack { color: var(--text-2); }
-  .tab.pack.sel { border-bottom-color: var(--pack); color: var(--text); }
-  .tab.pack .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%;
-    background: var(--pack); margin-right: 6px; vertical-align: middle; }
   .tabs .gear { margin-left: auto; padding: var(--s-sm) var(--s-md); color: var(--text-muted); font-size: var(--f-sm); }
 
   .panel { padding: var(--s-lg); }
@@ -146,10 +142,8 @@
     font-size: var(--f-xs); max-width: 620px; }
   .pl-row .st { width: 9px; height: 9px; border-radius: 50%; background: var(--ok); }
   .pl-row .ph { color: var(--text); font-weight: 500; }
-  .pl-row .route { margin-left: auto; color: var(--pack); border: var(--hair) solid var(--pack);
+  .pl-row .route { margin-left: auto; color: var(--text-2); border: var(--hair) solid transparent;
     border-radius: var(--r-xs); padding: 3px 9px; font-size: var(--f-micro); }
-  .pl-row .route .dot { display:inline-block; width:5px; height:5px; border-radius:50%; background:var(--pack);
-    margin-right:5px; vertical-align: middle; }
 
   .two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-md); }
   @media (max-width: 900px) { .two { grid-template-columns: 1fr; } }
@@ -224,8 +218,8 @@
       <code>Pipeline · Analysis · Story · Bible · Shotlist · Review</code>. Rationale: it is upstream
       ground truth the whole production reads from, so it sits next to the control room, not amid the
       downstream artifacts.</li>
-    <li>The pack tab is <b>visually marked as pack-scoped</b> (a <span class="tag pack">PACK</span> dot in
-      the accent colour <code>--pack</code>) so it never reads as a first-party generic tab.</li>
+    <li>Pack tabs use <b>the same navigation styling as generic tabs</b>. Only the selected tab
+      receives an accent. Unselected tabs have no colored dot or status-like tint.</li>
     <li>It is <b>also reachable from Pipeline</b>: the <code>analysis</code> phase row's route button opens
       this surface (reusing the existing <code>surfaceIcon</code> routing), so approving the phase and
       inspecting its result are one gesture.</li>
@@ -249,7 +243,7 @@
   <h2>Tokens (→ AppTheme)</h2>
   <table class="tok">
     <tr><th>Spec token</th><th>AppTheme</th><th>Use</th></tr>
-    <tr><td><code>--pack</code> #c08bff</td><td>add <code>AppTheme.Accent.pack</code></td><td>pack-scoped tab marker, route button, timeline accents</td></tr>
+    <tr><td><code>--pack</code> #c08bff</td><td>add <code>AppTheme.Accent.pack</code></td><td>analysis timeline accents</td></tr>
     <tr><td><code>--accent</code></td><td><code>AppTheme.Accent.timecode</code></td><td>downbeats, selected generic tab</td></tr>
     <tr><td><code>--text-3 / --text-muted</code></td><td><code>AppTheme.Text.tertiary / .muted</code></td><td>labels, ruler, provenance</td></tr>
     <tr><td><code>--r-sm / --s-md</code></td><td><code>AppTheme.Radius.sm / Spacing.md</code></td><td>panels, tiles</td></tr>
@@ -281,7 +275,7 @@
     <div class="cockpit">
       <div class="tabs">
         <div class="tab">Pipeline</div>
-        <div class="tab pack sel"><span class="dot"></span>Analysis</div>
+        <div class="tab pack sel">Analysis</div>
         <div class="tab">Story</div>
         <div class="tab">Bible</div>
         <div class="tab">Shotlist</div>
@@ -384,7 +378,7 @@
       <div class="cap">Re-measuring — data present, a fresh analysis is running (the tab stays)</div>
       <div class="cockpit">
         <div class="tabs">
-          <div class="tab">Pipeline</div><div class="tab pack sel"><span class="dot"></span>Analysis</div>
+          <div class="tab">Pipeline</div><div class="tab pack sel">Analysis</div>
           <div class="tab">Story</div><div class="tab">Bible</div><div class="tab">Shotlist</div><div class="tab">Review</div>
         </div>
         <div class="panel"><div class="center">
@@ -402,7 +396,7 @@
     <div class="cap">Unresolved structure — rhythm stays visible, section truth stays hidden</div>
     <div class="cockpit">
       <div class="tabs">
-        <div class="tab">Pipeline</div><div class="tab pack sel"><span class="dot"></span>Analysis</div>
+        <div class="tab">Pipeline</div><div class="tab pack sel">Analysis</div>
         <div class="tab">Story</div><div class="tab">Bible</div><div class="tab">Shotlist</div><div class="tab">Review</div>
       </div>
       <div class="panel">
@@ -435,7 +429,7 @@
     <div class="cap">Degraded — no reliable beat grid (never present an empty grid as truth)</div>
     <div class="cockpit">
       <div class="tabs">
-        <div class="tab">Pipeline</div><div class="tab pack sel"><span class="dot"></span>Analysis</div>
+        <div class="tab">Pipeline</div><div class="tab pack sel">Analysis</div>
         <div class="tab">Story</div><div class="tab">Bible</div><div class="tab">Shotlist</div><div class="tab">Review</div>
       </div>
       <div class="panel">
@@ -463,10 +457,10 @@
         <span class="st"></span>
         <span class="ph">Analysis</span>
         <span style="color:var(--text-3);font-size:var(--f-micro)">approved</span>
-        <span class="route"><span class="dot"></span>Analysis</span>
+        <span class="route">Analysis</span>
       </div>
-      <p style="font-size:var(--f-xs);margin:var(--s-sm) 0 0">The route button carries the pack accent +
-        label — the same routing the generic phases use for Story / Review, extended to the pack surface.</p>
+      <p style="font-size:var(--f-xs);margin:var(--s-sm) 0 0">The route button uses the same neutral styling as Story / Review. The separate green status
+        indicator reports approval; navigation never implies an error through pack identity.</p>
     </div></div>
   </div>
 
