@@ -20,6 +20,9 @@ def main():
     root = Path.home() / "Library/Logs/NexGenVideo/HangIncidents"
     args.output.mkdir(parents=True, exist_ok=True)
     results = []
+    retained_recordings = []
+    replay_account = None
+    replay_key = None
     for mode in ("wait", "spin"):
         before = set(root.glob("*"))
         temporary = tempfile.TemporaryDirectory()
@@ -41,6 +44,7 @@ def main():
         folders = set(root.glob("*")) - before
         assert len(folders) == 1, "exactly one recording required"
         folder = folders.pop()
+        retained_recordings.append(folder)
         reports = list(folder.glob("incident-*/incident.json"))
         assert len(reports) == 1, "exactly one detected hang required"
         report = json.loads(reports[0].read_text())
@@ -65,6 +69,8 @@ def main():
         events = [record for file in folder.glob("events-*.json") for record in json.loads(file.read_text())]
         assert any(event["operation"] == ("testWait" if mode == "wait" else "testSpin") for event in events)
         if mode == "wait":
+            replay_account = f"hang-diagnostic-{folder.name}"
+            replay_key = key_file.read_text().strip()
             export = exported / folder.name
             assert list(export.glob("replay-*.enc")), "encrypted replay content missing"
             assert (export / "checksums.json").is_file()
@@ -120,6 +126,16 @@ def main():
         if process.poll() is None:
             process.kill()
             process.wait(timeout=5)
+    retained_recordings.append(folder)
+    for _ in range(6):
+        subprocess.run([str(args.app / "Contents/MacOS/NexGenVideo")],
+            env={**os.environ, "NGV_HANG_SELFTEST": "startup"}, check=True, timeout=15,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        assert all(recording.is_dir() for recording in retained_recordings), "restart removed hang evidence"
+        preserved_key = subprocess.check_output(["security", "find-generic-password",
+            "-s", "de.h5ventures.nexgenvideo", "-a", replay_account, "-w"], text=True).strip()
+        assert preserved_key == replay_key, "restart removed or replaced the replay key"
+    results.append({"mode": "repeated-startup-retention", "starts": 6, "passed": True})
     (args.output / "result.json").write_text(json.dumps(results, indent=2))
 
 

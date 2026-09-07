@@ -2,6 +2,18 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.5.4",
+      "date": "2026-09-07",
+      "sections": [{
+        "heading": "Fixes",
+        "items": [
+          "Hang and replay recordings survive repeated launches and automatic cleanup. New recordings stop starting at the storage limit instead of deleting evidence or keys.",
+          "Diagnostic export identifies sessions by date, prioritizes recorded hangs, defaults to Downloads and reveals the saved ZIP in Finder. Missing replay keys are reported explicitly.",
+          "Acknowledged hang diagnostic notifications no longer reappear on every launch. Recordings remain available for export."
+        ]
+      }]
+    },
+    {
       "version": "1.5.3",
       "date": "2026-09-07",
       "sections": [{

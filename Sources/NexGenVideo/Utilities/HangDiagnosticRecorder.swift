@@ -70,7 +70,7 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
         }
         let alert = NSAlert()
         alert.messageText = "Record UI hang diagnostics"
-        alert.informativeText = "Diagnostics stay on this Mac until you export them. Structural recording includes UI timing and thread stacks. Replay recording also includes displayed chat text and images, encrypted on disk. Old recordings are removed on the next app launch after seven days."
+        alert.informativeText = "Diagnostics stay on this Mac until you export them. Structural recording includes UI timing and thread stacks. Replay recording also includes displayed chat text and images, encrypted on disk. Hang recordings, replay content and exported recordings are kept until you delete them. New recording stops when stored diagnostics reach 1 GB."
         alert.addButton(withTitle: "Record with replay content")
         alert.addButton(withTitle: "Record structure only")
         alert.addButton(withTitle: "Disable recording")
@@ -149,6 +149,7 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
             do {
                 try DiagnosticFiles.directory(Self.root)
                 try Self.prune(excluding: id)
+                try DiagnosticRetention.checkStorageBudget(at: Self.root)
                 try DiagnosticFiles.directory(folder)
                 try DiagnosticFiles.replace(metadata, at: folder.appendingPathComponent("build.json"))
                 startupID = id
@@ -167,7 +168,10 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
                 startSampler(folder: folder)
             } catch {
                 failure = "setup-failed"
-                DispatchQueue.main.async { Self.showFailure("Diagnostic recording could not start.") }
+                let message = (error as? CocoaError)?.code == .fileWriteOutOfSpace
+                    ? "Stored diagnostics reached 1 GB. Existing recordings and keys are preserved. Export and delete recordings from Help before starting a new recording."
+                    : "Diagnostic recording could not start. Existing recordings and keys are preserved."
+                DispatchQueue.main.async { Self.showFailure(message) }
             }
         }
     }
@@ -353,16 +357,8 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
             includingPropertiesForKeys: [.creationDateKey], options: [.skipsHiddenFiles])
             .filter { UUID(uuidString: $0.lastPathComponent) != nil && $0.lastPathComponent != id.uuidString }
             .filter { !hasLiveOwner($0) }
-            .sorted {
-                ((try? $0.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast)
-                < ((try? $1.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast)
-            }
-        for (index, folder) in folders.enumerated() {
-            let date = try folder.resourceValues(forKeys: [.creationDateKey]).creationDate ?? .distantPast
-            if Date().timeIntervalSince(date) > 7 * 86400 || index < folders.count - 2 {
-                try FileManager.default.removeItem(at: folder)
-                KeychainStore.delete(account: "hang-diagnostic-\(folder.lastPathComponent)")
-            }
+        for folder in try DiagnosticRetention.removableRecordings(folders) {
+            try FileManager.default.removeItem(at: folder)
         }
     }
 
@@ -417,11 +413,11 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
             guard let folders = try? FileManager.default.contentsOfDirectory(at: Self.root,
                 includingPropertiesForKeys: [.creationDateKey], options: [.skipsHiddenFiles]) else { return }
             for folder in folders where UUID(uuidString: folder.lastPathComponent) != nil && !Self.hasLiveOwner(folder) {
-                guard let date = try? folder.resourceValues(forKeys: [.creationDateKey]).creationDate,
+                guard (try? DiagnosticRetention.requiresExplicitDeletion(folder)) == false,
+                      let date = try? folder.resourceValues(forKeys: [.creationDateKey]).creationDate,
                       Date().timeIntervalSince(date) > 7 * 86400 else { continue }
                 do {
                     try FileManager.default.removeItem(at: folder)
-                    KeychainStore.delete(account: "hang-diagnostic-\(folder.lastPathComponent)")
                 } catch { continue }
             }
         }
@@ -432,6 +428,7 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
             writer.async {
                 do {
                     try DiagnosticFiles.copyRecording(from: folder, to: destination)
+                    try DiagnosticFiles.replace(true, at: folder.appendingPathComponent("exported.json"))
                     continuation.resume()
                 } catch { continuation.resume(throwing: error) }
             }

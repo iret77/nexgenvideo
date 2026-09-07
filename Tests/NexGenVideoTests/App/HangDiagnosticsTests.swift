@@ -5,6 +5,57 @@ import Testing
 
 @Suite("Bounded hang diagnostics")
 struct HangDiagnosticsTests {
+    @Test func acknowledgedNoticeSurvivesRestartAndNewHangStillNotifies() throws {
+        let suite = "hang-notice-tests-\(UUID().uuidString)"
+        let first = try #require(UserDefaults(suiteName: suite))
+        defer { first.removePersistentDomain(forName: suite) }
+        #expect(DiagnosticNotifications.acknowledge(["session/first"], defaults: first) == ["session/first"])
+        let restarted = try #require(UserDefaults(suiteName: suite))
+        #expect(DiagnosticNotifications.acknowledge(["session/first"], defaults: restarted).isEmpty)
+        #expect(DiagnosticNotifications.acknowledge(["session/second"], defaults: restarted) == ["session/second"])
+        #expect(DiagnosticNotifications.acknowledge(["session/second"], defaults: restarted).isEmpty)
+    }
+
+    @Test(arguments: ["pinned.json", "sample-request.json", "incident-example", "self-example.stacks",
+                      "replay-000000000001.enc", "exported.json"])
+    func evidenceSurvivesRepeatedStartsAndExpiry(marker: String) throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let evidence = root.appendingPathComponent(UUID().uuidString)
+        try DiagnosticFiles.directory(evidence)
+        try DiagnosticFiles.write(Data("preserved".utf8), to: evidence.appendingPathComponent(marker))
+        for _ in 0..<12 {
+            try DiagnosticFiles.directory(root.appendingPathComponent(UUID().uuidString))
+            let sessions = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+            let deletions = try DiagnosticRetention.removableRecordings(sessions, now: Date().addingTimeInterval(30 * 86400))
+            #expect(!deletions.contains(evidence))
+            for folder in deletions { try FileManager.default.removeItem(at: folder) }
+        }
+        #expect(try Data(contentsOf: evidence.appendingPathComponent(marker)) == Data("preserved".utf8))
+    }
+
+    @Test func emptySessionsRemainBounded() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try DiagnosticFiles.directory(root)
+        for _ in 0..<8 { try DiagnosticFiles.directory(root.appendingPathComponent(UUID().uuidString)) }
+        let sessions = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+        #expect(try DiagnosticRetention.removableRecordings(sessions).count == 6)
+    }
+
+    @Test func storageLimitRefusesNewRecordingWithoutRemovingEvidence() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try DiagnosticFiles.directory(root)
+        let file = root.appendingPathComponent("replay-000000000001.enc")
+        try DiagnosticFiles.write(Data(), to: file)
+        let handle = try FileHandle(forWritingTo: file)
+        defer { try? handle.close() }
+        try handle.truncate(atOffset: 1024 * 1024 * 1024)
+        #expect(throws: CocoaError.self) { try DiagnosticRetention.checkStorageBudget(at: root) }
+        #expect(FileManager.default.fileExists(atPath: file.path))
+    }
+
     @Test func ringNeverOverwritesUnconsumedEvents() {
         let ring = DiagnosticRing(capacity: 2)
         ring.append(.startup)

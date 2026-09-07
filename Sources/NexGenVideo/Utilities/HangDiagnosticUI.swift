@@ -1,6 +1,7 @@
 import AppKit
 import CryptoKit
 import HangDiagnostics
+import UniformTypeIdentifiers
 
 enum HangDiagnosticUI {
     @MainActor
@@ -18,39 +19,94 @@ enum HangDiagnosticUI {
         case "disabled": break
         default: HangDiagnosticRecorder.shared.configure()
         }
-        if let folders = try? FileManager.default.contentsOfDirectory(at: HangDiagnosticRecorder.root,
-            includingPropertiesForKeys: nil), folders.contains(where: {
-                FileManager.default.fileExists(atPath: $0.appendingPathComponent("sample-request.json").path)
-            }) {
-            notifySaved()
-        }
+        notifySaved()
     }
 
     @MainActor
     static func notifySaved() {
         guard !HangDiagnosticSelfTest.requested, !AppRelaunchSelfTest.isRequested else { return }
+        guard let folders = try? FileManager.default.contentsOfDirectory(at: HangDiagnosticRecorder.root,
+            includingPropertiesForKeys: nil) else { return }
+        let requests = folders.compactMap { folder -> String? in
+            guard UUID(uuidString: folder.lastPathComponent) != nil,
+                  let data = try? Data(contentsOf: folder.appendingPathComponent("sample-request.json")),
+                  let request = try? JSONDecoder().decode(String.self, from: data),
+                  UUID(uuidString: request) != nil else { return nil }
+            return "\(folder.lastPathComponent)/\(request)"
+        }
+        // Persist before the modal loop so queued notifications cannot present it again.
+        let pendingRequests = DiagnosticNotifications.acknowledge(requests)
+        guard !pendingRequests.isEmpty else { return }
         let alert = NSAlert()
         alert.messageText = "UI hang diagnostics saved"
         alert.informativeText = "Export the recording for analysis or delete it. No recording has been uploaded."
         alert.addButton(withTitle: "Export diagnostics…")
         alert.addButton(withTitle: "Later")
-        if alert.runModal() == .alertFirstButtonReturn { export() }
+        if alert.runModal() == .alertFirstButtonReturn {
+            let pending = folders.filter { folder in
+                pendingRequests.contains { $0.hasPrefix(folder.lastPathComponent + "/") }
+            }
+            export(recordings: pending)
+        }
     }
 
     @MainActor
     static func export() {
-        let picker = NSOpenPanel()
-        picker.message = "Select the diagnostic recording to export."
-        picker.directoryURL = HangDiagnosticRecorder.root
-        picker.canChooseDirectories = true
-        picker.canChooseFiles = false
-        guard picker.runModal() == .OK, let folder = picker.url,
-              folder.deletingLastPathComponent().standardizedFileURL.path == HangDiagnosticRecorder.root.standardizedFileURL.path,
-              UUID(uuidString: folder.lastPathComponent) != nil else { return }
+        do {
+            let folders = try FileManager.default.contentsOfDirectory(at: HangDiagnosticRecorder.root,
+                includingPropertiesForKeys: [.creationDateKey])
+            export(recordings: folders.filter { UUID(uuidString: $0.lastPathComponent) != nil })
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "No diagnostic recordings available"
+            alert.informativeText = "Recordings appear here after hang recording has started."
+            alert.runModal()
+        }
+    }
+
+    @MainActor
+    private static func export(recordings: [URL]) {
+        let folders = recordings.sorted { lhs, rhs in
+            let leftHang = FileManager.default.fileExists(atPath: lhs.appendingPathComponent("sample-request.json").path)
+            let rightHang = FileManager.default.fileExists(atPath: rhs.appendingPathComponent("sample-request.json").path)
+            if leftHang != rightHang { return leftHang }
+            let leftDate = (try? lhs.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
+            let rightDate = (try? rhs.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
+            return leftDate > rightDate
+        }
+        guard !folders.isEmpty else {
+            let alert = NSAlert()
+            alert.messageText = "No diagnostic recordings available"
+            alert.runModal()
+            return
+        }
+        var selectedIndex = 0
+        if folders.count > 1 {
+            let picker = NSPopUpButton()
+            picker.addItems(withTitles: folders.map { recordingLabel($0) })
+            picker.sizeToFit()
+            let alert = NSAlert()
+            alert.messageText = "Export diagnostic recording"
+            alert.informativeText = "Select a session. Sessions with a recorded hang appear first. Next, choose where to save the ZIP."
+            alert.accessoryView = picker
+            alert.addButton(withTitle: "Continue")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            selectedIndex = picker.indexOfSelectedItem
+        }
+        guard folders.indices.contains(selectedIndex) else { return }
+        let folder = folders[selectedIndex]
+        let hasReplay = ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])
+            .contains { $0.hasPrefix("replay-") && $0.hasSuffix(".enc") }
+        let key = KeychainStore.load(account: "hang-diagnostic-\(folder.lastPathComponent)")
         let save = NSSavePanel()
+        save.title = "Export diagnostic recording"
+        save.prompt = "Export"
+        save.message = "\(recordingLabel(folder))\nSave a ZIP copy for analysis. The original recording stays on this Mac."
+        save.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+        save.allowedContentTypes = [.zip]
         save.nameFieldStringValue = "NexGenVideo-\(folder.lastPathComponent).zip"
         guard save.runModal() == .OK, let destination = save.url else { return }
-        let key = KeychainStore.load(account: "hang-diagnostic-\(folder.lastPathComponent)")
         Task.detached(priority: .utility) {
             do {
                 let staging = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -74,12 +130,16 @@ enum HangDiagnosticUI {
                 try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: partial.path)
                 guard rename(partial.path, destination.path) == 0 else { throw CocoaError(.fileWriteUnknown) }
                 await MainActor.run {
+                    NSWorkspace.shared.activateFileViewerSelecting([destination])
                     let alert = NSAlert()
                     alert.messageText = "Diagnostics exported"
-                    alert.informativeText = key == nil ? "The package contains structural diagnostics only."
-                        : "Replay content is encrypted. Copy its key and send it separately from the package. The package does not contain this key."
-                    alert.addButton(withTitle: key == nil ? "Done" : "Copy decryption key")
-                    if alert.runModal() == .alertFirstButtonReturn, let key {
+                    let details = !hasReplay ? "The package contains structural diagnostics only."
+                        : key == nil ? "The package includes encrypted replay content, but its key is unavailable. Thread stacks and event records remain readable."
+                        : "Replay content is encrypted. Copy its key and send it separately from the ZIP. Keep both for analysis."
+                    alert.informativeText = "Saved to \(destination.path)\n\n\(details)"
+                    alert.addButton(withTitle: hasReplay && key != nil ? "Copy decryption key" : "Done")
+                    if hasReplay && key != nil { alert.addButton(withTitle: "Done") }
+                    if alert.runModal() == .alertFirstButtonReturn, hasReplay, let key {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(key, forType: .string)
                     }
@@ -93,6 +153,14 @@ enum HangDiagnosticUI {
                 }
             }
         }
+    }
+
+    @MainActor
+    private static func recordingLabel(_ folder: URL) -> String {
+        let date = (try? folder.resourceValues(forKeys: [.creationDateKey]).creationDate)
+            .map { DateFormatter.localizedString(from: $0, dateStyle: .medium, timeStyle: .medium) } ?? "Unknown date"
+        let hasHang = FileManager.default.fileExists(atPath: folder.appendingPathComponent("sample-request.json").path)
+        return "\(date) · \(hasHang ? "Hang recorded" : "No hang recorded") · \(folder.lastPathComponent.prefix(8))"
     }
 
     @MainActor
