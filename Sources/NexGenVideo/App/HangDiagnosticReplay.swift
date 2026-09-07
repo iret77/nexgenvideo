@@ -116,12 +116,13 @@ enum HangDiagnosticReplay {
         let scrolls = views.compactMap { $0 as? NSScrollView }
             .filter { !$0.isHiddenOrHasHiddenAncestor }
         let geometry = scrolls.map { scroll -> [String: Double] in
-            ["width": scroll.contentView.bounds.width, "height": scroll.contentView.bounds.height,
-             "offset": scroll.contentView.bounds.origin.y,
-             "contentHeight": scroll.documentView?.frame.height ?? 0]
+            ["width": Double(scroll.contentView.bounds.width), "height": Double(scroll.contentView.bounds.height),
+             "offset": Double(scroll.contentView.bounds.origin.y),
+             "contentHeight": Double(scroll.documentView?.frame.height ?? 0)]
         }
         let progress: [String: Any] = ["sequence": sequence.map { $0 as Any } ?? NSNull(),
                                        "finished": sequence == nil, "scrolls": geometry,
+                                       "windowNumber": window.windowNumber,
                                        "views": views.count,
                                        "constraints": views.reduce(0) { $0 + $1.constraints.count }]
         if let data = try? JSONSerialization.data(withJSONObject: progress) {

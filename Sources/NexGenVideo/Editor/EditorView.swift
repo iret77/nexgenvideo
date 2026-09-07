@@ -547,10 +547,10 @@ private final class PanelHostingController<Content: View>: NSViewController, Pan
 
     init(rootView: Content, panel: EditorViewModel.FocusedPanel) {
         hostingController = NSHostingController(rootView: rootView)
-        // The split view owns panel geometry; content must not feed sizes back into Auto Layout.
-        hostingController.sizingOptions = []
         self.panel = panel
         super.init(nibName: nil, bundle: nil)
+        // The split view owns panel geometry; content must not feed sizes back into Auto Layout.
+        hostingController.sizingOptions = []
     }
 
     @available(*, unavailable)
