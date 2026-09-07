@@ -7,6 +7,7 @@ on:
       - 'scripts/chat_hang_replay.py'
       - 'scripts/chat_replay_crypto.py'
       - 'Tests/PrivateFixtures/chat-replay.enc'
+      - 'Tests/PrivateFixtures/project-replay.enc'
       - 'Sources/NexGenVideo/App/ChatHangReplay.swift'
       - 'Sources/NexGenVideo/Agent/Panel/AgentTranscriptLayout.swift'
       - 'Sources/NexGenVideo/Agent/Panel/AgentMessageView.swift'
@@ -67,6 +68,12 @@ jobs:
           source "$RUNNER_TEMP/replay-venv/bin/activate"
           pip install --quiet cryptography==46.0.5
           python3 scripts/chat_replay_crypto.py unpack "$RUNNER_TEMP/private-fixture" Tests/PrivateFixtures/chat-replay.enc
+          python3 scripts/chat_replay_crypto.py unpack "$RUNNER_TEMP/private-project" Tests/PrivateFixtures/project-replay.enc
+          curl --fail --location --silent --show-error 'https://github.com/iret77/nexgenvideo/releases/download/preview-34048626045/musicvideo-0.5.2.ngvpack.zip' -o "$RUNNER_TEMP/pack.zip"
+          test "$(shasum -a 256 "$RUNNER_TEMP/pack.zip" | cut -d' ' -f1)" = 13b6831f7c0a7ef285572f9c80c071d867db0e644a5f16a09f59ded60e391a46
+          unzip -q "$RUNNER_TEMP/pack.zip" -d "$RUNNER_TEMP/replay-pack"
+          export NGV_CHAT_REPLAY_PROJECT="$RUNNER_TEMP/private-project"
+          export NGV_CHAT_REPLAY_PACK="$RUNNER_TEMP/replay-pack/musicvideo.ngvpack"
           export NGV_CHAT_REPLAY_FIXTURE="$RUNNER_TEMP/private-fixture/session-${{ matrix.session }}.json"
           tar -xzf "$RUNNER_TEMP/chat-replay/chat-replay.tar.gz" -C "$RUNNER_TEMP/chat-replay"
           python3 scripts/chat_hang_replay.py "$RUNNER_TEMP/chat-replay/NexGenVideo.app/Contents/MacOS/NexGenVideo" "$RUNNER_TEMP/evidence"

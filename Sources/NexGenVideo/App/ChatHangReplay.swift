@@ -12,6 +12,11 @@ enum ChatHangReplay {
         let editor = EditorViewModel()
         editor.workspaceFocus = .produce
         editor.agentPanelVisible = true
+        let projectPath = ProcessInfo.processInfo.environment["NGV_CHAT_REPLAY_PROJECT"]
+        if let projectPath {
+            do { try prepareProject(URL(fileURLWithPath: projectPath), editor: editor) }
+            catch { emit("project-load-failed", step: 0); exit(2) }
+        }
         let service = editor.agentService
         let fixturePath = ProcessInfo.processInfo.environment["NGV_CHAT_REPLAY_FIXTURE"]
         let image: String
@@ -47,6 +52,18 @@ enum ChatHangReplay {
         app.activate(ignoringOtherApps: true)
         emit("started", step: 0)
         Task { @MainActor in
+            if projectPath != nil {
+                await editor.refreshEngineState()
+                guard editor.packWiringBroken == nil,
+                      let state = editor.projectState,
+                      state.phases.count == 11,
+                      state.phases.filter(\.approved).count == 6,
+                      state.nextPhaseName == "bible" else {
+                    emit("project-state-mismatch", step: 0)
+                    exit(2)
+                }
+                emit("project-state-verified", step: 0)
+            }
             let ticksPerMessage = max(2, 1000 / max(1, recordedMessages.count))
             var focusedTicks = 0
             for step in 1...1200 {
@@ -100,6 +117,26 @@ enum ChatHangReplay {
         }
         app.run()
         exit(1)
+    }
+
+    private static func prepareProject(_ root: URL, editor: EditorViewModel) throws {
+        guard case .bound(let binding) = ProjectPluginSettings.bindingResolution(projectURL: root),
+              let packPath = ProcessInfo.processInfo.environment["NGV_CHAT_REPLAY_PACK"],
+              let identity = ProjectIdentity.existingUUID(for: root) else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        let source = URL(fileURLWithPath: packPath)
+        guard let info = PluginBundleInfo(bundleURL: source),
+              info.id == binding.id, info.version == binding.version,
+              info.projectSchema == binding.projectSchema else { throw CocoaError(.fileReadCorruptFile) }
+        let destination = PluginPaths.installURL(id: binding.id, version: binding.version)
+        try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: source, to: destination)
+        guard PluginLoader.load(at: destination).state == .loaded else { throw CocoaError(.fileReadCorruptFile) }
+        editor.timeline = try JSONDecoder().decode(Timeline.self, from: Data(contentsOf: root.appendingPathComponent(Project.timelineFilename)))
+        editor.mediaManifest = try JSONDecoder().decode(MediaManifest.self, from: Data(contentsOf: root.appendingPathComponent(Project.manifestFilename)))
+        editor.adoptWorkingCopy(.init(home: root, recoveredUnsaved: false, generation: UUID()),
+                               key: "p-" + identity, packageURL: root)
     }
 
     private static func replayRecordedMessages(_ messages: [AgentMessage], step: Int,
