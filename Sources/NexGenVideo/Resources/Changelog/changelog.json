@@ -9,7 +9,8 @@
         "items": [
           "Hang and replay recordings survive repeated launches and automatic cleanup. New recordings stop starting at the storage limit instead of deleting evidence or keys.",
           "Diagnostic export identifies sessions by date, prioritizes recorded hangs, defaults to Downloads and reveals the saved ZIP in Finder. Missing replay keys are reported explicitly.",
-          "Acknowledged hang diagnostic notifications no longer reappear on every launch. Recordings remain available for export."
+          "Acknowledged hang diagnostic notifications no longer reappear on every launch. Recordings remain available for export.",
+          "Music Video pack 0.5.4 is paired with this diagnostic build. Existing project pins and engine compatibility contracts remain unchanged."
         ]
       }]
     },

@@ -127,18 +127,21 @@ def main():
             process.kill()
             process.wait(timeout=5)
     retained_recordings.append(folder)
-    for _ in range(6):
-        before = set(root.glob("*"))
-        subprocess.run([str(args.app / "Contents/MacOS/NexGenVideo")],
-            env={**os.environ, "NGV_HANG_SELFTEST": "startup"}, check=True, timeout=15,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        started = set(root.glob("*")) - before
-        assert len(started) == 1, "startup did not create exactly one recording"
-        assert (started.pop() / "build.json").is_file(), "startup did not initialize recording"
-        assert all(recording.is_dir() for recording in retained_recordings), "restart removed hang evidence"
-        preserved_key = subprocess.check_output(["security", "find-generic-password",
-            "-s", "de.h5ventures.nexgenvideo", "-a", replay_account, "-w"], text=True).strip()
-        assert preserved_key == replay_key, "restart removed or replaced the replay key"
+    with tempfile.TemporaryDirectory() as retention_temporary:
+        expected_key = Path(retention_temporary) / "expected.key"
+        expected_key.write_text(replay_key)
+        expected_key.chmod(0o600)
+        for _ in range(6):
+            before = set(root.glob("*"))
+            subprocess.run([str(args.app / "Contents/MacOS/NexGenVideo")],
+                env={**os.environ, "NGV_HANG_SELFTEST": "startup",
+                     "NGV_HANG_SELFTEST_VERIFY_ACCOUNT": replay_account,
+                     "NGV_HANG_SELFTEST_VERIFY_KEY_FILE": str(expected_key)}, check=True, timeout=15,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            started = set(root.glob("*")) - before
+            assert len(started) == 1, "startup did not create exactly one recording"
+            assert (started.pop() / "build.json").is_file(), "startup did not initialize recording"
+            assert all(recording.is_dir() for recording in retained_recordings), "restart removed hang evidence"
     results.append({"mode": "repeated-startup-retention", "starts": 6, "passed": True})
     (args.output / "result.json").write_text(json.dumps(results, indent=2))
 
