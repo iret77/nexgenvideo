@@ -576,10 +576,6 @@ struct PipelinePanelView: View {
             contract: editor.uiContract,
             availablePackSurfaces: editor.availableCockpitPackSurfaces
         ) {
-            let isPackRoute = switch route.destination {
-            case .pack: true
-            default: false
-            }
             let isEnabled = route.destination != .chat
             Button {
                 switch route.destination {
@@ -599,10 +595,10 @@ struct PipelinePanelView: View {
                 }
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .lineLimit(1)
-                .padding(.horizontal, isPackRoute ? AppTheme.Spacing.none : AppTheme.Spacing.xs)
+                .padding(.horizontal, AppTheme.Spacing.xs)
                 .frame(maxWidth: .infinity, minHeight: AppTheme.IconSize.smMd, alignment: .leading)
             }
-            .buttonStyle(.inlineAction(isPackRoute ? .pack : .neutral))
+            .buttonStyle(.inlineAction(.neutral))
             .disabled(!isEnabled)
             .help(isEnabled
                   ? "Open \(route.label) to read this phase's work · compute: \(route.taskClass)"

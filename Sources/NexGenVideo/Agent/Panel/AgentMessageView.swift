@@ -7,7 +7,7 @@ struct AgentTranscriptTurnView: View {
     let toolResults: [String: ToolRunResult]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+        AgentTranscriptLayout {
             ForEach(turn.items) { item in
                 switch item {
                 case .userIntent(let intent):
@@ -218,7 +218,7 @@ struct AgentMessageView: View {
         let structuredResults = parsedStructuredResults
         let firstStructuredResultIndex = structuredResults.first?.index
         let combinedStructuredBlocks = structuredResults.flatMap(\.blocks)
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+        AgentTranscriptLayout {
             ForEach(Array(message.blocks.enumerated()), id: \.offset) { index, block in
                 switch block {
                 case .text(let text):

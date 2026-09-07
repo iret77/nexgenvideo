@@ -34,6 +34,7 @@ enum ModelsPaneProjection {
 struct ModelsPane: View {
     private var prefs = ModelPreferences.shared
     private var catalog = ModelCatalog.shared
+    @Bindable private var research = ModelCapabilityResearchController.shared
 
     @State private var query = ""
     /// Bumped when provider keys change so availability (which reads the keychain) re-renders live.
@@ -56,6 +57,15 @@ struct ModelsPane: View {
         )
     }
 
+    private var researchTargets: [ModelCapabilityResearchTargetV1] {
+        guard research.recordsLoaded else { return [] }
+        return ModelCapabilityResearchTargetBuilder.targets(
+            catalog: catalog,
+            records: research.records,
+            corpus: CatalogCapabilityRuntime.corpus
+        )
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
             SettingsSection(
@@ -72,10 +82,16 @@ struct ModelsPane: View {
                 }
             }
 
+            if !researchTargets.isEmpty || !research.records.isEmpty
+                || research.phase != .idle {
+                ModelCapabilityResearchPane()
+            }
+
             ForEach(sections) { section in
                 sectionView(section)
             }
         }
+        .task { research.start() }
         .onReceive(NotificationCenter.default.publisher(for: .providerKeysChanged)) { _ in
             keyRevision += 1
         }

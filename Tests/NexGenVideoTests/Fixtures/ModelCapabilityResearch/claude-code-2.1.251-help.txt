@@ -1,0 +1,23 @@
+Claude Code 2.1.251 command-line help excerpt recorded 2026-08-31.
+Primary contract: https://code.claude.com/docs/en/tools-reference
+--allowedTools, --allowed-tools <tools...>
+--disable-slash-commands
+--disallowedTools, --disallowed-tools <tools...>
+--effort <level>
+--input-format <format>
+--json-schema <schema>
+--max-budget-usd <amount>
+--mcp-config <configs...>
+--model <model>
+--no-chrome
+--no-session-persistence
+--output-format <format>
+--permission-mode <mode>
+-p, --print
+--restricted
+--safe-mode
+--setting-sources <sources>
+--strict-mcp-config
+--system-prompt <prompt>
+--tools <tools...>
+--verbose

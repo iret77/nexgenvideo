@@ -1,0 +1,27 @@
+{
+  "schema": "model-capability-research-candidate/v1",
+  "binding": {
+    "identity": {"family_id": "eleven-music", "variant_id": "default", "version_id": "1", "modality": "music"},
+    "provider_id": "elevenlabs",
+    "offering_id": "elevenlabs::music-v1",
+    "endpoint_id": "music/compose",
+    "catalog_model_id": "eleven-music-v1",
+    "mode": "compose"
+  },
+  "scope": "intrinsic",
+  "fields": {
+    "integers": {},
+    "decimals": {
+      "audio.duration_minimum_seconds": {"value": 3, "semantics": "hard_api_limit", "evidence": [{"source_url": "https://elevenlabs.io/docs/api-reference/music/compose", "source_title": "ElevenLabs compose music API", "observed_at": "2026-08-31", "kind": "documented_api", "confidence": 0.97}]},
+      "audio.duration_maximum_seconds": {"value": 600, "semantics": "hard_api_limit", "evidence": [{"source_url": "https://elevenlabs.io/docs/api-reference/music/compose", "source_title": "ElevenLabs compose music API", "observed_at": "2026-08-31", "kind": "documented_api", "confidence": 0.97}]}
+    },
+    "booleans": {
+      "audio.lyrics": {"value": true, "semantics": "supported_value", "evidence": [{"source_url": "https://elevenlabs.io/docs/api-reference/music/compose", "source_title": "ElevenLabs compose music API", "observed_at": "2026-08-31", "kind": "documented_api", "confidence": 0.91}]},
+      "audio.vocals": {"value": true, "semantics": "supported_value", "evidence": [{"source_url": "https://elevenlabs.io/docs/api-reference/music/compose", "source_title": "ElevenLabs compose music API", "observed_at": "2026-08-31", "kind": "documented_api", "confidence": 0.91}]}
+    },
+    "strings": {
+      "common.output_kinds": {"value": ["music"], "semantics": "supported_set", "evidence": [{"source_url": "https://elevenlabs.io/docs/api-reference/music/compose", "source_title": "ElevenLabs compose music API", "observed_at": "2026-08-31", "kind": "documented_api", "confidence": 0.99}]}
+    },
+    "integer_lists": {}
+  }
+}

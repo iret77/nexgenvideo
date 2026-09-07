@@ -38,10 +38,7 @@ struct ProjectCockpitView: View {
             HStack(spacing: AppTheme.Spacing.none) {
                 SegmentedTabBar(
                     titles: titles,
-                    selected: selectedTitle,
-                    accentedTitles: Set(packSurfaces.map(\.title)),
-                    markedTitles: Set(packSurfaces.map(\.title)),
-                    accentColor: editor.projectPalette.accent
+                    selected: selectedTitle
                 ) { title in
                     if let surface = packSurfaces.first(where: { $0.title == title }) {
                         editor.cockpitPackSurfaceID = surface.id

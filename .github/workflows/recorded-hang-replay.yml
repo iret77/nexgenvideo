@@ -40,9 +40,11 @@ jobs:
           fetch-depth: 0
       - uses: ./.github/actions/setup-xcode-27
       - uses: ./.github/actions/cache-swiftpm-dependencies
-      - name: Restore shipped panel sizing for control
+      - name: Restore shipped panel and transcript sizing for control
         if: matrix.variant == 'baseline'
-        run: git show 6798bb32ec214247133a932ac94ba1743032286f:Sources/NexGenVideo/Editor/EditorView.swift > Sources/NexGenVideo/Editor/EditorView.swift
+        run: |
+          git show 6798bb32ec214247133a932ac94ba1743032286f:Sources/NexGenVideo/Editor/EditorView.swift > Sources/NexGenVideo/Editor/EditorView.swift
+          git show 6798bb32ec214247133a932ac94ba1743032286f:Sources/NexGenVideo/Agent/Panel/AgentMessageView.swift > Sources/NexGenVideo/Agent/Panel/AgentMessageView.swift
       - name: Build optimized replay app
         run: |
           scripts/bundle.sh release

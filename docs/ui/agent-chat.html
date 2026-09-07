@@ -819,10 +819,9 @@
   .decision-field-label {
     display: block;
     margin-bottom: var(--s-xxs);
-    color: var(--text-3);
-    font-size: var(--f-micro);
+    color: var(--text-2);
+    font-size: var(--f-md);
     font-weight: 600;
-    text-transform: uppercase;
   }
 
   .choice-row {
@@ -1178,6 +1177,8 @@
     </ul>
 
     <h2>Composer Dock and #96 compatibility</h2>
+    <p>Decision questions preserve their authored casing, use normal letter spacing and UI-sized
+      text. Long questions must not receive uppercase metadata styling.</p>
     <p>#96 keeps three roles in three places: pending control in the Dock, visual choices on canonical
       application surfaces, and history as a compact non-interactive Receipt.</p>
 
