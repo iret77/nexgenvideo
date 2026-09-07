@@ -5,6 +5,7 @@ on:
   pull_request:
     paths:
       - scripts/hang_capture_probe.swift
+      - Sources/HangStackSampler/**
       - .github/workflows/hang-capture-probe.yml
 
 permissions:
@@ -21,7 +22,9 @@ jobs:
       - name: Compile minimal normal-lifecycle capture probe
         run: |
           mkdir -p probe/CaptureProbe.app/Contents/MacOS
-          swiftc -O -g -target arm64-apple-macos26.0 scripts/hang_capture_probe.swift -o probe/CaptureProbe.app/Contents/MacOS/CaptureProbe
+          clang -g -O2 -fno-omit-frame-pointer -target arm64-apple-macos26.0 -I Sources/HangStackSampler/include -c Sources/HangStackSampler/HangStackSampler.c -o probe/sampler.o
+          swiftc -O -g -target arm64-apple-macos26.0 scripts/hang_capture_probe.swift probe/sampler.o -o probe/CaptureProbe.app/Contents/MacOS/CaptureProbe
+          dsymutil probe/CaptureProbe.app/Contents/MacOS/CaptureProbe -o probe/CaptureProbe.dSYM
           /usr/libexec/PlistBuddy -c 'Add :CFBundleExecutable string CaptureProbe' probe/CaptureProbe.app/Contents/Info.plist
           /usr/libexec/PlistBuddy -c 'Add :CFBundleIdentifier string de.h5ventures.nexgenvideo.capture-probe' probe/CaptureProbe.app/Contents/Info.plist
           /usr/libexec/PlistBuddy -c 'Add :CFBundleVersion string 1' probe/CaptureProbe.app/Contents/Info.plist
@@ -51,6 +54,7 @@ jobs:
           codesign --force --options runtime --timestamp --sign "$PROBE_IDENTITY" probe/CaptureProbe.app
           codesign --verify --strict --verbose=2 probe/CaptureProbe.app
           ditto -c -k --keepParent probe/CaptureProbe.app probe/capture.zip
+          ditto -c -k --keepParent probe/CaptureProbe.dSYM probe/symbols.zip
           printf '%s' "$NOTARY_KEY_B64" | base64 --decode > "$RUNNER_TEMP/capture.p8"
           NOTARY_KEY_FILE="$RUNNER_TEMP/capture.p8" scripts/notarize.sh probe/capture.zip
           xcrun stapler staple probe/CaptureProbe.app
@@ -58,7 +62,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: signed-capture-probe
-          path: probe/capture.zip
+          path: |
+            probe/capture.zip
+            probe/symbols.zip
           retention-days: 7
   capture:
     needs: sign
@@ -77,14 +83,25 @@ jobs:
           codesign -d --entitlements :- CaptureProbe.app 2>entitlements.txt || true
           if grep -q 'get-task-allow' entitlements.txt; then exit 1; fi
           NGV_CAPTURE_PROBE_OUTPUT="$PWD/capture.sample.txt" CaptureProbe.app/Contents/MacOS/CaptureProbe
-          test -s capture.sample.txt
-          grep -E 'knownMainThreadWait|semaphore_wait|__ulock_wait' capture.sample.txt
+          for attempt in {1..30}; do
+            test -f capture.sample.txt.external.status && break
+            sleep 1
+          done
+          test "$(cat capture.sample.txt.self.status)" = 0
+          test -s capture.sample.txt.self.txt
+          ditto -x -k symbols.zip .
+          BASE="$(awk '/image .*CaptureProbe$/ {print $2; exit}' capture.sample.txt.self.txt)"
+          test -n "$BASE"
+          awk '/^0x/ {print $1}' capture.sample.txt.self.txt | xargs atos -arch arm64 -o CaptureProbe.dSYM/Contents/Resources/DWARF/CaptureProbe -l "$BASE" > symbolized.txt
+          grep 'knownMainThreadWait' symbolized.txt
+          if test -f capture.sample.txt.external.status; then cat capture.sample.txt.external.status; fi
           sw_vers
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: capture-feasibility-evidence
           path: |
-            capture.sample.txt
+            capture.sample.txt*
+            symbolized.txt
             entitlements.txt
           retention-days: 7

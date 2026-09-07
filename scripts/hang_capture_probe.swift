@@ -1,6 +1,9 @@
 import AppKit
 import Foundation
 
+@_silgen_name("ngv_capture_self")
+func captureSelf(_ path: UnsafePointer<CChar>) -> Int32
+
 final class ProbeDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         let output = ProcessInfo.processInfo.environment["NGV_CAPTURE_PROBE_OUTPUT"]!
@@ -8,6 +11,11 @@ final class ProbeDelegate: NSObject, NSApplicationDelegate {
         helper.executableURL = Bundle.main.executableURL
         helper.arguments = ["--sample-parent", String(getpid()), output]
         do { try helper.run() } catch { exit(10) }
+        Thread.detachNewThread {
+            Thread.sleep(forTimeInterval: 6)
+            let status = (output + ".self.txt").withCString { captureSelf($0) }
+            try? String(status).write(toFile: output + ".self.status", atomically: true, encoding: .utf8)
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             self.knownMainThreadWait()
         }
@@ -28,6 +36,7 @@ if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "--sample-paren
     do {
         try sample.run()
         sample.waitUntilExit()
+        try? String(sample.terminationStatus).write(toFile: CommandLine.arguments[3] + ".external.status", atomically: true, encoding: .utf8)
         exit(sample.terminationStatus)
     } catch { exit(12) }
 } else {
