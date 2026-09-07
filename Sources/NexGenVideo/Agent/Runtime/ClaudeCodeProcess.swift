@@ -42,6 +42,7 @@ final class ClaudeCodeProcess: @unchecked Sendable {
             let task = Task {
                 do {
                     for try await line in self.stdoutHandle.bytes.lines {
+                        HangDiagnosticRecorder.shared.record(.runtimeReceive, values: [Double(line.utf8.count)])
                         continuation.yield(line)
                     }
                     continuation.finish()

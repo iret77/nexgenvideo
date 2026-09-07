@@ -195,9 +195,13 @@ final class AgentService {
 
     var sessions: [ChatSession] = []
     var currentSessionId: UUID?
-    var messages: [AgentMessage] = []
+    var messages: [AgentMessage] = [] {
+        didSet { captureDiagnosticTranscript() }
+    }
     var isStreaming: Bool = false {
         didSet {
+            captureDiagnosticTranscript()
+            guard ProcessInfo.processInfo.environment["NGV_DIAGNOSTIC_REPLAY"] == nil else { return }
             if oldValue, !isStreaming {
                 // A turn finished: flush its messages into the active chat and mark the document edited
                 // (`onSessionsChanged`) so ⌘S / the close-warning actually persists the transcript AND
@@ -279,6 +283,7 @@ final class AgentService {
     /// The one dialog currently owning the composer input surface.
     private(set) var pendingDialog: AgentDialog? {
         didSet {
+            captureDiagnosticTranscript()
             guard oldValue?.id != pendingDialog?.id else { return }
             dialogChoiceSelections = [:]
             dialogSubmissionError = nil
@@ -288,6 +293,24 @@ final class AgentService {
 
     @ObservationIgnored
     private var dialogOrigins: [String: ToolCallOrigin] = [:]
+
+    func captureDiagnosticTranscript() {
+        guard HangDiagnosticRecorder.shared.recordsContent else { return }
+        HangDiagnosticTranscript.capture(messages: messages, streaming: isStreaming,
+                                         sessionID: currentSessionId, dialog: pendingDialog,
+                                         spend: pendingSpendApproval, project: editor?.diagnosticProjectContext)
+    }
+
+    func restoreDiagnosticTranscript(_ state: HangDiagnosticTranscript) throws {
+        guard ProcessInfo.processInfo.environment["NGV_DIAGNOSTIC_REPLAY"] != nil else { return }
+        abandonDialog()
+        pendingSpendApproval = nil
+        currentSessionId = state.sessionID
+        messages = state.messages
+        isStreaming = state.streaming
+        if let dialog = state.dialog { try presentDialog(dialog) }
+        pendingSpendApproval = state.spend
+    }
 
     func presentDialog(
         _ dialog: AgentDialog,
@@ -1251,7 +1274,9 @@ final class AgentService {
     /// The ONE pending spend confirmation (locked provider architecture — user has the final word on
     /// paid agent renders). Set while an agent render waits for approval; the composer dock renders a
     /// `SpendApprovalCard` above the input, exactly where the generative dialog lives (never a modal).
-    private(set) var pendingSpendApproval: SpendApproval?
+    private(set) var pendingSpendApproval: SpendApproval? {
+        didSet { captureDiagnosticTranscript() }
+    }
     private(set) var spendApprovalError: String?
     private(set) var runningSpendStatus: SpendRunStatus?
 
@@ -2454,6 +2479,7 @@ final class AgentService {
         presentation: AgentUserPresentation? = nil,
         allowWhileBlocked: Bool = false
     ) -> Bool {
+        guard ProcessInfo.processInfo.environment["NGV_DIAGNOSTIC_REPLAY"] == nil else { return false }
         guard allowWhileBlocked || !isComposerBlocked else { return false }
         if claudeRuntimeEnabled {
             guard canStream else {
@@ -2761,6 +2787,10 @@ final class AgentService {
                 var stopReason: AnthropicStopReason = .endTurn
 
                 for try await event in stream {
+                    let diagnosticID = HangDiagnosticRecorder.shared.record(.apiApply)
+                    defer {
+                        HangDiagnosticRecorder.shared.record(.apiApply, correlation: diagnosticID, end: true)
+                    }
                     try Task.checkCancellation()
                     switch event {
                     case .textDelta(let chunk):
@@ -3101,7 +3131,7 @@ final class AgentService {
     }
 }
 
-struct AgentMessage: Identifiable, Codable {
+struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
     enum Role: String, Codable { case user, assistant }
     let id: UUID
     let role: Role
@@ -3151,7 +3181,7 @@ struct AgentMessage: Identifiable, Codable {
     }
 }
 
-enum AgentContentBlock: Codable {
+enum AgentContentBlock: Codable, Sendable, Equatable {
     case text(String)
     case toolUse(id: String, name: String, inputJSON: String)
     case toolResult(toolUseId: String, content: [ToolResult.Block], isError: Bool)

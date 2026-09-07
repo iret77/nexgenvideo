@@ -811,6 +811,28 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Archive exact diagnostic app and symbols
+        run: |
+          ditto -c -k --keepParent .build/NexGenVideo.app .build/diagnostic-app.zip
+          mkdir -p .build/diagnostic-symbols
+          ditto .build/NexGenVideo.dSYM .build/diagnostic-symbols/NexGenVideo.dSYM
+          ditto .build/NexGenVideoDiagnostics.dSYM .build/diagnostic-symbols/NexGenVideoDiagnostics.dSYM
+          ditto .build/NexGenEngine.dSYM .build/diagnostic-symbols/NexGenEngine.dSYM
+          SYMBOL_BIN="$(swift build -c release --show-bin-path)"
+          dsymutil "$SYMBOL_BIN/libMusicvideoPlugin.dylib" -o .build/diagnostic-symbols/MusicvideoPlugin.dSYM
+          ditto -c -k --keepParent .build/diagnostic-symbols .build/diagnostic-symbols.zip
+          dwarfdump --uuid .build/NexGenVideo.app/Contents/MacOS/NexGenVideo
+          dwarfdump --uuid .build/NexGenVideo.dSYM
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: diagnostic-release-evidence
+          path: |
+            .build/diagnostic-app.zip
+            .build/diagnostic-symbols.zip
+          retention-days: 90
+          if-no-files-found: error
+
       - name: Stage draft GitHub release
         if: ${{ env.REL_DRY == 'false' }}
         env:
@@ -843,8 +865,34 @@ jobs:
         if: always()
         run: security delete-keychain "${SIGN_KEYCHAIN:-}" 2>/dev/null || true
 
+  diagnostic-acceptance:
+    needs: release
+    runs-on: macos-26
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: diagnostic-release-evidence
+      - name: Verify signed production capture and exact symbolization
+        run: |
+          ditto -x -k diagnostic-app.zip .
+          ditto -x -k diagnostic-symbols.zip .
+          codesign --verify --strict --verbose=2 NexGenVideo.app
+          xcrun stapler validate NexGenVideo.app
+          python3 scripts/hang_diagnostic_acceptance.py NexGenVideo.app diagnostic-symbols/NexGenVideo.dSYM --output evidence
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diagnostic-runtime-acceptance
+          path: evidence/result.json
+          retention-days: 90
+
   publish:
-    needs: [release-gate, release]
+    needs: [release-gate, release, diagnostic-acceptance]
     if: ${{ inputs.dry_run == false && needs.release-gate.outputs.publication-resumed != 'true' && needs.release.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 75

@@ -234,6 +234,9 @@ enum MainMenuBuilder {
         menu.addItem(.separator())
         menu.addItem(withTitle: "Send Feedback…", action: #selector(AppDelegate.showFeedback(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Reveal Diagnostics", action: #selector(AppDelegate.revealDiagnostics(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Configure Hang Recording…", action: #selector(AppDelegate.configureHangDiagnostics(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Export Hang Recording…", action: #selector(AppDelegate.exportHangDiagnostics(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Delete Hang Recordings…", action: #selector(AppDelegate.deleteHangDiagnostics(_:)), keyEquivalent: "")
         item.submenu = menu
         return item
     }

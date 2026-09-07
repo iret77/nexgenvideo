@@ -862,6 +862,8 @@ private struct ToolResultImageView: View {
         }
         .task(id: base64) {
             guard image == nil else { return }
+            let diagnosticID = HangDiagnosticRecorder.shared.record(.imageDecode, values: [Double(base64.utf8.count)])
+            defer { HangDiagnosticRecorder.shared.record(.imageDecode, correlation: diagnosticID, end: true) }
             let data = await Task.detached { Data(base64Encoded: base64) }.value
             if let data { image = NSImage(data: data) }
         }

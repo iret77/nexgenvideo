@@ -7,7 +7,7 @@ struct ToolResult: Sendable {
         case suspendTurn
     }
 
-    enum Block: Sendable {
+    enum Block: Sendable, Equatable {
         case text(String)
         case image(base64: String, mediaType: String)
     }

@@ -243,7 +243,7 @@ extension ResolvedVideoOfferingCapabilitiesV1 {
 /// One concrete way to fulfil a capability: a (provider, transport) with the provider's
 /// own reference and its billing mode. A provider may offer the same capability over both
 /// transports (API pay-per-call and MCP subscription) — the resolver weighs both.
-struct ProviderBinding: Sendable, Hashable {
+struct ProviderBinding: Sendable, Hashable, Codable {
     let provider: GenerationProvider
     let transport: ProviderTransport
     let kind: ProviderCapabilityKind

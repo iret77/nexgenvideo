@@ -474,6 +474,13 @@ struct DurableMediaImportTests {
 
     @Test func cancellingImportCancelsEveryQueuedBatch() async throws {
         let e = editor()
+        let (queueGate, releaseQueue) = AsyncStream<Void>.makeStream()
+        defer { releaseQueue.finish() }
+        // Keep every batch queued until cancellation, independent of runner throughput.
+        e.mediaImportTail = Task { @MainActor in
+            for await _ in queueGate { break }
+            return EditorViewModel.MediaImportSummary(assetCount: 0, folderCount: 0)
+        }
         let sources = (0..<3).map { index in
             FileManager.default.temporaryDirectory.appendingPathComponent(
                 "queued-cancel-\(index)-\(UUID().uuidString).mp4"
@@ -508,6 +515,7 @@ struct DurableMediaImportTests {
         }
         #expect(e.mediaImportSequence == sources.count)
         e.cancelMediaImport()
+        releaseQueue.finish()
         var summaries: [EditorViewModel.MediaImportSummary] = []
         for task in tasks { summaries.append(await task.value) }
 

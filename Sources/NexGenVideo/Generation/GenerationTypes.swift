@@ -22,7 +22,7 @@ enum BackendGenerationParams: Encodable, Sendable {
     }
 }
 
-struct ResolvedGenerationTarget: Sendable, Hashable {
+struct ResolvedGenerationTarget: Sendable, Hashable, Codable {
     let modelId: String
     let provider: GenerationProvider
     let endpoint: String

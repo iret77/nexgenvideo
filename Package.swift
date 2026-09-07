@@ -32,6 +32,7 @@ let package = Package(
     platforms: [.macOS(.v26)],
     products: [
         .executable(name: "NexGenVideo", targets: ["NexGenVideo"]),
+        .executable(name: "NexGenVideoDiagnostics", targets: ["NexGenVideoDiagnostics"]),
         // The first loadable pack — built as a dynamic library, then assembled +
         // signed into `musicvideo.ngvpack` by the release workflow. NOT a
         // dependency of the app: it ships OUTSIDE the DMG and loads at runtime.
@@ -58,9 +59,18 @@ let package = Package(
         .package(url: "https://github.com/microsoft/onnxruntime-swift-package-manager", from: "1.19.2"),
     ],
     targets: [
+        .target(name: "HangStackSampler", path: "Sources/HangStackSampler"),
+        .target(name: "HangDiagnostics", path: "Sources/HangDiagnostics"),
+        .executableTarget(
+            name: "NexGenVideoDiagnostics",
+            dependencies: ["HangDiagnostics"],
+            path: "Sources/NexGenVideoDiagnostics"
+        ),
         .executableTarget(
             name: "NexGenVideo",
             dependencies: [
+                "HangDiagnostics",
+                "HangStackSampler",
                 .product(name: "DSWaveformImage", package: "DSWaveformImage"),
                 .product(name: "MCP", package: "swift-sdk"),
                 .product(name: "Sparkle", package: "Sparkle"),
@@ -104,6 +114,7 @@ let package = Package(
         .testTarget(
             name: "NexGenVideoTests",
             dependencies: [
+                "HangDiagnostics",
                 "NexGenVideo",
                 .product(name: "NexGenEngine", package: "Engine"),
                 .product(name: "MCP", package: "swift-sdk"),
