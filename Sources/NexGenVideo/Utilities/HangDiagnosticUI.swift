@@ -5,6 +5,7 @@ import HangDiagnostics
 enum HangDiagnosticUI {
     @MainActor
     static func launch() {
+        guard !AppRelaunchSelfTest.isRequested else { return }
         if HangDiagnosticSelfTest.requested {
             HangDiagnosticSelfTest.start()
             return
@@ -20,13 +21,19 @@ enum HangDiagnosticUI {
             includingPropertiesForKeys: nil), folders.contains(where: {
                 FileManager.default.fileExists(atPath: $0.appendingPathComponent("pinned.json").path)
             }) {
-            let alert = NSAlert()
-            alert.messageText = "UI hang diagnostics saved"
-            alert.informativeText = "Export the recording for analysis or delete it. No recording has been uploaded."
-            alert.addButton(withTitle: "Export diagnostics…")
-            alert.addButton(withTitle: "Later")
-            if alert.runModal() == .alertFirstButtonReturn { export() }
+            notifySaved()
         }
+    }
+
+    @MainActor
+    static func notifySaved() {
+        guard !HangDiagnosticSelfTest.requested, !AppRelaunchSelfTest.isRequested else { return }
+        let alert = NSAlert()
+        alert.messageText = "UI hang diagnostics saved"
+        alert.informativeText = "Export the recording for analysis or delete it. No recording has been uploaded."
+        alert.addButton(withTitle: "Export diagnostics…")
+        alert.addButton(withTitle: "Later")
+        if alert.runModal() == .alertFirstButtonReturn { export() }
     }
 
     @MainActor
@@ -37,7 +44,7 @@ enum HangDiagnosticUI {
         picker.canChooseDirectories = true
         picker.canChooseFiles = false
         guard picker.runModal() == .OK, let folder = picker.url,
-              folder.deletingLastPathComponent().standardizedFileURL == HangDiagnosticRecorder.root.standardizedFileURL,
+              folder.deletingLastPathComponent().standardizedFileURL.path == HangDiagnosticRecorder.root.standardizedFileURL.path,
               UUID(uuidString: folder.lastPathComponent) != nil else { return }
         let save = NSSavePanel()
         save.nameFieldStringValue = "NexGenVideo-\(folder.lastPathComponent).zip"
@@ -49,16 +56,7 @@ enum HangDiagnosticUI {
                 try DiagnosticFiles.directory(staging)
                 defer { try? FileManager.default.removeItem(at: staging) }
                 let copy = staging.appendingPathComponent(folder.lastPathComponent)
-                try FileManager.default.copyItem(at: folder, to: copy)
-                let enumerator = FileManager.default.enumerator(at: copy, includingPropertiesForKeys: [.isRegularFileKey])
-                var checksums: [String: String] = [:]
-                while let file = enumerator?.nextObject() as? URL {
-                    if try file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true {
-                        let bytes = try Data(contentsOf: file, options: .mappedIfSafe)
-                        checksums[file.path.replacingOccurrences(of: copy.path + "/", with: "")] = DiagnosticFiles.digest(bytes)
-                    }
-                }
-                try DiagnosticFiles.replace(checksums, at: copy.appendingPathComponent("checksums.json"))
+                try await HangDiagnosticRecorder.shared.stageExport(from: folder, to: copy)
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
                 process.arguments = ["-c", "-k", "--keepParent", copy.path, destination.path]
@@ -94,7 +92,7 @@ enum HangDiagnosticUI {
     static func delete() {
         let alert = NSAlert()
         alert.messageText = "Delete local hang recordings?"
-        alert.informativeText = "Recording will stop. All local hang recordings and their decryption keys will be removed. Exported copies are not removed."
+        alert.informativeText = "Recording will stop. Recorder sessions and their decryption keys will be removed. Legacy crash logs and exported copies are kept."
         alert.addButton(withTitle: "Cancel")
         alert.addButton(withTitle: "Delete recordings")
         guard alert.runModal() == .alertSecondButtonReturn else { return }

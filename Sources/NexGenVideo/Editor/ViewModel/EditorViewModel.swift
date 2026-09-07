@@ -814,6 +814,7 @@ final class EditorViewModel {
 
     /// Refresh every engine-read snapshot (pipeline state, Bible, shotlist) in one pass.
     func refreshEngineState() async {
+        guard ProcessInfo.processInfo.environment["NGV_DIAGNOSTIC_REPLAY"] == nil else { return }
         let diagnosticID = HangDiagnosticRecorder.shared.record(.pipelineRefresh)
         defer {
             HangDiagnosticRecorder.shared.record(.pipelineRefresh, correlation: diagnosticID, end: true)

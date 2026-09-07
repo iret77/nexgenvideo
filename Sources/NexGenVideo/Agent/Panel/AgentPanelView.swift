@@ -559,6 +559,7 @@ struct AgentPanelView: View {
                 HangDiagnosticRecorder.shared.record(.scroll, values: [
                     context.geometry.contentSize.height, context.geometry.contentOffset.y,
                     context.geometry.containerSize.height, isUserPinnedAway ? 1 : 0,
+                    context.geometry.containerSize.width,
                 ])
                 let suppressProgrammaticUpdate = programmaticScrollPending
                 if newPhase == .interacting

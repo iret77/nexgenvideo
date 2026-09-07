@@ -9,6 +9,7 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
     static let shared = HangDiagnosticRecorder()
     static let root = MainThreadHangWatchdog.diagnosticsDirectory
         .appendingPathComponent("HangIncidents", isDirectory: true)
+        .resolvingSymlinksInPath()
     private let enabled = Atomic<Bool>(false)
     private let mainPulse = Atomic<UInt64>(0)
     private let loopPulse = Atomic<UInt64>(0)
@@ -29,11 +30,14 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
     private var journalBytes = 0
     private var contentBytes = 0
     private var key: SymmetricKey?
-    private var previousSnapshot: Data?
+    private var previousSnapshot: HangDiagnosticTranscript?
+    private var previousFrameDigest: String?
     private var snapshotOrdinal: UInt64 = 0
     private var replayEpochs: [(began: Double, files: [(URL, Int)])] = []
     private let contentEnabled = Atomic<Bool>(false)
     private var failure: String?
+    private var notifiedFailure = false
+    private var notifiedIncidents: Set<String> = []
     @MainActor private var observer: CFRunLoopObserver?
     @MainActor private var mainTimer: Timer?
 
@@ -92,12 +96,18 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
                 Self.showFailure("Cannot protect replay content in Keychain. Recording was not started.")
                 return
             }
+            if HangDiagnosticSelfTest.requested,
+               let output = ProcessInfo.processInfo.environment["NGV_HANG_SELFTEST_KEY"] {
+                try? DiagnosticFiles.write(Data(encoded.utf8), to: URL(fileURLWithPath: output))
+            }
         }
         let metadata = [
             "schema": "1", "startupID": id.uuidString,
             "version": AppVersion.marketing ?? "unknown",
             "build": Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
             "commit": Bundle.main.object(forInfoDictionaryKey: "NGVSourceCommit") as? String ?? "unknown",
+            "configuration": Bundle.main.object(forInfoDictionaryKey: "NGVBuildConfiguration") as? String ?? "unknown",
+            "sdk": Bundle.main.object(forInfoDictionaryKey: "NGVBuildSDK") as? String ?? "unknown",
             "os": ProcessInfo.processInfo.operatingSystemVersionString,
             "mode": includeContent ? "encrypted-replay" : "structure",
         ]
@@ -123,7 +133,8 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
                 self.mainPulse.store(DispatchTime.now().uptimeNanoseconds, ordering: .relaxed)
                 for window in NSApp.windows where window.isVisible {
                     self.record(.window, values: [Double(window.windowNumber), window.frame.width,
-                        window.frame.height, window.backingScaleFactor, NSApp.modalWindow == nil ? 0 : 1])
+                        window.frame.height, window.backingScaleFactor, NSApp.modalWindow == nil ? 0 : 1,
+                        window.isKeyWindow ? 1 : 0, window.firstResponder is NSTextView ? 1 : 0])
                 }
             }
         }
@@ -203,7 +214,26 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
             if helper?.isRunning != true && !stopping.load(ordering: .relaxed) {
                 failure = "helper-exited"
             }
+            if let folders = try? FileManager.default.contentsOfDirectory(at: session, includingPropertiesForKeys: nil) {
+                for folder in folders where folder.lastPathComponent.hasPrefix("incident-") {
+                    if !notifiedIncidents.contains(folder.lastPathComponent),
+                       let data = try? Data(contentsOf: folder.appendingPathComponent("incident.json")),
+                       let report = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       report["recoveredUptime"] != nil, let samples = report["samples"] as? [String], !samples.isEmpty {
+                        notifiedIncidents.insert(folder.lastPathComponent)
+                        DispatchQueue.main.async { HangDiagnosticUI.notifySaved() }
+                    }
+                }
+            }
         } catch { failure = "write-failed" }
+        if failure != nil && !notifiedFailure {
+            notifiedFailure = true
+            DispatchQueue.main.async {
+                if !HangDiagnosticSelfTest.requested {
+                    Self.showFailure("The diagnostic recording is incomplete. Check the exported capture-error report before relying on it.")
+                }
+            }
+        }
     }
 
     private func startHeartbeat(folder: URL, id: UUID) {
@@ -248,7 +278,8 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
         }
     }
 
-    func snapshot<T: Encodable & Sendable>(_ value: T, correlation: UInt64) {
+    func snapshot(_ value: HangDiagnosticTranscript, correlation: UInt64) {
+        let capturedUptime = ProcessInfo.processInfo.systemUptime
         guard recordsContent, snapshotSlots.wait(timeout: .now()) == .success else {
             if recordsContent { snapshotLosses.wrappingAdd(1, ordering: .relaxed) }
             return
@@ -257,16 +288,12 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
             defer { snapshotSlots.signal() }
             guard let key, let session else { return }
             do {
-                let bytes = DiagnosticPrivacy.scrubJSON(try JSONEncoder().encode(value))
-                guard (try? JSONSerialization.jsonObject(with: bytes)) != nil else {
-                    failure = "privacy-filter-rejected-snapshot"
-                    return
-                }
                 let now = ProcessInfo.processInfo.systemUptime
                 let pinned = FileManager.default.fileExists(atPath: session.appendingPathComponent("pinned.json").path)
                 if !pinned, replayEpochs.last.map({ now - $0.began >= 60 }) ?? true {
                     replayEpochs.append((now, []))
                     previousSnapshot = nil
+                    previousFrameDigest = nil
                 }
                 if replayEpochs.isEmpty { replayEpochs.append((now, [])) }
                 while !pinned, replayEpochs.count > 1, now - replayEpochs[1].began > 120 {
@@ -276,14 +303,21 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
                     }
                     replayEpochs.removeFirst()
                 }
-                guard bytes.count <= 32 * 1024 * 1024,
-                      contentBytes < 256 * 1024 * 1024 else {
-                    failure = "content-limit"
+                snapshotOrdinal &+= 1
+                guard Set(value.messages.map(\.id)).count == value.messages.count else {
+                    failure = "duplicate-message-identity"
                     return
                 }
-                snapshotOrdinal &+= 1
-                let delta = DiagnosticReplayDelta(sequence: snapshotOrdinal, previous: previousSnapshot, current: bytes)
-                let encoded = try JSONEncoder().encode(delta)
+                let frame = HangDiagnosticReplayFrame(sequence: snapshotOrdinal, uptime: capturedUptime, predecessor: previousFrameDigest,
+                                                     previous: previousSnapshot, current: value)
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.sortedKeys]
+                let encoded = DiagnosticPrivacy.scrubJSON(try encoder.encode(frame))
+                guard encoded.count <= 32 * 1024 * 1024,
+                      (try? JSONDecoder().decode(HangDiagnosticReplayFrame.self, from: encoded)) != nil else {
+                    failure = "snapshot-size-or-privacy-limit"
+                    return
+                }
                 let encrypted = try AES.GCM.seal(encoded, using: key,
                     authenticating: Data(startupID.uuidString.utf8)).combined!
                 guard contentBytes + encrypted.count <= 256 * 1024 * 1024 else {
@@ -294,7 +328,8 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
                 try DiagnosticFiles.write(encrypted, to: session.appendingPathComponent(name))
                 replayEpochs[replayEpochs.count - 1].files.append((session.appendingPathComponent(name), encrypted.count))
                 contentBytes += encrypted.count
-                previousSnapshot = bytes
+                previousSnapshot = value
+                previousFrameDigest = DiagnosticFiles.digest(encoded)
                 record(.replaySnapshot, correlation: correlation, end: true, values: [Double(snapshotOrdinal)])
             } catch { failure = "snapshot-failed" }
         }
@@ -335,6 +370,31 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
                     try FileManager.default.removeItem(at: folder)
                     KeychainStore.delete(account: "hang-diagnostic-\(folder.lastPathComponent)")
                 } catch { failure = "delete-failed" }
+            }
+        }
+    }
+
+    func stageExport(from folder: URL, to destination: URL) async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            writer.async {
+                do {
+                    try DiagnosticFiles.copyRecording(from: folder, to: destination)
+                    continuation.resume()
+                } catch { continuation.resume(throwing: error) }
+            }
+        }
+    }
+
+    func exportCurrentForSelfTest(to directory: URL) async throws {
+        guard HangDiagnosticSelfTest.requested else { return }
+        try await withCheckedThrowingContinuation { continuation in
+            writer.async { [self] in
+                do {
+                    guard let session else { throw CocoaError(.fileNoSuchFile) }
+                    try DiagnosticFiles.copyRecording(from: session,
+                        to: directory.appendingPathComponent(session.lastPathComponent))
+                    continuation.resume()
+                } catch { continuation.resume(throwing: error) }
             }
         }
     }

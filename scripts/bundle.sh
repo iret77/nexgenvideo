@@ -153,6 +153,8 @@ cp "$BIN_DIRECTORY/NexGenVideoDiagnostics" "$APP/Contents/Helpers/NexGenVideoDia
 cp "$BIN" "$APP/Contents/MacOS/NexGenVideo"
 cp "$RESOURCES/Info.plist" "$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :NGVSourceCommit string $(git rev-parse HEAD)" "$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :NGVBuildConfiguration string $CONFIG" "$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :NGVBuildSDK string $(xcrun --show-sdk-version)" "$APP/Contents/Info.plist"
 
 if [ -n "$PLUGIN_CATALOG_URL" ]; then
   case "$PLUGIN_CATALOG_URL" in

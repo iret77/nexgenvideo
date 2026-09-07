@@ -8,7 +8,7 @@ guard CommandLine.arguments.count == 4,
       let startupID = UUID(uuidString: CommandLine.arguments[2]) else { exit(64) }
 let session = URL(fileURLWithPath: CommandLine.arguments[3], isDirectory: true)
 guard session.lastPathComponent == startupID.uuidString,
-      session.resolvingSymlinksInPath() == session.standardizedFileURL else { exit(65) }
+      session.resolvingSymlinksInPath().path == session.standardizedFileURL.path else { exit(65) }
 
 struct CaptureStatus: Codable {
     let schema = 1
@@ -48,12 +48,12 @@ while true {
             try DiagnosticFiles.directory(folder)
             try DiagnosticFiles.replace(true, at: session.appendingPathComponent("pinned.json"))
             incident = folder
-            incidentCount += 1
             status = CaptureStatus(startupID: startupID, detectedUptime: now)
             try DiagnosticFiles.replace(status, at: folder.appendingPathComponent("incident.json"))
         } catch { exit(74) }
     case .sample(let number):
         if let incident {
+            if number == 1 { incidentCount += 1 }
             let request = UUID().uuidString
             try? DiagnosticFiles.replace(request, at: session.appendingPathComponent("sample-request.json"))
             status?.samples.append("self-\(request):requested-\(number)")
@@ -61,8 +61,13 @@ while true {
         }
     case .recovered, .suspended:
         if let incident {
-            status?.recoveredUptime = now
-            try? DiagnosticFiles.replace(status, at: incident.appendingPathComponent("incident.json"))
+            if status?.samples.isEmpty == true {
+                try? FileManager.default.removeItem(at: incident)
+                if incidentCount == 0 { try? FileManager.default.removeItem(at: session.appendingPathComponent("pinned.json")) }
+            } else {
+                status?.recoveredUptime = now
+                try? DiagnosticFiles.replace(status, at: incident.appendingPathComponent("incident.json"))
+            }
         }
         incident = nil
         status = nil

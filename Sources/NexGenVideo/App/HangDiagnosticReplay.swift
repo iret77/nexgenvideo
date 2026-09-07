@@ -33,22 +33,26 @@ enum HangDiagnosticReplay {
             window.makeKeyAndOrderFront(nil)
             app.activate(ignoringOtherApps: true)
             Task { @MainActor in
-                var previous: Data?
+                var previous: HangDiagnosticTranscript?
+                var previousDigest: String?
                 var priorTime: Double?
                 do {
                     for file in files {
-                        let decoded = try await Task.detached { () -> DiagnosticReplayDelta in
+                        let (decoded, digest) = try await Task.detached { () -> (HangDiagnosticReplayFrame, String) in
                             let encrypted = try Data(contentsOf: file)
                             let bytes = try AES.GCM.open(AES.GCM.SealedBox(combined: encrypted), using: key,
                                 authenticating: Data(folder.lastPathComponent.utf8))
-                            return try JSONDecoder().decode(DiagnosticReplayDelta.self, from: bytes)
+                            return (try JSONDecoder().decode(HangDiagnosticReplayFrame.self, from: bytes), DiagnosticFiles.digest(bytes))
                         }.value
                         if let priorTime {
                             try await Task.sleep(for: .seconds(max(0, decoded.uptime - priorTime)))
                         }
-                        let bytes = try decoded.apply(to: decoded.predecessor == nil ? nil : previous)
-                        let state = try JSONDecoder().decode(HangDiagnosticTranscript.self, from: bytes)
-                        previous = bytes
+                        guard decoded.predecessor == nil || decoded.predecessor == previousDigest else {
+                            throw CocoaError(.fileReadCorruptFile)
+                        }
+                        let state = try decoded.apply(to: decoded.predecessor == nil ? nil : previous)
+                        previous = state
+                        previousDigest = digest
                         priorTime = decoded.uptime
                         let service = editor.agentService
                         if let project = state.project { editor.restoreDiagnosticProject(project) }

@@ -201,6 +201,7 @@ final class AgentService {
     var isStreaming: Bool = false {
         didSet {
             captureDiagnosticTranscript()
+            guard ProcessInfo.processInfo.environment["NGV_DIAGNOSTIC_REPLAY"] == nil else { return }
             if oldValue, !isStreaming {
                 // A turn finished: flush its messages into the active chat and mark the document edited
                 // (`onSessionsChanged`) so ⌘S / the close-warning actually persists the transcript AND
@@ -2478,6 +2479,7 @@ final class AgentService {
         presentation: AgentUserPresentation? = nil,
         allowWhileBlocked: Bool = false
     ) -> Bool {
+        guard ProcessInfo.processInfo.environment["NGV_DIAGNOSTIC_REPLAY"] == nil else { return false }
         guard allowWhileBlocked || !isComposerBlocked else { return false }
         if claudeRuntimeEnabled {
             guard canStream else {
@@ -3129,7 +3131,7 @@ final class AgentService {
     }
 }
 
-struct AgentMessage: Identifiable, Codable, Sendable {
+struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
     enum Role: String, Codable { case user, assistant }
     let id: UUID
     let role: Role
@@ -3179,7 +3181,7 @@ struct AgentMessage: Identifiable, Codable, Sendable {
     }
 }
 
-enum AgentContentBlock: Codable, Sendable {
+enum AgentContentBlock: Codable, Sendable, Equatable {
     case text(String)
     case toolUse(id: String, name: String, inputJSON: String)
     case toolResult(toolUseId: String, content: [ToolResult.Block], isError: Bool)

@@ -17,6 +17,7 @@ public struct DiagnosticRecord: Codable, Sendable {
     public let correlation: UInt64
     public let end: Bool
     public let values: [Double]
+    public let hadNonFiniteValues: Bool
 
     public init(sequence: UInt64, uptime: Double, operation: DiagnosticOperation,
                 correlation: UInt64 = 0, end: Bool = false, values: [Double] = []) {
@@ -25,6 +26,7 @@ public struct DiagnosticRecord: Codable, Sendable {
         self.operation = operation
         self.correlation = correlation
         self.end = end
+        self.hadNonFiniteValues = values.contains { !$0.isFinite }
         self.values = Array(values.prefix(12)).map { $0.isFinite ? $0 : 0 }
     }
 }
@@ -133,6 +135,52 @@ public struct DiagnosticHangState: Sendable {
 }
 
 public enum DiagnosticFiles {
+    public static func copyRecording(from source: URL, to destination: URL) throws {
+        let began = ProcessInfo.processInfo.systemUptime
+        guard source.resolvingSymlinksInPath().path == source.standardizedFileURL.path else {
+            throw CocoaError(.fileReadNoPermission)
+        }
+        try directory(destination)
+        guard let enumerator = FileManager.default.enumerator(at: source,
+            includingPropertiesForKeys: [.isSymbolicLinkKey, .isRegularFileKey, .fileSizeKey],
+            options: [.skipsHiddenFiles]) else { throw CocoaError(.fileReadUnknown) }
+        var digests: [String: String] = [:]
+        var total = 0
+        for case let file as URL in enumerator {
+            let attributes = try file.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey, .fileSizeKey])
+            guard attributes.isSymbolicLink != true else { throw CocoaError(.fileReadNoPermission) }
+            guard attributes.isRegularFile == true else { continue }
+            let relative = String(file.path.dropFirst(source.path.count + 1))
+            guard !relative.contains(".."), !relative.hasPrefix("/"),
+                  isRecordingFile(relative) else { continue }
+            let size = attributes.fileSize ?? 0
+            guard size <= 40 * 1024 * 1024, total + size <= 1024 * 1024 * 1024,
+                  digests.count < 8192 else { throw CocoaError(.fileReadTooLarge) }
+            let bytes = try Data(contentsOf: file, options: .mappedIfSafe)
+            let target = destination.appendingPathComponent(relative)
+            try directory(target.deletingLastPathComponent())
+            try write(bytes, to: target)
+            digests[relative] = digest(bytes)
+            total += bytes.count
+        }
+        try replace(digests, at: destination.appendingPathComponent("checksums.json"))
+        try replace([
+            "schema": "hang-export/1", "bytes": String(total),
+            "exportBeganUptime": String(began),
+            "exportCompletedUptime": String(ProcessInfo.processInfo.systemUptime),
+            "completeness": "Check heartbeat losses, capture-error and requested versus completed stack files.",
+            "replayScope": "UI state and displayed transcript images; library media bytes are not copied.",
+        ], at: destination.appendingPathComponent("export.json"))
+    }
+
+    private static func isRecordingFile(_ relative: String) -> Bool {
+        if ["build.json", "heartbeat.json", "pinned.json", "sample-request.json", "capture-error.json", "self-capture-error.json"].contains(relative) { return true }
+        let patterns = [#"^events-[0-9]{12}\.json$"#, #"^replay-[0-9]{12}\.enc$"#,
+                        #"^self-[A-Fa-f0-9-]{36}-[0-2]\.stacks$"#,
+                        #"^incident-[A-Fa-f0-9-]{36}/incident\.json$"#]
+        return patterns.contains { relative.range(of: $0, options: .regularExpression) != nil }
+    }
+
     public static func directory(_ url: URL) throws {
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true,
                                                attributes: [.posixPermissions: 0o700])

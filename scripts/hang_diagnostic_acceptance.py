@@ -5,7 +5,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
-import time
+import tempfile
 
 
 def main():
@@ -19,8 +19,14 @@ def main():
     results = []
     for mode in ("wait", "spin"):
         before = set(root.glob("*"))
+        temporary = tempfile.TemporaryDirectory()
+        key_file = Path(temporary.name) / "replay.key"
+        exported = Path(temporary.name) / "export"
+        test_environment = {**os.environ, "NGV_HANG_SELFTEST": mode}
+        if mode == "wait":
+            test_environment.update(NGV_HANG_SELFTEST_KEY=str(key_file), NGV_HANG_SELFTEST_EXPORT=str(exported))
         process = subprocess.Popen([str(args.app / "Contents/MacOS/NexGenVideo")],
-                                   env={**os.environ, "NGV_HANG_SELFTEST": mode},
+                                   env=test_environment,
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
             process.wait(timeout=65)
@@ -55,6 +61,25 @@ def main():
         assert any(marker in output for output in symbolized), "missing injected blocking frame"
         events = [record for file in folder.glob("events-*.json") for record in json.loads(file.read_text())]
         assert any(event["operation"] == ("testWait" if mode == "wait" else "testSpin") for event in events)
+        if mode == "wait":
+            export = exported / folder.name
+            assert list(export.glob("replay-*.enc")), "encrypted replay content missing"
+            assert (export / "checksums.json").is_file()
+            replay_environment = {**os.environ, "NGV_DIAGNOSTIC_REPLAY": str(export),
+                                  "NGV_DIAGNOSTIC_KEY_FILE": str(key_file)}
+            command = [str(args.app / "Contents/MacOS/NexGenVideo")]
+            subprocess.run(command, env=replay_environment, check=True, timeout=20,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            fault = subprocess.Popen(command, env={**replay_environment, "NGV_DIAGNOSTIC_REPLAY_FAULT": "1"},
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                fault.wait(timeout=12)
+            except subprocess.TimeoutExpired:
+                fault.kill()
+                fault.wait()
+            else:
+                raise AssertionError("fault-enabled replay did not reproduce the injected hang")
+        temporary.cleanup()
         results.append({"mode": mode, "samples": len(stacks), "symbolizedMarker": marker, "passed": True})
     (args.output / "result.json").write_text(json.dumps(results, indent=2))
 
