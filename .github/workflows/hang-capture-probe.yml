@@ -1,0 +1,90 @@
+name: Signed hang capture feasibility
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - scripts/hang_capture_probe.swift
+      - .github/workflows/hang-capture-probe.yml
+
+permissions:
+  contents: read
+
+jobs:
+  sign:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: xcode-27
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-xcode-27
+      - name: Compile minimal normal-lifecycle capture probe
+        run: |
+          mkdir -p probe/CaptureProbe.app/Contents/MacOS
+          swiftc -O -g -target arm64-apple-macos26.0 scripts/hang_capture_probe.swift -o probe/CaptureProbe.app/Contents/MacOS/CaptureProbe
+          /usr/libexec/PlistBuddy -c 'Add :CFBundleExecutable string CaptureProbe' probe/CaptureProbe.app/Contents/Info.plist
+          /usr/libexec/PlistBuddy -c 'Add :CFBundleIdentifier string de.h5ventures.nexgenvideo.capture-probe' probe/CaptureProbe.app/Contents/Info.plist
+          /usr/libexec/PlistBuddy -c 'Add :CFBundleVersion string 1' probe/CaptureProbe.app/Contents/Info.plist
+          /usr/libexec/PlistBuddy -c 'Add :CFBundleShortVersionString string 1.0' probe/CaptureProbe.app/Contents/Info.plist
+          /usr/libexec/PlistBuddy -c 'Add :CFBundlePackageType string APPL' probe/CaptureProbe.app/Contents/Info.plist
+      - name: Sign and notarize using existing release credentials
+        env:
+          CERT_B64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          CERT_PW: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          NOTARY_KEY_B64: ${{ secrets.MACOS_NOTARY_KEY_P8_BASE64 }}
+          NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          PROBE_KEYCHAIN="$RUNNER_TEMP/capture-signing.keychain-db"
+          PROBE_PASSWORD="$(openssl rand -base64 24)"
+          trap 'security delete-keychain "$PROBE_KEYCHAIN"; rm -f "$RUNNER_TEMP/capture.p12" "$RUNNER_TEMP/capture.p8"' EXIT
+          printf '%s' "$CERT_B64" | base64 --decode > "$RUNNER_TEMP/capture.p12"
+          security create-keychain -p "$PROBE_PASSWORD" "$PROBE_KEYCHAIN"
+          security set-keychain-settings -lut 1800 "$PROBE_KEYCHAIN"
+          security unlock-keychain -p "$PROBE_PASSWORD" "$PROBE_KEYCHAIN"
+          security import "$RUNNER_TEMP/capture.p12" -P "$CERT_PW" -A -t cert -f pkcs12 -k "$PROBE_KEYCHAIN" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple: -k "$PROBE_PASSWORD" "$PROBE_KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$PROBE_KEYCHAIN" $(security list-keychains -d user | sed 's/"//g')
+          PROBE_IDENTITY="$(security find-identity -v -p codesigning "$PROBE_KEYCHAIN" | awk '/Developer ID Application/{print $2; exit}')"
+          test -n "$PROBE_IDENTITY"
+          codesign --force --options runtime --timestamp --sign "$PROBE_IDENTITY" probe/CaptureProbe.app
+          codesign --verify --strict --verbose=2 probe/CaptureProbe.app
+          ditto -c -k --keepParent probe/CaptureProbe.app probe/capture.zip
+          printf '%s' "$NOTARY_KEY_B64" | base64 --decode > "$RUNNER_TEMP/capture.p8"
+          NOTARY_KEY_FILE="$RUNNER_TEMP/capture.p8" scripts/notarize.sh probe/capture.zip
+          xcrun stapler staple probe/CaptureProbe.app
+          ditto -c -k --keepParent probe/CaptureProbe.app probe/capture.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-capture-probe
+          path: probe/capture.zip
+          retention-days: 7
+  capture:
+    needs: sign
+    runs-on: macos-26
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: signed-capture-probe
+      - name: Capture without debugger, sudo, or signing credentials
+        run: |
+          set -euo pipefail
+          ditto -x -k capture.zip .
+          codesign --verify --strict --verbose=2 CaptureProbe.app
+          xcrun stapler validate CaptureProbe.app
+          codesign -d --entitlements :- CaptureProbe.app 2>entitlements.txt || true
+          if grep -q 'get-task-allow' entitlements.txt; then exit 1; fi
+          NGV_CAPTURE_PROBE_OUTPUT="$PWD/capture.sample.txt" CaptureProbe.app/Contents/MacOS/CaptureProbe
+          test -s capture.sample.txt
+          grep -E 'knownMainThreadWait|semaphore_wait|__ulock_wait' capture.sample.txt
+          sw_vers
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: capture-feasibility-evidence
+          path: |
+            capture.sample.txt
+            entitlements.txt
+          retention-days: 7
