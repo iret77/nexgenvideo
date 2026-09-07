@@ -6,6 +6,8 @@ on:
       - .github/workflows/recorded-hang-replay.yml
       - scripts/recorded_hang_replay.py
       - Tests/PrivateFixtures/hang-recording.enc
+      - Sources/NexGenVideo/App/HangDiagnosticReplay.swift
+      - Sources/NexGenVideo/Editor/EditorView.swift
 
 permissions:
   contents: read
@@ -16,18 +18,47 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  build:
+    runs-on: xcode-27
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [baseline, candidate]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-xcode-27
+      - uses: ./.github/actions/cache-swiftpm-dependencies
+      - name: Restore shipped panel sizing for control
+        if: matrix.variant == 'baseline'
+        run: git show 6798bb32ec214247133a932ac94ba1743032286f:Sources/NexGenVideo/Editor/EditorView.swift > Sources/NexGenVideo/Editor/EditorView.swift
+      - name: Build optimized replay app
+        run: |
+          scripts/bundle.sh release
+          ditto -c -k --keepParent .build/NexGenVideo.app "$RUNNER_TEMP/replay-app.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: recorded-app-${{ matrix.variant }}
+          path: ${{ runner.temp }}/replay-app.zip
+          retention-days: 3
+
   baseline:
+    needs: build
     runs-on: macos-26
     timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [baseline, candidate]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: diagnostic-release-evidence
-          run-id: 34147561836
-          github-token: ${{ github.token }}
-          path: ${{ runner.temp }}/shipped
-      - name: Replay captured states in shipped signed app
+          name: recorded-app-${{ matrix.variant }}
+          path: ${{ runner.temp }}/replay
+      - name: Replay captured states with recorded dimensions
         env:
           NGV_HANG_FIXTURE_KEY: ${{ secrets.NGV_HANG_FIXTURE_KEY }}
         run: |
@@ -36,12 +67,12 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/replay-python"
           source "$RUNNER_TEMP/replay-python/bin/activate"
           pip install --quiet cryptography==46.0.5
-          ditto -x -k "$RUNNER_TEMP/shipped/diagnostic-app.zip" "$RUNNER_TEMP/shipped"
-          python3 scripts/recorded_hang_replay.py "$RUNNER_TEMP/shipped/NexGenVideo.app" Tests/PrivateFixtures/hang-recording.enc "$RUNNER_TEMP/evidence"
+          ditto -x -k "$RUNNER_TEMP/replay/replay-app.zip" "$RUNNER_TEMP/replay"
+          python3 scripts/recorded_hang_replay.py "$RUNNER_TEMP/replay/NexGenVideo.app" Tests/PrivateFixtures/hang-recording.enc "$RUNNER_TEMP/evidence" --match-geometry
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: recorded-hang-baseline
+          name: recorded-hang-${{ matrix.variant }}
           path: |
             ${{ runner.temp }}/evidence/result.json
             ${{ runner.temp }}/evidence/diagnostics.enc

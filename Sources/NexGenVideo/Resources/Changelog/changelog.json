@@ -2,6 +2,16 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.5.5",
+      "date": "2026-09-08",
+      "sections": [{
+        "heading": "Fixes",
+        "items": [
+          "Editor panels use the space assigned by the split view without generating competing content-size constraints during chat updates."
+        ]
+      }]
+    },
+    {
       "version": "1.5.4",
       "date": "2026-09-07",
       "sections": [{

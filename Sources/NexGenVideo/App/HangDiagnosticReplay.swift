@@ -26,8 +26,20 @@ enum HangDiagnosticReplay {
             let editor = EditorViewModel()
             editor.workspaceFocus = .produce
             editor.agentPanelVisible = true
+            let matchGeometry = environment["NGV_DIAGNOSTIC_REPLAY_MATCH_GEOMETRY"] == "1"
+            let records = try (matchGeometry ? structuralRecords(in: folder) : [])
+            let recordedWindow = records.last { $0.operation == .window && $0.values.count >= 6 && $0.values[5] == 1 }
+            let recordedScroll = records.last { $0.operation == .scroll && $0.values.count >= 5 }
+            if matchGeometry { editor.cockpitTab = .review }
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1470, height: 950),
                 styleMask: [.titled, .resizable, .closable], backing: .buffered, defer: false)
+            if let recordedWindow {
+                window.styleMask.insert(.fullSizeContentView)
+                window.titleVisibility = .hidden
+                window.titlebarAppearsTransparent = true
+                window.setFrame(NSRect(x: 0, y: 0, width: recordedWindow.values[1],
+                                       height: recordedWindow.values[2]), display: false)
+            }
             window.contentView = NSHostingView(rootView: EditorWindowContentView().environment(editor).allowsHitTesting(false))
             window.isReleasedWhenClosed = false
             window.makeKeyAndOrderFront(nil)
@@ -55,15 +67,65 @@ enum HangDiagnosticReplay {
                         previousDigest = digest
                         priorTime = decoded.uptime
                         let service = editor.agentService
-                        if let project = state.project { editor.restoreDiagnosticProject(project) }
+                        if decoded.projectChanged, let project = state.project { editor.restoreDiagnosticProject(project) }
                         try service.restoreDiagnosticTranscript(state)
+                        if matchGeometry {
+                            try await Task.sleep(for: .milliseconds(20))
+                            if let scroll = recordedScroll {
+                                restoreSidebarWidth(scroll.values[4], in: window)
+                            }
+                            writeProgress(sequence: decoded.sequence, window: window, environment: environment)
+                        }
                     }
-                    try await Task.sleep(for: .seconds(2))
+                    try await Task.sleep(for: .seconds(matchGeometry ? 30 : 2))
+                    writeProgress(sequence: nil, window: window, environment: environment)
                     exit(0)
                 } catch { exit(67) }
             }
             app.run()
         } catch { exit(68) }
         exit(69)
+    }
+
+    private static func structuralRecords(in folder: URL) throws -> [DiagnosticRecord] {
+        try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.hasPrefix("events-") && $0.pathExtension == "json" }
+            .flatMap { try JSONDecoder().decode([DiagnosticRecord].self, from: Data(contentsOf: $0)) }
+            .sorted { $0.sequence < $1.sequence }
+    }
+
+    private static func descendants(of view: NSView) -> [NSView] {
+        [view] + view.subviews.flatMap { descendants(of: $0) }
+    }
+
+    private static func restoreSidebarWidth(_ width: Double, in window: NSWindow) {
+        guard let content = window.contentView,
+              let split = descendants(of: content).compactMap({ $0 as? NSSplitView })
+                .first(where: { $0.autosaveName == "editor.produce.root" }),
+              let sidebar = split.subviews.first else { return }
+        let target = width + AppTheme.Layout.panelGap
+        if abs(sidebar.frame.width - target) > 0.5 {
+            split.setPosition(target, ofDividerAt: 0)
+        }
+    }
+
+    private static func writeProgress(sequence: UInt64?, window: NSWindow, environment: [String: String]) {
+        guard let path = environment["NGV_DIAGNOSTIC_REPLAY_PROGRESS"],
+              let content = window.contentView else { return }
+        let views = descendants(of: content)
+        let scrolls = views.compactMap { $0 as? NSScrollView }
+            .filter { !$0.isHiddenOrHasHiddenAncestor }
+        let geometry = scrolls.map { scroll -> [String: Double] in
+            ["width": scroll.contentView.bounds.width, "height": scroll.contentView.bounds.height,
+             "offset": scroll.contentView.bounds.origin.y,
+             "contentHeight": scroll.documentView?.frame.height ?? 0]
+        }
+        let progress: [String: Any] = ["sequence": sequence.map { $0 as Any } ?? NSNull(),
+                                       "finished": sequence == nil, "scrolls": geometry,
+                                       "views": views.count,
+                                       "constraints": views.reduce(0) { $0 + $1.constraints.count }]
+        if let data = try? JSONSerialization.data(withJSONObject: progress) {
+            try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
+        }
     }
 }

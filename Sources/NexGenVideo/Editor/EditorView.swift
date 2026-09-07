@@ -547,6 +547,8 @@ private final class PanelHostingController<Content: View>: NSViewController, Pan
 
     init(rootView: Content, panel: EditorViewModel.FocusedPanel) {
         hostingController = NSHostingController(rootView: rootView)
+        // The split view owns panel geometry; content must not feed sizes back into Auto Layout.
+        hostingController.sizingOptions = []
         self.panel = panel
         super.init(nibName: nil, bundle: nil)
     }
@@ -586,7 +588,10 @@ private final class PanelHostingController<Content: View>: NSViewController, Pan
         super.viewDidLayout()
         let inset = AppTheme.Layout.panelGap / 2
         let bounds = view.bounds
-        hostingController.view.frame = bounds.insetBy(dx: inset, dy: inset)
+        let panelFrame = bounds.insetBy(dx: inset, dy: inset)
+        if hostingController.view.frame != panelFrame {
+            hostingController.view.frame = panelFrame
+        }
         focusRing.frame = bounds
         focusRing.path = CGPath(
             roundedRect: bounds.insetBy(dx: inset, dy: inset),

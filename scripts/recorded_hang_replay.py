@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Replay authenticated private inputs; publish only counts and encrypted evidence."""
 import base64
+import argparse
 import io
 import json
 import os
 from pathlib import Path
 import subprocess
-import sys
 import tempfile
 import time
 import zipfile
@@ -15,7 +15,13 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 
 def main():
-    app, fixture, output = map(Path, sys.argv[1:])
+    parser = argparse.ArgumentParser()
+    parser.add_argument("app", type=Path)
+    parser.add_argument("fixture", type=Path)
+    parser.add_argument("output", type=Path)
+    parser.add_argument("--match-geometry", action="store_true")
+    args = parser.parse_args()
+    app, fixture, output = args.app, args.fixture, args.output
     output.mkdir(parents=True, exist_ok=True)
     key = base64.b64decode(os.environ["NGV_HANG_FIXTURE_KEY"], validate=True)
     encrypted = fixture.read_bytes()
@@ -39,24 +45,30 @@ def main():
         environment = {**os.environ, "NGV_DIAGNOSTIC_REPLAY": str(folder),
                        "NGV_DIAGNOSTIC_KEY_FILE": str(root / "replay.key")}
         environment.pop("NGV_HANG_FIXTURE_KEY", None)
+        if args.match_geometry:
+            environment.update(NGV_DIAGNOSTIC_REPLAY_MATCH_GEOMETRY="1",
+                               NGV_DIAGNOSTIC_REPLAY_PROGRESS=str(root / "progress.json"))
         started = time.monotonic()
         with (root / "app.log").open("wb") as log:
             process = subprocess.Popen([str(app / "Contents/MacOS/NexGenVideo")], env=environment,
                                        stdout=log, stderr=log)
             timed_out = False
             try:
-                process.wait(timeout=duration + 45)
+                process.wait(timeout=duration + 75)
             except subprocess.TimeoutExpired:
                 timed_out = True
-                subprocess.run(["sample", str(process.pid), "2", "-file", str(root / "sample.txt")],
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
+                try:
+                    subprocess.run(["sample", str(process.pid), "2", "-file", str(root / "sample.txt")],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
+                except subprocess.TimeoutExpired:
+                    pass
             finally:
                 if process.poll() is None:
                     process.kill()
                     process.wait()
         evidence = io.BytesIO()
         with zipfile.ZipFile(evidence, "w", zipfile.ZIP_DEFLATED) as archive:
-            for name in ("app.log", "sample.txt"):
+            for name in ("app.log", "sample.txt", "progress.json"):
                 if (root / name).exists():
                     archive.write(root / name, name)
         nonce = os.urandom(12)
@@ -64,7 +76,10 @@ def main():
             nonce, evidence.getvalue(), b"NGV_HANG_EVIDENCE_V1"))
         result = {"frames": len(frames), "recordedSeconds": duration,
                   "elapsedSeconds": time.monotonic() - started, "exitCode": process.returncode,
-                  "timedOut": timed_out, "geometryRestored": False}
+                  "timedOut": timed_out, "geometryRequested": args.match_geometry}
+        result["constraintOverflowWarning"] = "constant that exceeds internal limits" in (root / "app.log").read_text(errors="replace")
+        if (root / "progress.json").exists():
+            result["progress"] = json.loads((root / "progress.json").read_text())
         (output / "result.json").write_text(json.dumps(result, indent=2))
         print(json.dumps(result))
 
