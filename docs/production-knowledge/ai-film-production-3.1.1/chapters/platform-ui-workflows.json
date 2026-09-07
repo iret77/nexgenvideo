@@ -1,0 +1,1760 @@
+[
+  {
+    "id": "platform-ui-workflows-6dc670fc3f91",
+    "title": "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 1,
+      "endLine": 7,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L1",
+      "sha256": "2c5947b3a5c87d2b7944f5779efb726d9be68fe4221aac56b33146b7d3de8ece"
+    },
+    "contentMarkdown": "# Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT\n\n**Reference ID:** `UI-WF@2026-09-04`  \n**Research snapshot:** 31 August 2026 · **re-verified against the primary sources:** 4 September 2026 (all `*@2026-09-04` keys below; only Arcads web keeps the 2026-08-31 snapshot; `FILMFLOW-WEB@2026-09-07` was added and live-checked on 7 September 2026)  \n**Purpose:** give a production agent a conservative, evidence-based map of what a user can actually select and do in the current web products—and, crucially, **which screen owns each setting**. This is a *platform/UI* reference, not a model-quality ranking or a prompt-writing guide.  \n**Scope:** Higgsfield, fal.ai, Runway, OpenArt, Arcads, and ChatGPT image generation—the platforms explicitly requested for this project. “Etc.” is not an authorization to invent a capability for another vendor or model; inspect that vendor's current UI and primary documentation first.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-3b8acc5f6415",
+    "title": "Contents (jump by heading text; no line numbers)",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "Contents (jump by heading text; no line numbers)"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 8,
+      "endLine": 19,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L8",
+      "sha256": "7a5910ef9b81025d7beecbb590bed09eb817d3357823ea9d31073f03a1a0fd6d"
+    },
+    "contentMarkdown": "## Contents (jump by heading text; no line numbers)\n- §0 Governance — read for EVERY platform task: Version & evidence record (RECEIPT line, ledger keys `HF-CS4@…`, `HF-WEB@…`, `HF-MCP@…`, `HF-BRIDGE-MCP@…`, `FAL-WEB@…`, `RW-WEB@…`, `OA-WEB@…`, `AR-WEB@…`, `*-MCP@…`, `FILMFLOW-WEB@…` planning only) · Operating contract + Non-negotiable verification gate (incl. receipt states) · Control-plane map: never transplant a setting · Alternative access paths: web UI / MCP / ChatGPT (route declaration, MCP non-parity rules, GPT Image 2, MCP execution gate)\n- §1 Higgsfield — navigation/object model · **Cinema Studio 4.0: what a user sets before generation** (settings table) · **reliable user workflow** (opens with the 🟡 \"Do the controls bite?\" caveat) · What else the current UI can do (Video, Seedance 2.5 Edit, Blender add-on, Relight, Layers, Upscale, Audio/Lipsync, Supercomputer) · **Seedance 2.5 mode id ↔ UI label** · Output configuration · learning sources\n- §2 fal.ai — not an editing studio · browser surfaces · Playground fields · exploration→integration · API workflow · correct/incorrect advice · learning sources\n- §3 Runway — surface selection · Tool Mode (Gen-4 Image, Gen-4.5 video, Export) · Apps · Edit Studio/Aleph 2.0 · Agent & Workflows · long-form rule · learning sources\n- §4 OpenArt — navigation/persistent assets · Create Image · Video routes (Create Video form, Smart Shot/edit/extensions) · Director · Characters/Worlds/Brand · platform facts · learning sources\n- §5 Arcads — purpose · which form owns which choice · safe ad loop · agent/MCP boundary · learning sources\n- §6 Cross-platform routing — choose by request · continuity by platform · safe production loop\n- §7 Secondary-source audit · §8 Maintenance protocol\n\nReading rule: §0 plus the § of the platform at hand (plus §6 when choosing between platforms) satisfies \"read fully\" in SKILL.md's routing table for this file.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [
+      {
+        "sourceName": "SKILL.md",
+        "entryIDs": [
+          "skill-9fc6d6e46c26",
+          "skill-dceff66d0b82",
+          "skill-97ff9b201107",
+          "skill-c1c24ea6da18",
+          "skill-705399a08ca6",
+          "skill-05a8c920538c",
+          "skill-f468f0c333ce",
+          "skill-a9c8ddc59709",
+          "skill-cffc1e447b50",
+          "skill-11d6f150df4d",
+          "skill-2e42f043c413",
+          "skill-da7177bac7a7"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-7d54a0037e59",
+    "title": "Version & evidence record — mandatory for every platform claim",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "Version & evidence record — mandatory for every platform claim"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 20,
+      "endLine": 43,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L20",
+      "sha256": "86dcabadf8564777a7d20a0b7c927f96984118999bffe8f930c77a9f5650749f"
+    },
+    "contentMarkdown": "## Version & evidence record — mandatory for every platform claim\n\nEvery saved capability, workflow, setting, limit, or MCP instruction must carry (explicitly or by inheritance from the nearest **Version scope**) the RECEIPT line (SKILL.md Scope & version — KEY grammar there); its core values are:\n\n`platform → access route → account/workspace (if known) → surface/tool → model + mode id (\"UI label\") → vendor version or unversioned-UI snapshot → source URL · state (live-checked YYYY-MM-DD | from reference KEY)`\n\nDo **not** manufacture a UI version where the provider publishes none. Record it as `unversioned web UI @ YYYY-MM-DD` plus the exact URL and selected model/mode. For a model/API, record the exact endpoint/model ID and mode. For MCP, record the **server URL**, documented tool/schema set, authentication/account/workspace context, and checked date; a server URL alone is not a version.\n\nThe short keys below are internal reference identifiers, not vendor version names. A statement inherits its row until a more specific Version scope says otherwise. Any UI/model/MCP fact that cannot be assigned one of these scopes is **unverified**, not “current.”\n\n| Reference key(s) | Exact scope/version basis | Evidence and refresh trigger |\n|---|---|---|\n| `HF-CS4@2026-09-04`; `HF-WEB@2026-09-04` | `HF-CS4` = Higgsfield **Cinema Studio 4.0**. `HF-WEB` = other unversioned Higgsfield web tools (Video, Image, Audio, Edit, Upscale, etc.) captured at the check date. | [4.0 guide, published 12 Aug 2026, modified 31 Aug 2026](https://higgsfield.ai/blog/cinema-studio-4-0), [live shell](https://higgsfield.ai/generate/video) and [changelog](https://www.higgsfield.company/creator-hub/changelog) (newest entry 1 Sep 2026, Genjutsu) — all re-read 4 Sep 2026. Recheck after any Cinema release/changelog entry or tool-page change. |\n| `HF-MCP@2026-09-04` | Higgsfield MCP at `https://mcp.higgsfield.ai/mcp`; provider guide published 1 Aug 2026, last updated 1 Sep 2026; a Higgsfield CLI (github higgsfield-ai/cli) exists for Claude Code/Codex users (MCP & CLI page). | [MCP differences guide](https://higgsfield.ai/creator-hub/help-center/integrations/what-is-higgsfield-mcp). Recheck its exposed operations and billing before use. |\n| `HF-BRIDGE-MCP@2026-09-04` | Higgsfield Blender **Bridge** MCP at `https://bridge.higgsfield.ai/mcp`, paired with the Blender add-on (higgsfield.ai/plugins/blender); unversioned, add-on page re-read 2026-09-04 [P50] (same URL also serves the After Effects plugin connector, changelog 13 Jul 2026). Tool/schema list NOT documented publicly — read it in the connected session (MCP execution gate step 2). | [Add-on page](https://higgsfield.ai/plugins/blender) · sources.md P50. Recheck exposed tools, credit price on Generate and plan-level exclusions before use. |\n| `FAL-WEB@2026-09-04`; `FAL-MCP@2026-09-04` | fal Playground/Sandbox are unversioned schema-driven UIs; an exact **endpoint ID + current schema** is the effective version. MCP is `https://mcp.fal.ai/mcp` (Streamable HTTP, `Authorization: Bearer <FAL key>`, 11 tools as of 2026-09-04). | [Playground UI mapping](https://fal.ai/docs/documentation/development/handle-inputs-and-outputs) and [MCP tool reference](https://fal.ai/docs/documentation/setting-up/mcp). Re-fetch the selected endpoint schema on every paid run. |\n| `RW-WEB@2026-09-04`; `RW-MCP@2026-09-04` | Runway’s web suite is unversioned; model/tool names (e.g. Gen-4.5, Act-Two, Aleph 2.0) are the specific version identifiers. MCP is `https://mcp.runwayml.com/mcp` (Streamable HTTP only; Explore Mode unsupported; agent-selectable models listed 2026-09-04: Seedance 2.0, Kling, Gen-4.5, Veo, GPT image 2, Nano Banana Pro). | [current Gen-4.5 guide](https://help.runwayml.com/hc/en-us/articles/46974685288467-Creating-with-Gen-4-5) and [MCP guide](https://help.runwayml.com/hc/en-us/articles/51931843164691-Connecting-to-Runway-MCP). Recheck the active model/tool and plan. |\n| `OA-WEB@2026-09-04`; `OA-MCP@2026-09-04` | OpenArt Suite forms are unversioned and model/mode-selected; MCP is `https://mcp.openart.ai/mcp` (Character and Smart Shot still \"on the roadmap\" for MCP as of 2026-09-04). | [current Video form](https://openart.ai/suite/create-video) and [MCP page](https://openart.ai/mcp/). Recheck selected workspace, current model form and MCP tool availability. |\n| `AR-WEB@2026-08-31`; `AR-MCP@2026-06-26` | Arcads Studio/Mark/Workflow web surfaces are unversioned. Its current Getting Started guide is dated 2 Jul 2026; MCP guide is dated 26 Jun 2026 at `https://mcp.arcads.ai`. | [Getting Started](https://intercom.help/arcads/en/articles/14531683-getting-started-with-arcads) · [MCP guide](https://intercom.help/arcads/en/articles/15655699-arcads-mcp). Recheck exposed MCP tools before relying on Studio parity. |\n| `FILMFLOW-WEB@2026-09-07` | **FilmFlow Pro** (filmflow.pro) — unversioned web app labelled \"Beta / Early Access\" on the check date; a PLANNING surface, not a generation surface: script import with on-screen shot lining (every line becomes a shot-list row), storyboards bound to shots (uploaded frames, camera-move indicators, shot sizes, animatic playback with timing), scheduling/call sheets, real-time collaboration with version lock; 500 free credits, no subscription. Used only for workflows W10 stages 2–3. | [Landing](https://www.filmflow.pro/) · [Features](https://www.filmflow.pro/features) — live-checked 2026-09-07. 🟡 Maintainer-stated, NOT on the public pages at that date: AI-rendered storyboard frames and an interface/export; treat both as unverified — read the live app, and require the export schema of production-pipeline ch. 2 before relying on it. Recheck when the app leaves Beta. |\n| `CGPT-IMG@gpt-image-2@2026-09-04`; `OPENAI-IMG-API@gpt-image-2@2026-09-04` | ChatGPT web is an unversioned chat surface; the built-in image model identifier is `gpt-image-2` (multi-reference attachments, area-select edits and a Canvas view documented 2026-09-04). The API is a separate surface with the same exact model ID (`gpt-image-2`, plus `gpt-image-1.5`, `gpt-image-1`, `gpt-image-1-mini`) or the Responses image-generation tool; transparent backgrounds are in preview for `gpt-image-2`. | [ChatGPT image-generation guide](https://learn.chatgpt.com/docs/image-generation) · [OpenAI API guide](https://developers.openai.com/api/docs/guides/image-generation). Recheck plan/workspace availability and API model docs separately. |\n\n**Required wording in agent output:** “Verified for `KEY` — [surface] / [model + mode] / [access route], checked YYYY-MM-DD.” Without a live read this session write instead: “From reference `KEY` — [surface] / [model + mode] / [access route], not live-checked this session.” Never write the first form for a check you did not perform. If a user sees a different label/dropdown/tool list, the live UI supersedes this reference and the agent mints a new project KEY with today's check date per the SKILL.md KEY grammar and records its RECEIPT line in bible section B1b. The \"Verified for …\" sentence is the user-facing SHORT form; the RECEIPT line is the stored form.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [
+      {
+        "sourceName": "SKILL.md",
+        "entryIDs": [
+          "skill-9fc6d6e46c26",
+          "skill-dceff66d0b82",
+          "skill-97ff9b201107",
+          "skill-c1c24ea6da18",
+          "skill-705399a08ca6",
+          "skill-05a8c920538c",
+          "skill-f468f0c333ce",
+          "skill-a9c8ddc59709",
+          "skill-cffc1e447b50",
+          "skill-11d6f150df4d",
+          "skill-2e42f043c413",
+          "skill-da7177bac7a7"
+        ]
+      },
+      {
+        "sourceName": "sources.md",
+        "entryIDs": [
+          "sources-9de87ed0c000"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-04c305aa5fa4",
+    "title": "Operating contract for an agent",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "Operating contract for an agent"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 44,
+      "endLine": 56,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L44",
+      "sha256": "d0d2cfe67dce9490ef0a4fed344ec2f7e9530f9b76467c6429e01b0b9a348e6c"
+    },
+    "contentMarkdown": "## Operating contract for an agent\n\nThese products do not expose the same kind of control. Treat the following distinction as a hard routing rule.\n\n| Platform | What the user is actually using | Best interpretation for an agent |\n|---|---|---|\n| **Higgsfield** | A film-production workspace plus separate image/video/edit tools. Cinema Studio 4.0 exposes a cinematic control surface around selectable models. | Route a scene/project to Cinema Studio; put film grammar into its selectors and the story/action into the prompt. |\n| **fal.ai** | A model/API marketplace. Its browser UI is a test bench whose form is generated from each endpoint’s schema. | Route to a named model endpoint and inspect its exact schema. Do **not** describe fal as a film editor or assume a common set of controls. |\n| **Runway** | A creative suite with free-form Tool Mode, task-specific Apps, a conversational Agent, a node editor (Workflows), and a lightweight timeline. | Choose the surface first: single asset, a named task, conversational production, or reusable automation. |\n| **OpenArt** | An aggregated creative suite: single-shot image/video tools, saved Characters/Worlds/Brand Kit, structured tools, and the chat-based Director. | Choose between a shot-level tool and Director; retain recurring assets in the platform library rather than re-describing them every time. |\n| **Arcads** | A performance-marketing/UGC production platform: product assets, image/video models, AI Actors, scripts/voices, localization, an ad agent, and reusable node workflows. | Choose the ad-production surface first: hands-on Studio, a Talking/Animated Actor, B-roll, Translate, Mark Agent, or a Workflow. It is not a general cinematic-film studio. |\n| **ChatGPT** | A conversational image-generation surface using **`gpt-image-2`**, plus an optional host for connected third-party MCP apps. | Use it for conversational still creation/editing and reference-guided iteration. ChatGPT-native image generation is not a video generator and does not inherit an MCP provider’s web UI. |\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-4c833d2eab54",
+    "title": "Non-negotiable verification gate",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "Operating contract for an agent",
+      "Non-negotiable verification gate"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 57,
+      "endLine": 72,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L57",
+      "sha256": "fc723c90189b5bb4eb42e4e6acba29367a6aa31f02b4fd4f18c8db4c9df24e17"
+    },
+    "contentMarkdown": "### Non-negotiable verification gate\n\nBefore telling a user that an option is available—or spending credits—an agent must do all of the following.\n\n1. Identify **platform + surface + selected model + mode**. “Use Seedance” is insufficient: Seedance in an OpenArt video tool, in fal’s Playground, and inside Higgsfield are different UIs with different inputs and price/resolution choices.\n2. Read the visible model/settings panel and plan entitlement. Aggregators add and remove models, formats, reference counts, durations, and price tiers frequently.\n3. Read the upload hint in the active UI. It is the source of truth for accepted format, length, resolution, reference count, and file size.\n4. Read the displayed credit/cost estimate immediately before Generate/Run. Do not calculate cost from old tutorials.\n5. If a capability is not visible in the selected mode or current official docs, phrase it as a question for the user (“does your dropdown show …?”), not a proposed workflow.\n6. Do not transfer an option from an older version or a different product. Examples: Runway Gen-3 is retired; OpenArt Workflows were sunset; Higgsfield Cinema Studio 3.5 restrictions do not define Cinema Studio 4.0.\n7. **Receipt states — what to write when you cannot look (SKILL rule 16).** A receipt is in exactly one of two states; always name it. `live-checked <date>` — you read the live form / MCP schema in THIS session, or the user pasted or described the live form in this session; only in this state may a new checked date, UI-snapshot date, credit price, or account/workspace name appear. `from reference <KEY>` — no live read this session: cite the newest stored receipt (the bible's section B1b row, else the matching ledger key above) with ITS check date copied verbatim; leave account/workspace and cost empty. A `from reference` slate is a complete, valid deliverable; writing a `live-checked` date for a check you did not perform is fabrication. Ask the user for a live value only when the route itself is in doubt — never as a gate before drafting.\n\nThis document deliberately distinguishes **verified current controls** from **model-dependent controls**. A model-dependent field is not a promise that every dropdown selection supports it.\n\n---\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-446046bb6ca5",
+    "title": "Control-plane map: never transplant a setting",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "Control-plane map: never transplant a setting"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 73,
+      "endLine": 93,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L73",
+      "sha256": "4f51327ef110bcbdd2f869c1252c1f4091333fc32e526b2337a852e39f0ab772"
+    },
+    "contentMarkdown": "## Control-plane map: never transplant a setting\n\nA product can place the same underlying model in more than one surface. The name of a model alone is therefore never an instruction. The agent must address every proposal as:\n\n> **platform → workspace/tool → selected model → selected mode → setting**\n\nFor example, “set `Lens: Vintage Anamorphic` in **Higgsfield → Cinema Studio 4.0**” is valid. “use a vintage-anamorphic Lens setting with **Seedance**” is not: it falsely turns a Cinema Studio control into a Seedance parameter. If the user has selected Seedance inside Cinema Studio, describe it as a **Cinema Studio control applied by that surface**, not as a native Seedance field.\n\n| Control plane | Verified user-selectable scope | What must not be inferred or mixed in | Version scope to cite |\n|---|---|---|---|\n| **Higgsfield → Cinema Studio 4.0** | Film-direction panels: Genre, Era, Tempo, named-character Emotion Wheel, Colour Palette, Lighting, Camera type, Lens, Aperture, Camera movement, references and project/Element context. | These are **Cinema Studio controls**. Do not call them standalone Seedance, Kling, Veo, FLUX, or fal parameters. | `HF-CS4@2026-09-04 / Cinema Studio 4.0` |\n| **Higgsfield → Video → Seedance 2.5** | A named video-model surface: prompt, optional source/reference media, and the currently exposed Seedance mode controls. Higgsfield documents 50 multimodal references (ByteDance class split 30 image / 10 video / 10 audio — video-prompting ch. 14b), native audio, R2V motion guidance (= `omni_reference`, mode table in §1), and region edits as Seedance 2.5 capabilities. | Do not promise Cinema Studio’s Genre/Era/Tempo/Emotion Wheel/camera/lens/aperture panels here. Do not call its image/video/reference behaviour a FLUX workflow. | `HF-WEB@2026-09-04 / Video / Seedance 2.5 / active mode` |\n| **Higgsfield → Image → FLUX.2** | A named **image**-model surface. Current Higgsfield categorises FLUX.2 with Image Models and describes reference-led image creation/editing. | FLUX.2 is not a Cinema Studio film-control panel and not a text-to-video model. Never attach video duration, camera movement, native-audio, or Cinema Studio settings to it. | `HF-WEB@2026-09-04 / Image / FLUX.2 / active mode` |\n| **Higgsfield → Upscale → FLUX 3 Video Upscaler** | A distinct video-finishing tool: source clip, **Precise** or **Creative** mode, and optional Creative prompt guidance. | This is not FLUX.2 image generation and not Seedance video generation; do not suggest reference-image, cast, Cinema, or shot-planning settings unless the active Upscaler screen itself exposes them. | `HF-WEB@2026-09-04 / Upscale / FLUX 3 Video Upscaler / Precise|Creative` |\n| **Higgsfield → Audio / Lipsync Studio / Relight / Colour Palette / Layers** | Separate specialist forms for voice, lip sync, video light/grade, and image decomposition/editing. | An Audio/Lipsync, Relight, grade, or Layer setting is not a generation-model field. Route the user to the specialist tool instead of stuffing the request into a T2V prompt. | `HF-WEB@2026-09-04 / named specialist tool` |\n| **fal.ai → exact endpoint → Playground/Sandbox** | Only fields rendered from that endpoint’s current schema. An endpoint may offer a prompt, enum, seed, upload, mask, audio, or visual camera widget—or none of these. | No global fal “video settings,” Cinema-like studio controls, or endpoint parity. A field from `provider/model-A` cannot be proposed for `provider/model-B` without its schema. | `FAL-WEB@2026-09-04 / endpoint_id / schema retrieval date` |\n| **Runway → Tool Mode / named App / Agent / Workflow node** | The selected surface owns the form: e.g. Gen-4 Image, Gen-4.5 video, Act-Two, Aleph Edit Studio, an App task form, or node ports. | An App capability is not automatically a Gen-4.5 option; Agent preference is not a reusable Tool Mode parameter; Gen-4 Image reference controls are not Gen-4.5 editing controls. | `RW-WEB@2026-09-04 / named surface / named model + mode` |\n| **OpenArt → named tool → selected model → mode** | The Video/Image/Smart Shot/Edit/Director form selected by the user, plus saved assets. Its model picker can change the visible inputs. | A Start/End Frame, Smart Shot, Director, or Edit Video setting is not a universal “OpenArt Seedance” field, even when the same provider model name is displayed. | `OA-WEB@2026-09-04 / URL / selected model + mode` |\n| **Arcads → Studio / AI Actor mode / B-roll / Translate / Mark / Workflow** | A product-ad control plane. Each route owns separate fields: image model/prompt, actor/voice/script/emotion, movement, B-roll model, locale/accent, conversational campaign brief, or nodes. | An Arcads actor, script emotion, subtitle, translation, or Workflow-node option is not a Seedance/FLUX/Cinema parameter—and an underlying video-model choice does not make all Arcads ad tools available in that model form. | `AR-WEB@2026-08-31 / named Arcads surface / active model or node` |\n| **ChatGPT → ordinary chat → built-in image generation** | Natural-language prompt; attached reference image(s); conversational, targeted follow-up edits. The built-in route uses **`gpt-image-2`**. | It has no native video-generation route in this reference. Do not call a connector automatically and do not represent another provider’s model/mode/asset controls as native ChatGPT controls. | `CGPT-IMG@gpt-image-2@2026-09-04 / native chat` |\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-63c227d438e9",
+    "title": "How an agent converts an artistic instruction into an actionable one",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "Control-plane map: never transplant a setting",
+      "How an agent converts an artistic instruction into an actionable one"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 94,
+      "endLine": 108,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L94",
+      "sha256": "1cbc6a3e9bb6097c6f8191fa9ce17f7d0eceffb8e9e19234137bba3916ebb617"
+    },
+    "contentMarkdown": "### How an agent converts an artistic instruction into an actionable one\n\n| User intent | Correct action | Unsafe shortcut |\n|---|---|---|\n| “Make it a 1980s noir shot with a slow pan.” | In **Cinema Studio 4.0**, choose Era, Genre, and the visible movement preset; use the prompt for the event and concrete period props. | Claim that Seedance/FLUX/fal has those three selector values. |\n| “Use this product image and preserve its label.” | Open the selected model/mode’s reference or image-input control and inspect its current limits; use a dedicated edit/region tool if the task is local replacement. | Assume every image/video model accepts references, masks, region edits, or text fidelity. |\n| “Make the actor more fearful.” | In Cinema, use the Emotion Wheel with the actual `@Element`/character reference. Else write the performance intent in the prompt and say that it is not an equivalent control. | Offer the Cinema Emotion Wheel in a standalone Seedance, FLUX, fal, Runway, or OpenArt form. |\n| “Change the grade/light after we like the take.” | Use Higgsfield Relight/Colour Palette or the selected platform’s dedicated video-edit tool. | Regenerate through a video model and promise a targeted non-destructive adjustment. |\n\n**Output values are a final-form check, not a routing signal.** Resolution, duration, quantity, price, and plan entitlement are deliberately not used to identify a workflow here. They belong to the active model/mode and subscription form; read them only after the surface and creative controls above are fixed. A displayed output dropdown can be reported as a setting **of that exact form**, never as a platform-wide or model-family guarantee.\n\nThe Higgsfield split above is supported by the current product taxonomy, which lists Cinema Studio separately from Video Models and Image Models, and by the current Seedance/FLUX/FLUX-upscaler material. [Higgsfield model categories](https://higgsfield.ai/creator-hub/help-center/ai-models) · [Seedance 2.5](https://higgsfield.ai/seedance/2.5) · [FLUX.2 guide](https://higgsfield.ai/blog/FLUX-2-is-on-Higgsfield-Full-Guide) · [FLUX 3 Video Upscaler update](https://www.higgsfield.company/creator-hub/changelog)\n\n---\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-1bbc05467732",
+    "title": "Alternative access paths: web UI, MCP, and ChatGPT",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "Alternative access paths: web UI, MCP, and ChatGPT"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 109,
+      "endLine": 114,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L109",
+      "sha256": "efaaae5952e8c34602f52b7c3bb3febdafeed06e01e04f8e4688743c9c037720"
+    },
+    "contentMarkdown": "## Alternative access paths: web UI, MCP, and ChatGPT\n\n> **Version scope:** Each connector row below uses the matching `*-MCP` key in the version ledger; native ChatGPT uses `CGPT-IMG@gpt-image-2@2026-09-04`; API-only fields use `OPENAI-IMG-API@gpt-image-2@2026-09-04`. A connector is revalidated in the connected session, not merely by this dated page.\n\n**MCP is an alternative way to make the provider generate media; it is not a mirror of the provider’s web UI.** A connected agent can take a prompt/reference and run a provider operation without opening a browser tab. That is useful for an agentic workflow, but it creates a separate control plane with its own tool list, authentication, billing and result destination. A missing MCP tool, a plan restriction, or a different account/workspace is a real capability boundary—not something the agent may fill in with web-UI knowledge.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-a54da21dd877",
+    "title": "Mandatory route declaration",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "Alternative access paths: web UI, MCP, and ChatGPT",
+      "Mandatory route declaration"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 115,
+      "endLine": 125,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L115",
+      "sha256": "3e2e3baef8238bec477654b053eadfa05d7835092b17b9becd317b3d5f289153"
+    },
+    "contentMarkdown": "### Mandatory route declaration\n\nBefore any generation, state one of these exact routes in the proposal and user-facing activity log:\n\n1. **Web:** `Provider web UI → workspace/project → tool → model → mode`.\n2. **MCP:** `Host agent → named provider MCP → authenticated provider account/workspace → exposed tool → model/mode`.\n3. **ChatGPT native:** ChatGPT chat → built-in GPT Image 2 (`gpt-image-2`).\n4. **OpenAI API:** `application/agent → OpenAI API → Image API or Responses image-generation tool`.\n\nDo not collapse (2) into (1), or (3) into (4). In particular, a ChatGPT subscription/session does not prove access to the user’s Runway, Higgsfield, OpenArt, Arcads, or fal billing/workspace; an API key/billing relationship is also separate from ChatGPT plan availability. Ask the user to choose/sign in/switch workspace when that identity is not visible.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-1800a14f8efb",
+    "title": "Verified MCP routes and their non-parity rules",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "Alternative access paths: web UI, MCP, and ChatGPT",
+      "Verified MCP routes and their non-parity rules"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 126,
+      "endLine": 138,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L126",
+      "sha256": "76309016fe9a5de946deea7dbb2ccdcbfe369bb715a78db457fc4e1180721342"
+    },
+    "contentMarkdown": "### Verified MCP routes and their non-parity rules\n\n| Provider MCP | What the current connector can do | Account/workspace and UI boundary an agent must observe | Version scope to cite |\n|---|---|---|---|\n| **Higgsfield MCP** — `mcp.higgsfield.ai/mcp` | Generate images, video, Soul characters and audio, plus check credit balance, through OAuth to an existing Higgsfield account. Outputs appear in Higgsfield Assets. | It is an automation route, not a Cinema Studio panel. Higgsfield explicitly says web-only Unlimited/free generation access does **not** apply: MCP always spends standard credits. Do not infer Cinema project, camera/Emotion Wheel, finishing-tool, or web-plan behaviour from a successful MCP generation. | `HF-MCP@2026-09-04 / exposed operation` |\n| **Higgsfield Bridge MCP** — `bridge.higgsfield.ai/mcp` | Lets a host agent (Claude Desktop custom connector) build and edit gray-box scenes, cameras and cuts in the OPEN Blender file through the add-on; the add-on's tabs then generate/render. | Not the generation MCP: no image/video generation or credit tools verified on this server; output is the open .blend / playblast, not Higgsfield Assets; requires add-on installed and logged in; plan-level unlimited models excluded on plugins/MCP/Canvas. Exposed tool list unverified — read in session. | `HF-BRIDGE-MCP@2026-09-04 / exposed tool` |\n| **fal MCP** — `mcp.fal.ai/mcp` | Eleven documented tools (2026-09-04): `search_models`, `get_model_schema`, `get_pricing`, `search_docs`, `recommend_model`, `run_model`, `submit_job`, `check_job`, `get_job_result`, `cancel_job`, `upload_file`. | It is a stateless API path using the user’s **FAL API key**. It can expose any API field only after `get_model_schema`; it is not the Sandbox/Playground comparison UI, generation gallery, or a shared film workspace. | `FAL-MCP@2026-09-04 / endpoint_id + schema retrieval date` |\n| **Runway MCP** — `mcp.runwayml.com/mcp` | Generate images/videos in an MCP-capable agent after signing in to the Runway app account; model availability is plan-dependent. | It spends Runway credits, and **Explore Mode is explicitly unsupported** through MCP. Use Streamable HTTP only. Do not promise the full Tool Mode/App/Agent/Workflows/Timeline experience through the connector. | `RW-MCP@2026-09-04 / named model + mode` |\n| **OpenArt MCP** — `mcp.openart.ai/mcp` | Generate images/video/I2V, discover models, use library assets/references, upload files, inspect credits, switch workspaces and organize projects via OAuth. Results are saved to the connected OpenArt library/workspace. | On managed plans, an owner/admin must add the connector and each member signs in to an OpenArt account; verify the active workspace. **Character and Smart Shot are explicitly not yet available through MCP** (roadmap), even though they exist in the web suite. | `OA-MCP@2026-09-04 / workspace + exposed tool` |\n| **Arcads MCP** — `mcp.arcads.ai` | Create AI video ads from a supported MCP client using the connected Arcads account. | An active Arcads subscription and remaining Arcads credits are required. The current public MCP guide still says examples are forthcoming, so do not infer full Studio/Mark/Workflow/actor-tool parity; inspect the exposed tools and retain the ad-review boundary. | `AR-MCP@2026-06-26 / exposed tool` |\n\n[Higgsfield MCP differences](https://higgsfield.ai/creator-hub/help-center/integrations/what-is-higgsfield-mcp) · [fal MCP tool reference](https://fal.ai/docs/documentation/setting-up/mcp) · [Runway MCP guide](https://help.runwayml.com/hc/en-us/articles/51931843164691-Connecting-to-Runway-MCP) · [OpenArt MCP](https://openart.ai/mcp/) · [Arcads MCP](https://intercom.help/arcads/en/articles/15655699-arcads-mcp)\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-93d12ca52dd2",
+    "title": "ChatGPT native image generation: GPT Image 2",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "Alternative access paths: web UI, MCP, and ChatGPT",
+      "ChatGPT native image generation: GPT Image 2"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 139,
+      "endLine": 150,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L139",
+      "sha256": "ba9d066ad5822cef6a6e1d88ac107758f565f1d887554700ec7d16a0d6b48de0"
+    },
+    "contentMarkdown": "### ChatGPT native image generation: GPT Image 2\n\nTreat **ChatGPT itself** as a first-class *still-image* route. In a normal ChatGPT chat, the user can describe an image, attach reference image(s), then request iterative or targeted edits in the same conversation. The canonical built-in model name is **`gpt-image-2`** (often described informally as “GPT Image 2.0”). This is appropriate for concept frames, plates, product/still iteration and image edits before handing an approved result to a video platform. It is **not** a native replacement for Seedance, Cinema Studio, an Arcads actor, or any other video/film workspace. [ChatGPT image-generation guide](https://learn.chatgpt.com/docs/image-generation)\n\n| User request | Agent-safe ChatGPT route | Do not claim |\n|---|---|---|\n| Create or revise a still image conversationally | Use native ChatGPT image generation with a concrete prompt; attach a source/reference image for transform/extension; make small targeted follow-up edits and review the result. | That the chat exposes a named video model, Cinema camera controls, a persistent provider project, or exact external-platform reference semantics. |\n| Produce a video from chat | Use a named, authenticated **provider MCP** only if it is available and the user selects/authorizes it; state the provider and its workspace/credits. | That “ChatGPT” alone generates the video, or that an OpenArt/Runway/Higgsfield connector inherits the ChatGPT-native GPT Image 2 controls. |\n| Automate/batch GPT Image 2 | Use the OpenAI **Image API** for one-shot generate/edit requests, or the **Responses API** image-generation tool for multi-turn programmatic editing. | That ChatGPT plan limits, API keys, API billing, outputs, or model setting UI are interchangeable. |\n\nIn ChatGPT web, image availability and usage limits are plan/workspace dependent. For programmatic use, the current OpenAI docs distinguish the Image API (direct `gpt-image-2` choice) from the Responses API (a mainline model invokes an image-generation tool); both are a different account/billing/control path from ordinary ChatGPT use. The API may expose output parameters such as size, quality, format, compression and background, but an agent must only propose those when using the API—not invent them as ChatGPT-web dropdowns. [OpenAI image-generation API guide](https://developers.openai.com/api/docs/guides/image-generation)\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-87281cdfb693",
+    "title": "MCP execution gate",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "Alternative access paths: web UI, MCP, and ChatGPT",
+      "MCP execution gate"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 151,
+      "endLine": 159,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L151",
+      "sha256": "2db194d0e229d81371aced674cbeda23347cfc882fb61942d1d5addc28def2bb"
+    },
+    "contentMarkdown": "### MCP execution gate\n\n1. Confirm the **host agent**, connector name, provider account, target workspace/project, visible credit balance and intended model/mode.\n2. Read the MCP tool schema/list **in that connected session**. If it lacks the required operation, offer the provider web UI instead; do not simulate an unavailable action with prompt wording.\n3. Say where the output will land: the conversation only, provider Assets/library/project, or API response URL/file. Download/upload an approved asset deliberately before chaining it to another provider.\n4. Show the provider cost/credit consequence and obtain the normal generation approval. MCP convenience never authorizes unreviewed spending, batch creation, or publishing.\n\n---\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-ef1df540bb42",
+    "title": "1. Higgsfield — Cinema Studio 4.0 and adjacent creation tools",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "1. Higgsfield — Cinema Studio 4.0 and adjacent creation tools"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 160,
+      "endLine": 163,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L160",
+      "sha256": "66557dc356615a909a0aabcaf35b95de2159bab9bdf2f26e44e56aac22d2c9c8"
+    },
+    "contentMarkdown": "## 1. Higgsfield — Cinema Studio 4.0 and adjacent creation tools\n\n> **Version scope:** `HF-CS4@2026-09-04` applies only to Cinema Studio 4.0 and its project-specific claims; `HF-WEB@2026-09-04` applies to the other Higgsfield web tools. `HF-MCP@2026-09-04` applies only when explicitly named. Cinema-specific controls never inherit into standalone Video/Image/Audio/Edit tools. `HF-BRIDGE-MCP@2026-09-04` applies only to the Blender add-on's Bridge connector and never to `mcp.higgsfield.ai/mcp`.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-4cb5fa24727f",
+    "title": "Current navigation and object model",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "1. Higgsfield — Cinema Studio 4.0 and adjacent creation tools",
+      "Current navigation and object model"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 164,
+      "endLine": 175,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L164",
+      "sha256": "636ccb33581ef8b1ae32c1874f0555e3a7f2dbfad9117580aabac81b84a05381"
+    },
+    "contentMarkdown": "### Current navigation and object model\n\nThe signed-out Cinema Studio shell exposes **Home, My generations, My elements, My favorites, Community, Academy, and Projects**, with a project search and **New project** action. The broader product navigation (signed-out shell, 2026-09-04) separates **Image, Video, Audio, Edit (Layers), Cinema Studio 4.0, Marketing Studio, 3D Jutsu (new — described only as \"AI-powered camera control\", surface unverified), MCP & CLI, Supercomputer, Academy, Viral Presets, Community, Contests, Plugins, Canvas, Originals**. A project is therefore the appropriate home for a multi-shot film; a generic Video/Image page is the appropriate home for a single model test. [Cinema Studio shell](https://higgsfield.ai/generate/video) · [Cinema Studio 4.0 overview](https://higgsfield.ai/blog/cinema-studio-4-0)\n\n**Persistent reusable things:**\n\n- **Elements** are the asset layer for characters, locations, and props; the UI calls them from a project rather than requiring repeated manual uploads.\n- **AI Cast / Soul ID** are Higgsfield’s recurring-character route. Current studio material describes a trained identity as reusable across scenes/models; retain the actual character/Element name and reference it exactly. Do not promise a training-photo count or cross-model fidelity unless the user’s current Soul ID screen states it.\n- **Project Brief, Canvas, subfolders, shared Elements, and live multi-user generation** are collaboration/organization features—not evidence that the system has made a final artistic decision for the user.\n- **Personal Assistant** (canonical name in this skill; historically \"Mr. Higgs\", \"Claude Chat\" (3.5 docs), \"AI Director\" in tester videos): the script-to-shots/prompt-writing aid; it never spends credits.\n- **Academy** is now a video-lesson surface with copyable prompts in a Keypoints panel. The older course format was retired on 10 August 2026. [Current changelog](https://www.higgsfield.company/creator-hub/changelog)\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-d6cf98a9c992",
+    "title": "Cinema Studio 4.0: what a user sets before generation",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "1. Higgsfield — Cinema Studio 4.0 and adjacent creation tools",
+      "Cinema Studio 4.0: what a user sets before generation"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 176,
+      "endLine": 197,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L176",
+      "sha256": "058dbf64e3f6aad78693c7e312cc5bedbe7ebfe957dc3478a0fad42192ead94b"
+    },
+    "contentMarkdown": "### Cinema Studio 4.0: what a user sets before generation\n\nCinema Studio 4.0 is the current filmmaking interface, launched 12 August 2026. Its direct controls are the correct channel for film grammar; the text prompt should principally describe the on-screen event. Higgsfield explicitly says these controls are applied before generation rather than merely as post filters. [Official 4.0 guide](https://higgsfield.ai/blog/cinema-studio-4-0)\n\n| Panel / control | Verified current choices | What the agent should put there |\n|---|---|---|\n| **Genre** | General, Action, Epic, Drama, Comedy, Horror, Noir | Overall film logic/pacing. General leaves visual logic primarily to the prompt; do not also give contradictory genre directions in prose. |\n| **Era** | Auto plus decade looks documented for 1960s, 1980s, 1990s, 2000s, 2020s; the product describes direct decade selection | Temporal capture/grade character, not plot period details that must appear as props/costume. |\n| **Tempo / Montage Pacing** | Auto, Chaotic, Dynamic, Calm, Single Shot | Cut rhythm. Use **Single Shot** for one continuous take; do not promise an editable NLE timeline merely because the setting can generate cuts. |\n| **Emotion Wheel** | Hope, Anger, Joy, Trust, Fear, Surprise, Sadness, Disgust; used with an `@character_name` tag | Performance for a named character, e.g. `@mara Fear`. It is not a general “make the whole film sad” knob. |\n| **Colour Palette** | 50+ named templates; examples include Film Colors, Black Gloss, Candy Pink, Lime Jam, Nostalgic Blue | Colour/tonal direction. Use one deliberate choice and avoid countermanding it with a long incompatible colour recipe. |\n| **Lighting** | Auto; Silhouette, Practicals, Window, Overhead Fall, Contre-jour, Soft Cross; manual colour, brightness, diffusion, angle | Source/direction of light. `Practicals` means visible in-frame sources; use it where a lamp, candle, signage, etc. must motivate the light. |\n| **Camera type** | Auto, Modern, 35mm Film, 8mm Film, DV Camcorder | Base capture character. This is a look control, not a guarantee of a particular physical camera body. |\n| **Lens** | Auto, Clean Sharp, Anamorphic, Vintage Anamorphic, Warm Vintage, Halation Vintage | Optical character. The official page enumerates Auto plus five actual lens looks. |\n| **Aperture** | Auto, f/1.4 Wide Open, f/4 Moderate, f/11 Deep Focus | Depth-of-field intent. Use f/11 where environmental continuity matters; use f/1.4 only where loss of background detail is desired. |\n| **Camera movement** | 30+ presets; documented examples include POV, Robot Arm, Pan Left, Helicopter Shot, tracking and pedestal-down | A camera path. Pick a single path appropriate to the beat; no need to duplicate it in the prompt unless a timing/detail is essential. |\n| **References** | Up to 50 reference slots in one generation (the 4.0 guide's wording is \"50 image references\"; it does not enumerate classes). With **Seedance 2.5** selected, plan by ByteDance's official class split — 30 image + 10 video + 10 audio, incl. `@Clay Render` and `@Audio` (SKILL.md rule 5, video-prompting ch. 14b) — 🟡 whether the Cinema Studio upload widget exposes the video/audio slots is not yet receipted; confirm on the live subform and record it in the version ledger. Other models: read the active upload hint. | Attach references for identity, product shape, location, composition, style, motion and voice. Name/organize them in Elements where they recur. |\n\nPrecedence: the per-class split in SKILL.md rule 5 / video-prompting ch. 14b is the planning budget; any \"50\" in a Higgsfield table is the total slot count, never a per-class figure, and never a reason to drop @Video/@Audio/@Clay Render references from the checklist.\n\nThe source guide lists all above values and their intended visual effect, including the eight Emotion Wheel values and all lighting/camera/lens/aperture choices. [Film setup and character controls](https://higgsfield.ai/blog/cinema-studio-4-0#film-setup-genre-era-and-tempo) · [Camera controls](https://higgsfield.ai/blog/cinema-studio-4-0#camera-settings-camera-lens-and-aperture)\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [
+      {
+        "sourceName": "SKILL.md",
+        "entryIDs": [
+          "skill-9fc6d6e46c26",
+          "skill-dceff66d0b82",
+          "skill-97ff9b201107",
+          "skill-c1c24ea6da18",
+          "skill-705399a08ca6",
+          "skill-05a8c920538c",
+          "skill-f468f0c333ce",
+          "skill-a9c8ddc59709",
+          "skill-cffc1e447b50",
+          "skill-11d6f150df4d",
+          "skill-2e42f043c413",
+          "skill-da7177bac7a7"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-dffe420e1652",
+    "title": "Cinema Studio 4.0: reliable user workflow",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "1. Higgsfield — Cinema Studio 4.0 and adjacent creation tools",
+      "Cinema Studio 4.0: reliable user workflow"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 198,
+      "endLine": 210,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L198",
+      "sha256": "a435785f05aee07dade0b76f335b467787918d65ab05eeb518bb3c832ccfd5a1"
+    },
+    "contentMarkdown": "### Cinema Studio 4.0: reliable user workflow\n\n> 🟡 **Do the controls bite? Verify per project [P26, P27 — both Higgsfield-sponsored testers, 2026-08-24 and 2026-09-01].** Two independent walkthroughs report that Film setup (Genre/Era/Tempo), Camera (lens/format) and Lighting presets produced no visible change on Seedance 2.5 video, while the same instruction written in the prompt (\"silhouette backlighting\") did; only the first of three inline camera movements in one 15-s prompt executed; the Personal Assistant refused dragged assets and produced nothing on 2026-08-24. ⚠️ Conflicts with the official routing above (\"direct controls are the correct channel\"). Rule until a live receipt settles it: run one A/B at 480p per project — if a control does not bite, carry that aspect in the prompt block that governs it (video-prompting ch. 12), never in both. Same testers: CS 4.0 bills the same credits as plain Seedance 2.5 on the Video page; `Shift+#` inside the video prompt opens the camera-movement picker inline (Snorri cam, rack focus, POV, side tracking, handheld, Robo arm seen); a prompt pasted with element names already in `@tag` form auto-attaches those Elements — let the LLM write the tags.\n\n1. **Create/open a project.** Add the brief, make subfolders for sequences/versions if needed, and create or collect Elements first.\n2. **Split the script into shots.** The Personal Assistant can turn a script into individual shots and prefill camera parameters, but the agent/user must review the proposed prompt and settings before any generation. It is documented as a planning/settings aid, not a substitute for approval.\n3. **Choose the shot’s model in the current selector when available.** Cinema Studio supports multiple models; route by the current dropdown and model-specific UI, not by a generic promise that every model has every Cinema Studio control.\n4. **Set the world in controls:** genre → era → camera/lens/aperture → palette/lighting → tempo. Add a named character’s Emotion Wheel tag where performance matters.\n5. **Attach references and write only the remaining scene/action.** With the control surface already chosen, the prompt should state subject, event, order of actions, and continuity locks—not re-specify every optical setting.\n6. **Generate, review, and preserve the selected take.** Use a project/Element-aware iteration rather than starting a separate unrelated prompt for every take.\n7. **Repair/continue rather than inventing a new shot when appropriate.** Cinema Studio 4.0 has **Forward/Backward Extend** for a continuation or lead-in from an uploaded/existing video. It is not a start/end-frame animation control.\n8. **Apply finishing passes separately.** Colour Grading provides temperature, contrast, saturation, sharpness, grain, highlights, and exposure; the same current release family also offers Relight and Colour Palette as standalone video tools. [4.0 workflow](https://higgsfield.ai/blog/cinema-studio-4-0#step-by-step-how-to-direct-a-scene-in-cinema-studio-40) · [Relight/Colour Palette update](https://www.higgsfield.company/creator-hub/changelog)\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-071ec10c4b30",
+    "title": "What else the current Higgsfield UI can do",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "1. Higgsfield — Cinema Studio 4.0 and adjacent creation tools",
+      "What else the current Higgsfield UI can do"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 211,
+      "endLine": 227,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L211",
+      "sha256": "c76ac71637e1d01670853f285ad88c0c8d3012b500ef7beb2d301baab98f0bcf"
+    },
+    "contentMarkdown": "### What else the current Higgsfield UI can do\n\nThese are adjacent routes; do not force them through Cinema Studio when the user asks for the specific operation.\n\n| User goal | Correct current surface | Verified handling |\n|---|---|---|\n| Test a named third-party/native video model without the film-project framing | **Video** | Use the model selector; model features and resolution are model/plan dependent. The current changelog directs Seedance 2.5 users to Video → model selector; entries up to 2026-09-01 add **Genjutsu** (object swap / motion transfer on an existing clip: one video ≤30 s + up to 30 reference photos, output ≤1080p — a repair/re-skin route, W5), **MiniMax H3 Max** (768p, first/last frame), **Gemini Omni 1.1 Flash** (first/last frame, 360p draft to 4K, ≤10 s), **Wan 3.0 / Wan 3.0 Prime** (≤30 s, 480/720/1080p), Kling 3.0 Turbo, Grok Video 1.5, Seedance 2.0 Mini. |\n| Storyboard / multi-frame sequence stills (up to 8 frames, up to 4 image references, Auto or Manual) | **Image → Popcorn** (help-center article modified 2026-08-28) | Frames serve as start frames or references for a video model; chain the final frame into the next clip. Not a video generator. |\n| Camera-move presets on a single keyframe image (3 or 5 s clips) | **Video → Create Video → model selector → Higgsfield DoP** (\"Higgsfield Standard\" preset label; help-center article modified 2026-08-28) | Image-to-video with preset categories (Basic/Epic Camera Control, Effects, Mix); describe the scene in the prompt. The old \"preserve the original face, lighting, and geometry\" line is practitioner practice, not documented on the help page. |\n| Edit an existing Seedance take (region/timestamp-scoped fix) | **Video → model entry \"Seedance 2.5 Edit\"** (🟡 a draw-over region tool with time handles was seen inside Cinema Studio's Edit → Advanced on 2026-09-01 [P27] — unverified; if real, \"describe the region in words\" holds for the Video page only) | Its own entry in the video-model selector [PP@2026-08-31]: task dropdown \"Edit video\", source clip into the **VIDEO TO EDIT** slot, references via @-elements, up to 1080p; regions are described in words (no mask editor). Mode doctrine + prompt format: video-prompting ch. 14b. |\n| Block, preview and render a shot from inside Blender; perform a handheld camera with a phone | **Blender add-on** (higgsfield.ai/plugins/blender, unversioned UI @ 2026-09-04; Image tab lists Nano Banana 2, GPT Image, Seedream 5.0 Pro, Z Image) — seven tabs incl. Scene builder, Video (Seedance 2.5) and Camera (phone as tracked virtual camera, 🟡 launch video only) | Same credits as the web platform; plan-level unlimited models excluded on plugins/MCP/Canvas; Bridge MCP for agent-driven blockouts (`HF-BRIDGE-MCP@2026-09-04`). Method: production-pipeline ch. 8. |\n| Correct light or grade on an existing clip | **Relight** / **Color Palette** | Relight has six presets plus manual light parameters and up to two custom sources; Colour Palette has 50+ presets plus custom grading. |\n| Separate/rebuild a still image | **Layers** | Layer Decomposition, Edit Text, and Remove Background are currently listed actions. |\n| Upscale a video | **Upscale / FLUX 3 Video Upscaler** | Precise and Creative modes; outputs listed as 1080p, 2K, or 4K. Creative mode can use optional prompt guidance. |\n| Generate voice/change voice/translate and lip-sync | **Audio** / **Lipsync Studio** | Audio exposes Text to Speech, Voice Change, and Translate; Translate includes 18 languages in the 10 August update. Verify the active model’s advanced controls in the UI. |\n| Batch variant production | **Supercomputer** or a specialist studio such as Marketing Studio | Treat this as an agent/task workflow and retain human approval at the brief/outputs; it is not evidence that Cinema Studio alone maintains an editorial timeline. |\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-7a41a20d840f",
+    "title": "Seedance 2.5 mode id ↔ UI label (Higgsfield)",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "1. Higgsfield — Cinema Studio 4.0 and adjacent creation tools",
+      "Seedance 2.5 mode id ↔ UI label (Higgsfield)"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 228,
+      "endLine": 237,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L228",
+      "sha256": "9f0326a23a18bbbfd1934759c05b36103c231ecfd9d4781a2c01c34785e931db"
+    },
+    "contentMarkdown": "### Seedance 2.5 mode id ↔ UI label (Higgsfield)\n| Mode id (video-prompting ch. 14b) | Higgsfield Video page label | Evidence |\n|---|---|---|\n| `t2v` | model entry \"Seedance 2.5\", no source clip attached — task label unverified, read the live task dropdown | `HF-WEB@2026-09-04` |\n| `omni_reference` | model entry \"Seedance 2.5\" with the source clip attached as a REFERENCE (Higgsfield's marketing name for this is \"R2V motion guidance\") — NOT the \"Seedance 2.5 Edit\" entry, which locks duration/ratio and bills the source length (production-pipeline ch. 8). Exact task label unverified, read the live task dropdown | `HF-WEB@2026-09-04` + P21 |\n| `video_edit` | model entry \"Seedance 2.5 Edit\", task \"Edit video\", VIDEO TO EDIT slot | `HF-WEB@2026-09-04` [PP] |\n| `video_extension` | the Extend control (product page: \"Extend/Transition/Reverse\"; Cinema Studio 4.0: \"Forward/Backward Extend\") | `HF-CS4@2026-09-04` |\n\nRule: the slate's Run in row writes the mode as `id (\"UI label\")` — e.g. `video_edit (\"Seedance 2.5 Edit\")` — and, where the label column says unverified, as `id (UI label unverified — read the live task dropdown; if only \"Seedance 2.5 Edit\" looks applicable, STOP: that is video_edit, not this mode)`. Never invent a dropdown label. Dreamina and other vendors: no label map exists here — write `id (label unverified)` and cite the RECEIPT line.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-c25a75d5f8b0",
+    "title": "Output configuration: model/plan dependent, not a transferable creative control",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "1. Higgsfield — Cinema Studio 4.0 and adjacent creation tools",
+      "Output configuration: model/plan dependent, not a transferable creative control"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 238,
+      "endLine": 244,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L238",
+      "sha256": "41d0c7964b542f4d311e6aa4b4561e66c471c6ba21eb3c43c443f7f47bcb46e6"
+    },
+    "contentMarkdown": "### Output configuration: model/plan dependent, not a transferable creative control\n\n- The detailed 4.0 launch guide and changelog verify **up to 30 seconds** and **up to 1080p**; a separate Higgsfield marketing page simultaneously claims native 4K and one-minute generations. These official pages conflict as of the snapshot date. This is an output-form conflict, not an artistic-routing rule: read the active model/plan dropdown before generating. [Detailed guide](https://higgsfield.ai/blog/cinema-studio-4-0) · [conflicting product page](https://higgsfield.ai/cinematic-video-generator)\n- Do not recommend the Cinema Studio 2.0/2.5/3.0/3.5 walkthroughs as the current UI. They document historical versions. In particular, their external-upload restrictions must not be projected onto 4.0, which officially accepts up to 50 reference slots (class split per selected model — see the References row above).\n- “Multi-model support,” AI Cast, and camera presets do not prove that a given selected provider model has identical reference, native-audio, editing, duration, or resolution support. Inspect the model subform.\n- The current product is web-first; no current primary source here establishes an autonomous assistant that may spend credits without user review. Keep the user at the Generate/approval boundary.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-e065c23134cc",
+    "title": "Higgsfield learning sources",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "1. Higgsfield — Cinema Studio 4.0 and adjacent creation tools",
+      "Higgsfield learning sources"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 245,
+      "endLine": 253,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L245",
+      "sha256": "0e25585ec9127b7b8b5c8eb650914cb94f4843af0466855e6e8527122bffbf4d"
+    },
+    "contentMarkdown": "### Higgsfield learning sources\n\n- [Cinema Studio 4.0: official control-by-control guide](https://higgsfield.ai/blog/cinema-studio-4-0)\n- [Higgsfield Creator Hub help for historical Studio versions](https://higgsfield.ai/creator-hub/help-center/tools/how-do-i-use-cinema-studio) — useful only to recognize old UI labels, not as the 4.0 authority.\n- [Current changelog](https://www.higgsfield.company/creator-hub/changelog) — recheck here before a production session.\n- [Academy](https://higgsfield.ai/academy) — current interactive video lessons and copyable prompt keypoints.\n\n---\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-2fc39d4c2fa2",
+    "title": "2. fal.ai — model marketplace, test UI, and production API",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "2. fal.ai — model marketplace, test UI, and production API"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 254,
+      "endLine": 257,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L254",
+      "sha256": "fb61beef8f3ca9cf390a3136309753acfbfdaf43fcaf5653182bbc4273fd0bd5"
+    },
+    "contentMarkdown": "## 2. fal.ai — model marketplace, test UI, and production API\n\n> **Version scope:** `FAL-WEB@2026-09-04` applies to Gallery/Playground/Sandbox/Dashboard UI behaviour. For every actual model claim, replace the inherited scope with `endpoint_id + schema retrieved YYYY-MM-DD`; `FAL-MCP@2026-09-04` applies only to the MCP section.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-55a52d3a83bb",
+    "title": "The key correction: fal is not a universal editing studio",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "2. fal.ai — model marketplace, test UI, and production API",
+      "The key correction: fal is not a universal editing studio"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 258,
+      "endLine": 261,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L258",
+      "sha256": "a58c8639173469a0334e080f70d29a419f52dbd6b40e75237fcdf213a28dcaeb"
+    },
+    "contentMarkdown": "### The key correction: fal is not a universal editing studio\n\nfal gives access to 1,000+ image, video, audio, 3D, and other endpoints. It has a useful browser UI, but its core product is a unified API/endpoint platform. Its individual controls are generated from a model’s input schema; two video models can expose completely different fields. Therefore an agent may suggest **“open this exact endpoint and inspect its form”**, but may not invent a shared camera panel, storyboard, persistent character system, multi-shot editor, or prompt syntax for all fal models. [Model APIs overview](https://fal.ai/docs/documentation/model-apis/overview)\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-afd48d04b60f",
+    "title": "The browser surfaces a user can use",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "2. fal.ai — model marketplace, test UI, and production API",
+      "The browser surfaces a user can use"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 262,
+      "endLine": 273,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L262",
+      "sha256": "76e49ff53258159cd8d17b3746fe4f57756a85f541c8729d9132d0caa9495588"
+    },
+    "contentMarkdown": "### The browser surfaces a user can use\n\n| Surface | What it is for | Actual UI behavior |\n|---|---|---|\n| **Model Gallery / model page** | Find a provider/model or operation | Each model page provides its own Playground and API documentation, pricing, average latency, and copyable examples. |\n| **Playground** | Validate one specific model and reproduce the exact request | Fill its auto-generated form, click **Run**, see result(s), change fields and run again. The result retains generated code in Python, JavaScript, and cURL for that exact request. |\n| **Sandbox** | Compare alternatives before committing | Run matching input/prompt across multiple models side-by-side; see estimated cost before submitting; search prior generations by text, image similarity, or dominant colour; share a preview link. It does **not** generate integration code. |\n| **Dashboard** | Developer/account operations | Manage apps, API keys, billing, monitoring/analytics, requests, errors, and deployments. This is not the creative editing surface. |\n| **Free browser tools** | Single-file utility jobs | Some background/remove/upscale/extend/resize tools run in-browser. Video-generation entries direct to Playground, require sign-in, and bill compute per second. |\n\n[Playground manual](https://fal.ai/docs/documentation/model-apis/playground) · [Sandbox manual](https://fal.ai/docs/documentation/model-apis/sandbox) · [Dashboard/resources map](https://fal.ai/docs/documentation/setting-up/resources) · [free tools scope](https://fal.ai/tools)\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-cfc45e4aa90b",
+    "title": "What the Playground actually exposes",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "2. fal.ai — model marketplace, test UI, and production API",
+      "What the Playground actually exposes"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 274,
+      "endLine": 294,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L274",
+      "sha256": "2140a31fb3fdcc05280d2f3d651dfac5bdbe9b91b71d31c10e8e7102fae40fc5"
+    },
+    "contentMarkdown": "### What the Playground actually exposes\n🟡 Model-form fact (fal Omni for MiniMax H3, snapshot 2026-08-02 [P42]): prompt cap ≈2,000 characters on the fal form vs ≈7,000 for the raw model — condense the official six-section Ref2VA prompt before pasting; 15 s / 2K / 21:9 took ≈10 min inference.\n\nThe model author’s schema drives the form. Required fields and `ui.important` fields appear in the main form; optional fields with defaults normally sit under **Additional Settings**. An agent must open the selected endpoint’s **API** tab and treat that schema as canonical.\n\n| Schema pattern / metadata | Browser control rendered by Playground |\n|---|---|\n| `prompt` or `*_prompt` | Multi-line text area |\n| `bool` | Toggle |\n| bounded integer/float | Slider plus number input |\n| `seed` | Number input plus randomize button |\n| enum / literal | Dropdown |\n| `*_image_url` / image field | Drag-drop, paste, or URL image upload and preview |\n| `*_video_url` / video field | Video upload and preview |\n| `*_audio_url` / audio field | Audio upload/player and microphone recording |\n| `*_mask_image_url` / `*_mask_url` | Image input with built-in mask painter linked to the image field |\n| `face_image_url` | Camera capture plus image upload |\n| `camera_control` metadata | Visual movement selector with movement type/value |\n\nOutputs render as galleries/players only when the schema identifies them as Image, Video, or Audio; otherwise they may be raw JSON/download links. A model having a `prompt` does not imply it supports a negative prompt, a seed, a reference image, end frame, mask, audio, or camera UI—only its active schema can establish that. [Full UI mapping](https://fal.ai/docs/documentation/development/handle-inputs-and-outputs)\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-f9e9c67e2b82",
+    "title": "User workflow: visual exploration → reliable integration",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "2. fal.ai — model marketplace, test UI, and production API",
+      "User workflow: visual exploration → reliable integration"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 295,
+      "endLine": 303,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L295",
+      "sha256": "5b0337071ddf6cfdad5689a36112995ec20f39a68a4304c360699c4751e56ee5"
+    },
+    "contentMarkdown": "### User workflow: visual exploration → reliable integration\n\n1. **State the operation, not a brand preference:** text-to-image, image edit, text-to-video, image-to-video, video edit/restyle, upscale, audio, etc.\n2. **Use Sandbox for a fair A/B test.** Pick models that accept the same source type, use the same source/prompt, inspect the displayed estimate, then compare outputs. Save/share the winning result.\n3. **Open the winner’s individual Playground.** Fill every field from its current schema, including model-specific aspect ratio, duration, output format, safety, reference, seed, or audio controls.\n4. **Run and evaluate.** Keep the resulting parameter set; the Playground result can produce exact Python/JS/cURL code.\n5. **Only then automate.** Call the endpoint using its identifier and exact request. For a production batch, use a queue/async pattern and retain the returned request ID and output URL(s).\n6. **For an internal custom UI/model, deploy an App.** `fal deploy` supplies the App with its own Playground; authors control safe field rendering through their schema.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-2793dec3f603",
+    "title": "API workflow an implementation agent may propose",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "2. fal.ai — model marketplace, test UI, and production API",
+      "API workflow an implementation agent may propose"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 304,
+      "endLine": 315,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L304",
+      "sha256": "56d5e2216b41e3993ee377a2534e06c531c4a950a250c0e8474c4afcc4be3114"
+    },
+    "contentMarkdown": "### API workflow an implementation agent may propose\n\n| Need | fal call pattern | Important boundary |\n|---|---|---|\n| Quick local prototype / fast request | `run()` | Direct call, no queue/retry/polling. |\n| “Synchronous” developer convenience | `subscribe()` | Uses the queue but waits and handles polling. |\n| Production parallel/batch work | `submit()` then status/result or webhook | Recommended route for control and reliability; it returns immediately. |\n| Progressive updates | `stream()` | Only where endpoint supports it. |\n| Very-low-latency interaction | `realtime()` | Persistent WebSocket, only for explicit real-time endpoints. |\n\nAn app must keep `FAL_KEY` server-side; a browser frontend uses a server proxy rather than exposing the key. This is an implementation constraint, not a creative setting. [Inference methods](https://fal.ai/docs/documentation/model-apis/inference) · [client setup](https://fal.ai/docs/documentation/model-apis/inference/client-setup)\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-6176107bac0a",
+    "title": "Correct and incorrect fal advice",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "2. fal.ai — model marketplace, test UI, and production API",
+      "Correct and incorrect fal advice"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 316,
+      "endLine": 325,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L316",
+      "sha256": "010fd8a9921a79b822566b3253b725ef7caa066b1954dbe30bc8aad99fa9f6c9"
+    },
+    "contentMarkdown": "### Correct and incorrect fal advice\n\n**Safe:** “In Sandbox, compare the current image-to-video endpoints that accept one source image; then open the selected model’s Playground, check duration/reference/audio fields, and copy the exact request.”\n\n**Unsafe:** “fal’s video editor can mask the actor and use a dolly preset.” That may be true for a particular endpoint schema but is not a fal-wide feature.\n\n**Safe:** “A Playground may provide a mask painter when that endpoint has a matching mask field.”\n\n**Unsafe:** “The results will remain as a permanent project asset.” fal returns CDN URLs/metadata; application-level preservation, asset naming, and editorial assembly are the user’s/pipeline’s responsibility unless their custom App implements them.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-e7ff5638cd65",
+    "title": "fal learning sources",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "2. fal.ai — model marketplace, test UI, and production API",
+      "fal learning sources"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 326,
+      "endLine": 334,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L326",
+      "sha256": "a8cf1ca0db787f453b83049b3ec43fccf33362e193e6cd26af994b19e0f6ed93"
+    },
+    "contentMarkdown": "### fal learning sources\n\n- [Playground](https://fal.ai/docs/documentation/model-apis/playground) and [Sandbox](https://fal.ai/docs/documentation/model-apis/sandbox)\n- [Model API reference](https://fal.ai/docs/model-api-reference) — concrete endpoint schemas and prompt/output examples.\n- [Documentation index for agents](https://fal.ai/docs/llms.txt) — discover current pages before describing an endpoint.\n- [Examples](https://fal.ai/docs/examples) — text/image/video integration examples, including ComfyUI deployment.\n\n---\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-0d16d75d5809",
+    "title": "3. Runway — Tool Mode, Apps, Agent, Workflows, and timeline assembly",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "3. Runway — Tool Mode, Apps, Agent, Workflows, and timeline assembly"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 335,
+      "endLine": 338,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L335",
+      "sha256": "eb588096e47fb8116b76add420b17765bb51d082427665a341b85d9a31024534"
+    },
+    "contentMarkdown": "## 3. Runway — Tool Mode, Apps, Agent, Workflows, and timeline assembly\n\n> **Version scope:** `RW-WEB@2026-09-04`. The named model/tool is part of the version record: e.g. a Gen-4.5 fact means `RW-WEB@2026-09-04 / Gen-4.5 / stated mode`, not all Runway video models. `RW-MCP@2026-09-04` is separate.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-904199cbdc1a",
+    "title": "Surface selection: the first decision",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "3. Runway — Tool Mode, Apps, Agent, Workflows, and timeline assembly",
+      "Surface selection: the first decision"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 339,
+      "endLine": 352,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L339",
+      "sha256": "8af5cf8700ac11dac703ac1eca70c289d5fd548e493c34de20ea687aa9ec010d"
+    },
+    "contentMarkdown": "### Surface selection: the first decision\n\nRunway deliberately offers several overlapping ways to create. The user’s goal determines the correct one.\n\n| Surface | Use when | What an agent must not assume |\n|---|---|---|\n| **Tool Mode** | A single image/video generation or a named model’s direct settings | That an App’s convenience control will appear here. |\n| **Apps** | A known operation such as keyframes, character swap, product video, relight, remove, or upscale | That the App is API-accessible; current Apps are **not** available through the API. |\n| **Agent** | A conversational multi-asset/multi-shot task, planning, scripts, moodboards, an assembled cut, or a guided iteration | That it should act without an outline/review. The user should review its plan before credit-spending. |\n| **Workflows** | A reusable, explicit node graph/automation, including custom Apps | That it is an ordinary NLE timeline. It is a graph of model/utility nodes. |\n| **Timeline Studio** | Trimming and arranging clips into a shorter cut | That it replaces an advanced local editor for a feature/complex finishing job. |\n\nTools, Apps, and Agent automatically create a **Session**, which organizes the outputs generated there. Assets can be reused from the Runway library. [Getting started with generative video](https://help.runwayml.com/hc/en-us/articles/37425232841875-Getting-Started-with-Generative-Video) · [long-form workflow](https://help.runwayml.com/hc/en-us/articles/26871350018835-How-to-create-longer-videos-and-films)\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-4418f52deb3c",
+    "title": "Tool Mode: current base image and video paths",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "3. Runway — Tool Mode, Apps, Agent, Workflows, and timeline assembly",
+      "Tool Mode: current base image and video paths"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 353,
+      "endLine": 354,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L353",
+      "sha256": "3ed96370f49556f5377bc85207f39dddc7699e074bc4bd92e02a04ee014dd7af"
+    },
+    "contentMarkdown": "### Tool Mode: current base image and video paths\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-e9b2d1bc61c4",
+    "title": "Gen-4 Image",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "3. Runway — Tool Mode, Apps, Agent, Workflows, and timeline assembly",
+      "Tool Mode: current base image and video paths",
+      "Gen-4 Image"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 355,
+      "endLine": 366,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L355",
+      "sha256": "ab198b918a41882d2ad175945d2dbb1a91524ec6fc725f8c088dfb1e73b0544f"
+    },
+    "contentMarkdown": "#### Gen-4 Image\n\nOpen **Generate Image** from the Dashboard, then choose Gen-4/Gen-4 Turbo Image from the Runway group in the lower-left model selector. Current Gen-4 Image controls are:\n\n- Prompt (text; up to 1,000 characters) and optional image reference; **Describe Image** can make an editable prompt from an upload.\n- Aspect ratio: 16:9, 9:16, 1:1, 4:3, 3:4, or 21:9.\n- Quantity: 1 or 4 images.\n- Advanced: 720p/1080p, Aesthetic Range 0–5, random or fixed seed.\n- After generation: **Use** sends the image to generative video; **Vary** starts a new set based on one output.\n\nFor persistent/reusable image references, turn on References, upload or pick an Asset, and tag it with a name. A single generation supports up to **three** References. Reference image quality, neutral expression/light, and separate character/environment iteration paths matter more than repeating prose. [Gen-4 Image manual](https://help.runwayml.com/hc/en-us/articles/37053594806419-Creating-with-Gen-4-Image) · [References manual](https://help.runwayml.com/hc/en-us/articles/40042718905875-Creating-with-Gen-4-Image-References)\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-86a70ac78823",
+    "title": "Gen-4.5 video",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "3. Runway — Tool Mode, Apps, Agent, Workflows, and timeline assembly",
+      "Tool Mode: current base image and video paths",
+      "Gen-4.5 video"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 367,
+      "endLine": 382,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L367",
+      "sha256": "a9a0d240dcf2da2ead1343015c3be02f5f3910556cd0e42abaaf91c153517271"
+    },
+    "contentMarkdown": "#### Gen-4.5 video\n\nIn Tool Mode with **Video** selected, select **Gen-4.5** in the model picker. The current guide confirms Text-to-Video and Image-to-Video only; it says additional input support is coming, so do not offer unsupported reference/keyframe/audio modes as Gen-4.5 features.\n\n| Setting | Current verified value |\n|---|---|\n| Inputs | Text for T2V; text + one image for I2V |\n| Duration | 2–10 seconds |\n| Aspect ratios | 16:9, 9:16, 1:1, 4:3, 3:4, 21:9 |\n| Output | 720p |\n| Frame rate | 24 or 25 fps, in Advanced settings |\n| Price | 12 credits per second |\n| Iteration | Generate; then favorite, upscale, download, or **Use** the result |\n\nFor I2V, the image supplies composition, subject, lighting, and style; prompt primarily for motion/camera/temporal change. Check the image for implied motion that contradicts the requested movement. For T2V, describe both visual content and motion. A simple useful pattern is “The camera [motion] as the subject [action].” [Gen-4.5 creation guide](https://help.runwayml.com/hc/en-us/articles/46974685288467-Creating-with-Gen-4-5) · [I2V prompting guide](https://help.runwayml.com/hc/en-us/articles/48324313115155-Image-to-Video-Prompting-Guide)\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-7a7a82672859",
+    "title": "Export choice",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "3. Runway — Tool Mode, Apps, Agent, Workflows, and timeline assembly",
+      "Tool Mode: current base image and video paths",
+      "Export choice"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 383,
+      "endLine": 386,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L383",
+      "sha256": "eae4bc7b1c220416e9bece1aee8810edc42a865fa3814bca543079d2967861b0"
+    },
+    "contentMarkdown": "#### Export choice\n\nOn eligible plans, Gen-4.5 Tool Mode and Aleph 2.0 Edit Studio can choose **MP4**, **ProRes** (six listed profiles), or a **PNG sequence** at generation time. ProRes/PNG adds 5 credits per second to the base generation cost. Check the plan and the current dialog; it is not a universal free download option. [Export guide](https://help.runwayml.com/hc/en-us/articles/54396547993491-Exporting-Videos-in-ProRes-and-PNG-Sequence-Formats)\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-bb1c0df9af39",
+    "title": "Apps: current named operations",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "3. Runway — Tool Mode, Apps, Agent, Workflows, and timeline assembly",
+      "Apps: current named operations"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 387,
+      "endLine": 415,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L387",
+      "sha256": "7990339adb9af32bfb5bcef199a09cbc3ad32893d436f07a14d29cc9d2c27a92"
+    },
+    "contentMarkdown": "### Apps: current named operations\n\nOpen **Apps** in the left sidebar, search or browse, then select an App. Apps are the right answer when a user asks for one of their clearly scoped operations. Input type and credit cost are shown inside the active App; some may support Explore Mode and others require Credits Mode. The iOS app does not currently expose Apps (a mobile browser can). [Apps manual](https://help.runwayml.com/hc/en-us/articles/45570040112531-Creating-with-Apps)\n\n**Video Apps (current list):**\n\n- Performance Capture with **Act-Two**; Animate with Keyframes; Backdrop; Character Swap; Color Grade; Image to Dialogue; Edit Studio; Lighting; Motion Sketch; Multi-Shot; Product Shot Video Builder; References; Remove; Stitch Video; Stylize Video; Time of Day; Upscale; Weather.\n\n**Image Apps (current list):**\n\n- Ad Concepter; Ad Localization; Character Renderer; Cinematic Brainstorm; Create Ad; Expand Image; Mockup; Panel Upscaler; Product Reshoot; Runway Look; Scene Builder; Slide Maker; Story Panels; Stylize Image; Upscale Image; Vary Image; Vary Ad.\n\n**Audio Apps (current list):**\n\n- Stylize Audio; SFX.\n\nImportant concrete App routes:\n\n| Request | Current Runway route | Verified constraints / behavior |\n|---|---|---|\n| Transfer an actor’s performance to an image/video character | **Apps → Performance Capture with Act-Two** | Needs a driving performance video plus character image/video; up to 30 seconds at 24fps. Gesture control applies to character-image input, not character-video input. |\n| Transition from a supplied first to end frame | **Apps → Animate with Keyframes** | Use this rather than claiming Gen-4.5 has keyframe input. |\n| Prompted transformation of a supplied clip | **Apps → Edit Studio** (Aleph 2.0) | Current mode is Single edit; choose a keyframe, write a precise change, optionally limit a frame range, then generate across the footage. |\n| Combine clips | **Apps → Stitch Video** or **Timeline Studio** | Stitch can combine files up to 60 minutes; selection/order is still the user’s editorial decision. |\n| One prompted multi-cut asset | **Apps → Multi-Shot** | Official current app list says up to five shots from one text prompt. |\n| Video 4K enhancement | **Apps → Upscale** | App listing says upload a video up to 40 seconds for 4K output. |\n\nFor Act-Two, use well-lit single-subject source media, typically waist-up or closer, with clear facial features and no interrupting cuts. An image target can receive environmental/gesture motion; a video target preserves its existing scene/camera motion and has no gesture control. [Act-Two manual](https://help.runwayml.com/hc/en-us/articles/42311337895827-Performance-Capture-with-Act-Two)\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-a2f90ea048dd",
+    "title": "Edit Studio / Aleph 2.0: an actual repair route",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "3. Runway — Tool Mode, Apps, Agent, Workflows, and timeline assembly",
+      "Edit Studio / Aleph 2.0: an actual repair route"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 416,
+      "endLine": 428,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L416",
+      "sha256": "f17a80a0463027d77cdf2933c2beb9bccfac23f02cde8a4059316ac7211fae60"
+    },
+    "contentMarkdown": "### Edit Studio / Aleph 2.0: an actual repair route\n\nOpen **Apps → Video → Edit Studio**, or search it. Upload/select a Runway asset or drag/drop a video. Current accepted source conditions are conventional aspect ratio, over 2 seconds and under 30 seconds (longer files are trimmed), 480p–1080p, 24–30fps, and no more than 10 cuts/shot changes. An unsupported source should be conformed/split externally before promising an in-platform edit.\n\nCurrent **Single edit** procedure:\n\n1. Select a keyframe that shows the thing to alter clearly (wide for an environment; close for e.g. eye colour).\n2. Use a short, specific change prompt: action verb + desired transformation, e.g. “change the outfit and bag to soft yellow.”\n3. Optionally work on a frame range; only the chosen time range spends Aleph generation credits.\n4. The keyframe is rendered with an image model, then Aleph applies that appearance through the clip. Review the propagation before accepting it.\n\nSupported creative intents documented by Runway: VFX, relight, background/product/object/wardrobe swap, restyle, and weather/season transformation. **Multi-edit and Expand are marked “coming soon” in the current manual**; do not offer them as an available Edit Studio mode. [Edit Studio manual](https://help.runwayml.com/hc/en-us/articles/51683104370451-Creating-with-Edit-Studio) · [Aleph 2.0 prompting](https://help.runwayml.com/hc/en-us/articles/52150503729171-Aleph-2-0-Prompting-Guide)\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-890d79b44fab",
+    "title": "Agent and Workflows",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "3. Runway — Tool Mode, Apps, Agent, Workflows, and timeline assembly",
+      "Agent and Workflows"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 429,
+      "endLine": 434,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L429",
+      "sha256": "605262f612a65d30474e0ca2330a76d4ae9dc87ec55d5bc0d0ff8bc632a5ca90"
+    },
+    "contentMarkdown": "### Agent and Workflows\n\n**Runway Agent** is a conversational creative partner. It can plan and generate images, single/multi-shot video, audio/music/voiceover, create storyboards/reference sheets/character sheets, edit images/video, and build/render a timeline. It selects a model automatically (including Gen-4.5 and supported third-party models), but the user may ask for a model. In a sensible workflow the user supplies a brief/assets, reviews Agent’s outline/intent, then asks it to generate or revise the specific scene. A slash command can invoke an Agent Skill such as an ad campaign or mood board. [Agent guide](https://help.runwayml.com/hc/en-us/articles/51601639579667-Creating-with-Runway-Agent)\n\n**Workflows** are node graphs. Create one from **Workflows → + New Workflow**, add input/model/utility nodes, connect compatible ports, use **Run** on one node for isolated testing or **Run All** for the graph, and inspect/cancel parallel runs in Active Runs. Workflows can later be published as custom Apps/endpoints. The canonical stills-first graph is Text → Gen-4 Image → Gen-4 Video, with separate text nodes for still and motion prompting. [First Workflow tutorial](https://help.runwayml.com/hc/en-us/articles/45769159004691-Building-your-first-Workflows)\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-9afe66081c3f",
+    "title": "Long-form rule and historical traps",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "3. Runway — Tool Mode, Apps, Agent, Workflows, and timeline assembly",
+      "Long-form rule and historical traps"
+    ],
+    "kind": "historical-evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 435,
+      "endLine": 439,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L435",
+      "sha256": "e5c4eb85974935a8ebfe175d3eb471dc17bf75f15cf9abb409eee67808eebc90"
+    },
+    "contentMarkdown": "### Long-form rule and historical traps\n\n- Runway’s own current film guide treats generative clips as short building blocks, typically 5–10-second storyboard shots. Make character and environment plates first; use references to carry them through shots; assemble with Timeline Studio for short pieces or a full editor for complex/long finishing. [Long-form guide](https://help.runwayml.com/hc/en-us/articles/26871350018835-How-to-create-longer-videos-and-films)\n- **Gen-3 Alpha and Gen-3 Alpha Turbo were retired in July 2026.** Never give a new user a Gen-3, Act-One, old Video-to-Video, or Gen-3 keyframe workflow. The current replacement routes are Gen-4.5 for T2V/I2V, Animate Frames for keyframes, and Aleph 2.0 Edit Studio for video transformation. [Runway retirement notice](https://help.runwayml.com/hc/en-us/articles/33350169138323-Creating-with-Video-to-Video-on-Gen-3-Alpha-and-Turbo)\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-f4622546e4ea",
+    "title": "Runway learning sources",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "3. Runway — Tool Mode, Apps, Agent, Workflows, and timeline assembly",
+      "Runway learning sources"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 440,
+      "endLine": 448,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L440",
+      "sha256": "37a6d4d86cc7ef3d3159436e7eda759a0735c816aa644aa00e27fd60081e1e68"
+    },
+    "contentMarkdown": "### Runway learning sources\n\n- [Help Centre: current product sections](https://help.runwayml.com/hc/en-us/categories/1500001930562-Video-Editing)\n- [Prompting guides and current model manuals](https://help.runwayml.com/hc/en-us/articles/46974685288467-Creating-with-Gen-4-5)\n- [Runway Academy](https://academy.runwayml.com/) — current short video lessons, including [Agent 2.0](https://academy.runwayml.com/tutorial/agent-2).\n- [Apps reference](https://help.runwayml.com/hc/en-us/articles/45570040112531-Creating-with-Apps) — recheck this list before routing to an App.\n\n---\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-0fcd03ac29bc",
+    "title": "4. OpenArt — shot tools, persistent assets, Smart Shot, and Director",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "4. OpenArt — shot tools, persistent assets, Smart Shot, and Director"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 449,
+      "endLine": 452,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L449",
+      "sha256": "a286d8a465ea019a10164c3c0dfcce3c78c894d435cf4f6d79d24a8de5aa92f2"
+    },
+    "contentMarkdown": "## 4. OpenArt — shot tools, persistent assets, Smart Shot, and Director\n\n> **Version scope:** `OA-WEB@2026-09-04`. Values labelled “current default display” are observations of the linked **unversioned form and selected model/mode** on the snapshot date, not durable OpenArt defaults. `OA-MCP@2026-09-04` is a separate scope.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-c80b9d082feb",
+    "title": "Current suite navigation and persistent assets",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "4. OpenArt — shot tools, persistent assets, Smart Shot, and Director",
+      "Current suite navigation and persistent assets"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 453,
+      "endLine": 463,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L453",
+      "sha256": "15d317392d933f70a392fbf724624f82156b6e35bef0c26cad423e18495486cf"
+    },
+    "contentMarkdown": "### Current suite navigation and persistent assets\n\nThe current suite’s left navigation is useful evidence of the product’s information architecture:\n\n- **Chat:** Agent Ori (quick requests) and Director (large projects).\n- **Tools:** Video, Image, World, Character, Audio.\n- **Assets:** Director Projects, Character & World, Brand Kit, Media.\n- **Inspire** plus pinned/all tools.\n\nThis matters: OpenArt has a real reusable asset layer. For recurring people, locations, product identity, logo/colours, use saved Character/World/Brand Kit/Media assets and attach/tag them in the actual creation surface. Do not rely on prompt wording alone for continuity. [Current Video suite shell](https://openart.ai/suite/video) · [current Character shell](https://openart.ai/suite/character) · [current World shell](https://openart.ai/suite/world)\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-c58d776d3e35",
+    "title": "Create Image: current user workflow",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "4. OpenArt — shot tools, persistent assets, Smart Shot, and Director",
+      "Create Image: current user workflow"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 464,
+      "endLine": 474,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L464",
+      "sha256": "c92ce44270bd198d8d98b613107195f7a2003d5aac3aa63593bcfc673b283bd9"
+    },
+    "contentMarkdown": "### Create Image: current user workflow\n\n1. From Home choose **Create → Create Image**.\n2. Select a prompt-only model when text is sufficient; select a reference-capable model when a face/product/pose/style image must guide the output. The picker can filter by capability (e.g. reference or 4K), but availability is dynamic.\n3. Write a visually specific prompt. OpenArt’s current starter structure is: **shot type → subject and its attributes → environment and lighting → style**.\n4. Set model-exposed resolution, quality, aspect ratio, and quantity. Quality/resolution options vary by model; do not promise them merely because another model supports them.\n5. Click **Create**, review the result grid, then download, **Send to Edit Image**, or **Send to Video**. **Image Variations** is a separate tool.\n6. Supporting prompt actions: **Prompt from Image** converts an uploaded image into editable text only; it does not turn that source into a visual reference. **Enhance Prompt** revises the text and must be reviewed; Clear Prompt starts over.\n\n[Official current image guide](https://openart.ai/blog/how-to-generate-an-ai-image/)\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-58cb6bb8864b",
+    "title": "Video: direct shot-level routes",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "4. OpenArt — shot tools, persistent assets, Smart Shot, and Director",
+      "Video: direct shot-level routes"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 475,
+      "endLine": 482,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L475",
+      "sha256": "d43576e0d0fed938a335bfbf77024145d9bccb3b9b7b69343bded7833b87202a"
+    },
+    "contentMarkdown": "### Video: direct shot-level routes\n\nThe current **Video** tool hub exposes these routes:\n\n- Frame to Video; Text to Video; Smart Shot; Edit Video; Dub Video; Replace Background; Relight Video; VFX; Motion Sync; Lip-Sync; Upscale Video; Replace Character; Extend Video; Add Sound Effect; Restyle Video.\n\nThis is a menu of distinct tool modes, not a claim that one generic prompt screen has all controls at once. [Current Video tool hub](https://openart.ai/suite/video)\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-4976feb5aef0",
+    "title": "Current Create Video form",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "4. OpenArt — shot tools, persistent assets, Smart Shot, and Director",
+      "Video: direct shot-level routes",
+      "Current Create Video form"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 483,
+      "endLine": 500,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L483",
+      "sha256": "5bc902018936c451d38ee016b41e4cf90e561931f45e43a7b2aeb9adc656b43e"
+    },
+    "contentMarkdown": "#### Current Create Video form\n\nThe current unauthenticated surface documents the following initial form state; subscription/model selection can alter it:\n\n| Form area | What the user can select/add |\n|---|---|\n| Mode | **Start/End Frame** or **Text with Reference** |\n| Model | Current default display: **Seedance 2.5**; change only through the active model selector |\n| Prompt | “Describe your video” |\n| Inputs | Upload Media; saved Characters; visual references (JPEG/PNG/WEBP; current hint says 30MB max and 300–6000px per side) |\n| References | Current default Seedance view displays **0/50** |\n| Controls | Camera; **Auto Polish** prompt; Audio toggle |\n| Output | Aspect ratio, resolution, duration, and quantity; current default display is 16:9 / 480p / 5s and 1 of 8 |\n\nThis is the exact point at which an agent should say “check the output row after choosing your model,” rather than quoting a platform-wide max. [Current Create Video form](https://openart.ai/suite/create-video)\n\nUse **Frame to Video** where a supplied still/approved opening image should determine the first frame; use **Text to Video** when there is no image anchor; use the Start/End option only when that option is visible for the selected model. Add a saved Character and separate visual references when identity/appearance must persist. Use Audio only after confirming it is on and supported by the chosen model.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-85eec349cf69",
+    "title": "Smart Shot, direct video edit, and extensions",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "4. OpenArt — shot tools, persistent assets, Smart Shot, and Director",
+      "Video: direct shot-level routes",
+      "Smart Shot, direct video edit, and extensions"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 501,
+      "endLine": 507,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L501",
+      "sha256": "22137fa633e66d729ca58e74d7b6b08688bc94989a53602816a682e53bd1292b"
+    },
+    "contentMarkdown": "#### Smart Shot, direct video edit, and extensions\n\n- **Smart Shot** is OpenArt’s structured multi-angle/storyboard route. The current screen asks for a scene description, supports character/object and environment references (the visible state shows up to three), previews a **Shot Plan**, and shows an output configuration; its current default display is 16:9 / 480p / Pro / 20s. Treat its exact length/resolution/reference allowance as active-UI/model dependent. [Current Smart Shot form](https://openart.ai/suite/smart-shot)\n- **Edit Video** accepts a selected/uploaded source and a text edit description. The current form’s default model is Gemini Omni Flash and its visible input constraint is MP4/MOV, up to 100MB, 1–10s, 720–2160px. The source needs to meet those constraints before the agent proposes an in-platform edit. [Current Edit Video form](https://openart.ai/suite/modify-video)\n- Use the dedicated **Extend Video** tool for continuation, not an unsupported request to make a single generator run indefinitely. OpenArt’s public current page describes extensions of up to 10 seconds at a time; verify in the chosen model/tool before running. [Video feature guide](https://openart.ai/ai-video-generator/)\n- For a local transformation, pick the dedicated mode—VFX, Relight, Replace Background/Character, Restyle, Dub, Lip-Sync, Motion Sync, Upscale, or Add Sound Effect—rather than asking a fresh T2V run to preserve a source video.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-6692176f1743",
+    "title": "Director: conversation-driven multi-scene production",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "4. OpenArt — shot tools, persistent assets, Smart Shot, and Director",
+      "Director: conversation-driven multi-scene production"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 508,
+      "endLine": 519,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L508",
+      "sha256": "f0f7b7004b1b50549e123f69e88eba245eda4c8eea989a8f064ed7f0c0e2d2f5"
+    },
+    "contentMarkdown": "### Director: conversation-driven multi-scene production\n\n**OpenArt Director** is distinct from Text/Frame-to-Video. It is a chat-led production route for a concept that should become a multi-scene cut.\n\n1. Start in **Director** and describe the idea. Add an image, scene/person reference, soundtrack, voice, or video if useful; tag a saved Character or World where applicable.\n2. Answer the resolution, aspect ratio, and tone questions or let Director choose the initial settings.\n3. Review the generated storyboard scene-by-scene before accepting the work.\n4. Give conversational changes. The official description says Director should redo the frame/scene requested rather than the entire work.\n5. Retain the project in **Director Projects** and use its assets in later revisions.\n\nOpenArt markets Director as capable of coherent videos up to five minutes and edit-by-chat without a timeline. Treat that as a product capability claim—not a guarantee of perfect continuity, a substitute for reviewing the storyboard, or evidence of a frame-accurate conventional timeline. For precision cuts/finishing, the user may still choose individual tools or a conventional editor. [Director guide](https://openart.ai/blog/how-to-use-openart-director/)\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-21265d567b98",
+    "title": "Characters, Worlds, and Brand continuity",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "4. OpenArt — shot tools, persistent assets, Smart Shot, and Director",
+      "Characters, Worlds, and Brand continuity"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 520,
+      "endLine": 529,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L520",
+      "sha256": "6693c2f098301f02c747ff35c0570c4dddaae0f54eb3ee7426cbc56cc7963c50"
+    },
+    "contentMarkdown": "### Characters, Worlds, and Brand continuity\n\n| Asset type | Actual current route | What it gives the user | What it does **not** prove |\n|---|---|---|---|\n| **Character** | Tools → Character; current quick starts include Create Character, Character Image, Character Video, Talking Video, Motion Sync | A saved character library to attach in new visual/video generations. Character Builder also documents Look Vibe, Gender, Ethnicity, Age; Image-to-Character; and Text-to-Character. | Perfect identity or a particular non-human/anime style. The launch material initially limited Character Builder to photorealistic human characters; recheck current type choices. |\n| **World** | Tools → World; quick starts include Create World, 3D World Cam, Cast in Scene | Persistent navigable environment from text/image, camera navigation, then a captured 2D image that can become a video keyframe or be edited. | A downloadable mesh/Gaussian-splat/Unreal/Blender asset. The launch source marks those exports as future work. |\n| **Brand Kit** | Assets → Brand Kit | Saved recurring brand/logo/colour/style context in the suite. | That every chosen third-party model will obey logos, exact text, or brand identity without review. |\n\n[Character Builder announcement](https://openart.ai/blog/character-builder-pr/) · [Worlds announcement](https://openart.ai/blog/openart-worlds-press-release/)\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-4b6d0762ce25",
+    "title": "OpenArt’s current platform-level model and workflow facts",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "4. OpenArt — shot tools, persistent assets, Smart Shot, and Director",
+      "OpenArt’s current platform-level model and workflow facts"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 530,
+      "endLine": 535,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L530",
+      "sha256": "48049fdf1bd3437c56b8e7aae136f92426b4fb1071f31279800c343dcd7d3203"
+    },
+    "contentMarkdown": "### OpenArt’s current platform-level model and workflow facts\n\n- The platform currently lists a dynamic aggregation of leading video/image models (marketing page re-read 2026-09-04): video picker Seedance 2.5, Seedance 2.0, Happy Horse, Kling 3.0, Wan 2.7, Veo 3.1; model library additionally Sora 2, SwitchX, LTX-2.3, PixVerse, Gemini Omni Flash, plus a separate **WAN 3.0** model page — so both WAN 2.7 and WAN 3.0 labels exist, read the live picker; image models GPT Image 2, Grok Imagine, Qwen Image 3, Nano Banana 2, Seedream 5.0 Pro. Clip length: usually ≤15 s, 20 s on LTX 2.3, 30 s on Seedance 2.5 only; **Extend Video** continues a shot by up to 10 s at a time; resolution up to 4K on many models, 1080p default. The presence of a name in the library does not make all of its modes/settings available in every tool.\n- The former **OpenArt Workflows** (ComfyUI community workflow area) was sunset on **18 January 2026**. Do not recommend creating or editing an OpenArt Workflow as a current production route; use the suite’s current Tools, Director, or external ComfyUI instead. [Sunset notice](https://openart.ai/workflows/home)\n- Commercial rights and premium models/longer/higher-quality renders are plan dependent. Read the active plan/terms; current public material says commercial rights apply on Advanced and above, but this is a purchase/legal check, not a creative inference. [Video FAQ](https://openart.ai/ai-video-generator/)\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-2f26645f5b2d",
+    "title": "OpenArt learning sources",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "4. OpenArt — shot tools, persistent assets, Smart Shot, and Director",
+      "OpenArt learning sources"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 536,
+      "endLine": 544,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L536",
+      "sha256": "50dda8137d5e409ba02db8157683a0499920508d101a7971ef9b5de256489e1d"
+    },
+    "contentMarkdown": "### OpenArt learning sources\n\n- [OpenArt Tutorials](https://openart.ai/tutorials) — official video tutorials; dates/screens must still be cross-checked with the active product form.\n- [Create Image guide, 27 Aug 2026](https://openart.ai/blog/how-to-generate-an-ai-image/)\n- [Video tool hub](https://openart.ai/suite/video) and [Director guide](https://openart.ai/blog/how-to-use-openart-director/)\n- [OpenArt updates](https://openart.ai/blog/category/updates/) — use this to detect shipped/replaced products.\n\n---\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-03c0f524fd96",
+    "title": "5. Arcads — UGC/performance-ad production, not a generic video generator",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "5. Arcads — UGC/performance-ad production, not a generic video generator"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 545,
+      "endLine": 548,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L545",
+      "sha256": "e69ffe343f7d043dfe71aa999393cb9ff8425564cf37f2a1f4ae6db2a730e847"
+    },
+    "contentMarkdown": "## 5. Arcads — UGC/performance-ad production, not a generic video generator\n\n> **Version scope:** `AR-WEB@2026-08-31`; the Getting Started flow cited below is dated 2 Jul 2026. The connector/API material is separately `AR-MCP@2026-06-26`; do not use a Studio/Mark/Workflow statement as an MCP feature without a live tool check.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-cc6f1d24d639",
+    "title": "What Arcads is actually for",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "5. Arcads — UGC/performance-ad production, not a generic video generator",
+      "What Arcads is actually for"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 549,
+      "endLine": 562,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L549",
+      "sha256": "de4656c489573c9ebf647722edda7d33643ded649907a1fa5901d2c8b7e8731f"
+    },
+    "contentMarkdown": "### What Arcads is actually for\n\nArcads is a connected **creative-testing and UGC-ad** workspace. Its current product model is: product/campaign context → actors, images, B-roll and ad scenes → localization/variations → reviewed outputs or reusable workflow. It can contain third-party image/video models, but its actor, script, product-placement, subtitle, translation and batch controls belong to **Arcads**, not to those underlying models. An agent must therefore not relabel an Arcads ad feature as “a Seedance setting” or suggest Arcads for a conventional narrative-film workflow merely because it has B-roll/video generation. [Current platform overview](https://www.arcads.ai/) · [Getting Started, 2 July 2026](https://intercom.help/arcads/en/articles/14531683-getting-started-with-arcads)\n\nThe current platform has three higher-level routes with different ownership:\n\n| Surface | What the user supplies/chooses | Correct agent interpretation |\n|---|---|---|\n| **Studio / project** | Product image, image-generation model, scene prompt, selected image/output and downstream ad tools. Arcads auto-detects the uploaded product in its getting-started flow. | The product asset is the campaign anchor. Use it before asking a model to invent packaging, logo, or product details. |\n| **Mark Agent** | Product site/assets, brand and audience information, competitor or winning-ad references, then a campaign request. | A conversational campaign-production route: Mark proposes angles/hooks/scripts, selects actors/scenes and produces an assembled UGC ad. It is not a reason to skip approval of factual claims, brand voice, product depiction, or the final ad. |\n| **Workflows** | Explicit input/model/tool nodes, connected assets/prompts/actors, then Run. | A reusable batch pipeline. Treat each node’s visible input/output ports as canonical; do not assume that a Studio or Mark control exists as a node, or vice versa. |\n\n[Mark Agent workflow](https://agent.arcads.ai/) · [Workflow feature guide](https://intercom.help/arcads/en/articles/15393713-what-is-the-workflow-feature)\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-47ed307fe438",
+    "title": "Arcads: which form owns which user choice",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "5. Arcads — UGC/performance-ad production, not a generic video generator",
+      "Arcads: which form owns which user choice"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 563,
+      "endLine": 573,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L563",
+      "sha256": "ad00fce3465ce15fbef2f2357d964d9e1d044ac4bd17f8739bac9288343fbc55"
+    },
+    "contentMarkdown": "### Arcads: which form owns which user choice\n\n| User objective | Correct current route and verified direct choices | Do not transfer it to |\n|---|---|---|\n| Create product/lifestyle stills | **New Project → product upload → image generation**: product image, scene prompt, selected image model; the current flow also offers Prompt Builder and downstream changes to colours/background/elements. | Talking Actor, B-roll, or a generic Seedance/FLUX request without first checking the active model form. |\n| Make a person deliver a UGC script | **Talking Actor**: choose a character from the generated image, choose a library voice or clone a voice, add script, optionally let Arcads add emotions, and preview audio before full video. | Animated Actor movement or a generic video model. The actor/script/voice/emotion form is its own surface. |\n| Give the actor body/action movement | **Animated Actors**: select the visible movement model (current examples: Clean, Dance, Work), then its duration/aspect-ratio fields; after generation, voice/captions can be swapped. | Talking Actor speech settings, B-roll camera generation, or Cinema Studio camera controls. |\n| Produce a product cutaway | **B-roll**: start from a product image, describe the shot, select the active B-roll model, then use that form’s short-clip/batch controls. The current guide gives Seedance 2.0 only as an example, not as a platform default. | Actor/voice/emotion options or a claim that every Arcads model exposes the same controls. |\n| Localize an approved ad | **Translate**: choose target language and accent; Arcads describes automatic lip-motion matching. Review the language, claims and lip-sync result per locale. | A new Talking Actor or a text-only translation that is assumed to edit the old video automatically. |\n| Generate many creative tests | **Workflow**: choose nodes, connect them, run the pipeline; current examples reuse a product image, script and character avatars across actors/languages. | A promise that an ad Agent/Studio generation will automatically preserve every node-level parameter. |\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-e4f03834a023",
+    "title": "Safe ad-production loop for an agent",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "5. Arcads — UGC/performance-ad production, not a generic video generator",
+      "Safe ad-production loop for an agent"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 574,
+      "endLine": 581,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L574",
+      "sha256": "f10f187fc238d4596bae34d99bfab9ce620d298a3cfb5c4f6e336676cac94a8d"
+    },
+    "contentMarkdown": "### Safe ad-production loop for an agent\n\n1. Establish the **campaign boundary**: product, market, approved benefit/offer, audience, platform format, brand restrictions, and whether real-person likeness/voice is authorized.\n2. Upload/select the approved product asset and decide the execution: product still, Talking Actor UGC, Animated Actor, B-roll, or a complete Mark/Workflow batch.\n3. Set choices only in the selected route’s live form. In particular, choose **actor + voice + script** in Talking Actor; choose **movement** in Animated Actors; choose **model + shot description** in B-roll; choose **locale/accent** in Translate.\n4. Review one ad for product accuracy, spoken wording, subtitles, actor/voice appropriateness, localization and visual continuity before generating a batch. Neither a good source product image nor an automated emotion pass approves advertising claims.\n5. For scale, turn the approved structure into a Workflow and keep the product, script, actor set, locale and output set explicit at the workflow inputs. Review the batch before publish/export.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-1b8baeb4fe8e",
+    "title": "Agent/MCP boundary",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "5. Arcads — UGC/performance-ad production, not a generic video generator",
+      "Agent/MCP boundary"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 582,
+      "endLine": 585,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L582",
+      "sha256": "b3f1abe9446899ed9d68217b380fea535628227cfea2b478fd07b80d5fabc001"
+    },
+    "contentMarkdown": "### Agent/MCP boundary\n\nArcads now offers a hosted MCP endpoint as an integration path, in addition to its browser surfaces and public API. It requires an Arcads account and an active subscription with remaining credits; a connected agent must retain the same review/credit boundary as a user in Studio. Current public MCP material advertises operations such as competitor-ad analysis and adapting a hook/static ad, but that is a capability description—not permission to make unverified comparative claims, use an unlicensed likeness/creative, or publish without approval. [Arcads MCP help](https://intercom.help/arcads/en/articles/15655699-arcads-mcp) · [Arcads API guide](https://intercom.help/arcads/en/articles/10538922-arcads-ai-api-documentation)\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-dac737fb48cd",
+    "title": "Arcads learning sources",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "5. Arcads — UGC/performance-ad production, not a generic video generator",
+      "Arcads learning sources"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 586,
+      "endLine": 594,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L586",
+      "sha256": "f6e15fca11044b8eba546dceb0da52e52de651ce65b9d719c60fc7d308c0e2b1"
+    },
+    "contentMarkdown": "### Arcads learning sources\n\n- [Arcads Help Centre: complete platform guide collection](https://intercom.help/arcads/en/collections/7500987-how-to-use-arcads-platform)\n- [Getting Started walkthrough](https://intercom.help/arcads/en/articles/14531683-getting-started-with-arcads) — current UI baseline; recheck the selected model/mode form.\n- [Workflow Feature](https://intercom.help/arcads/en/articles/15393713-what-is-the-workflow-feature) — current node/batch concepts and examples.\n- [MCP documentation](https://intercom.help/arcads/en/articles/15655699-arcads-mcp) — integration only; does not replace user approval.\n\n---\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-cc3e829c0f33",
+    "title": "6. Cross-platform workflow routing",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "6. Cross-platform workflow routing"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 595,
+      "endLine": 598,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L595",
+      "sha256": "7a572a1a1cb94726e485f1952ba6e1ecafe49c5160636973938aed11fcec6fe5"
+    },
+    "contentMarkdown": "## 6. Cross-platform workflow routing\n\n> **Version scope:** This is a routing synthesis, not a new platform version. Each row inherits the named platform/surface key from the version ledger; an agent must output that key when applying a row to a real generation.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-e23bc75bdf23",
+    "title": "What to choose for the actual user request",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "6. Cross-platform workflow routing",
+      "What to choose for the actual user request"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 599,
+      "endLine": 616,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L599",
+      "sha256": "01689a2c4ad2ba1eb1228e4f0542bcc8fbff72eb1198b13b553ab041ec3551be"
+    },
+    "contentMarkdown": "### What to choose for the actual user request\n\n| User needs | Best first route | Why | Do not promise |\n|---|---|---|---|\n| Test the same source/prompt against several models, compare cost, then integrate in code | **fal Sandbox → specific Playground → API** | This is fal’s purpose-built comparison/reproducibility flow. | A shared set of model controls or a video-edit timeline. |\n| Create or precisely revise a still in a conversational workspace | **ChatGPT native GPT Image 2 (`gpt-image-2`)** | It supports prompt-led reference use and iterative follow-up edits in one chat. | A native video render, external provider workspace, or API-only output controls. |\n| Generate a provider image/video without leaving an MCP-capable chat/agent | **Named provider MCP**, after provider sign-in, workspace and credits are verified | MCP can be a direct alternative generation path; it returns provider outputs into the agent conversation and/or provider library. | Web-UI parity, a matching ChatGPT plan/account, free/unlimited web access, or an unexposed feature such as OpenArt Smart Shot. |\n| Direct a cinematic shot with direct film-grammar settings, shared cast/assets, and a project context | **Higgsfield Cinema Studio 4.0** | Genre/era/tempo/light/camera/lens/aperture/Emotion Wheel are native UI controls. | 4K/one-minute output until the active dropdown confirms it. |\n| Generate a controlled still and animate it with one current Runway model | **Runway Tool Mode: Gen-4 Image → Use → Gen-4.5 I2V** | The output handoff and reference process are documented. | Gen-4.5 start/end frames, video editing, or arbitrary external reference modes. |\n| Replace/re-light/restyle/remove something in a short source video | **Runway Edit Studio** or the matching **OpenArt Video** edit tool | Both expose dedicated edit routes; use source constraints to choose. | That an arbitrary long/high-FPS/multi-cut clip will upload successfully. |\n| Animate a character’s actual performance from an actor/driving clip | **Runway Act-Two** | It explicitly maps driving performance to character image/video and has gesture rules. | A full-body, multi-character, cut-heavy performance transfer without testing. |\n| Make a multi-shot scene without hand-assembling every shot | **OpenArt Smart Shot** or **Runway Multi-Shot App** | Both are explicitly structured multi-shot modes; OpenArt shows a Shot Plan, Runway states up to five shots. | A conventional editable timeline from either generator. |\n| Take a concept to an AI-assembled story/campaign/short video by conversation | **OpenArt Director** or **Runway Agent** | Both are chat-based planning/production surfaces, with different asset/timeline approaches. | Autonomous final approval or guaranteed cross-scene continuity. |\n| Produce testable UGC/ad variations from product assets, actors, scripts and locales | **Arcads Studio → Talking/Animated Actor or B-roll → Workflow**; use **Mark** where a campaign-level conversational route is wanted | Its asset, actor, localization and batch surfaces are designed for creative testing. | Cinema-Studio film controls, generic model parity, unreviewed advertising claims, or automatic publication. |\n| Preserve a recurring person/location/brand in OpenArt | **Character / World / Brand Kit** then the selected shot tool | This uses the suite’s persistent asset model. | Exact text/logo rendering or a model’s undocumented reference support. |\n| Plan script → shots → storyboard → take/cut table in one shared planning document before any generation (storyboard-first model, workflows W10) | **FilmFlow Pro** (`FILMFLOW-WEB@2026-09-07`) if its frames stay look-free and it exports the production-pipeline ch. 2 schema; otherwise a Markdown shot board + grey sketches | Script, shot list and storyboard frames are one linked document with an animatic; the take/cut table and camera setup system are the skill's own additions on top. | AI renderings or an export/API — not on its public pages on the check date; any generation at all. |\n| Need geometry-consistent location views | **OpenArt World → captured keyframes**; otherwise external 3D/blockout | World is a navigable persistent scene and captured output can seed video. | Current export to mesh/splats; it is not shipped in the cited source. |\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-2ed9b643b727",
+    "title": "Continuity strategy by platform",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "6. Cross-platform workflow routing",
+      "Continuity strategy by platform"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 617,
+      "endLine": 627,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L617",
+      "sha256": "ac2795a63981d183c2defa36b1c5820423909df5ccda3bb9e1fe5404cd52ac7e"
+    },
+    "contentMarkdown": "### Continuity strategy by platform\n\n| Platform | Agent-safe continuity mechanism |\n|---|---|\n| Higgsfield | Create/reuse Elements and Soul/AI Cast assets inside one project; add relevant references; use one project brief and shot folders. |\n| fal.ai | Host/preserve canonical assets yourself and pass the URLs/files the selected endpoint accepts. The API result is a response with media URLs, not a film bible. |\n| Runway | Create neutral character/environment plates; tag up to three reusable Gen-4 image References; store in Assets; animate approved stills. |\n| OpenArt | Save Character, World, Brand Kit, and Media assets; attach them in the selected tool or tag them in Director. |\n| Arcads | Retain the approved product asset, actor/voice choice, script, locale and winning creative structure; make all of them explicit Workflow inputs when scaling. |\n| ChatGPT native | Keep the approved image and its reference/prompt context in the conversation while iterating; deliberately download/attach the final still when another provider must use it. |\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-905b7b1a103b",
+    "title": "A universally safe production loop",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "6. Cross-platform workflow routing",
+      "A universally safe production loop"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 628,
+      "endLine": 639,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L628",
+      "sha256": "a668c797d39114bfbfba52f888f07de4263c3b1ce0c284cdbde624ea284ec40d"
+    },
+    "contentMarkdown": "### A universally safe production loop\n\n1. Define a shot and its intended output shape/length before entering a generator.\n2. Establish identity/location/style in a still or persistent asset first.\n3. Use the platform’s own continuity/reference channel, not only prose.\n4. Select the model **after** choosing the platform/surface and inspect the live settings that remain.\n5. Make short validated clips; review in the six passes of post-audio-legal ch. 19 (identity → continuity → timing → camera → audio → style; geography and light are the continuity pass, editability = ENDING STATE reached).\n6. Use a dedicated edit/extend route for a local defect; regenerate only where the model/surface cannot make the repair.\n7. Assemble longer work in the platform’s stated sequence surface (Higgsfield project/tempo, Runway Timeline Studio/Agent, OpenArt Director/Smart Shot) or a conventional editor as appropriate.\n\n---\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-ad5ae3bbf61d",
+    "title": "7. Secondary-source audit: tutorials, blogs, and YouTube",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "7. Secondary-source audit: tutorials, blogs, and YouTube"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 640,
+      "endLine": 656,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L640",
+      "sha256": "2163075059e66062363d9234bf49e53481e7577b8b45b5c47eee8e4c577cb4db"
+    },
+    "contentMarkdown": "## 7. Secondary-source audit: tutorials, blogs, and YouTube\n\nPrimary product documentation is the authority for current UI, limits, plan access, and cost. The following external/tutorial pass was still useful as a **staleness check**, not as a replacement authority.\n\n| Source checked | Date / status | How it was used |\n|---|---|---|\n| [StackPicks: Higgsfield tutorial](https://stackpicks.dev/blog/how-to-use-higgsfield-ai-tutorial-2026) | Updated 16 Aug 2026 | Explicitly **not** used for feature facts: it claims 5–8-second clips and older preset counts, contradicting Higgsfield’s 12 Aug 4.0 guide (30 seconds, 30+ movements, 50 refs). This is the practical reason agents must reject even recent influencer/tutorial claims when the live primary source disagrees. |\n| [OpenArt Image-to-Video YouTube tutorial](https://www.youtube.com/watch?v=r6k8EqCQzQY) | 7 Apr 2026 | Found as a beginner walkthrough. It can help a user see a basic upload→motion→generate flow, but it predates current Director, current suite navigation, and current model/tool list; no UI fact above depends on it. |\n| [OpenArt official Tutorials](https://openart.ai/tutorials) | Current page | Preferred over third-party videos because it is maintained by the provider; still cross-check the screen/model dropdown. |\n| [Runway Academy](https://academy.runwayml.com/) | Current | Preferred learning source for current Agent/Apps usage; current Help Centre remains the authority for constraints. |\n| Higgsfield Academy / Creator Hub | Redesigned Aug 2026 | Preferred current learning source; the changelog records that old courses were retired in favour of video lessons/Keypoints. |\n| [Arcads Getting Started](https://intercom.help/arcads/en/articles/14531683-getting-started-with-arcads) | 2 July 2026 | Preferred current walkthrough for product → image → Talking Actor/Animated Actor/B-roll/Translate/Workflow routing; it supersedes older avatar-only Arcads videos. |\n\n**Research discipline:** an external walkthrough can contribute a user-experience observation only when it matches a current primary source. It cannot establish a technical limit, price, supported input, plan entitlement, model availability, or button name. Screens in videos age faster than prompts.\n\n---\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "platform-ui-workflows-ba1359d74f17",
+    "title": "8. Maintenance protocol",
+    "ancestry": [
+      "Current UI & User-Workflow Reference — Higgsfield, fal.ai, Runway, OpenArt, Arcads, ChatGPT",
+      "8. Maintenance protocol"
+    ],
+    "kind": "evidence",
+    "applicationContract": "routes",
+    "source": {
+      "path": "references/platform-ui-workflows.md",
+      "startLine": 657,
+      "endLine": 671,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L657",
+      "sha256": "9584f9c77f09d6030820a7b8e24bf021662cefaafc6582ac78daa3817149cdb9"
+    },
+    "contentMarkdown": "## 8. Maintenance protocol\n\nThis reference is intentionally dated. Re-verify the marked volatile areas before any production run and update the document with the primary URL and date:\n\n- model dropdown contents, model-specific input forms, reference counts, duration/resolution/audio options;\n- each MCP server URL, exposed tool/schema list, client transport, account/workspace authorization, result destination and MCP-only billing/plan exceptions; never infer web-UI parity from an integration announcement;\n- ChatGPT native image availability and the current `gpt-image-2`/Image API/Responses API boundaries; distinguish ChatGPT plan/workspace limits from API credentials and billing;\n- Arcads actor/voice/model/movement/localization forms, Mark abilities, Workflow node ports, MCP/API scope and credit requirements;\n- all plan, credit, export, and commercial-use claims;\n- current product names, especially Higgsfield Cinema Studio release names and Runway Apps;\n- Higgsfield standalone perspective/storyboard tools referenced in production-pipeline ch. 9 and 16 (Angles, Shots, DoP, Popcorn, Start & End Frame, WAN Camera Control): confirm presence and current label in the live tool picker; if confirmed, add a row to the \"What else the current Higgsfield UI can do\" table with URL + date and replace the undated warning in ch. 16;\n- release/retirement notices (Runway and OpenArt have recently retired entire prior surfaces);\n- any claim of native 4K, multi-minute generation, “unlimited,” “perfect consistency,” autonomous generation, or third-party model parity.\n\nWhen a source conflict remains unresolved—as with Higgsfield’s 30s/1080p documentation versus its 1min/native-4K marketing page (both still live on 2026-09-04)—record the conflict, use the lower verified capability as the working assumption, and ask the user to read the live control rather than guessing.\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  }
+]
