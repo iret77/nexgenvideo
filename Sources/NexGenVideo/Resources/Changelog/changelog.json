@@ -8,7 +8,8 @@
         "heading": "Hang diagnostics",
         "items": [
           "Opt-in local UI-hang recording with an independent helper, bounded event history and native thread stacks.",
-          "Optional encrypted transcript replay recording, explicit export and deletion. No automatic upload. This diagnostic build does not claim to fix the underlying UI hang."
+          "Optional encrypted transcript replay recording, explicit export and deletion. No automatic upload. This diagnostic build does not claim to fix the underlying UI hang.",
+          "Music Video pack 0.5.3 is paired with this build. Existing project pins and engine compatibility contracts remain unchanged."
         ]
       }]
     },
