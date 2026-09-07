@@ -1,0 +1,193 @@
+import CryptoKit
+import Foundation
+import Synchronization
+
+public enum DiagnosticOperation: String, Codable, Sendable {
+    case startup, heartbeat, runLoop, context, scroll, window
+    case runtimeReceive, runtimeApply, apiReceive, apiApply
+    case projection, markdown, imageDecode, pipelineRefresh, replaySnapshot
+    case recovered, stopped, captureFailure, dropped, testWait, testSpin
+}
+
+public struct DiagnosticRecord: Codable, Sendable {
+    public let sequence: UInt64
+    public let uptime: Double
+    public let operation: DiagnosticOperation
+    public let correlation: UInt64
+    public let end: Bool
+    public let values: [Double]
+
+    public init(sequence: UInt64, uptime: Double, operation: DiagnosticOperation,
+                correlation: UInt64 = 0, end: Bool = false, values: [Double] = []) {
+        self.sequence = sequence
+        self.uptime = uptime
+        self.operation = operation
+        self.correlation = correlation
+        self.end = end
+        self.values = Array(values.prefix(12)).map { $0.isFinite ? $0 : 0 }
+    }
+}
+
+public final class DiagnosticRing: @unchecked Sendable {
+    private let lock = NSLock()
+    private let counter = Atomic<UInt64>(0)
+    private let losses = Atomic<UInt64>(0)
+    private var slots: [DiagnosticRecord?]
+    private var readIndex = 0
+    private var count = 0
+
+    public init(capacity: Int = 8192) {
+        precondition(capacity > 0)
+        slots = Array(repeating: nil, count: capacity)
+    }
+
+    public var dropped: UInt64 { losses.load(ordering: .relaxed) }
+
+    @discardableResult
+    public func append(_ operation: DiagnosticOperation, correlation: UInt64 = 0,
+                       end: Bool = false, values: [Double] = []) -> UInt64 {
+        guard lock.try() else {
+            losses.wrappingAdd(1, ordering: .relaxed)
+            return 0
+        }
+        defer { lock.unlock() }
+        let id = counter.wrappingAdd(1, ordering: .relaxed).newValue
+        guard count < slots.count else {
+            losses.wrappingAdd(1, ordering: .relaxed)
+            return id
+        }
+        slots[(readIndex + count) % slots.count] = DiagnosticRecord(
+            sequence: id, uptime: ProcessInfo.processInfo.systemUptime,
+            operation: operation, correlation: correlation, end: end, values: values
+        )
+        count += 1
+        return id
+    }
+
+    public func drain() -> [DiagnosticRecord] {
+        lock.lock()
+        defer { lock.unlock() }
+        var result: [DiagnosticRecord] = []
+        result.reserveCapacity(count)
+        while count > 0 {
+            if let item = slots[readIndex] { result.append(item) }
+            slots[readIndex] = nil
+            readIndex = (readIndex + 1) % slots.count
+            count -= 1
+        }
+        return result
+    }
+}
+
+public struct DiagnosticHeartbeat: Codable, Sendable {
+    public let startupID: UUID
+    public let processID: Int32
+    public let writerUptime: Double
+    public let mainUptime: Double
+    public let runLoopUptime: Double
+    public let dropped: UInt64
+    public let stopped: Bool
+
+    public init(startupID: UUID, processID: Int32, writerUptime: Double,
+                mainUptime: Double, runLoopUptime: Double, dropped: UInt64, stopped: Bool) {
+        self.startupID = startupID
+        self.processID = processID
+        self.writerUptime = writerUptime
+        self.mainUptime = mainUptime
+        self.runLoopUptime = runLoopUptime
+        self.dropped = dropped
+        self.stopped = stopped
+    }
+}
+
+public struct DiagnosticHangState: Sendable {
+    public enum Action: Equatable, Sendable {
+        case pin, sample(Int), recovered, suspended
+    }
+    private var lastTick: Double?
+    private var pinned = false
+    private var samples = 0
+    private var baseline: Double = 0
+
+    public init() {}
+
+    public mutating func tick(now: Double, mainUptime: Double) -> Action? {
+        defer { lastTick = now }
+        if let lastTick, now - lastTick > 3.5 {
+            baseline = now
+            pinned = false
+            samples = 0
+            return .suspended
+        }
+        let age = now - max(mainUptime, baseline)
+        if age < 2 {
+            defer { pinned = false; samples = 0 }
+            return pinned ? .recovered : nil
+        }
+        if !pinned { pinned = true; return .pin }
+        if samples == 0 && age >= 5 { samples = 1; return .sample(1) }
+        if samples == 1 && age >= 15 { samples = 2; return .sample(2) }
+        return nil
+    }
+}
+
+public enum DiagnosticFiles {
+    public static func directory(_ url: URL) throws {
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true,
+                                               attributes: [.posixPermissions: 0o700])
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
+    }
+
+    public static func write(_ data: Data, to url: URL) throws {
+        try data.write(to: url, options: .withoutOverwriting)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+
+    public static func replace<T: Encodable>(_ value: T, at url: URL) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        try encoder.encode(value).write(to: url, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+
+    public static func digest(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+public struct DiagnosticReplayDelta: Codable, Sendable {
+    public let sequence: UInt64
+    public let uptime: Double
+    public let predecessor: String?
+    public let digest: String
+    public let prefix: Int
+    public let suffix: Int
+    public let inserted: Data
+
+    public init(sequence: UInt64, previous: Data?, current: Data) {
+        self.sequence = sequence
+        uptime = ProcessInfo.processInfo.systemUptime
+        predecessor = previous.map(DiagnosticFiles.digest)
+        digest = DiagnosticFiles.digest(current)
+        let old = previous ?? Data()
+        var prefix = 0
+        var suffix = 0
+        while prefix < min(old.count, current.count), old[prefix] == current[prefix] { prefix += 1 }
+        while suffix < min(old.count, current.count) - prefix,
+              old[old.count - suffix - 1] == current[current.count - suffix - 1] { suffix += 1 }
+        self.prefix = prefix
+        self.suffix = suffix
+        inserted = current.subdata(in: prefix..<(current.count - suffix))
+    }
+
+    public func apply(to previous: Data?) throws -> Data {
+        let old = previous ?? Data()
+        guard predecessor == previous.map(DiagnosticFiles.digest), prefix >= 0, suffix >= 0,
+              prefix <= old.count, suffix <= old.count - prefix else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        let output = old.prefix(prefix) + inserted + old.suffix(suffix)
+        guard DiagnosticFiles.digest(output) == digest else { throw CocoaError(.fileReadCorruptFile) }
+        return output
+    }
+}

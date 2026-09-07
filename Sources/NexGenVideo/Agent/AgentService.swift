@@ -2761,6 +2761,11 @@ final class AgentService {
                 var stopReason: AnthropicStopReason = .endTurn
 
                 for try await event in stream {
+                    let diagnosticID = HangDiagnosticRecorder.shared.record(.apiApply)
+                    defer {
+                        HangDiagnosticRecorder.shared.record(.apiApply, correlation: diagnosticID, end: true)
+                        HangDiagnosticTranscript.capture(messages: messages, streaming: true, sessionID: currentSessionId)
+                    }
                     try Task.checkCancellation()
                     switch event {
                     case .textDelta(let chunk):
@@ -3101,7 +3106,7 @@ final class AgentService {
     }
 }
 
-struct AgentMessage: Identifiable, Codable {
+struct AgentMessage: Identifiable, Codable, Sendable {
     enum Role: String, Codable { case user, assistant }
     let id: UUID
     let role: Role
@@ -3151,7 +3156,7 @@ struct AgentMessage: Identifiable, Codable {
     }
 }
 
-enum AgentContentBlock: Codable {
+enum AgentContentBlock: Codable, Sendable {
     case text(String)
     case toolUse(id: String, name: String, inputJSON: String)
     case toolResult(toolUseId: String, content: [ToolResult.Block], isError: Bool)

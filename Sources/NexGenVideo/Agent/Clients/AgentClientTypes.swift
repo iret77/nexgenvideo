@@ -119,6 +119,7 @@ enum AnthropicSSE {
                       let delta = event["delta"] as? [String: Any],
                       let deltaType = delta["type"] as? String else { break }
                 if deltaType == "text_delta", let text = delta["text"] as? String, !text.isEmpty {
+                    HangDiagnosticRecorder.shared.record(.apiReceive, values: [Double(text.utf8.count)])
                     continuation.yield(.textDelta(text))
                 } else if deltaType == "input_json_delta",
                           let partial = delta["partial_json"] as? String,
@@ -130,6 +131,7 @@ enum AnthropicSSE {
             case "content_block_stop":
                 if let index = event["index"] as? Int, let acc = pendingTools.removeValue(forKey: index) {
                     let json = acc.json.isEmpty ? "{}" : acc.json
+                    HangDiagnosticRecorder.shared.record(.apiReceive, values: [Double(json.utf8.count)])
                     continuation.yield(.toolUseComplete(id: acc.id, name: acc.name, inputJSON: json))
                 }
 

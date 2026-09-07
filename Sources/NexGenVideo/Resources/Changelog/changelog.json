@@ -2,6 +2,17 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.5.3",
+      "date": "2026-09-07",
+      "sections": [{
+        "heading": "Hang diagnostics",
+        "items": [
+          "Opt-in local UI-hang recording with an independent helper, bounded event history and native thread stacks.",
+          "Optional encrypted transcript replay recording, explicit export and deletion. No automatic upload. This diagnostic build does not claim to fix the underlying UI hang."
+        ]
+      }]
+    },
+    {
       "version": "1.5.2",
       "date": "2026-09-06",
       "sections": [

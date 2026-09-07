@@ -180,6 +180,8 @@ final class ClaudeCodeRuntime {
         var authenticationEvents = ClaudeCodeAuthenticationEventBuffer()
         do {
             for try await line in stream {
+                let diagnosticID = HangDiagnosticRecorder.shared.record(.runtimeApply, values: [Double(line.utf8.count)])
+                defer { HangDiagnosticRecorder.shared.record(.runtimeApply, correlation: diagnosticID, end: true) }
                 guard gen == generation else { return }   // stopped / rotated before this line: don't ingest or publish
                 let decoded = ClaudeStreamDecoder.decode(line: line)
                 guard !decoded.isEmpty else { continue }
@@ -198,6 +200,7 @@ final class ClaudeCodeRuntime {
                     events = ready
                 }
                 for event in events { mapper.ingest(event) }
+                HangDiagnosticTranscript.capture(messages: mapper.messages, streaming: true, sessionID: appSessionId)
                 if !reportedSessionId, let sid = mapper.sessionId {
                     reportedSessionId = true
                     onSessionId?(sid)
