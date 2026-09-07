@@ -149,6 +149,12 @@ final class AgentService {
     }
 
     func refreshBackendStatus() {
+        if ProcessInfo.processInfo.environment["NGV_DIAGNOSTIC_REPLAY"] != nil {
+            isCheckingAPIKey = false
+            isCheckingClaude = false
+            claudeStatus = .init(executableURL: nil, version: "offline-replay", isAuthenticated: true)
+            return
+        }
         switch backend {
         case .anthropicAPI:
             reloadAPIKey()

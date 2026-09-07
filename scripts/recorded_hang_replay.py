@@ -78,9 +78,12 @@ def main():
                     if not screenshot_taken and (root / "progress.json").exists():
                         progress = json.loads((root / "progress.json").read_text())
                         if progress.get("sequence") == decoded[-1]["sequence"]:
-                            subprocess.run(["screencapture", "-x", "-l", str(progress["windowNumber"]),
-                                            str(root / "final.png")], stdout=subprocess.DEVNULL,
-                                           stderr=subprocess.DEVNULL, timeout=10)
+                            try:
+                                subprocess.run(["screencapture", "-x", "-l", str(progress["windowNumber"]),
+                                                str(root / "final.png")], stdout=subprocess.DEVNULL,
+                                               stderr=subprocess.DEVNULL, timeout=10)
+                            except subprocess.TimeoutExpired:
+                                pass
                             screenshot_taken = True
                     time.sleep(0.5)
             finally:
@@ -101,6 +104,7 @@ def main():
         result["maxObservedCPU"] = max((o["cpu"] for o in observations), default=None)
         result["maxRSSKB"] = max((o["rssKB"] for o in observations), default=None)
         result["busySamples"] = captures
+        result["osVersion"] = subprocess.check_output(["sw_vers", "-productVersion"], text=True).strip()
         result["highCPUObservations"] = sum(o["cpu"] >= 80 for o in observations)
         result["constraintOverflowWarning"] = "constant that exceeds internal limits" in (root / "app.log").read_text(errors="replace")
         if (root / "progress.json").exists():

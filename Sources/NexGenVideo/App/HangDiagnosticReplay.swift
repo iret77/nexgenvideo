@@ -23,6 +23,7 @@ enum HangDiagnosticReplay {
             let app = NSApplication.shared
             app.setActivationPolicy(.regular)
             BundledFonts.register()
+            AgentBackendPreference.set(.claudeCode)
             let editor = EditorViewModel()
             editor.workspaceFocus = .produce
             editor.agentPanelVisible = true
@@ -31,16 +32,18 @@ enum HangDiagnosticReplay {
             let recordedWindow = records.last { $0.operation == .window && $0.values.count >= 6 && $0.values[5] == 1 }
             let recordedScroll = records.last { $0.operation == .scroll && $0.values.count >= 5 }
             if matchGeometry { editor.cockpitTab = .review }
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1470, height: 950),
-                styleMask: [.titled, .resizable, .closable], backing: .buffered, defer: false)
+            let host = NSHostingController(rootView: EditorWindowContentView().environment(editor).allowsHitTesting(false))
+            host.safeAreaRegions = []
+            let window = NSWindow(contentViewController: host)
+            window.styleMask.insert([.fullSizeContentView, .resizable, .closable])
+            window.titleVisibility = .hidden
+            window.titlebarAppearsTransparent = true
+            window.appearance = NSAppearance(named: .darkAqua)
+            window.setFrame(NSRect(x: 0, y: 0, width: 1470, height: 950), display: false)
             if let recordedWindow {
-                window.styleMask.insert(.fullSizeContentView)
-                window.titleVisibility = .hidden
-                window.titlebarAppearsTransparent = true
                 window.setFrame(NSRect(x: 0, y: 0, width: recordedWindow.values[1],
                                        height: recordedWindow.values[2]), display: false)
             }
-            window.contentView = NSHostingView(rootView: EditorWindowContentView().environment(editor).allowsHitTesting(false))
             window.isReleasedWhenClosed = false
             window.makeKeyAndOrderFront(nil)
             app.activate(ignoringOtherApps: true)
@@ -123,6 +126,8 @@ enum HangDiagnosticReplay {
         let progress: [String: Any] = ["sequence": sequence.map { $0 as Any } ?? NSNull(),
                                        "finished": sequence == nil, "scrolls": geometry,
                                        "windowNumber": window.windowNumber,
+                                       "editableTextViews": views.compactMap { $0 as? NSTextView }
+                                           .filter { $0.isEditable && !$0.isHiddenOrHasHiddenAncestor }.count,
                                        "views": views.count,
                                        "constraints": views.reduce(0) { $0 + $1.constraints.count }]
         if let data = try? JSONSerialization.data(withJSONObject: progress) {
