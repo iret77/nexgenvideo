@@ -2,6 +2,55 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.5.5",
+      "date": "2026-09-08",
+      "sections": [
+        {
+          "heading": "Fixes",
+          "items": [
+            "Selection questions retain their original casing and use readable text sizing without expanded letter spacing.",
+            "Analysis navigation uses the same neutral styling as other pipeline destinations. Pack tabs no longer show a colored dot that can be mistaken for an error.",
+            "Transcript blocks isolate descendant alignment during layout updates. The original reported UI hang remains under investigation."
+          ]
+        },
+        {
+          "heading": "Models",
+          "items": [
+            "Model capability research offers reviewed, persistent evidence in Settings and applies accepted capabilities to routing while preserving live provider limits."
+          ]
+        }
+      ]
+    },
+    {
+      "version": "1.5.4",
+      "date": "2026-09-07",
+      "sections": [
+        {
+          "heading": "Fixes",
+          "items": [
+            "Hang and replay recordings survive repeated launches and automatic cleanup. New recordings stop starting at the storage limit instead of deleting evidence or keys.",
+            "Diagnostic export identifies sessions by date, prioritizes recorded hangs, defaults to Downloads and reveals the saved ZIP in Finder. Missing replay keys are reported explicitly.",
+            "Acknowledged hang diagnostic notifications no longer reappear on every launch. Recordings remain available for export.",
+            "Music Video pack 0.5.4 is paired with this diagnostic build. Existing project pins and engine compatibility contracts remain unchanged."
+          ]
+        }
+      ]
+    },
+    {
+      "version": "1.5.3",
+      "date": "2026-09-07",
+      "sections": [
+        {
+          "heading": "Hang diagnostics",
+          "items": [
+            "Opt-in local UI-hang recording with an independent helper, bounded event history and native thread stacks.",
+            "Optional encrypted transcript replay recording, explicit export and deletion. No automatic upload. This diagnostic build does not claim to fix the underlying UI hang.",
+            "Music Video pack 0.5.3 is paired with this build. Existing project pins and engine compatibility contracts remain unchanged."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.5.2",
       "date": "2026-09-06",
       "sections": [
@@ -31,7 +80,8 @@
           "heading": "Production intelligence",
           "items": [
             "Music Video now selects only the production doctrine, camera, story, continuity, and production-sheet guidance relevant to the current phase and intent, within a deterministic context budget.",
-            "Shot planning and sanity checks can evaluate visible-character, duration, and reference demands against the selected generation route instead of fixed global limits."
+            "Shot planning and sanity checks can evaluate visible-character, duration, and reference demands against the selected generation route instead of fixed global limits.",
+            "Inherited, defensive, stale, or conflicting model specifications can be researched from Models settings in an isolated Claude web session, reviewed field by field, and saved as reversible local evidence without weakening live provider limits."
           ]
         },
         {
@@ -67,7 +117,7 @@
           "heading": "Generation and pipeline",
           "items": [
             "Format packs can publish format-neutral execution inputs, production routing, source bindings, and exact-byte provenance without moving project truth out of the host.",
-            "Model selection and validation now derive duration, resolution, reference, and provider-route limits from versioned capabilities, including the verified Seedance 2.5 480p/720p and 4–30-second contract.",
+            "Model selection and validation now derive duration, resolution, reference, and provider-route limits from versioned capabilities, including the verified Seedance 2.5 480p/720p and 4\u201330-second contract.",
             "Imported and AI-enhanced shots retain their declared project-local source and deterministic render route through planning, approval, and final provenance checks."
           ]
         },
@@ -283,7 +333,7 @@
         {
           "heading": "Generation",
           "items": [
-            "Seedance 2.5 is integrated through fal.ai and recognized across Higgsfield discovery, with automatic or 4–30-second duration, 480p and 720p output, and up to 50 mixed references where supported.",
+            "Seedance 2.5 is integrated through fal.ai and recognized across Higgsfield discovery, with automatic or 4\u201330-second duration, 480p and 720p output, and up to 50 mixed references where supported.",
             "Music Video duration checks now read versioned pack capability data instead of enforcing a hardcoded 15-second Seedance limit."
           ]
         }
@@ -478,7 +528,7 @@
           "heading": "Agent",
           "items": [
             "Agent transcripts remain responsive when Brief opens after Audio Analysis.",
-            "Main-thread stalls now save recent pipeline state and, when available, a process sample under Help → Reveal Diagnostics."
+            "Main-thread stalls now save recent pipeline state and, when available, a process sample under Help \u2192 Reveal Diagnostics."
           ]
         }
       ]

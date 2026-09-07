@@ -6,7 +6,7 @@ import Foundation
 // unknown extra keys are ignored, so a newer engine schema still loads read-only.
 // This drives both the Pipeline panel (phases + next open phase) and the Cost panel (budget numbers).
 
-struct ProjectStateData: Decodable, Sendable, Equatable {
+struct ProjectStateData: Codable, Sendable, Equatable {
     var project: String
     var mode: String
     var budgetEur: Double
@@ -62,7 +62,7 @@ struct ProjectStateData: Decodable, Sendable, Equatable {
 }
 
 /// One pipeline phase and whether its gate has been approved.
-struct ProjectPhase: Decodable, Sendable, Equatable, Identifiable {
+struct ProjectPhase: Codable, Sendable, Equatable, Identifiable {
     var phase: String
     var approved: Bool
     var state: String

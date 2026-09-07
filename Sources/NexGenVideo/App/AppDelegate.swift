@@ -2,7 +2,9 @@ import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        MainThreadHangWatchdog.shared.start()
+        if Bundle.main.object(forInfoDictionaryKey: "NGVDiagnosticBuild") as? Bool != true {
+            MainThreadHangWatchdog.shared.start()
+        }
         AppRelaunchSelfTest.checkpoint("delegate-started")
 
         // Activate the app (required when launched from CLI, not a .app bundle)
@@ -66,6 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppNotifications.configure()
 
         AppState.shared.reconcileMCPService()
+        DispatchQueue.main.async { HangDiagnosticUI.launch() }
     }
 
     func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool {
@@ -135,5 +138,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func showTutorial(_ sender: Any?) {
         guard let editor = AppState.shared.activeProject?.editorViewModel else { return }
         editor.tour.start(in: editor)
+    }
+
+    @MainActor @objc func configureHangDiagnostics(_ sender: Any?) {
+        HangDiagnosticRecorder.shared.configure()
+    }
+
+    @MainActor @objc func exportHangDiagnostics(_ sender: Any?) {
+        HangDiagnosticUI.export()
+    }
+
+    @MainActor @objc func deleteHangDiagnostics(_ sender: Any?) {
+        HangDiagnosticUI.delete()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        HangDiagnosticRecorder.shared.stop()
     }
 }

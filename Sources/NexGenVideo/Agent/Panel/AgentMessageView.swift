@@ -7,7 +7,7 @@ struct AgentTranscriptTurnView: View {
     let toolResults: [String: ToolRunResult]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+        AgentTranscriptLayout {
             ForEach(turn.items) { item in
                 switch item {
                 case .userIntent(let intent):
@@ -218,7 +218,7 @@ struct AgentMessageView: View {
         let structuredResults = parsedStructuredResults
         let firstStructuredResultIndex = structuredResults.first?.index
         let combinedStructuredBlocks = structuredResults.flatMap(\.blocks)
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+        AgentTranscriptLayout {
             ForEach(Array(message.blocks.enumerated()), id: \.offset) { index, block in
                 switch block {
                 case .text(let text):
@@ -862,6 +862,8 @@ private struct ToolResultImageView: View {
         }
         .task(id: base64) {
             guard image == nil else { return }
+            let diagnosticID = HangDiagnosticRecorder.shared.record(.imageDecode, values: [Double(base64.utf8.count)])
+            defer { HangDiagnosticRecorder.shared.record(.imageDecode, correlation: diagnosticID, end: true) }
             let data = await Task.detached { Data(base64Encoded: base64) }.value
             if let data { image = NSImage(data: data) }
         }

@@ -1,0 +1,25 @@
+{
+  "schema": "model-capability-research-candidate/v1",
+  "binding": {
+    "identity": {"family_id": "gemini-image", "variant_id": "flash", "version_id": "2.5", "modality": "image"},
+    "provider_id": "google",
+    "offering_id": "google::gemini-2.5-flash-image",
+    "endpoint_id": "gemini-2.5-flash-image",
+    "catalog_model_id": "nano-banana",
+    "mode": "edit"
+  },
+  "scope": "intrinsic",
+  "fields": {
+    "integers": {
+      "image.references": {"value": 3, "semantics": "reliable_capacity", "evidence": [{"source_url": "https://ai.google.dev/gemini-api/docs/image-generation", "source_title": "Gemini API image generation", "observed_at": "2026-08-31", "kind": "documented_api", "confidence": 0.96}]}
+    },
+    "decimals": {},
+    "booleans": {
+      "image.edit": {"value": true, "semantics": "supported_value", "evidence": [{"source_url": "https://ai.google.dev/gemini-api/docs/image-generation", "source_title": "Gemini API image generation", "observed_at": "2026-08-31", "kind": "documented_api", "confidence": 0.98}]}
+    },
+    "strings": {
+      "common.aspect_ratios": {"value": ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"], "semantics": "supported_set", "evidence": [{"source_url": "https://ai.google.dev/gemini-api/docs/image-generation", "source_title": "Gemini API image generation", "observed_at": "2026-08-31", "kind": "documented_api", "confidence": 0.95}]}
+    },
+    "integer_lists": {}
+  }
+}

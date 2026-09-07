@@ -68,6 +68,8 @@ final class ModelCatalog {
     private(set) var providerDiscovery: [GenerationProvider: ProviderDiscoveryState] = [:]
     private(set) var offeringCapabilitiesByModelID:
         [String: [ResolvedOfferingCapabilityProfileV1]] = [:]
+    private(set) var curatedOfferingCapabilitiesByModelID:
+        [String: [ResolvedOfferingCapabilityProfileV1]] = [:]
     private(set) var isLoaded: Bool = false
     private(set) var lastError: String?
 
@@ -134,6 +136,10 @@ final class ModelCatalog {
     private func rebuild() {
         apply(mergedEntries())
         NotificationCenter.default.post(name: .modelCatalogChanged, object: nil)
+    }
+
+    func refreshCapabilityResolution() {
+        rebuild()
     }
 
     /// Base ∪ discovered, base first and its curated fields winning; a model offered by both merges the
@@ -277,7 +283,11 @@ final class ModelCatalog {
         var newInternalByLogical: [String: String] = [:]
         var newOfferingCapabilitiesByModelID:
             [String: [ResolvedOfferingCapabilityProfileV1]] = [:]
+        var newCuratedOfferingCapabilitiesByModelID:
+            [String: [ResolvedOfferingCapabilityProfileV1]] = [:]
         var capabilityErrors: [String] = []
+        let researchRecords = ModelCapabilityResearchController.shared.records
+        let researchCorpus = CatalogCapabilityRuntime.corpus
         newVideo.reserveCapacity(entries.count)
         newImage.reserveCapacity(entries.count)
         newAudio.reserveCapacity(entries.count)
@@ -286,10 +296,20 @@ final class ModelCatalog {
 
         for entry in entries {
             do {
-                let capabilities = try Self.offeringCapabilities(
+                let curatedCapabilities = try Self.offeringCapabilities(
                     for: entry,
                     resolver: capabilityResolver
                 )
+                let capabilities = try curatedCapabilities.map {
+                    try Self.applyingResearchRecords(
+                        to: $0,
+                        records: researchRecords,
+                        corpus: researchCorpus
+                    )
+                }
+                if !curatedCapabilities.isEmpty {
+                    newCuratedOfferingCapabilitiesByModelID[entry.id] = curatedCapabilities
+                }
                 if !capabilities.isEmpty {
                     newOfferingCapabilitiesByModelID[entry.id] = capabilities
                 }
@@ -329,7 +349,55 @@ final class ModelCatalog {
         self.offersById = newOffersById
         self.internalByLogical = newInternalByLogical
         self.offeringCapabilitiesByModelID = newOfferingCapabilitiesByModelID
+        self.curatedOfferingCapabilitiesByModelID = newCuratedOfferingCapabilitiesByModelID
         self.lastError = capabilityErrors.first
+    }
+
+    nonisolated static func applyingResearchRecords(
+        to capability: ResolvedOfferingCapabilityProfileV1,
+        records: [ModelCapabilityResearchOverlayRecordV1],
+        corpus: ModelCapabilityCorpusDocument?,
+        now: Date = Date()
+    ) throws -> ResolvedOfferingCapabilityProfileV1 {
+        guard let corpus, !records.isEmpty else { return capability }
+        let resolvedBinding = ModelCapabilityResearchIdentityPolicy.binding(
+            profile: capability.intrinsic,
+            offering: capability.offering,
+            corpus: corpus
+        )
+        let identity = resolvedBinding.value.identity
+        let matching = records.filter { $0.binding.identity == identity }
+        guard !matching.isEmpty else { return capability }
+        let curatedIntrinsic = ModelCapabilityResearchIdentityPolicy.bindingProfile(
+            capability.intrinsic,
+            to: identity
+        )
+        let curatedEffective = ModelCapabilityResearchIdentityPolicy.bindingProfile(
+            capability.effective,
+            to: identity
+        )
+        let intrinsic = try ModelCapabilityResearchOverlayResolver.resolve(
+            curatedIntrinsic: curatedIntrinsic,
+            records: matching.filter { $0.scope == .intrinsic },
+            staleAfterDays: corpus.staleAfterDays,
+            now: now
+        )
+        let proposedEffective = try ModelCapabilityResearchOverlayResolver.resolve(
+            curatedIntrinsic: curatedIntrinsic,
+            records: matching,
+            offering: capability.offering,
+            staleAfterDays: corpus.staleAfterDays,
+            now: now
+        )
+        let effective = ModelCapabilityResearchOverlayResolver.applyingResolvedEndpointBoundary(
+            curatedEffective,
+            to: proposedEffective
+        )
+        return ResolvedOfferingCapabilityProfileV1(
+            offering: capability.offering,
+            intrinsic: intrinsic.profile,
+            effective: effective.profile
+        )
     }
 
     nonisolated static func offeringCapabilities(
@@ -547,6 +615,7 @@ final class ModelCatalog {
         offersById = [:]
         internalByLogical = [:]
         offeringCapabilitiesByModelID = [:]
+        curatedOfferingCapabilitiesByModelID = [:]
         lastError = error
     }
 

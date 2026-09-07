@@ -148,8 +148,13 @@ BIN="$BIN_DIRECTORY/NexGenVideo"
 echo "==> Assembling $APP"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
+mkdir -p "$APP/Contents/Helpers"
+cp "$BIN_DIRECTORY/NexGenVideoDiagnostics" "$APP/Contents/Helpers/NexGenVideoDiagnostics"
 cp "$BIN" "$APP/Contents/MacOS/NexGenVideo"
 cp "$RESOURCES/Info.plist" "$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :NGVSourceCommit string $(git rev-parse HEAD)" "$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :NGVBuildConfiguration string $CONFIG" "$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :NGVBuildSDK string $(xcrun --show-sdk-version)" "$APP/Contents/Info.plist"
 
 if [ -n "$PLUGIN_CATALOG_URL" ]; then
   case "$PLUGIN_CATALOG_URL" in
@@ -217,6 +222,8 @@ fi
 echo "==> Generating dSYM"
 rm -rf "$DSYM"
 dsymutil "$APP/Contents/MacOS/NexGenVideo" -o "$DSYM"
+dsymutil "$BIN_DIRECTORY/NexGenVideoDiagnostics" -o "$ROOT/.build/NexGenVideoDiagnostics.dSYM"
+dsymutil "$BIN_DIRECTORY/libNexGenEngine.dylib" -o "$ROOT/.build/NexGenEngine.dSYM"
 
 if [ "$MODE" = "dev" ]; then
   echo "==> Ad-hoc signing dev app"
@@ -254,6 +261,7 @@ for dylib in "$APP/Contents/Frameworks"/*.dylib; do
 done
 
 echo "==> Codesigning main app"
+codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP/Contents/Helpers/NexGenVideoDiagnostics"
 codesign --force --options runtime --timestamp \
   --entitlements "$ENTITLEMENTS" \
   --sign "$SIGN_IDENTITY" \

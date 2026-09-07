@@ -89,6 +89,11 @@ struct AgentPanelView: View {
         .onChange(of: packProgress) { _, _ in refreshDiscoveredPlugins() }
         .onChange(of: hangContext, initial: true) { _, context in
             MainThreadHangWatchdog.shared.update(context: context)
+            HangDiagnosticRecorder.shared.record(.context, values: [
+                context.isStreaming ? 1 : 0, context.hasDialog ? 1 : 0,
+                context.hasGateApproval ? 1 : 0, context.hasSpendApproval ? 1 : 0,
+            ])
+            service.captureDiagnosticTranscript()
         }
         .onChange(of: surfaceState.dockOwner) { previous, current in
             if previous != .composer, current == .composer {
@@ -551,6 +556,11 @@ struct AgentPanelView: View {
                 for: .sizeChanges
             )
             .onScrollPhaseChange { _, newPhase, context in
+                HangDiagnosticRecorder.shared.record(.scroll, values: [
+                    context.geometry.contentSize.height, context.geometry.contentOffset.y,
+                    context.geometry.containerSize.height, isUserPinnedAway ? 1 : 0,
+                    context.geometry.containerSize.width,
+                ])
                 let suppressProgrammaticUpdate = programmaticScrollPending
                 if newPhase == .interacting
                         || newPhase == .decelerating

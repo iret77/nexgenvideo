@@ -70,6 +70,9 @@ struct AgentTranscriptTurn: Identifiable {
 
 enum AgentTranscriptProjection {
     static func turns(messages: [AgentMessage], isStreaming: Bool) -> [AgentTranscriptTurn] {
+        HangDiagnosticSelfTest.injectReplayControl(messages)
+        let diagnosticID = HangDiagnosticRecorder.shared.record(.projection, values: [Double(messages.count)])
+        defer { HangDiagnosticRecorder.shared.record(.projection, correlation: diagnosticID, end: true) }
         let messageTurns = splitIntoTurns(messages)
         return messageTurns.enumerated().compactMap { index, messages in
             project(messages, isRunning: isStreaming && index == messageTurns.count - 1)

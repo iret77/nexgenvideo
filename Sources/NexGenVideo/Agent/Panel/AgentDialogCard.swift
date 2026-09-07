@@ -162,10 +162,9 @@ struct AgentDialogCard: View {
         switch section.kind {
         case .choices(let options, let multiSelect):
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-                Text(section.label.uppercased())
-                    .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
-                    .tracking(AppTheme.Tracking.wide)
-                    .foregroundStyle(AppTheme.Text.mutedColor)
+                Text(section.label)
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
                 FlowChips(options: options,
                           selected: choiceSelections[section.id] ?? [],
                           multiSelect: multiSelect,

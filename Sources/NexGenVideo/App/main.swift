@@ -1,6 +1,8 @@
 import AppKit
 
 Log.bootstrap()
+ChatHangReplay.runIfRequested()
+HangDiagnosticReplay.runIfRequested()
 AppRelaunchSelfTest.recordBootIfRequested()
 
 // CI-only exact-file analysis through the real app and private digest-pinned fixture.
@@ -14,6 +16,7 @@ Telemetry.start()
 BundledFonts.register()
 ModelCatalog.shared.configure()
 ModelCatalog.shared.load(entries: ModelCatalog.launchEntries)
+ModelCapabilityResearchController.shared.start()
 // Then refresh from the hosted catalog (models + ranking cards without an app release); the
 // registries above are the offline fallback and first-run seed.
 Task { @MainActor in await RemoteCatalog.refresh() }

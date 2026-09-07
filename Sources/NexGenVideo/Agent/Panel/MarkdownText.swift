@@ -101,6 +101,8 @@ struct MarkdownText: View {
     }
 
     private static func cachedParse(_ text: String, scale: Double) -> [Block] {
+        let diagnosticID = HangDiagnosticRecorder.shared.record(.markdown, values: [Double(text.utf8.count), scale])
+        defer { HangDiagnosticRecorder.shared.record(.markdown, correlation: diagnosticID, end: true) }
         let key = "\(scale):\(text)" as NSString
         if let hit = cache.object(forKey: key) { return hit.value }
         let value = parse(text, scale: scale)
