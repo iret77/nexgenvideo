@@ -5,6 +5,9 @@ import SwiftUI
 
 @MainActor
 enum HangDiagnosticReplay {
+    private static var lastPulse = ProcessInfo.processInfo.systemUptime
+    private static var maximumPulseGap = 0.0
+
     static func runIfRequested() {
         let environment = ProcessInfo.processInfo.environment
         guard let path = environment["NGV_DIAGNOSTIC_REPLAY"],
@@ -34,7 +37,7 @@ enum HangDiagnosticReplay {
             if matchGeometry { editor.cockpitTab = .review }
             let host = NSHostingController(rootView: EditorWindowContentView().environment(editor).allowsHitTesting(false))
             host.safeAreaRegions = []
-            let window = NSWindow(contentViewController: host)
+            let window = ReplayWindow(contentViewController: host)
             window.styleMask.insert([.fullSizeContentView, .resizable, .closable])
             window.titleVisibility = .hidden
             window.titlebarAppearsTransparent = true
@@ -47,6 +50,14 @@ enum HangDiagnosticReplay {
             window.isReleasedWhenClosed = false
             window.makeKeyAndOrderFront(nil)
             app.activate(ignoringOtherApps: true)
+            let pulse = Timer(timeInterval: 0.25, repeats: true) { _ in
+                MainActor.assumeIsolated {
+                    let now = ProcessInfo.processInfo.systemUptime
+                    maximumPulseGap = max(maximumPulseGap, now - lastPulse)
+                    lastPulse = now
+                }
+            }
+            RunLoop.main.add(pulse, forMode: .common)
             Task { @MainActor in
                 var previous: HangDiagnosticTranscript?
                 var previousDigest: String?
@@ -77,6 +88,8 @@ enum HangDiagnosticReplay {
                             if let scroll = recordedScroll {
                                 restoreSidebarWidth(scroll.values[4], in: window)
                             }
+                            scrollTranscriptToBottom(in: window)
+                            try await Task.sleep(for: .milliseconds(100))
                             writeProgress(sequence: decoded.sequence, window: window, environment: environment)
                         }
                     }
@@ -88,6 +101,31 @@ enum HangDiagnosticReplay {
             app.run()
         } catch { exit(68) }
         exit(69)
+    }
+
+    private final class ReplayWindow: NSWindow {
+        override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
+    }
+
+    private static func scrollTranscriptToBottom(in window: NSWindow) {
+        guard let content = window.contentView,
+              let split = descendants(of: content).compactMap({ $0 as? NSSplitView })
+                .first(where: { $0.autosaveName == "editor.produce.root" }),
+              let sidebar = split.subviews.first,
+              let scroll = descendants(of: sidebar).compactMap({ $0 as? NSScrollView })
+                .filter({ !$0.isHiddenOrHasHiddenAncestor })
+                .max(by: { $0.contentView.bounds.height < $1.contentView.bounds.height }),
+              let document = scroll.documentView else { return }
+        let bottom = max(0, document.frame.height - scroll.contentView.bounds.height)
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: bottom))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        for phase in [NSEvent.Phase.began, .changed, .ended] {
+            guard let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
+                                      wheel1: -20, wheel2: 0, wheel3: 0) else { continue }
+            event.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+            event.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(phase.rawValue))
+            if let wheel = NSEvent(cgEvent: event) { scroll.scrollWheel(with: wheel) }
+        }
     }
 
     private static func structuralRecords(in folder: URL) throws -> [DiagnosticRecord] {
@@ -126,6 +164,9 @@ enum HangDiagnosticReplay {
         let progress: [String: Any] = ["sequence": sequence.map { $0 as Any } ?? NSNull(),
                                        "finished": sequence == nil, "scrolls": geometry,
                                        "windowNumber": window.windowNumber,
+                                       "windowWidth": window.frame.width,
+                                       "windowHeight": window.frame.height,
+                                       "maximumPulseGap": maximumPulseGap,
                                        "editableTextViews": views.compactMap { $0 as? NSTextView }
                                            .filter { $0.isEditable && !$0.isHiddenOrHasHiddenAncestor }.count,
                                        "views": views.count,
