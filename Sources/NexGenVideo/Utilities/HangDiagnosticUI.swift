@@ -11,6 +11,7 @@ enum HangDiagnosticUI {
             return
         }
         guard Bundle.main.object(forInfoDictionaryKey: "NGVDiagnosticBuild") as? Bool == true else { return }
+        HangDiagnosticRecorder.shared.pruneExpiredRecordings()
         switch UserDefaults.standard.string(forKey: "hangDiagnosticMode") {
         case "replay": HangDiagnosticRecorder.shared.start(includeContent: true)
         case "structure": HangDiagnosticRecorder.shared.start(includeContent: false)
@@ -19,7 +20,7 @@ enum HangDiagnosticUI {
         }
         if let folders = try? FileManager.default.contentsOfDirectory(at: HangDiagnosticRecorder.root,
             includingPropertiesForKeys: nil), folders.contains(where: {
-                FileManager.default.fileExists(atPath: $0.appendingPathComponent("pinned.json").path)
+                FileManager.default.fileExists(atPath: $0.appendingPathComponent("sample-request.json").path)
             }) {
             notifySaved()
         }
@@ -58,14 +59,20 @@ enum HangDiagnosticUI {
                 let copy = staging.appendingPathComponent(folder.lastPathComponent)
                 try await HangDiagnosticRecorder.shared.stageExport(from: folder, to: copy)
                 let process = Process()
+                let archive = staging.appendingPathComponent("recording.zip")
                 process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-                process.arguments = ["-c", "-k", "--keepParent", copy.path, destination.path]
+                process.arguments = ["-c", "-k", "--keepParent", copy.path, archive.path]
                 process.standardOutput = FileHandle.nullDevice
                 process.standardError = FileHandle.nullDevice
                 try process.run()
                 process.waitUntilExit()
                 guard process.terminationStatus == 0 else { throw CocoaError(.fileWriteUnknown) }
-                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
+                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: archive.path)
+                let partial = destination.deletingLastPathComponent().appendingPathComponent(".\(UUID().uuidString).partial")
+                defer { try? FileManager.default.removeItem(at: partial) }
+                try FileManager.default.copyItem(at: archive, to: partial)
+                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: partial.path)
+                guard rename(partial.path, destination.path) == 0 else { throw CocoaError(.fileWriteUnknown) }
                 await MainActor.run {
                     let alert = NSAlert()
                     alert.messageText = "Diagnostics exported"
@@ -97,6 +104,17 @@ enum HangDiagnosticUI {
         alert.addButton(withTitle: "Delete recordings")
         guard alert.runModal() == .alertSecondButtonReturn else { return }
         HangDiagnosticRecorder.shared.stop()
-        HangDiagnosticRecorder.shared.deleteRecordings()
+        Task { @MainActor in
+            let result = NSAlert()
+            do {
+                try await HangDiagnosticRecorder.shared.deleteRecordings()
+                result.messageText = "Local hang recordings deleted"
+                result.informativeText = "Exported copies and legacy crash logs were kept. Restart NexGenVideo to record again."
+            } catch {
+                result.messageText = "Some recordings could not be deleted"
+                result.informativeText = "Close other NexGenVideo instances and try again. Exported copies and legacy crash logs were kept."
+            }
+            result.runModal()
+        }
     }
 }

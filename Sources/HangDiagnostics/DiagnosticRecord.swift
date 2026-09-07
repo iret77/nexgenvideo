@@ -150,7 +150,10 @@ public enum DiagnosticFiles {
             let attributes = try file.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey, .fileSizeKey])
             guard attributes.isSymbolicLink != true else { throw CocoaError(.fileReadNoPermission) }
             guard attributes.isRegularFile == true else { continue }
-            let relative = String(file.path.dropFirst(source.path.count + 1))
+            let rootComponents = source.standardizedFileURL.pathComponents
+            let fileComponents = file.standardizedFileURL.pathComponents
+            guard fileComponents.starts(with: rootComponents) else { throw CocoaError(.fileReadNoPermission) }
+            let relative = fileComponents.dropFirst(rootComponents.count).joined(separator: "/")
             guard !relative.contains(".."), !relative.hasPrefix("/"),
                   isRecordingFile(relative) else { continue }
             let size = attributes.fileSize ?? 0
@@ -169,7 +172,7 @@ public enum DiagnosticFiles {
             "exportBeganUptime": String(began),
             "exportCompletedUptime": String(ProcessInfo.processInfo.systemUptime),
             "completeness": "Check heartbeat losses, capture-error and requested versus completed stack files.",
-            "replayScope": "UI state and displayed transcript images; library media bytes are not copied.",
+            "replayScope": "UI state and displayed transcript images; library media bytes and pipeline artifact bytes are not copied. Pack binaries are not embedded. Geometry is recorded, not restored by replay.",
         ], at: destination.appendingPathComponent("export.json"))
     }
 

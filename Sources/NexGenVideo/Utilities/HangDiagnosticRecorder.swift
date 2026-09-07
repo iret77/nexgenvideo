@@ -19,6 +19,7 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
     private let writer = DispatchQueue(label: "de.h5ventures.nexgenvideo.diagnostic-writer", qos: .utility)
     private let pulseQueue = DispatchQueue(label: "de.h5ventures.nexgenvideo.diagnostic-heartbeat", qos: .utility)
     private let snapshotSlots = DispatchSemaphore(value: 2)
+    private let samplerLifetime = DispatchGroup()
     private let snapshotLosses = Atomic<UInt64>(0)
     private var session: URL?
     private var startupID = UUID()
@@ -69,7 +70,7 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
         }
         let alert = NSAlert()
         alert.messageText = "Record UI hang diagnostics"
-        alert.informativeText = "Diagnostics stay on this Mac until you export them. Structural recording includes UI timing and thread stacks. Replay recording also includes displayed chat text and images, encrypted on disk. Recordings expire after seven days."
+        alert.informativeText = "Diagnostics stay on this Mac until you export them. Structural recording includes UI timing and thread stacks. Replay recording also includes displayed chat text and images, encrypted on disk. Old recordings are removed on the next app launch after seven days."
         alert.addButton(withTitle: "Record with replay content")
         alert.addButton(withTitle: "Record structure only")
         alert.addButton(withTitle: "Disable recording")
@@ -141,6 +142,10 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
         self.mainTimer = mainTimer
         RunLoop.main.add(mainTimer, forMode: .common)
         writer.async { [self] in
+            guard !stopping.load(ordering: .relaxed) else {
+                KeychainStore.delete(account: "hang-diagnostic-\(id.uuidString)")
+                return
+            }
             do {
                 try DiagnosticFiles.directory(Self.root)
                 try Self.prune(excluding: id)
@@ -183,6 +188,9 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
         pulseQueue.async { [self] in
             pulseTimer?.cancel()
             pulseTimer = nil
+        }
+        writer.async { [self] in
+            if helper?.isRunning == true { helper?.terminate() }
         }
     }
 
@@ -255,7 +263,9 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
     }
 
     private func startSampler(folder: URL) {
+        samplerLifetime.enter()
         Thread.detachNewThread { [self] in
+            defer { samplerLifetime.leave() }
             var lastRequest = ""
             while !stopping.load(ordering: .relaxed) {
                 if let data = try? Data(contentsOf: folder.appendingPathComponent("sample-request.json")),
@@ -266,9 +276,12 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
                         let output = folder.appendingPathComponent("self-\(request)-\(index).stacks")
                         let partial = output.appendingPathExtension("partial")
                         let result = partial.path.withCString { ngv_capture_self($0) }
-                        if result == 0 { try? FileManager.default.moveItem(at: partial, to: output) }
-                        if result != 0 {
-                            try? DiagnosticFiles.replace(result, at: folder.appendingPathComponent("self-capture-error.json"))
+                        do {
+                            guard result == 0 else { throw CocoaError(.fileWriteUnknown) }
+                            try FileManager.default.moveItem(at: partial, to: output)
+                        } catch {
+                            try? DiagnosticFiles.replace("capture-or-finalize-failed:\(result)",
+                                at: folder.appendingPathComponent("self-capture-error.json"))
                         }
                         Thread.sleep(forTimeInterval: 1)
                     }
@@ -339,6 +352,7 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
         let folders = try FileManager.default.contentsOfDirectory(at: root,
             includingPropertiesForKeys: [.creationDateKey], options: [.skipsHiddenFiles])
             .filter { UUID(uuidString: $0.lastPathComponent) != nil && $0.lastPathComponent != id.uuidString }
+            .filter { !hasLiveOwner($0) }
             .sorted {
                 ((try? $0.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast)
                 < ((try? $1.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast)
@@ -360,16 +374,55 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
         alert.runModal()
     }
 
-    func deleteRecordings() {
-        writer.async { [self] in
-            helper?.terminate()
+    private static func hasLiveOwner(_ folder: URL) -> Bool {
+        guard let data = try? Data(contentsOf: folder.appendingPathComponent("heartbeat.json")),
+              let pulse = try? JSONDecoder().decode(DiagnosticHeartbeat.self, from: data),
+              !pulse.stopped, pulse.processID > 0 else { return false }
+        return kill(pulse.processID, 0) == 0 || errno == EPERM
+    }
+
+    func deleteRecordings() async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+            writer.async { [self] in
+                do {
+                    pulseQueue.sync { [self] in pulseTimer?.cancel(); pulseTimer = nil }
+                    guard samplerLifetime.wait(timeout: .now() + 5) == .success else {
+                        throw CocoaError(.fileWriteUnknown)
+                    }
+                    if helper?.isRunning == true { helper?.terminate() }
+                    let deadline = ProcessInfo.processInfo.systemUptime + 2
+                    while helper?.isRunning == true && ProcessInfo.processInfo.systemUptime < deadline {
+                        Thread.sleep(forTimeInterval: 0.05)
+                    }
+                    guard helper?.isRunning != true else { throw CocoaError(.fileWriteUnknown) }
+                    let folders = try FileManager.default.contentsOfDirectory(at: Self.root, includingPropertiesForKeys: nil)
+                    for folder in folders where UUID(uuidString: folder.lastPathComponent) != nil {
+                        guard folder.lastPathComponent == startupID.uuidString || !Self.hasLiveOwner(folder) else {
+                            throw CocoaError(.fileWriteNoPermission)
+                        }
+                        try FileManager.default.removeItem(at: folder)
+                        KeychainStore.delete(account: "hang-diagnostic-\(folder.lastPathComponent)")
+                    }
+                    session = nil
+                    key = nil
+                    previousSnapshot = nil
+                    continuation.resume()
+                } catch { continuation.resume(throwing: error) }
+            }
+        }
+    }
+
+    func pruneExpiredRecordings() {
+        writer.async {
             guard let folders = try? FileManager.default.contentsOfDirectory(at: Self.root,
-                includingPropertiesForKeys: nil) else { return }
-            for folder in folders where UUID(uuidString: folder.lastPathComponent) != nil {
+                includingPropertiesForKeys: [.creationDateKey], options: [.skipsHiddenFiles]) else { return }
+            for folder in folders where UUID(uuidString: folder.lastPathComponent) != nil && !Self.hasLiveOwner(folder) {
+                guard let date = try? folder.resourceValues(forKeys: [.creationDateKey]).creationDate,
+                      Date().timeIntervalSince(date) > 7 * 86400 else { continue }
                 do {
                     try FileManager.default.removeItem(at: folder)
                     KeychainStore.delete(account: "hang-diagnostic-\(folder.lastPathComponent)")
-                } catch { failure = "delete-failed" }
+                } catch { continue }
             }
         }
     }

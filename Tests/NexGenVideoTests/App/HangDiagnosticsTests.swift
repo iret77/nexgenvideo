@@ -68,10 +68,10 @@ struct HangDiagnosticsTests {
         #expect(!String(decoding: scrubbed, as: UTF8.self).contains("private-canary"))
     }
 
-    @Test func exportIncludesOnlyCompletedKnownFiles() throws {
+    @Test(arguments: [false, true]) func exportIncludesOnlyCompletedKnownFiles(directoryURL: Bool) throws {
         let base = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: base) }
-        let source = base.appendingPathComponent("source")
+        let source = base.appendingPathComponent("source", isDirectory: directoryURL)
         let destination = base.appendingPathComponent("export")
         try DiagnosticFiles.directory(source)
         try DiagnosticFiles.write(Data("[]".utf8), to: source.appendingPathComponent("events-000000000001.json"))
@@ -83,6 +83,18 @@ struct HangDiagnosticsTests {
         #expect(!FileManager.default.fileExists(atPath: destination.appendingPathComponent("capture.stacks.partial").path))
         let attributes = try FileManager.default.attributesOfItem(atPath: destination.appendingPathComponent("checksums.json").path)
         #expect(attributes[.posixPermissions] as? Int == 0o600)
+    }
+
+    @Test func exportRejectsSymlinkedRecording() throws {
+        let base = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let source = base.appendingPathComponent("source")
+        try DiagnosticFiles.directory(source)
+        let link = base.appendingPathComponent("linked")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: source)
+        #expect(throws: (any Error).self) {
+            try DiagnosticFiles.copyRecording(from: link, to: base.appendingPathComponent("export"))
+        }
     }
 
     @Test func replayFrameDoesNotRepeatUnchangedImages() throws {
