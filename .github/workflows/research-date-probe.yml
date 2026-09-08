@@ -1,4 +1,4 @@
-name: Research date release probe
+name: Research release probe
 on:
   workflow_dispatch:
   pull_request:
@@ -11,7 +11,7 @@ permissions:
 jobs:
   probe:
     runs-on: xcode-27
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-xcode-27
@@ -35,3 +35,35 @@ jobs:
           /tmp/research-date-debug
           swiftc -O /tmp/research-date.swift -o /tmp/research-date-release
           /tmp/research-date-release
+      - name: Validate the public fixtures across the actual module boundary
+        run: |
+          mkdir -p "$RUNNER_TEMP/research-probe"
+          cat > "$RUNNER_TEMP/research-probe/main.swift" <<'SWIFT'
+          import Foundation
+          import NexGenEngine
+          for (name, host) in [("image-gemini-2.5", "ai.google.dev"), ("video-seedance-2.5", "docs.dev.runwayml.com"), ("music-eleven-v1", "elevenlabs.io")] {
+              let data = try Data(contentsOf: URL(fileURLWithPath: "Tests/NexGenVideoTests/Fixtures/ModelCapabilityResearch/\(name).json"))
+              let candidate = try JSONDecoder().decode(ModelCapabilityResearchCandidateV1.self, from: data)
+              let request = ModelCapabilityResearchRequestV1(binding: candidate.binding, scope: candidate.scope,
+                  trigger: .inheritedProfile, fallbackResolution: .inherited, fallbackProfileID: "fixture-fallback",
+                  allowedSourceHosts: [host], observedAt: ModelCapabilityResearchDatePolicy.date("2026-08-31")!)
+              print("request date=\(request.observedAt)")
+              print(String(data: try JSONEncoder().encode(candidate), encoding: .utf8)!)
+              do {
+                  _ = try ModelCapabilityResearchValidator.decodeCandidate(data, for: request)
+                  print("validated \(name)")
+              } catch { print("validation failed: \(error)"); exit(1) }
+          }
+          SWIFT
+          for optimization in Onone O; do
+            swiftc -swift-version 6 -$optimization -enable-testing -emit-module -emit-library -module-name NexGenEngine \
+              Engine/Sources/NexGenEngine/Capabilities/*.swift \
+              -emit-module-path "$RUNNER_TEMP/research-probe/NexGenEngine.swiftmodule" \
+              -o "$RUNNER_TEMP/research-probe/libNexGenEngine.dylib"
+            swiftc -swift-version 6 -$optimization -enable-testing \
+              -I "$RUNNER_TEMP/research-probe" -L "$RUNNER_TEMP/research-probe" -lNexGenEngine \
+              -Xlinker -rpath -Xlinker "$RUNNER_TEMP/research-probe" \
+              Sources/NexGenVideo/Generation/Capabilities/ModelCapabilityResearchSchema.swift \
+              "$RUNNER_TEMP/research-probe/main.swift" -o "$RUNNER_TEMP/research-probe/probe"
+            "$RUNNER_TEMP/research-probe/probe"
+          done
