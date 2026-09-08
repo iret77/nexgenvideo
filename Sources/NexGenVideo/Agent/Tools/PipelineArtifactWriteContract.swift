@@ -49,6 +49,18 @@ enum PipelineArtifactWriteContract {
             )),
             "color_script": keyValueArray(key: "section", value: "description"),
             "lighting_anchor": string,
+            "style_selection": object([
+                "directorID": string,
+                "signatureID": string,
+                "signatureDimensions": array(enumeration(ProductionStyleDimensionV1.allCases.map(\.rawValue))),
+                "overrides": array(object([
+                    "dimension": enumeration(ProductionStyleDimensionV1.allCases.map(\.rawValue)),
+                    "value": string,
+                    "reason": string,
+                    "sourceEntryID": string,
+                ], required: ["dimension", "value", "reason"])),
+            ], required: ["directorID", "signatureDimensions", "overrides"]),
+            "clear_style": ["type": "boolean"],
             "notes": string,
         ],
         required: ["visual_medium", "refs", "color_script"]

@@ -12,6 +12,7 @@ struct PromptBinding: Sendable, Equatable {
     let routeSHA256: String
     let referencePlanSHA256: String
     let orderedBindingsSHA256: String
+    let styleFingerprint: String
 
     init(
         projectKey: String,
@@ -22,7 +23,8 @@ struct PromptBinding: Sendable, Equatable {
         capabilitiesSHA256: String = "none",
         routeSHA256: String = "none",
         referencePlanSHA256: String = "none",
-        orderedBindingsSHA256: String = "none"
+        orderedBindingsSHA256: String = "none",
+        styleFingerprint: String = "none"
     ) {
         self.projectKey = projectKey
         self.shotId = shotId
@@ -33,6 +35,7 @@ struct PromptBinding: Sendable, Equatable {
         self.routeSHA256 = routeSHA256
         self.referencePlanSHA256 = referencePlanSHA256
         self.orderedBindingsSHA256 = orderedBindingsSHA256
+        self.styleFingerprint = styleFingerprint
     }
 
     static let free = PromptBinding(
@@ -286,7 +289,7 @@ enum PromptCompiler {
             + "\(binding.shotFingerprint)|\(binding.routeArtifactSHA256)|"
             + "\(binding.requirementSHA256)|\(binding.capabilitiesSHA256)|"
             + "\(binding.routeSHA256)|\(binding.referencePlanSHA256)|"
-            + "\(binding.orderedBindingsSHA256)|\(modelId)|\(text)"
+            + "\(binding.orderedBindingsSHA256)|\(binding.styleFingerprint)|\(modelId)|\(text)"
         let digest = SHA256.hash(data: Data(material.utf8))
         return digest.prefix(8).map { String(format: "%02x", $0) }.joined()
     }
@@ -326,11 +329,17 @@ enum PromptCompiler {
         }
         let projectKey = editor?.projectId ?? root?.standardizedFileURL
             .resolvingSymlinksInPath().path ?? "none"
+        var styleFingerprint = "none"
+        if modality.usesVisualStyle, let root, try ProductionStyleStoreV1.load(dataRoot: root) != nil {
+            let snapshot = try ProductionStyleStoreV1.snapshot(dataRoot: root)
+            styleFingerprint = FileDigest.sha256(of: Data((snapshot.inputFingerprint + ":" + snapshot.artifactFingerprint).utf8))
+        }
         guard shotId != "none" else {
             return PromptBinding(
                 projectKey: projectKey,
                 shotId: "none",
-                shotFingerprint: "none"
+                shotFingerprint: "none",
+                styleFingerprint: styleFingerprint
             )
         }
         guard let root,
@@ -354,13 +363,15 @@ enum PromptCompiler {
                 capabilitiesSHA256: routing.route.capabilitiesSHA256,
                 routeSHA256: routing.route.routeSHA256,
                 referencePlanSHA256: routing.referencePlanSHA256,
-                orderedBindingsSHA256: routing.orderedBindingsSHA256
+                orderedBindingsSHA256: routing.orderedBindingsSHA256,
+                styleFingerprint: styleFingerprint
             )
         }
         return PromptBinding(
             projectKey: projectKey,
             shotId: shotId,
-            shotFingerprint: try shotFingerprint(shot)
+            shotFingerprint: try shotFingerprint(shot),
+            styleFingerprint: styleFingerprint
         )
     }
 

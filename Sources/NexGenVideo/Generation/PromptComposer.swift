@@ -34,7 +34,16 @@ enum PromptComposer {
         }
     }
 
-    enum Modality: Sendable { case video, image, audio, music }
+    enum Modality: Sendable {
+        case video, image, audio, music
+
+        var usesVisualStyle: Bool {
+            switch self {
+            case .video, .image: true
+            case .audio, .music: false
+            }
+        }
+    }
 
     /// A shot's deterministic camera/framing projection plus the compliance read-surface, threaded into
     /// a per-shot compile so `PromptPayload.camera/composition` come from the SPEC (not reconstructed by
@@ -120,6 +129,23 @@ enum PromptComposer {
 
         let composed: String
         var notes: [String] = []
+        let productionStyle = try projectDir.flatMap { project -> ResolvedProductionStyleV1? in
+            guard modality.usesVisualStyle else { return nil }
+            guard let root = DataRootResolver.dataRoot(of: project) else { return nil }
+            let style = try ProductionStyleStoreV1.load(dataRoot: root)
+            if style != nil {
+                let gates = try YAMLArtifactStore(dataRoot: root).load(Gates.self, at: PipelineLayout.gatesFile)
+                let isDesignStill: Bool
+                if case .image = modality { isDesignStill = shot == nil } else { isDesignStill = false }
+                guard gates.gates["production_design"]?.approved == true || isDesignStill else {
+                    throw ComposeError.lintBlocked(code: "STYLE_NOT_APPROVED", message: "Approve Production Design before using its style for production shots.")
+                }
+                if gates.gates["production_design"]?.approved != true {
+                    notes.append("Production Design style proposal; this still does not approve the style.")
+                }
+            }
+            return style
+        }
         switch modality {
         case .video:
             let acceptsFreeContext = shot == nil
@@ -138,6 +164,7 @@ enum PromptComposer {
                 payload.composition = shot.composition
                 payload.temporalStructure = shot.temporalStructure
             }
+            apply(productionStyle, to: &payload, plannedCamera: shot != nil, still: false)
             composed = PromptGenerator.buildVideoPrompt(modelID: engineModelID(modelId), payload: payload)
             if let shot,
                let violation = ProductionPromptPolicy.videoPromptViolations(
@@ -159,6 +186,7 @@ enum PromptComposer {
                 directives: directives.all + (shot?.imageDirectives ?? [])
             )
             if let shot { payload.camera = shot.camera; payload.composition = shot.composition }
+            apply(productionStyle, to: &payload, plannedCamera: shot != nil, still: true)
             composed = try PromptGenerator.buildImagePrompt(modelID: engineModelID(modelId), payload: payload)
             if shot != nil,
                let violation = ProductionPromptPolicy.stillPromptViolations(composed).first {
@@ -189,6 +217,18 @@ enum PromptComposer {
             throw ComposeError.tooLong(count: composed.count, cap: cap, modelId: modelId)
         }
         return Composition(text: composed, notes: notes)
+    }
+
+    private static func apply(_ style: ResolvedProductionStyleV1?, to payload: inout PromptPayload,
+                              plannedCamera: Bool, still: Bool) {
+        guard let style else { return }
+        payload.style = [style.value(.character), style.value(.color)].compactMap { $0 }.joined(separator: " ")
+        if let light = style.value(.lighting) { payload.light = light }
+        if !plannedCamera, let composition = style.value(.composition) { payload.composition = composition }
+        if !plannedCamera, !still,
+           let camera = style.selection.overrides.first(where: { $0.dimension == .camera })?.value {
+            payload.camera = camera
+        }
     }
 
     // MARK: - Ledger

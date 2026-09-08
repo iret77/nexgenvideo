@@ -852,11 +852,28 @@ enum PipelineExecutionPlanComposer {
         declaredPack: String?,
         dataRoot: URL
     ) throws -> [PackArtifactExtensionReferenceV1] {
+        var references: [PackArtifactExtensionReferenceV1] = []
+        if try ProductionStyleStoreV1.load(dataRoot: dataRoot) != nil {
+            let before = try ProductionStyleStoreV1.snapshot(dataRoot: dataRoot)
+            let path = ResolvedProductionStyleV1.relativePath
+            let data = try Data(contentsOf: ProjectLocalFile.resolve(path, dataRoot: dataRoot))
+            guard FileDigest.sha256(of: data) == before.artifactFingerprint,
+                  before == (try ProductionStyleStoreV1.snapshot(dataRoot: dataRoot)) else {
+                throw PipelineExecutionPlanComposerError.invalidReference("Production style changed while reading.")
+            }
+            references.append(PackArtifactExtensionReferenceV1(
+                id: ProductionStyleStoreV1.lineageID,
+                schema: ResolvedProductionStyleV1.schemaVersion,
+                path: path,
+                sha256: FileDigest.sha256(of: data)
+            ))
+            _ = try ProductionStyleStoreV1.load(dataRoot: dataRoot)
+        }
         guard let contract = try PhaseContractRuntime.contract(activePack: declaredPack),
               let shotlistIndex = contract.order.firstIndex(of: "shotlist") else {
-            return []
+            return references
         }
-        return try contract.order[..<shotlistIndex].compactMap { phaseID in
+        references += try contract.order[..<shotlistIndex].compactMap { phaseID in
             guard let extensionArtifact = contract.phase(phaseID)?
                 .declaration.extensionArtifact else {
                 return nil
@@ -903,6 +920,7 @@ enum PipelineExecutionPlanComposer {
             )
             return reference
         }
+        return references
     }
 
     private static func appendProjectMedia(

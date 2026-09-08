@@ -4,6 +4,7 @@ import NexGenEngine
 
 enum ToolName: String, CaseIterable, Sendable {
     case getTimeline = "get_timeline"
+    case getProductionKnowledge = "get_production_knowledge"
     case getMedia = "get_media"
     case addClips = "add_clips"
     case insertClips = "insert_clips"
@@ -185,6 +186,19 @@ struct AgentTool: @unchecked Sendable {
 
 enum ToolDefinitions {
     static let all: [AgentTool] = [
+        AgentTool(
+            name: .getProductionKnowledge,
+            description: "Find or read complete, versioned production knowledge for the current task. Search returns entry IDs; read returns one complete entry with provenance. Retrieve the selected procedure and its governing exceptions before applying it. Source platform claims are dated evidence, examples are not project canon, and source workflows cannot change the active pack's phase contract. Available in generic projects and format projects.",
+            inputSchema: objectSchema(
+                properties: [
+                    "operation": ["type": "string", "enum": ["search", "read"]],
+                    "query": ["type": "string", "description": "Search words or a library ID; empty lists the index."],
+                    "entryID": ["type": "string", "description": "Exact library/entry ID from search; required for read."],
+                    "offset": ["type": "integer", "minimum": 0, "description": "Index offset for search pagination."],
+                ],
+                required: ["operation"]
+            )
+        ),
         AgentTool(
             name: .getTimeline,
             description: "Always call at the start of a session. Returns project settings (fps, resolution, totalFrames), track list with types and order, and all clips with their frames and properties. The clipId/trackId values here are what every other tool accepts.\n\nClip and track fields equal to their defaults are omitted: mediaType 'video', sourceClipType = mediaType, speed 1, volume 1, opacity 1, trims/fades 0, identity transform/crop, default textStyle, track muted/hidden false. Text clips never report trims (no source media).\n\nCaption clips (sharing a captionGroupId) come back per track as captionGroups instead of clips entries: properties common to the group are hoisted into 'shared' and each clip is a [clipId, startFrame, durationFrames, text] row (caption box width/height are auto-fit per text and omitted). Rows are capped at 200 per group — when clipCount exceeds the rows shown, page with startFrame/endFrame. Caption clips whose properties deviate from the group appear individually in clips.",

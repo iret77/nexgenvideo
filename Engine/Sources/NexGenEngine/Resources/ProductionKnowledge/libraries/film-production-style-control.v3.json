@@ -1,0 +1,982 @@
+{
+  "schemaVersion": "creative-library.v1",
+  "id": "film-production-style-control",
+  "version": "3.1.1",
+  "applicability": {
+    "packIDs": [],
+    "phases": [
+      "init",
+      "analysis",
+      "brief",
+      "production_design",
+      "treatment",
+      "storyboard",
+      "bible",
+      "shotlist",
+      "sanity",
+      "frames",
+      "render",
+      "review",
+      "assembly",
+      "finish",
+      "generic"
+    ],
+    "intentTags": [
+      "style-control"
+    ],
+    "activeProfileIDs": []
+  },
+  "entries": [
+    {
+      "id": "style-control-671a457dd443",
+      "title": "Style Control: Enforcement, Model Mechanics, Vocabularies",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "style-control"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for look library + per-model style compiler + reference planner",
+      "guidance": [
+        "# Style Control: Enforcement, Model Mechanics, Vocabularies\n\nStandalone reference for everything style-related across image AND video models. Tags and confidence labels: legend in sources.md. **Methodology note:** vocabulary packages are marked 🟢 when sources converge; since style blogs copy each other, convergence may partly be citation echo — treat vocabularies as strong starting points, and let your own motion-ladder test (post-audio-legal ch. 19) be the final judge. Pixar look definition: `pixar-look.md`.\n\n",
+        "Read applicable linked procedures and exceptions by exact entryID: film-production-pixar-look/pixar-look-1da5c9533bf3, film-production-pixar-look/pixar-look-266b78d1a40e, film-production-pixar-look/pixar-look-441de0d8a9d1, film-production-pixar-look/pixar-look-56847cb20874, film-production-pixar-look/pixar-look-6067d37adaa1, film-production-pixar-look/pixar-look-67b9aafd568b, film-production-pixar-look/pixar-look-68ec1764bb32, film-production-pixar-look/pixar-look-79aef52eb72e, film-production-pixar-look/pixar-look-8448fb177d42, film-production-pixar-look/pixar-look-e2bffc9f8b7c, film-production-pixar-look/pixar-look-eeafb6781cc6, film-production-pixar-look/pixar-look-f22e3f8ad2cd, film-production-pixar-look/pixar-look-fdcec6b2c0f0, film-production-pixar-look/pixar-look-ffa1fc7ecbcc, film-production-sources/sources-9de87ed0c000"
+      ],
+      "verifyCriteria": [
+        "Keep all animation and non-animation packages.",
+        "Style donor is not an identity or geometry donor unless explicitly assigned.",
+        "Still and video exclusion rules remain distinct."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "style-control-79b3e6b7c14b",
+      "title": "1. Style stack hierarchy (all models)",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "style-control"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for look library + per-model style compiler + reference planner",
+      "guidance": [
+        "## 1. Style stack hierarchy (all models)\n🟢 Descending force: **(1) reference images that carry the look → (2) platform settings (CS 4.0 palette/lighting/camera) → (3) prompt style block → (4) model default (usually photorealism).** Video models do not re-stylize on their own: photoreal plate + Pixar prompt = photoreal video; stylized plate + Pixar prompt = stylized video. The look is won in the STILLS (stills-first, production-pipeline ch. 1); the prompt only secures it.\n🟢 Why a single style word fails: models default to photorealism; a label without an anchor is overruled or decays after beat 1. Style needs the stack, not a word.\n🟢 **The strongest single style carrier for stylized-3D is a FIGURE in frame [PP]:** stylized environments without a character default to photoreal on every image model (their real-world counterparts are near-photoreal); the character forces the whole render into the stylized mode. Hard rule + inverted build order: production-pipeline ch. 1; proven prompt-only alternative for figure-less environments: pixar-look §9 (style-forcing blocks; brightness-dependent).\n🟢 **Image block vs. video prompt — do not confuse them.** For IMAGE models (GPT Image 2) the style block goes FIRST and works (§2). For VIDEO prompts there is NO glued style-prefix at the top: style is distributed into the blocks that govern each aspect (video-prompting ch. 12, placement rule 1). The \"paste one global look block on every video prompt\" pattern is what Higgsfield's own Shotlist-Director skill emits [H-off, P38] and what several practitioner skills copy — it is official output, not a convenience note; this skill still does not adopt it, because in tests Seedance ignores a floating keyword prefix (and GPT Image 2 ignores a keyword-chain opener, §2 — its structured style block is a different thing) while the reference image and per-block placement carry the look. Documented as ⚠️ open conflict (video-prompting ch. 12 primacy caveat).\n\n",
+        "Required ancestor context: # Style Control: Enforcement, Model Mechanics, Vocabularies\n\nStandalone reference for everything style-related across image AND video models. Tags and confidence labels: legend in sources.md. **Methodology note:** vocabulary packages are marked 🟢 when sources converge; since style blogs copy each other, convergence may partly be citation echo — treat vocabularies as strong starting points, and let your own motion-ladder test (post-audio-legal ch. 19) be the final judge. Pixar look definition: `pixar-look.md`.\n\n"
+      ],
+      "verifyCriteria": [
+        "Keep all animation and non-animation packages.",
+        "Style donor is not an identity or geometry donor unless explicitly assigned.",
+        "Still and video exclusion rules remain distinct."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "style-control-2cf209a10276",
+      "title": "2. GPT Image 2 — style mechanics",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "style-control"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for look library + per-model style compiler + reference planner",
+      "guidance": [
+        "## 2. GPT Image 2 — style mechanics\n🟢 **Reasoning model, not a keyword matcher:** plans composition before generating; natural descriptive sentences beat adjective/tag chains (\"8k, masterpiece, trending\" do nothing). Conflicting style mixes produce mud — ONE dominant style per prompt.\n🟢 **Style block first:** sweet spot 100–300 words; beyond ~500, early instructions get ignored — a long scene description must not push the style block back. Formula: style anchor → subject → details → rendering specs.\n🟢 **Production-proven 4-section Pixar structure [PP] — supersedes keyword-avalanche openers:** a front-loaded keyword chain (\"whimsical Pixar-style stylized 3D animation, rounded simplified forms, soft global illumination, subsurface scattering…\") as the opening line does NOT hold. What works:\n```\n[1 FRAME]  A Pixar-quality 3D animation still, [aspect ratio, e.g. 16:9 landscape]. Cinematic feature-film look, [lighting].\n[2 SCENE]  Concrete scene: specific objects, materials, light — 5–12 concrete nouns.\n[3 CHARACTER]  The figure with explicit Pixar proportions: \"expressive, slightly oversized eyes\n           (classic Pixar proportions)\", sculpted detail, believable surface.\n[4 ART DIRECTION]  \"full-CG Pixar aesthetic — subsurface scattering on [specific surfaces],\n           physically based materials, soft shadow ambient occlusion, [specific light cues].\n           Clean stylised shapes consistent with [2–3 Pixar film titles] — not photoreal\n           uncanny-valley.\"\n```\nImage-model rule (AR class): the negations in this section are never ported into a video prompt — there the wanted light/material grammar replaces them (video-prompting ch. 14, third class). The anti-pattern closer (\"not photoreal uncanny-valley\") at the END of the art-direction section is essential — without it GPT Image 2 drifts back to photoreal. Film titles as aesthetic lineage are established (§6b); characters stay original. This studio/title wording belongs to the figure-bearing 4-section path only; the figure-less §9 path (pixar-look) uses generic wording plus the do-not-imitate clause — never both in one prompt (pixar-look §9, IP wording rule). And the figure-anchor hard rule applies (production-pipeline ch. 1): a stylized still without a figure defaults to photoreal on EVERY model — section 3 is not optional for look-defining renders.\n🟢 **Actively repel the photoreal default:** \"Pixar style\" alone is not enough. What works: (a) **early negation as repulsion anchor** — \"NOT a photograph. NOT photorealistic. NOT a nature documentary.\" (community tests: ~80% photoreal without it; the official cookbook uses the same technique inversely: \"Avoid cinematic lighting\" for documentary realism) — plus (b) **concrete rendering cues**: `subsurface scattering on all surfaces` (strongest single cue), `soft ambient occlusion`, `soft global illumination`, `painted CG material — every surface reads as rendered, not photographed`, `cinematic warm-cool color grade`.\n🟢 **Film-reference framing beats technical adjectives:** \"This is a still from a Pixar animated feature film / a $200M animated feature.\"\n🟢 **Max 3 edit iterations per asset** [H-off, P49 reproduces it at feature scale] — quality degrades after (noise, shadow artifacts) → rewrite the prompt and regenerate. Refinements: one variable per round; preserve list on every edit (\"change only X, keep subject identical\").\n🟢 **Object size: relation or mask — NEVER canvas fractions [PP]:** image models have no concept of \"percent of image width\" — that is a post-hoc measuring unit for humans, not something the model reasons in. It thinks in objects and their relations, not in frame shares, so \"~1% of the image width\" style size specs fail silently and burn reroll budget (production evidence: four consecutive %-scaled runs, all wrong-sized). What works, in order: (a) **relational anchoring** to an object of known size already in frame — \"no larger than the pebbles beside it\", \"the size of @X in the frame\" — with **exactly ONE comparison anchor**: stacking several (\"tiny vs. the shelf, the size of a nub, smaller than a mound, a minor speck\") averages out like style soup and reads as emphasis, not precision [PP]; (b) for hard size constraints in an EDIT: **masked/region inpaint on a HARD-mask platform** (FLUX Fill, Imagen — outside-mask content is algorithmically preserved, the mask truly defines the size); ⚠️ GPT Image's mask parameter is official-documented as guidance only (\"entirely prompt-based… may not follow its exact shape\") — there, pair the mask with the full preserve list and expect overflow. Mask-strictness table + full position/scale control ladders: image-model-logic ch. 24. Know the coupled failure mode: **detail demand inflates size** — the moment the prompt asks for visible detail (facets, engraving, texture) on a small object, the model enlarges the object to fit the detail, and no wording overrides that; describe detail AS IT READS at the target size (\"two or three sharp glints suggest facets\") instead of as modeled geometry, or take the mask path. Numeric canvas units (%, px, fractions of frame) are ballast at best and actively counterproductive at worst — this applies to every image model, not just GPT Image 2.\n🟢 **Placed objects float unless contact is positively locked [PP]:** \"resting on\", \"at the edge\", \"slightly overhanging\" plus \"a small contact shadow\" do NOT guarantee ground contact in an edit — the model happily renders the object hovering with a shadow painted beneath it. Write the contact itself as a positive lock: \"bottom face flush on the surface, full contact, weight settled — no gap between object and ground.\" Drop overhang/brink phrasing for small objects entirely; it invites hovering. (Same principle as SKILL rule 6: positive locks sit next to what they protect.)\n🟢 **Know the weaknesses:** strong at structured, text-heavy production output; weaker at atmospheric painterly imagery — the style block must be extra strong there. In-image text: exact wording in quotes, 1–5 words, state the position. Resolution: >2K experimental — generate lower + upscale.\n🟡 **Material rule for critical surfaces** (ice/snow as example; applies to glass/water/metal): the model renders these photoreal (wet, transparent, crystalline). Counter-recipe: anchor the desired material positively AND negate the photo appearance — \"matte powdery surface like fresh dry snow — NOT wet, NOT glossy, NOT transparent. Reads as painted CG material.\"\n\n",
+        "Required ancestor context: # Style Control: Enforcement, Model Mechanics, Vocabularies\n\nStandalone reference for everything style-related across image AND video models. Tags and confidence labels: legend in sources.md. **Methodology note:** vocabulary packages are marked 🟢 when sources converge; since style blogs copy each other, convergence may partly be citation echo — treat vocabularies as strong starting points, and let your own motion-ladder test (post-audio-legal ch. 19) be the final judge. Pixar look definition: `pixar-look.md`.\n\n"
+      ],
+      "verifyCriteria": [
+        "Keep all animation and non-animation packages.",
+        "Style donor is not an identity or geometry donor unless explicitly assigned.",
+        "Still and video exclusion rules remain distinct."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "style-control-f84b2ba9034a",
+      "title": "Which GPT Image 2 structure to use (selector — read before writing any stylized still)",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "style-control"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for look library + per-model style compiler + reference planner",
+      "guidance": [
+        "### Which GPT Image 2 structure to use (selector — read before writing any stylized still)\n- **Figure IN frame** (character sheet, figure-anchored anchor plate, hero still) → the 4-section structure above; section 3 is mandatory.\n- **Figure-LESS stylized environment from scratch** → the pixar-look §9 five-block template, copied verbatim; swap only the Scene / Composition / Camera / Lighting-palette blocks and keep all five load-bearing blocks (priority sentence, thumbnail rule, flat-graphic style, render treatment, avoid list). §9 SUPERSEDES any [STYLE]-first plate opener for this case; generic \"stylized animated-feature\" wording, no studio name or film title (pixar-look §9 IP wording rule); dark scenes use the §9 bright-anchor method.\n- **Figure-less plate DERIVED from an approved figure-anchored plate** → an edit prompt (remove the figure + preserve list, production-pipeline ch. 1 step 3; edit mechanics image-model-logic ch. 24g) — no fresh style template.\n- **Photoreal stills** → the capture-context phrases below (one dominant capture frame).\n\nCompact style vocabulary for the [4 ART DIRECTION] section of a figure-in-frame still (NOT a standalone template): \"a 3D animated world — NOT a photograph, NOT photorealistic; every surface reads as painted CG material with soft subsurface scattering; simplified sculpted forms with clean readable silhouettes (rounded or faceted — prompt a deliberate mix, pixar-look §9 refinements); soft global illumination, soft ambient occlusion, gentle rim light, cinematic warm-cool color contrast; warm, handcrafted, unmistakably animated.\"\n\n",
+        "Required ancestor context: # Style Control: Enforcement, Model Mechanics, Vocabularies\n\nStandalone reference for everything style-related across image AND video models. Tags and confidence labels: legend in sources.md. **Methodology note:** vocabulary packages are marked 🟢 when sources converge; since style blogs copy each other, convergence may partly be citation echo — treat vocabularies as strong starting points, and let your own motion-ladder test (post-audio-legal ch. 19) be the final judge. Pixar look definition: `pixar-look.md`.\n\n",
+        "Required ancestor context: ## 2. GPT Image 2 — style mechanics\n🟢 **Reasoning model, not a keyword matcher:** plans composition before generating; natural descriptive sentences beat adjective/tag chains (\"8k, masterpiece, trending\" do nothing). Conflicting style mixes produce mud — ONE dominant style per prompt.\n🟢 **Style block first:** sweet spot 100–300 words; beyond ~500, early instructions get ignored — a long scene description must not push the style block back. Formula: style anchor → subject → details → rendering specs.\n🟢 **Production-proven 4-section Pixar structure [PP] — supersedes keyword-avalanche openers:** a front-loaded keyword chain (\"whimsical Pixar-style stylized 3D animation, rounded simplified forms, soft global illumination, subsurface scattering…\") as the opening line does NOT hold. What works:\n```\n[1 FRAME]  A Pixar-quality 3D animation still, [aspect ratio, e.g. 16:9 landscape]. Cinematic feature-film look, [lighting].\n[2 SCENE]  Concrete scene: specific objects, materials, light — 5–12 concrete nouns.\n[3 CHARACTER]  The figure with explicit Pixar proportions: \"expressive, slightly oversized eyes\n           (classic Pixar proportions)\", sculpted detail, believable surface.\n[4 ART DIRECTION]  \"full-CG Pixar aesthetic — subsurface scattering on [specific surfaces],\n           physically based materials, soft shadow ambient occlusion, [specific light cues].\n           Clean stylised shapes consistent with [2–3 Pixar film titles] — not photoreal\n           uncanny-valley.\"\n```\nImage-model rule (AR class): the negations in this section are never ported into a video prompt — there the wanted light/material grammar replaces them (video-prompting ch. 14, third class). The anti-pattern closer (\"not photoreal uncanny-valley\") at the END of the art-direction section is essential — without it GPT Image 2 drifts back to photoreal. Film titles as aesthetic lineage are established (§6b); characters stay original. This studio/title wording belongs to the figure-bearing 4-section path only; the figure-less §9 path (pixar-look) uses generic wording plus the do-not-imitate clause — never both in one prompt (pixar-look §9, IP wording rule). And the figure-anchor hard rule applies (production-pipeline ch. 1): a stylized still without a figure defaults to photoreal on EVERY model — section 3 is not optional for look-defining renders.\n🟢 **Actively repel the photoreal default:** \"Pixar style\" alone is not enough. What works: (a) **early negation as repulsion anchor** — \"NOT a photograph. NOT photorealistic. NOT a nature documentary.\" (community tests: ~80% photoreal without it; the official cookbook uses the same technique inversely: \"Avoid cinematic lighting\" for documentary realism) — plus (b) **concrete rendering cues**: `subsurface scattering on all surfaces` (strongest single cue), `soft ambient occlusion`, `soft global illumination`, `painted CG material — every surface reads as rendered, not photographed`, `cinematic warm-cool color grade`.\n🟢 **Film-reference framing beats technical adjectives:** \"This is a still from a Pixar animated feature film / a $200M animated feature.\"\n🟢 **Max 3 edit iterations per asset** [H-off, P49 reproduces it at feature scale] — quality degrades after (noise, shadow artifacts) → rewrite the prompt and regenerate. Refinements: one variable per round; preserve list on every edit (\"change only X, keep subject identical\").\n🟢 **Object size: relation or mask — NEVER canvas fractions [PP]:** image models have no concept of \"percent of image width\" — that is a post-hoc measuring unit for humans, not something the model reasons in. It thinks in objects and their relations, not in frame shares, so \"~1% of the image width\" style size specs fail silently and burn reroll budget (production evidence: four consecutive %-scaled runs, all wrong-sized). What works, in order: (a) **relational anchoring** to an object of known size already in frame — \"no larger than the pebbles beside it\", \"the size of @X in the frame\" — with **exactly ONE comparison anchor**: stacking several (\"tiny vs. the shelf, the size of a nub, smaller than a mound, a minor speck\") averages out like style soup and reads as emphasis, not precision [PP]; (b) for hard size constraints in an EDIT: **masked/region inpaint on a HARD-mask platform** (FLUX Fill, Imagen — outside-mask content is algorithmically preserved, the mask truly defines the size); ⚠️ GPT Image's mask parameter is official-documented as guidance only (\"entirely prompt-based… may not follow its exact shape\") — there, pair the mask with the full preserve list and expect overflow. Mask-strictness table + full position/scale control ladders: image-model-logic ch. 24. Know the coupled failure mode: **detail demand inflates size** — the moment the prompt asks for visible detail (facets, engraving, texture) on a small object, the model enlarges the object to fit the detail, and no wording overrides that; describe detail AS IT READS at the target size (\"two or three sharp glints suggest facets\") instead of as modeled geometry, or take the mask path. Numeric canvas units (%, px, fractions of frame) are ballast at best and actively counterproductive at worst — this applies to every image model, not just GPT Image 2.\n🟢 **Placed objects float unless contact is positively locked [PP]:** \"resting on\", \"at the edge\", \"slightly overhanging\" plus \"a small contact shadow\" do NOT guarantee ground contact in an edit — the model happily renders the object hovering with a shadow painted beneath it. Write the contact itself as a positive lock: \"bottom face flush on the surface, full contact, weight settled — no gap between object and ground.\" Drop overhang/brink phrasing for small objects entirely; it invites hovering. (Same principle as SKILL rule 6: positive locks sit next to what they protect.)\n🟢 **Know the weaknesses:** strong at structured, text-heavy production output; weaker at atmospheric painterly imagery — the style block must be extra strong there. In-image text: exact wording in quotes, 1–5 words, state the position. Resolution: >2K experimental — generate lower + upscale.\n🟡 **Material rule for critical surfaces** (ice/snow as example; applies to glass/water/metal): the model renders these photoreal (wet, transparent, crystalline). Counter-recipe: anchor the desired material positively AND negate the photo appearance — \"matte powdery surface like fresh dry snow — NOT wet, NOT glossy, NOT transparent. Reads as painted CG material.\"\n\n"
+      ],
+      "verifyCriteria": [
+        "Keep all animation and non-animation packages.",
+        "Style donor is not an identity or geometry donor unless explicitly assigned.",
+        "Still and video exclusion rules remain distinct."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "style-control-481af1471ae1",
+      "title": "Structured image-prompt patterns [G2-gallery]",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "style-control"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for look library + per-model style compiler + reference planner",
+      "guidance": [
+        "### Structured image-prompt patterns [G2-gallery]\n🟢 **Layout before subject:** when structure matters (sheets, grids, storyboards, posters, plates with fixed composition), allocate space FIRST — canvas, aspect ratio, grid/zone layout — then describe the subject. Stated late, layout gets improvised. This applies to EVERY still prompt, not only structured ones: state the canvas/aspect ratio in the prompt (first line or FRAME block) and set the same ratio in the UI; the Render Slate \"no double control\" rule (SKILL rule 10) governs video prompts only.\n🟢 **JSON/config-schema prompts** are a proven GPT Image 2 pattern for stills with many interacting systems (environment + subject + materials + lighting + particles + render goals): keys name visual subsystems (GLOBAL_SETTINGS / ENVIRONMENT / CORE_ASSETS / DETAIL_SYSTEMS / OUTPUT with an avoid-array), values are concrete visual constraints. Useful for complex hero plates and product/commercial work; JSON needn't be machine-valid — clean and readable suffices.\n🟢 **Director-lineage scene formula** (extends the director-signature shorthand): \"A [shot type] in the lineage of [director/film aesthetic]'s [signature]. [Scene with 5–12 concrete nouns]. The color palette is a strict scheme of '[Named Tone 1]', '[Named Tone 2]', '[Named Tone 3]'. Lighting: [source, direction, contrast]. Camera: [lens, angle, focus]. The mood is [2–3 words].\" Naming palette tones in quotes as proper nouns ('Millennial Pink', 'Amber and Cobalt') binds them noticeably harder than loose color words. Legally safe as aesthetic lineage; keep characters and settings original.\n🟢 **Capture-context phrases for photoreal stills** (name HOW it was captured, not that it's realistic): \"RAW, unprocessed, full iPhone camera quality\" (kills AI polish) · \"amateur photo, shot from the crowd at a distance\" (real-event feel) · \"eye level, 28 mm lens feel\" (architectural) · \"natural morning side light\" (lifestyle). ONE dominant capture frame per prompt — stacked camera specs conflict.\n🟢 **Scene density beats adjectives:** 5–12 concrete nouns + 2–4 material/light constraints; empty quality words (\"stunning\", \"professional\", \"8k\") do nothing in a reasoning image model.\n\n",
+        "Required ancestor context: # Style Control: Enforcement, Model Mechanics, Vocabularies\n\nStandalone reference for everything style-related across image AND video models. Tags and confidence labels: legend in sources.md. **Methodology note:** vocabulary packages are marked 🟢 when sources converge; since style blogs copy each other, convergence may partly be citation echo — treat vocabularies as strong starting points, and let your own motion-ladder test (post-audio-legal ch. 19) be the final judge. Pixar look definition: `pixar-look.md`.\n\n",
+        "Required ancestor context: ## 2. GPT Image 2 — style mechanics\n🟢 **Reasoning model, not a keyword matcher:** plans composition before generating; natural descriptive sentences beat adjective/tag chains (\"8k, masterpiece, trending\" do nothing). Conflicting style mixes produce mud — ONE dominant style per prompt.\n🟢 **Style block first:** sweet spot 100–300 words; beyond ~500, early instructions get ignored — a long scene description must not push the style block back. Formula: style anchor → subject → details → rendering specs.\n🟢 **Production-proven 4-section Pixar structure [PP] — supersedes keyword-avalanche openers:** a front-loaded keyword chain (\"whimsical Pixar-style stylized 3D animation, rounded simplified forms, soft global illumination, subsurface scattering…\") as the opening line does NOT hold. What works:\n```\n[1 FRAME]  A Pixar-quality 3D animation still, [aspect ratio, e.g. 16:9 landscape]. Cinematic feature-film look, [lighting].\n[2 SCENE]  Concrete scene: specific objects, materials, light — 5–12 concrete nouns.\n[3 CHARACTER]  The figure with explicit Pixar proportions: \"expressive, slightly oversized eyes\n           (classic Pixar proportions)\", sculpted detail, believable surface.\n[4 ART DIRECTION]  \"full-CG Pixar aesthetic — subsurface scattering on [specific surfaces],\n           physically based materials, soft shadow ambient occlusion, [specific light cues].\n           Clean stylised shapes consistent with [2–3 Pixar film titles] — not photoreal\n           uncanny-valley.\"\n```\nImage-model rule (AR class): the negations in this section are never ported into a video prompt — there the wanted light/material grammar replaces them (video-prompting ch. 14, third class). The anti-pattern closer (\"not photoreal uncanny-valley\") at the END of the art-direction section is essential — without it GPT Image 2 drifts back to photoreal. Film titles as aesthetic lineage are established (§6b); characters stay original. This studio/title wording belongs to the figure-bearing 4-section path only; the figure-less §9 path (pixar-look) uses generic wording plus the do-not-imitate clause — never both in one prompt (pixar-look §9, IP wording rule). And the figure-anchor hard rule applies (production-pipeline ch. 1): a stylized still without a figure defaults to photoreal on EVERY model — section 3 is not optional for look-defining renders.\n🟢 **Actively repel the photoreal default:** \"Pixar style\" alone is not enough. What works: (a) **early negation as repulsion anchor** — \"NOT a photograph. NOT photorealistic. NOT a nature documentary.\" (community tests: ~80% photoreal without it; the official cookbook uses the same technique inversely: \"Avoid cinematic lighting\" for documentary realism) — plus (b) **concrete rendering cues**: `subsurface scattering on all surfaces` (strongest single cue), `soft ambient occlusion`, `soft global illumination`, `painted CG material — every surface reads as rendered, not photographed`, `cinematic warm-cool color grade`.\n🟢 **Film-reference framing beats technical adjectives:** \"This is a still from a Pixar animated feature film / a $200M animated feature.\"\n🟢 **Max 3 edit iterations per asset** [H-off, P49 reproduces it at feature scale] — quality degrades after (noise, shadow artifacts) → rewrite the prompt and regenerate. Refinements: one variable per round; preserve list on every edit (\"change only X, keep subject identical\").\n🟢 **Object size: relation or mask — NEVER canvas fractions [PP]:** image models have no concept of \"percent of image width\" — that is a post-hoc measuring unit for humans, not something the model reasons in. It thinks in objects and their relations, not in frame shares, so \"~1% of the image width\" style size specs fail silently and burn reroll budget (production evidence: four consecutive %-scaled runs, all wrong-sized). What works, in order: (a) **relational anchoring** to an object of known size already in frame — \"no larger than the pebbles beside it\", \"the size of @X in the frame\" — with **exactly ONE comparison anchor**: stacking several (\"tiny vs. the shelf, the size of a nub, smaller than a mound, a minor speck\") averages out like style soup and reads as emphasis, not precision [PP]; (b) for hard size constraints in an EDIT: **masked/region inpaint on a HARD-mask platform** (FLUX Fill, Imagen — outside-mask content is algorithmically preserved, the mask truly defines the size); ⚠️ GPT Image's mask parameter is official-documented as guidance only (\"entirely prompt-based… may not follow its exact shape\") — there, pair the mask with the full preserve list and expect overflow. Mask-strictness table + full position/scale control ladders: image-model-logic ch. 24. Know the coupled failure mode: **detail demand inflates size** — the moment the prompt asks for visible detail (facets, engraving, texture) on a small object, the model enlarges the object to fit the detail, and no wording overrides that; describe detail AS IT READS at the target size (\"two or three sharp glints suggest facets\") instead of as modeled geometry, or take the mask path. Numeric canvas units (%, px, fractions of frame) are ballast at best and actively counterproductive at worst — this applies to every image model, not just GPT Image 2.\n🟢 **Placed objects float unless contact is positively locked [PP]:** \"resting on\", \"at the edge\", \"slightly overhanging\" plus \"a small contact shadow\" do NOT guarantee ground contact in an edit — the model happily renders the object hovering with a shadow painted beneath it. Write the contact itself as a positive lock: \"bottom face flush on the surface, full contact, weight settled — no gap between object and ground.\" Drop overhang/brink phrasing for small objects entirely; it invites hovering. (Same principle as SKILL rule 6: positive locks sit next to what they protect.)\n🟢 **Know the weaknesses:** strong at structured, text-heavy production output; weaker at atmospheric painterly imagery — the style block must be extra strong there. In-image text: exact wording in quotes, 1–5 words, state the position. Resolution: >2K experimental — generate lower + upscale.\n🟡 **Material rule for critical surfaces** (ice/snow as example; applies to glass/water/metal): the model renders these photoreal (wet, transparent, crystalline). Counter-recipe: anchor the desired material positively AND negate the photo appearance — \"matte powdery surface like fresh dry snow — NOT wet, NOT glossy, NOT transparent. Reads as painted CG material.\"\n\n"
+      ],
+      "verifyCriteria": [
+        "Keep all animation and non-animation packages.",
+        "Style donor is not an identity or geometry donor unless explicitly assigned.",
+        "Still and video exclusion rules remain distinct."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "style-control-7665e999d1da",
+      "title": "3. Nano Banana Pro — style mechanics",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "style-control"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for look library + per-model style compiler + reference planner",
+      "guidance": [
+        "## 3. Nano Banana Pro — style mechanics\n🟡 Scope: tested on the model labelled Nano Banana Pro. \"Nano Banana 2\" (OpenArt, Higgsfield Blender add-on; on Higgsfield's Image selector both Pro and 2 exist side by side, changelog 2026) is a different model — treat §3 as a starting hypothesis, receipt under the surface's exact label, one A/B before relying on it (production-pipeline ch. 5 label-mismatch note).\n🟢 **Style-transfer syntax with feature lock:** \"Same character as the reference image, redrawn in the style of [X]. Maintain [unique features: scar, hair length, earrings…].\" Without explicit feature naming, transfer generalizes the face into a generic anime face. Repeat garment specifics at EVERY zoom level.\n🟢 **Placement inverse to GPT Image 2:** lock facial markers via text tokens, put the **new style medium at the END of the prompt**; keep outfit + pose identical to the reference for the first transfer.\n🟢 \"Too realistic\" fix: strengthen style keywords (anime style, cel shaded, comic book art) + attach a style reference image (1–3 refs: character/style/background separate).\n🟢 Multi-character: map left-to-right explicitly; from 3 characters, **scaffold** — generate two, lock, then add one character at a time onto the locked image (otherwise feature swapping). Capacity ~5 characters/14 objects.\n🟢 Manga/comic specialty: full-page generation (one whole page instead of single panels) keeps characters consistent across panels and lays out itself.\n\n",
+        "Required ancestor context: # Style Control: Enforcement, Model Mechanics, Vocabularies\n\nStandalone reference for everything style-related across image AND video models. Tags and confidence labels: legend in sources.md. **Methodology note:** vocabulary packages are marked 🟢 when sources converge; since style blogs copy each other, convergence may partly be citation echo — treat vocabularies as strong starting points, and let your own motion-ladder test (post-audio-legal ch. 19) be the final judge. Pixar look definition: `pixar-look.md`.\n\n"
+      ],
+      "verifyCriteria": [
+        "Keep all animation and non-animation packages.",
+        "Style donor is not an identity or geometry donor unless explicitly assigned.",
+        "Still and video exclusion rules remain distinct."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "style-control-63a866503413",
+      "title": "4. Soul Cinema & Seedream — style role",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "style-control"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for look library + per-model style compiler + reference planner",
+      "guidance": [
+        "## 4. Soul Cinema & Seedream — style role\n🟢 Soul Cinema: cinematic (photoreal) default look — first choice for REALISTIC characters/locations from scratch, not the stylization specialist. For stylized sheets: GPT Image 2 (with §2 stack) or Nano Banana Pro (§3). Seedream 4.5: edits with texture preservation.\n\n",
+        "Required ancestor context: # Style Control: Enforcement, Model Mechanics, Vocabularies\n\nStandalone reference for everything style-related across image AND video models. Tags and confidence labels: legend in sources.md. **Methodology note:** vocabulary packages are marked 🟢 when sources converge; since style blogs copy each other, convergence may partly be citation echo — treat vocabularies as strong starting points, and let your own motion-ladder test (post-audio-legal ch. 19) be the final judge. Pixar look definition: `pixar-look.md`.\n\n"
+      ],
+      "verifyCriteria": [
+        "Keep all animation and non-animation packages.",
+        "Style donor is not an identity or geometry donor unless explicitly assigned.",
+        "Still and video exclusion rules remain distinct."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "style-control-b73f6f0f3ffe",
+      "title": "5. Video layer (Seedance 2.x / Cinema Studio)",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "style-control"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for look library + per-model style compiler + reference planner",
+      "guidance": [
+        "## 5. Video layer (Seedance 2.x / Cinema Studio)\n🟢 Style comes from the references (§1) — the approved anchor still attached as a tagged reference, a literal start frame only in the chain case (production-pipeline ch. 1); the video prompt only secures it, and it does so **distributed, not as a prefix** (video-prompting ch. 12): light in LIGHTING, colour in COLOR GRADE or LOCATION, optics in OPTICS, acting/skin in PERFORMANCE, physics in PHYSICS; only the technical look word (photoreal, grain, format) sits in the STYLE suffix near the end. Repeat the load-carrying style aspects in POSITIVE LOCKS. Exclude style bleed from photoreal references (\"Use @X for layout and light only. Do not copy its photographic rendering.\"). Declare mixed styles explicitly (\"photorealistic environment, stylized characters\"). Motion must match the style (limited animation = static bodies + tableau camera; Pixar = squash & stretch, weight). Official formula (⚠️ superseded default): \"@image is the first keyframe and style reference\" — read today as \"@image is the style and geometry reference\"; first-keyframe use only in the chain case (production-pipeline ch. 1).\n🟢 CS 4.0: style additionally via settings (palette/lighting/era) — dials before prompt, avoid double control (platforms-models ch. 13b); ⚠️ verify per project that the dial bites on the selected video model, else carry the aspect in its prompt block (platform-ui-workflows §1, blockquote \"Do the controls bite?\").\n\n",
+        "Required ancestor context: # Style Control: Enforcement, Model Mechanics, Vocabularies\n\nStandalone reference for everything style-related across image AND video models. Tags and confidence labels: legend in sources.md. **Methodology note:** vocabulary packages are marked 🟢 when sources converge; since style blogs copy each other, convergence may partly be citation echo — treat vocabularies as strong starting points, and let your own motion-ladder test (post-audio-legal ch. 19) be the final judge. Pixar look definition: `pixar-look.md`.\n\n"
+      ],
+      "verifyCriteria": [
+        "Keep all animation and non-animation packages.",
+        "Style donor is not an identity or geometry donor unless explicitly assigned.",
+        "Still and video exclusion rules remain distinct."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "style-control-bfffd977ce4d",
+      "title": "5b. Style control per video model",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "style-control"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for look library + per-model style compiler + reference planner",
+      "guidance": [
+        "## 5b. Style control per video model\n🟢 **Meta-finding (multi-source):** no universal style winner — run a **motion ladder** per style and model (subtle portrait → head turn → walk → fast action → interaction). Never copy prompts 1:1 between models.\n\n",
+        "Required ancestor context: # Style Control: Enforcement, Model Mechanics, Vocabularies\n\nStandalone reference for everything style-related across image AND video models. Tags and confidence labels: legend in sources.md. **Methodology note:** vocabulary packages are marked 🟢 when sources converge; since style blogs copy each other, convergence may partly be citation echo — treat vocabularies as strong starting points, and let your own motion-ladder test (post-audio-legal ch. 19) be the final judge. Pixar look definition: `pixar-look.md`.\n\n"
+      ],
+      "verifyCriteria": [
+        "Keep all animation and non-animation packages.",
+        "Style donor is not an identity or geometry donor unless explicitly assigned.",
+        "Still and video exclusion rules remain distinct."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "style-control-cbe1c1252598",
+      "title": "Seedance 2.0/2.5",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "style-control"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for look library + per-model style compiler + reference planner",
+      "guidance": [
+        "### Seedance 2.0/2.5\n🟢 **Flat 2D is harder than stylized 3D** — the counterintuitive core finding: Pixar-ish 3D forgives (gradients hide frame errors), flat cel punishes every wobble (\"lines crawl, the whole frame boils\"). Flat 2D needs simpler motion and stricter control.\n🟢 **Anti-3D fix for flat anime:** (1) explicit flat rendering terminology: \"solid vector lineart, unlit flat tones, traditional anime cel-shading, flat sRGB color space\" — suppresses depth maps and forced ambient occlusion, holds line weights in fast motion; (2) the depth suppression written POSITIVELY — \"every surface a flat colour plane, no shading gradient, outlines carry all form\" — a single concrete exclusion at most, never a repeated \"no 3D\" (ch. 14 third class: a repeated ban is an attractor).\n🟢 **Style anchor workflow:** carry the flat cel style as the compact STYLE suffix (4–8 tokens, §6 meta rule) and restate its load-carrying aspects in POSITIVE LOCKS (§5) + limited palette + character references — never as an opening line (video-prompting ch. 12, placement rule 1); drafts on Mini/2.0, finals on the full model. Name the production technique, never a mood (\"flat cel shading, bold outlines, no motion blur\" not \"anime feeling\").\n🟢 **Official whole-video style lock pattern:** \"The entire video must match this exact 2D anime illustration aesthetic. Maintain consistent 2D anime illustration style throughout all frames.\" And mixed media **per element**: \"photorealistic environment with real people, cel-shaded flat coloring on hero only, cartoon physics and expressions on hero only.\" Block placement on Seedance/CS: the whole-video lock sentence goes in POSITIVE LOCKS; the per-element mixed-media declaration goes in STYLE.\n🟢 Style transfer: attach a style reference + \"in the visual style of the reference\"; director/DoP/film references as anchors (\"Wes Anderson symmetrical framing\") — **one** style reference per prompt.\n🟡 Also viable: pixel art (limited palette, hard edges, no anti-aliasing, four-frame gait cycle) and oil paint with moving brushstrokes.\n\n",
+        "Required ancestor context: # Style Control: Enforcement, Model Mechanics, Vocabularies\n\nStandalone reference for everything style-related across image AND video models. Tags and confidence labels: legend in sources.md. **Methodology note:** vocabulary packages are marked 🟢 when sources converge; since style blogs copy each other, convergence may partly be citation echo — treat vocabularies as strong starting points, and let your own motion-ladder test (post-audio-legal ch. 19) be the final judge. Pixar look definition: `pixar-look.md`.\n\n",
+        "Required ancestor context: ## 5b. Style control per video model\n🟢 **Meta-finding (multi-source):** no universal style winner — run a **motion ladder** per style and model (subtle portrait → head turn → walk → fast action → interaction). Never copy prompts 1:1 between models.\n\n"
+      ],
+      "verifyCriteria": [
+        "Keep all animation and non-animation packages.",
+        "Style donor is not an identity or geometry donor unless explicitly assigned.",
+        "Still and video exclusion rules remain distinct."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "style-control-c58bd9c5a494",
+      "title": "MiniMax H3 (Hailuo 3)",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "style-control"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for look library + per-model style compiler + reference planner",
+      "guidance": [
+        "### MiniMax H3 (Hailuo 3)\n🟢 Stylization strengths: **holds line quality and proportions in 2D/anime** (\"which most video models struggle with\"); realism trends plastic. Specs: 4–15 s, 24 fps, native 2K on hosted surfaces (⚠️ 768p-base claim retired, platforms-models ch. 21); one beat per shot. Prompt in the official three-field / six-section formats — never port the Seedance block structure 1:1.\n🟡 **Unique capability — LoRA:** trained LoRAs (own clips/keyframes) can hard-lock style, character, or motion — potentially the strongest style lock for many-clip consistency, but the training method is still unshown in any fetched source (platforms-models ch. 21).\n🟢 Prompt logic: action chain (cause→motion→reaction, chronological) instead of scene description; official modes T2VA/I2VA/FL2VA.\n\n",
+        "Required ancestor context: # Style Control: Enforcement, Model Mechanics, Vocabularies\n\nStandalone reference for everything style-related across image AND video models. Tags and confidence labels: legend in sources.md. **Methodology note:** vocabulary packages are marked 🟢 when sources converge; since style blogs copy each other, convergence may partly be citation echo — treat vocabularies as strong starting points, and let your own motion-ladder test (post-audio-legal ch. 19) be the final judge. Pixar look definition: `pixar-look.md`.\n\n",
+        "Required ancestor context: ## 5b. Style control per video model\n🟢 **Meta-finding (multi-source):** no universal style winner — run a **motion ladder** per style and model (subtle portrait → head turn → walk → fast action → interaction). Never copy prompts 1:1 between models.\n\n"
+      ],
+      "verifyCriteria": [
+        "Keep all animation and non-animation packages.",
+        "Style donor is not an identity or geometry donor unless explicitly assigned.",
+        "Still and video exclusion rules remain distinct."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "style-control-666cdb1219e7",
+      "title": "Kling 3.0",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "style-control"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for look library + per-model style compiler + reference planner",
+      "guidance": [
+        "### Kling 3.0\n🟢 **Strongest stylization flexibility of the photoreal class**; multi-shot mode holds the art style across shots — hence the anime recommendation of several comparisons. But: anime sits outside the comfort zone → **2–3× reroll budget** vs. realism.\n🟢 **Style drifts per generation:** Kling interprets each generation independently — repeat identical style keywords in EVERY prompt of the sequence + reuse the same style reference image. Never mix realism and anime in one prompt.\n🟢 MotionControl: reference action video + face binding for body/face/hand motion.\n\n",
+        "Required ancestor context: # Style Control: Enforcement, Model Mechanics, Vocabularies\n\nStandalone reference for everything style-related across image AND video models. Tags and confidence labels: legend in sources.md. **Methodology note:** vocabulary packages are marked 🟢 when sources converge; since style blogs copy each other, convergence may partly be citation echo — treat vocabularies as strong starting points, and let your own motion-ladder test (post-audio-legal ch. 19) be the final judge. Pixar look definition: `pixar-look.md`.\n\n",
+        "Required ancestor context: ## 5b. Style control per video model\n🟢 **Meta-finding (multi-source):** no universal style winner — run a **motion ladder** per style and model (subtle portrait → head turn → walk → fast action → interaction). Never copy prompts 1:1 between models.\n\n"
+      ],
+      "verifyCriteria": [
+        "Keep all animation and non-animation packages.",
+        "Style donor is not an identity or geometry donor unless explicitly assigned.",
+        "Still and video exclusion rules remain distinct."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "style-control-ab661985aaa4",
+      "title": "Veo 3.1",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "style-control"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for look library + per-model style compiler + reference planner",
+      "guidance": [
+        "### Veo 3.1\n🟢 Photorealism-first: overly smooth physics-correct motion works **against** anime aesthetics (stylized movement is exaggerated, not correct). Can stylize when the motion grammar is prompted along: stop-motion via \"12 fps judder, frame-to-frame jitter, no motion blur, preserve handmade imperfection\"; anime via \"squash-and-stretch, impact frames, speed lines\" + \"keep character on-model across shots\"; vector flat for explainers.\n\n",
+        "Required ancestor context: # Style Control: Enforcement, Model Mechanics, Vocabularies\n\nStandalone reference for everything style-related across image AND video models. Tags and confidence labels: legend in sources.md. **Methodology note:** vocabulary packages are marked 🟢 when sources converge; since style blogs copy each other, convergence may partly be citation echo — treat vocabularies as strong starting points, and let your own motion-ladder test (post-audio-legal ch. 19) be the final judge. Pixar look definition: `pixar-look.md`.\n\n",
+        "Required ancestor context: ## 5b. Style control per video model\n🟢 **Meta-finding (multi-source):** no universal style winner — run a **motion ladder** per style and model (subtle portrait → head turn → walk → fast action → interaction). Never copy prompts 1:1 between models.\n\n"
+      ],
+      "verifyCriteria": [
+        "Keep all animation and non-animation packages.",
+        "Style donor is not an identity or geometry donor unless explicitly assigned.",
+        "Still and video exclusion rules remain distinct."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "style-control-d208337fba85",
+      "title": "Grok Imagine (1.5)",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "style-control"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for look library + per-model style compiler + reference planner",
+      "guidance": [
+        "### Grok Imagine (1.5)\n🟢 **Native stylization bias:** drifts cartoonish/Pixar-like on its own (even converts photoreal intent) — several aggregator matrices list it as THE pick for \"stylized: anime, cyberpunk, cartoon, music-video, art-directed\". Negatives unreliable → style qualifiers at the prompt START. Grok Imagine 1.5: 1080p only in specific modes (mode names unverified — read the live selector), 720p otherwise; plan the upscale path unless the receipt shows 1080p.\n\n",
+        "Required ancestor context: # Style Control: Enforcement, Model Mechanics, Vocabularies\n\nStandalone reference for everything style-related across image AND video models. Tags and confidence labels: legend in sources.md. **Methodology note:** vocabulary packages are marked 🟢 when sources converge; since style blogs copy each other, convergence may partly be citation echo — treat vocabularies as strong starting points, and let your own motion-ladder test (post-audio-legal ch. 19) be the final judge. Pixar look definition: `pixar-look.md`.\n\n",
+        "Required ancestor context: ## 5b. Style control per video model\n🟢 **Meta-finding (multi-source):** no universal style winner — run a **motion ladder** per style and model (subtle portrait → head turn → walk → fast action → interaction). Never copy prompts 1:1 between models.\n\n"
+      ],
+      "verifyCriteria": [
+        "Keep all animation and non-animation packages.",
+        "Style donor is not an identity or geometry donor unless explicitly assigned.",
+        "Still and video exclusion rules remain distinct."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "style-control-2baa47554330",
+      "title": "Wan 2.5/2.6 · LTX",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "style-control"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for look library + per-model style compiler + reference planner",
+      "guidance": [
+        "### Wan 2.5/2.6 · LTX\n🟡 Wan: open-weight, cheap, LoRA-capable, multi-shot + reference-to-video (2.6), 1080p — budget alternative with pipeline ownership; ⚠️ Version note: OpenArt's video picker showed WAN 2.7 while a separate WAN 3.0 model page exists (OA-WEB@2026-09-04); Higgsfield lists Wan 3.0 / 3.0 Prime since 2026-08-24 (≤30 s, 480/720/1080p, HF-WEB@2026-09-04) — read the live picker for the exact label before writing the receipt. 🟡 **Wan 3.0 (OpenArt, Aug 2026) [P36, affiliate]:** t2v with attached references, 30 s, 720p, standard/prime modes; a prompt that addresses a reference not attached FAILS outright (\"add the reference images where mentioned\") — Rule 0 enforced by the model; the ByteDance stage format ported 1:1 in one report (single data point, not a licence); LTX-2.3 for own LoRA pipelines, LTX-2 Retake for partial repairs without full regeneration.\n\n",
+        "Required ancestor context: # Style Control: Enforcement, Model Mechanics, Vocabularies\n\nStandalone reference for everything style-related across image AND video models. Tags and confidence labels: legend in sources.md. **Methodology note:** vocabulary packages are marked 🟢 when sources converge; since style blogs copy each other, convergence may partly be citation echo — treat vocabularies as strong starting points, and let your own motion-ladder test (post-audio-legal ch. 19) be the final judge. Pixar look definition: `pixar-look.md`.\n\n",
+        "Required ancestor context: ## 5b. Style control per video model\n🟢 **Meta-finding (multi-source):** no universal style winner — run a **motion ladder** per style and model (subtle portrait → head turn → walk → fast action → interaction). Never copy prompts 1:1 between models.\n\n"
+      ],
+      "verifyCriteria": [
+        "Keep all animation and non-animation packages.",
+        "Style donor is not an identity or geometry donor unless explicitly assigned.",
+        "Still and video exclusion rules remain distinct."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "style-control-23d9278937c0",
+      "title": "Restyle path (video-to-video, distinct production route)",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "style-control"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for look library + per-model style compiler + reference planner",
+      "guidance": [
+        "### Restyle path (video-to-video, distinct production route)\n🟢 Fully restyling existing footage (live action → anime/Pixar/claymation/pixel art) is production-ready — reference class **Runway Aleph** (in-context V2V: re-skinning, object edits, relighting with preserved motion); alternatives Luma Modify, GoEnhance et al. Prompt pattern: short and specific — \"Detailed anime film aesthetic, **stable facial structure**, soft cel shading, cinematic anime lighting\"; specificity beats length. ⚠️ The quality test is MOTION: many \"restyle\" apps are frame filters that fall apart in movement. Source limits for Runway Aleph 2.0 Edit Studio are documented (RW-WEB@2026-09-04: 2–30 s, 480p–1080p, 24–30 fps, ≤10 cuts, Single-edit mode only — platform-ui-workflows §3); other restyle apps (Luma Modify, GoEnhance) remain 🟡 untested — run a short clip first. Complements the VFX hybrid path (production-pipeline ch. 9) with the inverse direction: live footage as a motion scaffold for a style.\n\n",
+        "Required ancestor context: # Style Control: Enforcement, Model Mechanics, Vocabularies\n\nStandalone reference for everything style-related across image AND video models. Tags and confidence labels: legend in sources.md. **Methodology note:** vocabulary packages are marked 🟢 when sources converge; since style blogs copy each other, convergence may partly be citation echo — treat vocabularies as strong starting points, and let your own motion-ladder test (post-audio-legal ch. 19) be the final judge. Pixar look definition: `pixar-look.md`.\n\n",
+        "Required ancestor context: ## 5b. Style control per video model\n🟢 **Meta-finding (multi-source):** no universal style winner — run a **motion ladder** per style and model (subtle portrait → head turn → walk → fast action → interaction). Never copy prompts 1:1 between models.\n\n"
+      ],
+      "verifyCriteria": [
+        "Keep all animation and non-animation packages.",
+        "Style donor is not an identity or geometry donor unless explicitly assigned.",
+        "Still and video exclusion rules remain distinct."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "style-control-ff888ede11ee",
+      "title": "6. Style vocabularies (token packages — placement per model)",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "style-control"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for look library + per-model style compiler + reference planner",
+      "guidance": [
+        "## 6. Style vocabularies (token packages — placement per model)\n**Placement (binding):** GPT Image 2 stills → §2 four-section structure, style first · Nano Banana Pro → new style medium at the END (§3) · Seedance / Cinema Studio video → split by aspect into LIGHTING / COLOR GRADE / OPTICS / PERFORMANCE / PHYSICS, the compact look tokens in the STYLE suffix, load-carrying aspects repeated in POSITIVE LOCKS — never line 1 (video-prompting ch. 12, placement rule 1) · Grok Imagine → prompt START (§5b, model exception) · Kling / Veo → their spine in platforms-models ch. 21 · MiniMax H3 → its own schema, no vocabulary port.\n- **Pixar/stylized 3D:** whimsical Pixar-style stylized 3D animation, rounded simplified forms, warm bounce lighting, exaggerated character proportions, oversized expressive eyes, soft global illumination, subsurface-scattering skin, rim light on shoulders + soft face light, warm three-point lighting, family-film cinematic composition, believable-not-photoreal. Pixar look = **80% rendering quality, 20% character design** — the rendering cues carry, not the word. Grade: warm-cool contrast (classic teal shadows/warm highlights) — projects with their own color script replace the concrete colors; the warm-cool principle stays. Proven viral format: emotional close-up, big eyes, warm light. ⚠️ For GPT Image 2, deliver this vocabulary via the 4-section structure (§2), never as a front-loaded keyword chain — the avalanche opener is disproven [PP]. First frame locks style, last frame locks the motion target — first/last-frame use only in the chain case (production-pipeline ch. 1), otherwise the still is a tagged reference; one variation axis per run. ⚠️ Render-engine tokens (\"Unreal Engine 5\", \"Octane\") risk the game-render look; \"Pixar Renderman quality\" is the safer token. IP line: the glossy 3D style is free, and film titles work as aesthetic lineage anchors (\"consistent with …\", same class as director names, used in the proven 4-section structure [PP]); Pixar CHARACTERS remain protected IP (documented C&D one day after a model launch) — never reference or reproduce named characters. Studio/title naming is path-bound: figure-bearing §2 prompts only; §9 figure-less prompts stay generic (pixar-look §9). Full look definition: `pixar-look.md`.\n- **Uncanny valley rule:** ~70% realism is the discomfort zone — either clearly stylized OR fully photoreal, never the middle. Environments: chunkier simplified geometry (rounded or faceted — pixar-look §9), soft shadows without photographic edges.\n- **Hanna-Barbera/limited TV animation:** 1960s Hanna-Barbera-style limited television animation, thick tapered black outlines + thin interior lines, flat color fills, desaturated/pastel palette, minimal shading, geometric simplified shapes, strong silhouettes, static hand-painted painterly background, economical movement (bodies mostly static, expression via face/small gestures), tableau camera.\n- **Rubber hose (1920s/30s):** 1930s rubber-hose animation, bendy tube limbs, pie-cut eyes, white gloves, ink-black flat fills, bouncy synchronized motion, film grain/dust, off-white paper background.\n- **Anime (modern):** anime style, cel shading, consistent linework, speed lines + anime motion blur, held poses before action beats; high-action = model sweet spot.\n- **Retro-90s anime:** retro 90s anime screenshot, VHS film grain, hand-painted background textures, high-contrast white highlights on hair and eyes, muted color palette, 4:3.\n- **Monochrome manga:** strictly black-and-white ink, no grayscale, dense screen-tone dot patterns for shadows, bold ink strokes, exaggerated speed lines, dramatic angles, manga panel aesthetic.\n- **Chibi:** super-deformed proportions (head ≈ body), huge sparkling eyes, tiny limbs, bright cel shading, kawaii sticker aesthetic.\n- **Ghibli-like / painterly anime:** hand-painted cel animation, soft watercolor/gouache background with visible brushwork, warm golden palette (amber, sage, dusty rose, warm cream — even night scenes warm lamplit, not cold blue), dappled afternoon light, lush botanical background detail, gentle pastoral mood. Four load-bearing traits confirmed in practice [P34]: painterly backgrounds, hand-inked line work, gentle naturalistic colour, warm atmospheric light — drop one and results scatter. Strongest single words per community tests: \"watercolor\" and \"cel animation\"; \"golden hour\" as the strongest lighting lever. Keep photorealism OUT by what you write in, not by a REPEATED ban list — the single §2 repulsion anchor stays: \"visible gouache brushwork, soft painted edges, matte paper texture, muted warm contrast\" replaces \"no CGI / no 3D render\" (ch. 14 third class — a repeated style ban attracts the style); simply omit photorealism tokens (4K, Unreal), they fight the aesthetic directly. Over-describe the background, under-describe the subject (Ghibli lives in the environment).\n- **Claymation/stop-motion (Aardman-like):** plasticine/polymer clay, visible fingerprint and thumbprint texture, hand-sculpted imperfections, slightly lopsided handmade shapes, matte clay surface, button eyes, miniature diorama set (felt grass, paper trees), tilt-shift/shallow DoF, warm soft studio lighting, 12 fps stop-motion stutter (video). Core principle: **imperfection descriptors ARE the style** — without \"handmade/slight imperfections\" the model renders too polished and the look tips into smooth 3D. Reuse the vocabulary identically across all scenes.\n- **Flat 2D TV cartoon / paper cutout (describe generically — named shows are IP):** flat 2D cartoon, thick black outlines (bold 2px vector linework), flat color fills — no gradients, minimal cel-shading, flat ambient light without realistic shadows, simplified geometric shapes, pastel/bright palette; cutout variant adds: paper-cutout aesthetic, crisp cutout edges, round heads, simple dot eyes, paper texture.\n- **Saturday-morning cartoon:** classic hand-drawn cartoon, bold shapes, thick outlines, bright primary palette, clean line, minimal background detail.\n\n🟢 **Meta rule for all vocabularies:** the prompt-side look TOKENS of the style anchor (the style-contract paragraph lives in the bible, SKILL.md Workflow step 4) are a compact package (4–8 specific tokens) reused verbatim across all prompts — \"more style words = more style soup = more drift\": a 30-word style line gets averaged into unpredictability. One sub-style per prompt; style mixes (Ghibli + cyberpunk) cause drift — mixed styles only as explicit per-element declarations (§5).\n\n",
+        "Required ancestor context: # Style Control: Enforcement, Model Mechanics, Vocabularies\n\nStandalone reference for everything style-related across image AND video models. Tags and confidence labels: legend in sources.md. **Methodology note:** vocabulary packages are marked 🟢 when sources converge; since style blogs copy each other, convergence may partly be citation echo — treat vocabularies as strong starting points, and let your own motion-ladder test (post-audio-legal ch. 19) be the final judge. Pixar look definition: `pixar-look.md`.\n\n",
+        "Read applicable linked procedures and exceptions by exact entryID: film-production-pixar-look/pixar-look-1da5c9533bf3, film-production-pixar-look/pixar-look-266b78d1a40e, film-production-pixar-look/pixar-look-441de0d8a9d1, film-production-pixar-look/pixar-look-56847cb20874, film-production-pixar-look/pixar-look-6067d37adaa1, film-production-pixar-look/pixar-look-67b9aafd568b, film-production-pixar-look/pixar-look-68ec1764bb32, film-production-pixar-look/pixar-look-79aef52eb72e, film-production-pixar-look/pixar-look-8448fb177d42, film-production-pixar-look/pixar-look-e2bffc9f8b7c, film-production-pixar-look/pixar-look-eeafb6781cc6, film-production-pixar-look/pixar-look-f22e3f8ad2cd, film-production-pixar-look/pixar-look-fdcec6b2c0f0, film-production-pixar-look/pixar-look-ffa1fc7ecbcc, film-production-skill/skill-05a8c920538c, film-production-skill/skill-11d6f150df4d, film-production-skill/skill-2e42f043c413, film-production-skill/skill-705399a08ca6, film-production-skill/skill-97ff9b201107, film-production-skill/skill-9fc6d6e46c26, film-production-skill/skill-a9c8ddc59709, film-production-skill/skill-c1c24ea6da18, film-production-skill/skill-cffc1e447b50, film-production-skill/skill-da7177bac7a7, film-production-skill/skill-dceff66d0b82, film-production-skill/skill-f468f0c333ce"
+      ],
+      "verifyCriteria": [
+        "Keep all animation and non-animation packages.",
+        "Style donor is not an identity or geometry donor unless explicitly assigned.",
+        "Still and video exclusion rules remain distinct."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "style-control-73867a0b4daf",
+      "title": "6b. Non-animation styles: footage authenticity, era looks, technical optics",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "style-control"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for look library + per-model style compiler + reference planner",
+      "guidance": [
+        "## 6b. Non-animation styles: footage authenticity, era looks, technical optics\n",
+        "Required ancestor context: # Style Control: Enforcement, Model Mechanics, Vocabularies\n\nStandalone reference for everything style-related across image AND video models. Tags and confidence labels: legend in sources.md. **Methodology note:** vocabulary packages are marked 🟢 when sources converge; since style blogs copy each other, convergence may partly be citation echo — treat vocabularies as strong starting points, and let your own motion-ladder test (post-audio-legal ch. 19) be the final judge. Pixar look definition: `pixar-look.md`.\n\n"
+      ],
+      "verifyCriteria": [
+        "Keep all animation and non-animation packages.",
+        "Style donor is not an identity or geometry donor unless explicitly assigned.",
+        "Still and video exclusion rules remain distinct."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "style-control-5257ea810f14",
+      "title": "A. Footage authenticity (found-footage family)",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "style-control"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for look library + per-model style compiler + reference planner",
+      "guidance": [
+        "### A. Footage authenticity (found-footage family)\n🟢 **Four-tell rule:** a clip only reads as \"genuinely recorded\" when FOUR things are named: (1) the recording format (camcorder/VHS shoulder cam, dashcam, bodycam, CCTV, livestream/webcam), (2) a burned-in tell (timecode lower right, REC icon, battery red-light — \"battery red-light reflected in breath\"), (3) exactly ONE in-frame light source (headlamp, headlights, fluorescent strip), (4) a camera that does NOT behave cinematically (fixed mount or panicked handheld). Name the artifacts in language instead of hoping for filters — \"scanline softness on a 1990s shoulder-camcorder, dust in a headlamp beam.\"\n🟢 **Restraint rule:** the scene must stay readable under the damage — \"build the fear first, then add only enough tracking drift, timecode, and tape wear to make the clip feel recovered instead of overprocessed.\"\n🟡 Sub-vocabularies: **VHS** — tape grain, tracking errors, scanlines, static bursts, chromatic drift, faded colors, timestamp overlay. **CCTV** — fixed high angle, b/w or IR green-gray, muted tones, noisy shadows, edge blur, burned-in timestamp, corner brackets. **CRT monitor feed** — cool blue tint, phosphor glow, screen curvature, analog noise. **Bodycam/dashcam** — chest-height ultra-wide, motion blur on head/vehicle movement, close distorted audio.\n🟢 **Anti-slop bonus:** degraded-media looks have built-in fault tolerance — grain, blur, and compression mask model artifacts (same principle as the UGC path). A footage format is a legitimate rescue style for risk shots.\n\n",
+        "Required ancestor context: # Style Control: Enforcement, Model Mechanics, Vocabularies\n\nStandalone reference for everything style-related across image AND video models. Tags and confidence labels: legend in sources.md. **Methodology note:** vocabulary packages are marked 🟢 when sources converge; since style blogs copy each other, convergence may partly be citation echo — treat vocabularies as strong starting points, and let your own motion-ladder test (post-audio-legal ch. 19) be the final judge. Pixar look definition: `pixar-look.md`.\n\n",
+        "Required ancestor context: ## 6b. Non-animation styles: footage authenticity, era looks, technical optics\n"
+      ],
+      "verifyCriteria": [
+        "Keep all animation and non-animation packages.",
+        "Style donor is not an identity or geometry donor unless explicitly assigned.",
+        "Still and video exclusion rules remain distinct."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "style-control-7b703384f157",
+      "title": "B. Era & film-stock looks (prompt layer of the era selector)",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "style-control"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for look library + per-model style compiler + reference planner",
+      "guidance": [
+        "### B. Era & film-stock looks (prompt layer of the era selector)\n🟢 **The year is a rule, not decoration [H-off, P24]:** write the period as a hard bound — \"nothing in frame is newer than 2011: no smartphones, no glowing screens in a crowd, no modern cars at the kerb\" — because the model pulls every picture toward today by default (an extra will be holding a phone). **Twin sets stay apart by contrast locks:** two rich interiors in the same palette are written as patina vs. polish (dried oxblood, tarnished gold, one aged lamp — vs. saturated crimson, mirror-bright brass, identical lamps in symmetry) plus a never-clause each way (\"never tarnish on the new money, never mirror polish on the old\").\n🟢 **Named film stocks are precision tools** — models know their signatures: Kodak Portra 400 (soft natural skin, faded blacks), Kodachrome 64 (rich, warm), CineStill 800T (tungsten + halation), Fuji Pro 400H (greenish shadows), Kodak Tri-X (b/w, hard grain), Fujifilm Velvia (hyper-saturated landscape). \"Scanned film negative\" adds realistic imperfections.\n🟡 Look building blocks: **16mm** — blooming highlights, heavy grain, jitter texture, vignette, \"avoiding any digital sharpness\"; **Super 8/8mm home movie** — warm, flickering, family nostalgia; **newsreel** — 16mm b/w, scratches, slightly sped motion; **Polaroid/Instax** — creamy highlights, chemical streaks, white frame border, pastel fade; **1990s disposable** — harsh direct flash, red-eye, date stamp, washed colors; **daguerreotype/Victorian** — sepia-metallic, oval vignette, long-exposure stillness; plus silent-film 1920s, Technicolor 1950s, French New Wave, Y2K digicam flash as established shorthand.\n🟢 **Vintage vs. retro — decide explicitly:** vintage = authentically \"shot back then\" (period-correct fashion, set, imperfections included); retro = modern subjects in old capture technique. The model needs the decision or it mixes. Always couple an era look with period-correct production design.\n🟡 **Director signatures as composition shortcuts** (legally safe — style, not work): \"Wes Anderson style\" = perfectly symmetrical central composition + flat pastel palette + deadpan storybook framing; works cross-model as shorthand for a whole rule set. Similarly usable: noir 1940s (hard shadows, venetian-blind light), European arthouse (muted, soft, emotional).\n\n",
+        "Required ancestor context: # Style Control: Enforcement, Model Mechanics, Vocabularies\n\nStandalone reference for everything style-related across image AND video models. Tags and confidence labels: legend in sources.md. **Methodology note:** vocabulary packages are marked 🟢 when sources converge; since style blogs copy each other, convergence may partly be citation echo — treat vocabularies as strong starting points, and let your own motion-ladder test (post-audio-legal ch. 19) be the final judge. Pixar look definition: `pixar-look.md`.\n\n",
+        "Required ancestor context: ## 6b. Non-animation styles: footage authenticity, era looks, technical optics\n"
+      ],
+      "verifyCriteria": [
+        "Keep all animation and non-animation packages.",
+        "Style donor is not an identity or geometry donor unless explicitly assigned.",
+        "Still and video exclusion rules remain distinct."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "style-control-da4feb1794ad",
+      "title": "C. Technical optics & special cameras",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "style-control"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for look library + per-model style compiler + reference planner",
+      "guidance": [
+        "### C. Technical optics & special cameras\n🟡 Prompt vocabulary for optics beyond preset lenses: **FPV drone** — rapid low-altitude weaving, motion blur at frame edges, lens flare through obstacles (opposite of gimbal drone: \"flat, stable, horizon-level\" is the anti-FPV look); **action cam/GoPro** — ultra-wide FOV, horizon-locked, hyper-stabilized, helmet/chest mount; **thermal** — heat-signature rendering, white-hot/black-hot, temperature gradients instead of texture; **night vision** — IR green, glowing highlights, noisy shadows, pupil glow; **tilt-shift miniature** — extreme selective focus plane turns real scenes into model worlds. Optics choice = genre signal (military, survival, documentary).\n\n",
+        "Required ancestor context: # Style Control: Enforcement, Model Mechanics, Vocabularies\n\nStandalone reference for everything style-related across image AND video models. Tags and confidence labels: legend in sources.md. **Methodology note:** vocabulary packages are marked 🟢 when sources converge; since style blogs copy each other, convergence may partly be citation echo — treat vocabularies as strong starting points, and let your own motion-ladder test (post-audio-legal ch. 19) be the final judge. Pixar look definition: `pixar-look.md`.\n\n",
+        "Required ancestor context: ## 6b. Non-animation styles: footage authenticity, era looks, technical optics\n"
+      ],
+      "verifyCriteria": [
+        "Keep all animation and non-animation packages.",
+        "Style donor is not an identity or geometry donor unless explicitly assigned.",
+        "Still and video exclusion rules remain distinct."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "style-control-fc8ef8be9186",
+      "title": "7. Reference integration protocol (for prompt-writing agents)",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "style-control"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for look library + per-model style compiler + reference planner",
+      "guidance": [
+        "## 7. Reference integration protocol (for prompt-writing agents)\n🟢 **Declare the style donor [H-off, P23]:** when references come from different styles, name which one donates rendering style to which receiver and dose it in words — \"take the style of the character and apply it to the background\" (Higgsfield's own fix on a hybrid short; push harder/softer to control the blend). Undeclared, the model blends silently or leaves the seam. Case: pixar-look §10.\n🟢 **Style reverse-engineering via LLM [P17]:** to build a project's reusable style block, feed the look-defining references to the LLM FIRST and have it analyze and write out the style (materials, skin/surface treatment, rendering signals) as a base prompt structure — then reuse that structure across all generations, refining per asset with further references until the cast and locations sit. Beats hand-writing style prose from memory.\n🟢 **Rule 0 — a reference only exists if the prompt addresses it.** \"Attach an image in the UI\" without a prompt role = undefined behavior. Every prompt with references contains a REFERENCE block. Motto: \"Use text to direct. Use images to preserve appearance.\"\n🟢 **Rule 1** — one line per reference: tag/name + \"controls only [exactly one job]\" + \"Do not copy [concrete non-transfers]\". No tag without a job, no job without a tag. (Full line shape incl. the identity anchor: video-prompting ch. 12 ACTIVE REFERENCES — one merged line, not a job line plus a separate anchor line.)\n🟡 **2D vector art as identity source for a 3D render [P35, sponsored]:** a flat transparent-PNG mascot works as an identity reference re-rendered in 3D when the role line anchors the features and colour scheme to the artwork (\"anchor the facial features, hat, tool and colour scheme directly to the vector artwork\") — a mixed-style declaration where the STYLE donor is the prompt, the IDENTITY donor the 2D art.\n🟢 **Rule 2** — clarify platform syntax BEFORE writing: @image numbers (upload order!), @element_name (Higgsfield), or Mode B (describe the visible feature). Tags are not portable (token forms and the unverified-marker: video-prompting ch. 12b tag token rule).\n🟢 **Rule 3** — every prompt deliverable carries its attachment checklist in upload order as the Render Slate `Inputs` row directly ABOVE the code block (SKILL.md rule 10): one line per reference, numbered in upload order, `n. @tag = what it is` (\"1. @image1 = sheet X · 2. @image2 = style still Y …\"). The checklist is never written inside the prompt — the generator reads it as scene content (image-model-logic 24b item 1).\n🟢 **Rule 4** — style references get the same role discipline: \"@image2 controls only the rendering style. Do not copy its subject or composition.\"\n🟢 **Diagnosis:** output comes back photoreal despite a style word → the style was a word, not an anchor. Fix order: (1) look-carrying reference (a start frame only in the chain case, production-pipeline ch. 1), (2) upgrade the style carrier to the vocabulary package at its model's placement (§6 placement line; + negation anchor on GPT Image 2), (3) style into the locks. Never just sprinkle the style word a third time.\n",
+        "Required ancestor context: # Style Control: Enforcement, Model Mechanics, Vocabularies\n\nStandalone reference for everything style-related across image AND video models. Tags and confidence labels: legend in sources.md. **Methodology note:** vocabulary packages are marked 🟢 when sources converge; since style blogs copy each other, convergence may partly be citation echo — treat vocabularies as strong starting points, and let your own motion-ladder test (post-audio-legal ch. 19) be the final judge. Pixar look definition: `pixar-look.md`.\n\n",
+        "Read applicable linked procedures and exceptions by exact entryID: film-production-skill/skill-05a8c920538c, film-production-skill/skill-11d6f150df4d, film-production-skill/skill-2e42f043c413, film-production-skill/skill-705399a08ca6, film-production-skill/skill-97ff9b201107, film-production-skill/skill-9fc6d6e46c26, film-production-skill/skill-a9c8ddc59709, film-production-skill/skill-c1c24ea6da18, film-production-skill/skill-cffc1e447b50, film-production-skill/skill-da7177bac7a7, film-production-skill/skill-dceff66d0b82, film-production-skill/skill-f468f0c333ce"
+      ],
+      "verifyCriteria": [
+        "Keep all animation and non-animation packages.",
+        "Style donor is not an identity or geometry donor unless explicitly assigned.",
+        "Still and video exclusion rules remain distinct."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    }
+  ],
+  "provenance": {
+    "sourceURL": "https://github.com/iret77/ai-film-production",
+    "sourceCommit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+    "sourceSections": [
+      "references/style-control.md"
+    ],
+    "adaptation": "Complete source sections. Apply these NGV adaptations before source imperatives:\nngv-phase-order: The active pack owns phase order. Musicvideo remains Track → optional Lyrics → Init → approved Analysis → optional existing material → story. Use W10 knowledge inside the relevant existing phases; a replacement phase graph requires an explicit decision.\nngv-canon: Map bible roles to NGV canonical writers/artifacts and cumulative exact-byte lineage. Do not create an independent markdown authority. Draft/proposal and approval remain different states; phase edits require explicit rewind.\nngv-greenfield: Musicvideo may be greenfield: propose story or nonnarrative concept from approved audio analysis and optional lyrics. Missing existing story files never block development. Execution prompts cannot silently invent unapproved beats.\nngv-language: App interaction follows explicit app localization or an explicit language request. Generated model prompts remain English with literal dialogue in the declared dialogue language. Preserve user-supplied text as input/provenance; the normal route still precompiles it, never bypasses the prompt engine.\nngv-hybrid: Reusable craft, coverage, structure, review and finishing also apply to imported/live_action/ai_enhanced shots. Generation-only anchors, paid routes and draft renders are conditional on source mode. Retain zero-generation musicvideo/film workflows.\nngv-anchor-modes: Record reference anchor, exact keyframe interpolation, frame continuation and native video extension as different proposed modes. #485 must settle integration with locked chained-shot semantics. Existing predecessor-last-frame-only chain remains unchanged until that decision.\nngv-provider-evidence: These are dated source claims, not live verified capabilities. Keep original date/confidence/route. Executability comes from enabled providers intersected with actual route support. Never transplant a UI field into an API or enable a provider from this corpus.\nngv-spend: Preserve the diagnostic counting protocol and escalation thresholds as configurable policy. Every paid operation stays inside explicit cost/batch authorization (#480); never automatically spend through the entire suggested budget. A paid diagnostic is not a free validation.\nngv-style-scope: Bind each selected criterion to its actual frame/shot/sequence/project scope and evidence modality. Technical provenance gates remain deterministic; aesthetic reviews require viewed media or attributed director review. A local fault on a usable production take follows scoped repair before regeneration.\nngv-performance-audio: Musicvideo master audio is the original track. Referenced segments can drive performance/lip sync without becoming replacement soundtrack. Singing, spoken dialogue, VO, ambience and score are separate roles with explicit mouth ownership; keep scope of music-bleed exception.\nngv-documentary: For actual documentary, paper edit selects attributed, consented source transcript ranges; no invented witness quote or synthetic footage passed off as evidence. Authored or reenacted interviews are a separately declared synthetic mode, preserving source/disclosure provenance.\nngv-abi-and-pins: Use versioned resources/new extension artifacts under existing registration and loader. Do not add stored fields to compatible public V1 value types. Existing projects retain pinned pack/profile/library versions; migration is explicit and transactional.\nngv-style-risk: A deliberate style may accept a named aesthetic imperfection; it does not excuse wrong identity, anatomy, unapproved canon changes or provenance gaps. Distinguish intentional camera following from accidental floating camera.\nngv-examples: Keep example and template content available in full, but instantiate only from actual project data and verified route. Never promote example light/weather/plot, prices, IDs or account names into canon.\nngv-legal: Preserve attribution, consent, rights and disclosure procedures and the source date. Do not compile jurisdiction-specific legal conclusions into an automatic green gate. No additional legal research or advice is asserted by this extraction.\nngv-knowledge-scope: Keep every actionable item locally; select the relevant complete procedure/recipe and its governing exceptions per task. Do not inject all files, silently truncate the selected procedure, or mistake a small initial library for complete migration.\nngv-readable-overlays: Preserve the chosen recording-format tell or chapter-card intent as an NLE overlay/title with exact text where needed; do not ask the video generator to render reliable readable text. Non-text recording artifacts remain generation style. This is an explicit NGV realization of both source intentions, not a claim that the source contains this reconciliation."
+  },
+  "license": {
+    "spdxIdentifier": "MIT",
+    "copyrightNotice": "Copyright (c) 2026 iret77",
+    "sourceURL": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/LICENSE"
+  }
+}

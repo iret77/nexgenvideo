@@ -70,6 +70,7 @@ enum ToolRunPresentation {
         "generate_audio": "Generating audio",
         "upscale_media": "Upscaling media",
         "list_models": "Listing generation models",
+        "get_production_knowledge": "Reading production guidance",
         "resolve_model": "Choosing the right model",
         // Production pipeline
         "init_project": "Setting up the production pipeline",

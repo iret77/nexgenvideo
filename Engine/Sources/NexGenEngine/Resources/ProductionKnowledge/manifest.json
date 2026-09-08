@@ -63,6 +63,153 @@
       "version": "1.0.0",
       "path": "libraries/stylized-3d-animation.v1.json",
       "sha256": "776ebb718464a75bd6cb5270164ca7bff840b3a996654f51f1b180a21ddbf56c"
+    },
+    {
+      "kind": "library",
+      "id": "film-production-readme",
+      "version": "3.1.1",
+      "path": "libraries/film-production-readme.v3.json",
+      "sha256": "2f1becf93da4d74379412e53da5f9af7fa313a88bb84c34aa23917448375aa72"
+    },
+    {
+      "kind": "library",
+      "id": "film-production-skill",
+      "version": "3.1.1",
+      "path": "libraries/film-production-skill.v3.json",
+      "sha256": "55271cae223656bb40c6d0916c7a3b00486d10e77a94734e7a6003e0fb25089e"
+    },
+    {
+      "kind": "library",
+      "id": "film-production-director-recipes",
+      "version": "3.1.1",
+      "path": "libraries/film-production-director-recipes.v3.json",
+      "sha256": "4825a109bd1e78b6960d9cf7e0a32c537a0d9365f29c67b12bd59df546a63257"
+    },
+    {
+      "kind": "library",
+      "id": "film-production-film-craft",
+      "version": "3.1.1",
+      "path": "libraries/film-production-film-craft.v3.json",
+      "sha256": "9097a0c81a3a9ee3b797596ddc95fd17ba4ebd9540f7f5718effcbfcdd0fd329"
+    },
+    {
+      "kind": "library",
+      "id": "film-production-genre-baselines",
+      "version": "3.1.1",
+      "path": "libraries/film-production-genre-baselines.v3.json",
+      "sha256": "50c648e2234fad8f4d3cbffadf1eadafddbf95dbbdd809930945172b671fc45e"
+    },
+    {
+      "kind": "library",
+      "id": "film-production-glossary",
+      "version": "3.1.1",
+      "path": "libraries/film-production-glossary.v3.json",
+      "sha256": "a89214408fd756f81695f3a325bf0e6146955917ec52d99165312f1fb0fa6074"
+    },
+    {
+      "kind": "library",
+      "id": "film-production-image-model-logic",
+      "version": "3.1.1",
+      "path": "libraries/film-production-image-model-logic.v3.json",
+      "sha256": "e399914588c23c8fdcf52bfc12e88b8fa87190d6af0041063d54a9108f40564d"
+    },
+    {
+      "kind": "library",
+      "id": "film-production-pixar-look",
+      "version": "3.1.1",
+      "path": "libraries/film-production-pixar-look.v3.json",
+      "sha256": "67464079de8d9580dd0c8e4819a47218fb947bcb91923fe4e08030e99be3a21f"
+    },
+    {
+      "kind": "library",
+      "id": "film-production-platform-ui-workflows",
+      "version": "3.1.1",
+      "path": "libraries/film-production-platform-ui-workflows.v3.json",
+      "sha256": "59ee8854d1c2c85b2856fd9f864e1d1e96d434b2dba4786e5d654d6c0e80ac52"
+    },
+    {
+      "kind": "library",
+      "id": "film-production-platforms-models",
+      "version": "3.1.1",
+      "path": "libraries/film-production-platforms-models.v3.json",
+      "sha256": "2ca410043d54de3855a565cc7dc7b7da96187c2d9080acee27fb5524a4872a17"
+    },
+    {
+      "kind": "library",
+      "id": "film-production-post-audio-legal",
+      "version": "3.1.1",
+      "path": "libraries/film-production-post-audio-legal.v3.json",
+      "sha256": "08d85b0a0e4b147292a8778566cc0722b2ecbd539b17c65ded8d795d06bbff90"
+    },
+    {
+      "kind": "library",
+      "id": "film-production-production-bible",
+      "version": "3.1.1",
+      "path": "libraries/film-production-production-bible.v3.json",
+      "sha256": "8151180f09315f0a743975571046627e0abf035dd5fc3bc293b0f14181494d40"
+    },
+    {
+      "kind": "library",
+      "id": "film-production-production-pipeline",
+      "version": "3.1.1",
+      "path": "libraries/film-production-production-pipeline.v3.json",
+      "sha256": "78bfb033bfa2819b2bfb5a379e8c51f7aa38f5a5262fd9e6c7e5a00e2c9442dd"
+    },
+    {
+      "kind": "library",
+      "id": "film-production-renderability",
+      "version": "3.1.1",
+      "path": "libraries/film-production-renderability.v3.json",
+      "sha256": "50719a3d88a44304e9fa51f20ecf5cc826e7f6682768162492eb1e55d0e23868"
+    },
+    {
+      "kind": "library",
+      "id": "film-production-sources",
+      "version": "3.1.1",
+      "path": "libraries/film-production-sources.v3.json",
+      "sha256": "71eda10bbb62230d1852444f21a2f228096ea04880b7318ba5b0c2587eb3d9b0"
+    },
+    {
+      "kind": "library",
+      "id": "film-production-story-structures",
+      "version": "3.1.1",
+      "path": "libraries/film-production-story-structures.v3.json",
+      "sha256": "9cd10f4fa1846fd79742d91d0939b1e697226826463cef5e0f6f1e83a4a6da11"
+    },
+    {
+      "kind": "library",
+      "id": "film-production-style-control",
+      "version": "3.1.1",
+      "path": "libraries/film-production-style-control.v3.json",
+      "sha256": "420129cd7c3b766b70861fcf2511d332cd8610d159b67fe95a640f83bd6ac986"
+    },
+    {
+      "kind": "library",
+      "id": "film-production-video-prompting",
+      "version": "3.1.1",
+      "path": "libraries/film-production-video-prompting.v3.json",
+      "sha256": "ce8e67e317d77fd759a12d5cc10b2008013ba064d4dd4ecc0a823b24e68e57b5"
+    },
+    {
+      "kind": "library",
+      "id": "film-production-worked-example",
+      "version": "3.1.1",
+      "path": "libraries/film-production-worked-example.v3.json",
+      "sha256": "0bdb0c7bd962055e1a56daf3a4e62ae517b3476b9cac0a13871fdf00cba01065"
+    },
+    {
+      "kind": "library",
+      "id": "film-production-workflows",
+      "version": "3.1.1",
+      "path": "libraries/film-production-workflows.v3.json",
+      "sha256": "b3155c54bffa8d9d92b952bad06fdd58f4fc1e7172e340685ee634955d5ec989"
+    },
+    {
+      "kind": "library",
+      "id": "film-production-blueprints",
+      "version": "3.1.1",
+      "path": "libraries/film-production-blueprints.v3.json",
+      "sha256": "051fa30fe5903a7646bb0c72c344782dcbc6533e86d5bc43e60153318061eb2f"
     }
   ]
 }

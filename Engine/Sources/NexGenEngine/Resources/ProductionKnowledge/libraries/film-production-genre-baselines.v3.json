@@ -1,0 +1,672 @@
+{
+  "schemaVersion": "creative-library.v1",
+  "id": "film-production-genre-baselines",
+  "version": "3.1.1",
+  "applicability": {
+    "packIDs": [],
+    "phases": [
+      "init",
+      "analysis",
+      "brief",
+      "production_design",
+      "treatment",
+      "storyboard",
+      "bible",
+      "shotlist",
+      "sanity",
+      "frames",
+      "render",
+      "review",
+      "assembly",
+      "finish",
+      "generic"
+    ],
+    "intentTags": [
+      "genre-baselines"
+    ],
+    "activeProfileIDs": []
+  },
+  "entries": [
+    {
+      "id": "genre-baselines-c56dc8097a52",
+      "title": "Genre Baselines: Entry Points & Skill Filters",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "genre-baselines"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for genre defaults and knowledge selector; pack-specific overrides",
+      "guidance": [
+        "# Genre Baselines: Entry Points & Skill Filters\n\nThe FIRST file to read when a project's genre is known. Per genre: the audience contract, craft defaults (vocabulary from film-craft.md), subgenre shifts, a recipe shortlist (director-recipes.md), AI-production notes, and a **skill filter** — which files belong in context for this project type. Baselines are starting points the user bends, never rules.\n\nTags and confidence labels: legend in sources.md. **Always in context regardless of genre:** SKILL.md (routing + always-rules). Add per the filter lines below (they are the files the SKILL.md routing table's spine names for this project type); load video-prompting.md when prompts are actually being written.\n\n---\n\n",
+        "Read applicable linked procedures and exceptions by exact entryID: film-production-director-recipes/director-recipes-056ac0ea6c03, film-production-director-recipes/director-recipes-17cfc8bdffd7, film-production-director-recipes/director-recipes-ead52cc58afb, film-production-director-recipes/director-recipes-ed7e5494d54b, film-production-film-craft/film-craft-08c1a1b2c538, film-production-film-craft/film-craft-2248687307ab, film-production-film-craft/film-craft-250a592981e5, film-production-film-craft/film-craft-3467e7856eaf, film-production-film-craft/film-craft-53cc6a016d88, film-production-film-craft/film-craft-56d3d772fec2, film-production-film-craft/film-craft-570fba3d71dd, film-production-film-craft/film-craft-67a9384f75ea, film-production-film-craft/film-craft-9ebd24a43e12, film-production-film-craft/film-craft-b70a3b38e137, film-production-skill/skill-05a8c920538c, film-production-skill/skill-11d6f150df4d, film-production-skill/skill-2e42f043c413, film-production-skill/skill-705399a08ca6, film-production-skill/skill-97ff9b201107, film-production-skill/skill-9fc6d6e46c26, film-production-skill/skill-a9c8ddc59709, film-production-skill/skill-c1c24ea6da18, film-production-skill/skill-cffc1e447b50, film-production-skill/skill-da7177bac7a7, film-production-skill/skill-dceff66d0b82, film-production-skill/skill-f468f0c333ce, film-production-sources/sources-9de87ed0c000, film-production-video-prompting/video-prompting-2d077c405e26, film-production-video-prompting/video-prompting-3145b34f3b5d, film-production-video-prompting/video-prompting-33ae6df5c3f0, film-production-video-prompting/video-prompting-39026ee6df7f, film-production-video-prompting/video-prompting-4a8d407dff7a, film-production-video-prompting/video-prompting-5275ee1254bc, film-production-video-prompting/video-prompting-6ebc68114145, film-production-video-prompting/video-prompting-77153717e7be, film-production-video-prompting/video-prompting-a3510dce6126, film-production-video-prompting/video-prompting-ae84e7dfae96, film-production-video-prompting/video-prompting-b8193dd15dd6, film-production-video-prompting/video-prompting-cb91fd3500e1, film-production-video-prompting/video-prompting-cd15da11c9c9, film-production-video-prompting/video-prompting-d87cde00835d, film-production-video-prompting/video-prompting-ddfa67879961, film-production-video-prompting/video-prompting-f6e454e1d76b"
+      ],
+      "verifyCriteria": [
+        "Genre is not automatically a pack.",
+        "Retain all 13 baselines and each load/skip recommendation."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "genre-baselines-41eb04e85ab9",
+      "title": "Action",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "genre-baselines"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for genre defaults and knowledge selector; pack-specific overrides",
+      "guidance": [
+        "## Action\n**Contract:** kinetic clarity — the audience must always know who, where, and what's at stake mid-chaos. **Defaults:** sequence-approach structure (setpieces as mini-films) · escalating setpiece scale · geography established BEFORE chaos (one orienting master per beat) · shot lengths shorten into impacts, one long \"oner\" showpiece per act · wide-to-tight lens pattern, low angles on heroes · hard motivated light, high contrast · desaturated base + heat accents · impacts on the cut, silence before the biggest hit. **Subgenres:** martial-arts (longer takes, full bodies in frame, choreography readable) · car/chase (parallel cross-cutting, cockpit inserts, wheel rules) · disaster (scale reveals, crowd logistics) · superhero (icon poses as held frames). **Recipes:** Kurosawa (ensemble motion + weather) · Greengrass (verité chaos) · Nolan (engineered setpieces) · Leone (standoff tension) · Wachowskis/Pope (wire-fu techno-noir) + Kamiński (combat realism). **AI notes:** fights = attack–reaction beats cut in the edit (renderability §3); vehicles/wheels rescue paths; crowd rules; blockout path for complex camera chains (production-pipeline ch. 8). **Filter:** renderability.md (critical) · production-pipeline.md · film-craft.md §3–4.\n\n",
+        "Required ancestor context: # Genre Baselines: Entry Points & Skill Filters\n\nThe FIRST file to read when a project's genre is known. Per genre: the audience contract, craft defaults (vocabulary from film-craft.md), subgenre shifts, a recipe shortlist (director-recipes.md), AI-production notes, and a **skill filter** — which files belong in context for this project type. Baselines are starting points the user bends, never rules.\n\nTags and confidence labels: legend in sources.md. **Always in context regardless of genre:** SKILL.md (routing + always-rules). Add per the filter lines below (they are the files the SKILL.md routing table's spine names for this project type); load video-prompting.md when prompts are actually being written.\n\n---\n\n",
+        "Read applicable linked procedures and exceptions by exact entryID: film-production-film-craft/film-craft-08c1a1b2c538, film-production-film-craft/film-craft-2248687307ab, film-production-film-craft/film-craft-250a592981e5, film-production-film-craft/film-craft-3467e7856eaf, film-production-film-craft/film-craft-53cc6a016d88, film-production-film-craft/film-craft-56d3d772fec2, film-production-film-craft/film-craft-570fba3d71dd, film-production-film-craft/film-craft-67a9384f75ea, film-production-film-craft/film-craft-9ebd24a43e12, film-production-film-craft/film-craft-b70a3b38e137, film-production-production-pipeline/production-pipeline-0fdca1da8970, film-production-production-pipeline/production-pipeline-1bb10d449ca5, film-production-production-pipeline/production-pipeline-3e7423e91475, film-production-production-pipeline/production-pipeline-3f320156d67f, film-production-production-pipeline/production-pipeline-41c7b8294114, film-production-production-pipeline/production-pipeline-446e57806ce5, film-production-production-pipeline/production-pipeline-455241c73ce4, film-production-production-pipeline/production-pipeline-524c7d64a7f3, film-production-production-pipeline/production-pipeline-668103488e98, film-production-production-pipeline/production-pipeline-99e7beb6f331, film-production-production-pipeline/production-pipeline-9bf4e03af57e, film-production-production-pipeline/production-pipeline-a2fb95cff485, film-production-production-pipeline/production-pipeline-b4b53fe52130, film-production-production-pipeline/production-pipeline-d16d62c31ae0, film-production-production-pipeline/production-pipeline-d1f0cfe8e195, film-production-production-pipeline/production-pipeline-f418e48ce02f, film-production-production-pipeline/production-pipeline-f7091f27c6d1, film-production-production-pipeline/production-pipeline-fe8ae664fb1e, film-production-renderability/renderability-0a1e0a4a4edc, film-production-renderability/renderability-111b29259b37, film-production-renderability/renderability-1b6016907c61, film-production-renderability/renderability-28385106c00e, film-production-renderability/renderability-32075c011ed3, film-production-renderability/renderability-4074c75ffcb1, film-production-renderability/renderability-d07031e108b5, film-production-renderability/renderability-d58da1655e55"
+      ],
+      "verifyCriteria": [
+        "Genre is not automatically a pack.",
+        "Retain all 13 baselines and each load/skip recommendation."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "genre-baselines-388bc706ea77",
+      "title": "Spy / Espionage",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "genre-baselines"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for genre defaults and knowledge selector; pack-specific overrides",
+      "guidance": [
+        "## Spy / Espionage\n**Contract:** controlled paranoia — information is the weapon, watching is the action. **Defaults:** cross-cut parallel operations · surveillance grammar (long-lens compression, foreground occlusion, observation patterns — video-prompting ch. 12e) · immaculate wides for glamour variants, gray realism for le-Carré variants · practicals in offices/safehouses, faces half-lit · steel blue/gray + amber interior pockets · quiet tension, sudden violence in short bursts. **Subgenres:** glamour spy (anamorphic gloss, exotic establishing porn, tux-and-neon) · bureaucratic/le Carré (static frames, fluorescent light, silence, paper) · action-spy (borrow Action defaults for setpieces only). **Recipes:** Fincher (surgical watching) · Nolan (mechanism) · Hitchcock (suspense grammar) + Willis (institutional darkness) or Hoytema (sober scale). **AI notes:** observation patterns are copy-ready (ch. 12e); dialogue-heavy → reverse plates + 180° lock mandatory; in-frame documents/screens = post-compositing. **Filter:** film-craft.md §4/§7 (suspense mechanics) · renderability.md · platforms-models.md if multi-model.\n\n",
+        "Required ancestor context: # Genre Baselines: Entry Points & Skill Filters\n\nThe FIRST file to read when a project's genre is known. Per genre: the audience contract, craft defaults (vocabulary from film-craft.md), subgenre shifts, a recipe shortlist (director-recipes.md), AI-production notes, and a **skill filter** — which files belong in context for this project type. Baselines are starting points the user bends, never rules.\n\nTags and confidence labels: legend in sources.md. **Always in context regardless of genre:** SKILL.md (routing + always-rules). Add per the filter lines below (they are the files the SKILL.md routing table's spine names for this project type); load video-prompting.md when prompts are actually being written.\n\n---\n\n",
+        "Read applicable linked procedures and exceptions by exact entryID: film-production-film-craft/film-craft-08c1a1b2c538, film-production-film-craft/film-craft-2248687307ab, film-production-film-craft/film-craft-250a592981e5, film-production-film-craft/film-craft-3467e7856eaf, film-production-film-craft/film-craft-53cc6a016d88, film-production-film-craft/film-craft-56d3d772fec2, film-production-film-craft/film-craft-570fba3d71dd, film-production-film-craft/film-craft-67a9384f75ea, film-production-film-craft/film-craft-9ebd24a43e12, film-production-film-craft/film-craft-b70a3b38e137, film-production-platforms-models/platforms-models-11af2fa0ab95, film-production-platforms-models/platforms-models-13d27380ec0e, film-production-platforms-models/platforms-models-195226cac8fa, film-production-platforms-models/platforms-models-2ffba5575630, film-production-platforms-models/platforms-models-57a34d2b06e5, film-production-platforms-models/platforms-models-8ee6da64109f, film-production-platforms-models/platforms-models-a0954cd3380a, film-production-platforms-models/platforms-models-ac9faa3b5e53, film-production-platforms-models/platforms-models-c159854e7bd9, film-production-platforms-models/platforms-models-e2702c4d5d1c, film-production-platforms-models/platforms-models-eff59588bc73, film-production-platforms-models/platforms-models-f565be362c5d, film-production-renderability/renderability-0a1e0a4a4edc, film-production-renderability/renderability-111b29259b37, film-production-renderability/renderability-1b6016907c61, film-production-renderability/renderability-28385106c00e, film-production-renderability/renderability-32075c011ed3, film-production-renderability/renderability-4074c75ffcb1, film-production-renderability/renderability-d07031e108b5, film-production-renderability/renderability-d58da1655e55"
+      ],
+      "verifyCriteria": [
+        "Genre is not automatically a pack.",
+        "Retain all 13 baselines and each load/skip recommendation."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "genre-baselines-bf25776c9d83",
+      "title": "Horror",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "genre-baselines"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for genre defaults and knowledge selector; pack-specific overrides",
+      "guidance": [
+        "## Horror\n**Contract:** dread before shock — the audience imagines worse than you can show. **Defaults:** withholding as system (off-screen space, negative space, what the frame does NOT show) · slow static or creeping camera; handheld only in panic peaks · low-key light, single motivated sources, pools in darkness · underexposure trusted · desaturated cold base, one signal color · long silence, sound-before-source, held shots past comfort · the monster in fragments until the latest possible reveal. **Subgenres:** found footage (UGC recipe wholesale — device logic, four-tell rule) · supernatural/haunted (Kubrick geometry, Lynch wrongness) · slasher (POV shots, Hitchcock look-triads) · body horror (macro detail, texture emphasis) · folk horror (daylight dread — inverted: bright wides, wrongness in openness). **Recipes:** Kubrick (fate geometry) · Lynch (uncanny) · Hitchcock (grammar) · Ridley Scott (layered-atmosphere dread) + Young (soft darkness) or Willis. **AI notes:** darkness hides model artifacts (advantage); found footage = highest artifact tolerance; gore is a content-policy boundary — imply via reaction and aftermath (also better craft). **Filter:** film-craft.md §5/§7 · renderability.md §3 · style-control.md §6b (footage authenticity).\n\n",
+        "Required ancestor context: # Genre Baselines: Entry Points & Skill Filters\n\nThe FIRST file to read when a project's genre is known. Per genre: the audience contract, craft defaults (vocabulary from film-craft.md), subgenre shifts, a recipe shortlist (director-recipes.md), AI-production notes, and a **skill filter** — which files belong in context for this project type. Baselines are starting points the user bends, never rules.\n\nTags and confidence labels: legend in sources.md. **Always in context regardless of genre:** SKILL.md (routing + always-rules). Add per the filter lines below (they are the files the SKILL.md routing table's spine names for this project type); load video-prompting.md when prompts are actually being written.\n\n---\n\n",
+        "Read applicable linked procedures and exceptions by exact entryID: film-production-film-craft/film-craft-08c1a1b2c538, film-production-film-craft/film-craft-2248687307ab, film-production-film-craft/film-craft-250a592981e5, film-production-film-craft/film-craft-3467e7856eaf, film-production-film-craft/film-craft-53cc6a016d88, film-production-film-craft/film-craft-56d3d772fec2, film-production-film-craft/film-craft-570fba3d71dd, film-production-film-craft/film-craft-67a9384f75ea, film-production-film-craft/film-craft-9ebd24a43e12, film-production-film-craft/film-craft-b70a3b38e137, film-production-renderability/renderability-0a1e0a4a4edc, film-production-renderability/renderability-111b29259b37, film-production-renderability/renderability-1b6016907c61, film-production-renderability/renderability-28385106c00e, film-production-renderability/renderability-32075c011ed3, film-production-renderability/renderability-4074c75ffcb1, film-production-renderability/renderability-d07031e108b5, film-production-renderability/renderability-d58da1655e55, film-production-style-control/style-control-23d9278937c0, film-production-style-control/style-control-2baa47554330, film-production-style-control/style-control-2cf209a10276, film-production-style-control/style-control-481af1471ae1, film-production-style-control/style-control-5257ea810f14, film-production-style-control/style-control-63a866503413, film-production-style-control/style-control-666cdb1219e7, film-production-style-control/style-control-671a457dd443, film-production-style-control/style-control-73867a0b4daf, film-production-style-control/style-control-7665e999d1da, film-production-style-control/style-control-79b3e6b7c14b, film-production-style-control/style-control-7b703384f157, film-production-style-control/style-control-ab661985aaa4, film-production-style-control/style-control-b73f6f0f3ffe, film-production-style-control/style-control-bfffd977ce4d, film-production-style-control/style-control-c58bd9c5a494, film-production-style-control/style-control-cbe1c1252598, film-production-style-control/style-control-d208337fba85, film-production-style-control/style-control-da4feb1794ad, film-production-style-control/style-control-f84b2ba9034a, film-production-style-control/style-control-fc8ef8be9186, film-production-style-control/style-control-ff888ede11ee"
+      ],
+      "verifyCriteria": [
+        "Genre is not automatically a pack.",
+        "Retain all 13 baselines and each load/skip recommendation."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "genre-baselines-5cf688811c5e",
+      "title": "Thriller",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "genre-baselines"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for genre defaults and knowledge selector; pack-specific overrides",
+      "guidance": [
+        "## Thriller\n**Contract:** the audience knows more than the character (suspense) or exactly as little (mystery) — pick per scene, mostly the former. **Defaults:** bomb-under-the-table cross-cutting · delay engines (cutaways before doors, pauses before answers) · tightening framings as the net closes · clean controlled camera drifting ever closer · low-key motivated light, venetian/architectural shadow patterns · cool desaturation, sickly practicals · relentless even pacing, no wasted scene. **Subgenres:** psycho-thriller (subjective camera, unreliable frames, Lynch borrowings) · conspiracy (70s grammar: zooms, long-lens voyeurism, Willis darkness) · survival (geography as antagonist, wide isolation frames). **Recipes:** Fincher (the genre default) · Hitchcock (grammar source) · Villeneuve (slow dread variant) + Fraser or Willis. **AI notes:** dialogue discipline (production-pipeline ch. 7) carries most scenes; suspense = editing structure, cheap to generate — the craft is in the cut order, not the pixels. **Filter:** film-craft.md §4/§7 (core) · renderability.md · post-audio-legal.md ch. 19 (continuity ledger — thrillers punish continuity errors hardest).\n\n",
+        "Required ancestor context: # Genre Baselines: Entry Points & Skill Filters\n\nThe FIRST file to read when a project's genre is known. Per genre: the audience contract, craft defaults (vocabulary from film-craft.md), subgenre shifts, a recipe shortlist (director-recipes.md), AI-production notes, and a **skill filter** — which files belong in context for this project type. Baselines are starting points the user bends, never rules.\n\nTags and confidence labels: legend in sources.md. **Always in context regardless of genre:** SKILL.md (routing + always-rules). Add per the filter lines below (they are the files the SKILL.md routing table's spine names for this project type); load video-prompting.md when prompts are actually being written.\n\n---\n\n",
+        "Read applicable linked procedures and exceptions by exact entryID: film-production-film-craft/film-craft-08c1a1b2c538, film-production-film-craft/film-craft-2248687307ab, film-production-film-craft/film-craft-250a592981e5, film-production-film-craft/film-craft-3467e7856eaf, film-production-film-craft/film-craft-53cc6a016d88, film-production-film-craft/film-craft-56d3d772fec2, film-production-film-craft/film-craft-570fba3d71dd, film-production-film-craft/film-craft-67a9384f75ea, film-production-film-craft/film-craft-9ebd24a43e12, film-production-film-craft/film-craft-b70a3b38e137, film-production-post-audio-legal/post-audio-legal-1c65925d87d5, film-production-post-audio-legal/post-audio-legal-5949409d78e1, film-production-post-audio-legal/post-audio-legal-9aca3116b4f9, film-production-post-audio-legal/post-audio-legal-d966bfa722d1, film-production-post-audio-legal/post-audio-legal-fd0a7b340780, film-production-renderability/renderability-0a1e0a4a4edc, film-production-renderability/renderability-111b29259b37, film-production-renderability/renderability-1b6016907c61, film-production-renderability/renderability-28385106c00e, film-production-renderability/renderability-32075c011ed3, film-production-renderability/renderability-4074c75ffcb1, film-production-renderability/renderability-d07031e108b5, film-production-renderability/renderability-d58da1655e55"
+      ],
+      "verifyCriteria": [
+        "Genre is not automatically a pack.",
+        "Retain all 13 baselines and each load/skip recommendation."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "genre-baselines-26a2df9e7d9a",
+      "title": "Crime / Krimi",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "genre-baselines"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for genre defaults and knowledge selector; pack-specific overrides",
+      "guidance": [
+        "## Crime / Krimi\n**Contract:** procedure meets morality — solving as narrative spine, milieu as texture. **Defaults:** scene-of-crime grammar (detail inserts, top-down pattern shots) · interview/interrogation coverage (two-sided reverse plates, table geometry) · milieu realism in light (available, unglamorous) · muted palette with era/city identity · measured pacing with discovery beats · voiceover legitimate (noir lineage). **Subgenres:** noir (hard keys, blinds, night-wet streets, fatalist VO) · Scandinavian (gray daylight, institutional interiors, silence) · heist (mechanism structure — Nolan cross-cut planning/execution, playful tempo) · cozy/whodunit (warm palette, ensemble tableaus, Anderson-adjacent order). **Recipes:** Fincher (procedural) · Gilligan (slow-burn empire/corrosion) · Scorsese (kinetic rise-and-fall) · Willis (dynasty darkness) · Nolan (heist mechanism) · Anderson (cozy variant). **AI notes:** interrogations = the dialogue-scene discipline verbatim; evidence close-ups (documents!) = in-frame-text rules; crime scenes = still-heavy, cheap to produce. **Filter:** film-craft.md §4/§8 · renderability.md §2 (text!) · production-pipeline.md ch. 7.\n\n",
+        "Required ancestor context: # Genre Baselines: Entry Points & Skill Filters\n\nThe FIRST file to read when a project's genre is known. Per genre: the audience contract, craft defaults (vocabulary from film-craft.md), subgenre shifts, a recipe shortlist (director-recipes.md), AI-production notes, and a **skill filter** — which files belong in context for this project type. Baselines are starting points the user bends, never rules.\n\nTags and confidence labels: legend in sources.md. **Always in context regardless of genre:** SKILL.md (routing + always-rules). Add per the filter lines below (they are the files the SKILL.md routing table's spine names for this project type); load video-prompting.md when prompts are actually being written.\n\n---\n\n",
+        "Read applicable linked procedures and exceptions by exact entryID: film-production-film-craft/film-craft-08c1a1b2c538, film-production-film-craft/film-craft-2248687307ab, film-production-film-craft/film-craft-250a592981e5, film-production-film-craft/film-craft-3467e7856eaf, film-production-film-craft/film-craft-53cc6a016d88, film-production-film-craft/film-craft-56d3d772fec2, film-production-film-craft/film-craft-570fba3d71dd, film-production-film-craft/film-craft-67a9384f75ea, film-production-film-craft/film-craft-9ebd24a43e12, film-production-film-craft/film-craft-b70a3b38e137, film-production-production-pipeline/production-pipeline-0fdca1da8970, film-production-production-pipeline/production-pipeline-1bb10d449ca5, film-production-production-pipeline/production-pipeline-3e7423e91475, film-production-production-pipeline/production-pipeline-3f320156d67f, film-production-production-pipeline/production-pipeline-41c7b8294114, film-production-production-pipeline/production-pipeline-446e57806ce5, film-production-production-pipeline/production-pipeline-455241c73ce4, film-production-production-pipeline/production-pipeline-524c7d64a7f3, film-production-production-pipeline/production-pipeline-668103488e98, film-production-production-pipeline/production-pipeline-99e7beb6f331, film-production-production-pipeline/production-pipeline-9bf4e03af57e, film-production-production-pipeline/production-pipeline-a2fb95cff485, film-production-production-pipeline/production-pipeline-b4b53fe52130, film-production-production-pipeline/production-pipeline-d16d62c31ae0, film-production-production-pipeline/production-pipeline-d1f0cfe8e195, film-production-production-pipeline/production-pipeline-f418e48ce02f, film-production-production-pipeline/production-pipeline-f7091f27c6d1, film-production-production-pipeline/production-pipeline-fe8ae664fb1e, film-production-renderability/renderability-0a1e0a4a4edc, film-production-renderability/renderability-111b29259b37, film-production-renderability/renderability-1b6016907c61, film-production-renderability/renderability-28385106c00e, film-production-renderability/renderability-32075c011ed3, film-production-renderability/renderability-4074c75ffcb1, film-production-renderability/renderability-d07031e108b5, film-production-renderability/renderability-d58da1655e55"
+      ],
+      "verifyCriteria": [
+        "Genre is not automatically a pack.",
+        "Retain all 13 baselines and each load/skip recommendation."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "genre-baselines-7c42d9ae1707",
+      "title": "Drama",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "genre-baselines"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for genre defaults and knowledge selector; pack-specific overrides",
+      "guidance": [
+        "## Drama\n**Contract:** emotional truth — the audience watches people change. **Defaults:** performance first: coverage that protects acting (longer takes, reaction-side cutting, L-cuts for listening) · camera restraint (static/slow, moves only on emotional shifts) · naturalistic motivated light, window-side modelling · palette tracks the emotional arc (color script discipline) · scenes enter late/leave early but BREATHE inside · silence and processing beats as content. **Subgenres:** chamber (Bergman wholesale) · family/generational (Ozu stillness, seasons) · social realism (the Dardenne/Arnold recipe: following handheld, available light, no score) · romance (two-shot intimacy, warm practicals, Wong Kar-wai for longing variants) · coming-of-age (Malick fragments, golden memory). **Recipes:** Bergman · Ozu · Wenders · Malick · Wong Kar-wai · Sciamma (+ Mathon) · Dardenne/Arnold + Nykvist or Young. **AI notes:** THE hardest genre for AI — everything hangs on face performance: multi-stage emotion formulas (ch. 14), PERFORMANCE block, expression sheets, 2.5 for emotion transitions; budget rerolls on emotional peaks. **Filter:** video-prompting.md ch. 12/14 (emotion formulas critical) · film-craft.md §7–8 · pixar-look.md only if stylized.\n\n",
+        "Required ancestor context: # Genre Baselines: Entry Points & Skill Filters\n\nThe FIRST file to read when a project's genre is known. Per genre: the audience contract, craft defaults (vocabulary from film-craft.md), subgenre shifts, a recipe shortlist (director-recipes.md), AI-production notes, and a **skill filter** — which files belong in context for this project type. Baselines are starting points the user bends, never rules.\n\nTags and confidence labels: legend in sources.md. **Always in context regardless of genre:** SKILL.md (routing + always-rules). Add per the filter lines below (they are the files the SKILL.md routing table's spine names for this project type); load video-prompting.md when prompts are actually being written.\n\n---\n\n",
+        "Read applicable linked procedures and exceptions by exact entryID: film-production-film-craft/film-craft-08c1a1b2c538, film-production-film-craft/film-craft-2248687307ab, film-production-film-craft/film-craft-250a592981e5, film-production-film-craft/film-craft-3467e7856eaf, film-production-film-craft/film-craft-53cc6a016d88, film-production-film-craft/film-craft-56d3d772fec2, film-production-film-craft/film-craft-570fba3d71dd, film-production-film-craft/film-craft-67a9384f75ea, film-production-film-craft/film-craft-9ebd24a43e12, film-production-film-craft/film-craft-b70a3b38e137, film-production-pixar-look/pixar-look-1da5c9533bf3, film-production-pixar-look/pixar-look-266b78d1a40e, film-production-pixar-look/pixar-look-441de0d8a9d1, film-production-pixar-look/pixar-look-56847cb20874, film-production-pixar-look/pixar-look-6067d37adaa1, film-production-pixar-look/pixar-look-67b9aafd568b, film-production-pixar-look/pixar-look-68ec1764bb32, film-production-pixar-look/pixar-look-79aef52eb72e, film-production-pixar-look/pixar-look-8448fb177d42, film-production-pixar-look/pixar-look-e2bffc9f8b7c, film-production-pixar-look/pixar-look-eeafb6781cc6, film-production-pixar-look/pixar-look-f22e3f8ad2cd, film-production-pixar-look/pixar-look-fdcec6b2c0f0, film-production-pixar-look/pixar-look-ffa1fc7ecbcc, film-production-video-prompting/video-prompting-2d077c405e26, film-production-video-prompting/video-prompting-3145b34f3b5d, film-production-video-prompting/video-prompting-33ae6df5c3f0, film-production-video-prompting/video-prompting-39026ee6df7f, film-production-video-prompting/video-prompting-4a8d407dff7a, film-production-video-prompting/video-prompting-5275ee1254bc, film-production-video-prompting/video-prompting-6ebc68114145, film-production-video-prompting/video-prompting-77153717e7be, film-production-video-prompting/video-prompting-a3510dce6126, film-production-video-prompting/video-prompting-ae84e7dfae96, film-production-video-prompting/video-prompting-b8193dd15dd6, film-production-video-prompting/video-prompting-cb91fd3500e1, film-production-video-prompting/video-prompting-cd15da11c9c9, film-production-video-prompting/video-prompting-d87cde00835d, film-production-video-prompting/video-prompting-ddfa67879961, film-production-video-prompting/video-prompting-f6e454e1d76b"
+      ],
+      "verifyCriteria": [
+        "Genre is not automatically a pack.",
+        "Retain all 13 baselines and each load/skip recommendation."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "genre-baselines-d3d8f306e5b2",
+      "title": "Comedy",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "genre-baselines"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for genre defaults and knowledge selector; pack-specific overrides",
+      "guidance": [
+        "## Comedy\n**Contract:** timing is the content — the frame and the cut ARE the joke. **Defaults:** wider framings than drama (bodies + spatial relationships carry gags) · flat/even \"sitcom-bright\" light unless the joke needs mood · static camera lets comedy play; the pan/push-in AS punchline · hold after the gag (deadpan air) · rhythm: setup–beat–punch, rule of three, callback economy · reaction shots are the laugh multiplier. **Subgenres:** deadpan (Anderson wholesale: symmetry + metronome) · slapstick/physical (full bodies, longer takes, choreography readable — animation's home turf) · dark comedy (drama light + comedy timing, the collision is the tone) · rom-com (warm high-key, two-shot chemistry, montage sequences) · mockumentary (UGC/doc grammar + straight-face interviews). **Recipes:** Anderson (the precision pole) · ZAZ/Brooks (parody deadpan) · Allen lineage (master-shot talk) · Wright (comedy in the cut) · Boyle (kinetic-comedy energy) · UGC (mockumentary). **AI notes:** comedy timing lives in the EDIT — generate reaction coverage deliberately; slapstick choreography = move-by-move writing (never \"he stumbles funny\"); animation formats forgive and amplify physical comedy. **Filter:** film-craft.md §4/§7 (rhythm!) · director-recipes (Anderson) · production-pipeline.md ch. 2.\n\n",
+        "Required ancestor context: # Genre Baselines: Entry Points & Skill Filters\n\nThe FIRST file to read when a project's genre is known. Per genre: the audience contract, craft defaults (vocabulary from film-craft.md), subgenre shifts, a recipe shortlist (director-recipes.md), AI-production notes, and a **skill filter** — which files belong in context for this project type. Baselines are starting points the user bends, never rules.\n\nTags and confidence labels: legend in sources.md. **Always in context regardless of genre:** SKILL.md (routing + always-rules). Add per the filter lines below (they are the files the SKILL.md routing table's spine names for this project type); load video-prompting.md when prompts are actually being written.\n\n---\n\n",
+        "Read applicable linked procedures and exceptions by exact entryID: film-production-film-craft/film-craft-08c1a1b2c538, film-production-film-craft/film-craft-2248687307ab, film-production-film-craft/film-craft-250a592981e5, film-production-film-craft/film-craft-3467e7856eaf, film-production-film-craft/film-craft-53cc6a016d88, film-production-film-craft/film-craft-56d3d772fec2, film-production-film-craft/film-craft-570fba3d71dd, film-production-film-craft/film-craft-67a9384f75ea, film-production-film-craft/film-craft-9ebd24a43e12, film-production-film-craft/film-craft-b70a3b38e137, film-production-production-pipeline/production-pipeline-0fdca1da8970, film-production-production-pipeline/production-pipeline-1bb10d449ca5, film-production-production-pipeline/production-pipeline-3e7423e91475, film-production-production-pipeline/production-pipeline-3f320156d67f, film-production-production-pipeline/production-pipeline-41c7b8294114, film-production-production-pipeline/production-pipeline-446e57806ce5, film-production-production-pipeline/production-pipeline-455241c73ce4, film-production-production-pipeline/production-pipeline-524c7d64a7f3, film-production-production-pipeline/production-pipeline-668103488e98, film-production-production-pipeline/production-pipeline-99e7beb6f331, film-production-production-pipeline/production-pipeline-9bf4e03af57e, film-production-production-pipeline/production-pipeline-a2fb95cff485, film-production-production-pipeline/production-pipeline-b4b53fe52130, film-production-production-pipeline/production-pipeline-d16d62c31ae0, film-production-production-pipeline/production-pipeline-d1f0cfe8e195, film-production-production-pipeline/production-pipeline-f418e48ce02f, film-production-production-pipeline/production-pipeline-f7091f27c6d1, film-production-production-pipeline/production-pipeline-fe8ae664fb1e"
+      ],
+      "verifyCriteria": [
+        "Genre is not automatically a pack.",
+        "Retain all 13 baselines and each load/skip recommendation."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "genre-baselines-37d395f687f6",
+      "title": "Biopic",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "genre-baselines"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for genre defaults and knowledge selector; pack-specific overrides",
+      "guidance": [
+        "## Biopic\n**Contract:** a life shaped into meaning — truth-adjacent, dramaturgically honest. **Defaults:** era grammar as system (period-correct palette, film-stock look, production design — style-control §6b era looks) · structure choice UP FRONT: cradle-to-grave vs. decisive-window vs. mosaic · archive-style inserts (era-matched footage grammar) as texture · restrained camera dignity, documentary borrowings for authenticity beats · one signature visual motif tied to the person. **Subgenres:** artist/musician (performance recreations — see Music film) · political (institutional grammar, Willis/Hoytema sobriety) · sports (training montage + event coverage grammar). **Recipes:** Spielberg (classical dignity) · Fincher (procedural lives) · Malick (memory-mosaic variant) + Kamiński (testimony). **AI notes:** REAL PERSONS = the legal boundary — likeness/voice only with documented consent, AND test platform acceptance of the face before casting a licensed likeness (moderation plan, post-audio-legal ch. 20); fictionalized-inspired characters are the safe route; era looks are cheap style wins. **Filter:** post-audio-legal.md ch. 20 (critical, first) · style-control.md §6b · film-craft.md §8.\n\n",
+        "Required ancestor context: # Genre Baselines: Entry Points & Skill Filters\n\nThe FIRST file to read when a project's genre is known. Per genre: the audience contract, craft defaults (vocabulary from film-craft.md), subgenre shifts, a recipe shortlist (director-recipes.md), AI-production notes, and a **skill filter** — which files belong in context for this project type. Baselines are starting points the user bends, never rules.\n\nTags and confidence labels: legend in sources.md. **Always in context regardless of genre:** SKILL.md (routing + always-rules). Add per the filter lines below (they are the files the SKILL.md routing table's spine names for this project type); load video-prompting.md when prompts are actually being written.\n\n---\n\n",
+        "Read applicable linked procedures and exceptions by exact entryID: film-production-film-craft/film-craft-08c1a1b2c538, film-production-film-craft/film-craft-2248687307ab, film-production-film-craft/film-craft-250a592981e5, film-production-film-craft/film-craft-3467e7856eaf, film-production-film-craft/film-craft-53cc6a016d88, film-production-film-craft/film-craft-56d3d772fec2, film-production-film-craft/film-craft-570fba3d71dd, film-production-film-craft/film-craft-67a9384f75ea, film-production-film-craft/film-craft-9ebd24a43e12, film-production-film-craft/film-craft-b70a3b38e137, film-production-post-audio-legal/post-audio-legal-1c65925d87d5, film-production-post-audio-legal/post-audio-legal-5949409d78e1, film-production-post-audio-legal/post-audio-legal-9aca3116b4f9, film-production-post-audio-legal/post-audio-legal-d966bfa722d1, film-production-post-audio-legal/post-audio-legal-fd0a7b340780, film-production-style-control/style-control-23d9278937c0, film-production-style-control/style-control-2baa47554330, film-production-style-control/style-control-2cf209a10276, film-production-style-control/style-control-481af1471ae1, film-production-style-control/style-control-5257ea810f14, film-production-style-control/style-control-63a866503413, film-production-style-control/style-control-666cdb1219e7, film-production-style-control/style-control-671a457dd443, film-production-style-control/style-control-73867a0b4daf, film-production-style-control/style-control-7665e999d1da, film-production-style-control/style-control-79b3e6b7c14b, film-production-style-control/style-control-7b703384f157, film-production-style-control/style-control-ab661985aaa4, film-production-style-control/style-control-b73f6f0f3ffe, film-production-style-control/style-control-bfffd977ce4d, film-production-style-control/style-control-c58bd9c5a494, film-production-style-control/style-control-cbe1c1252598, film-production-style-control/style-control-d208337fba85, film-production-style-control/style-control-da4feb1794ad, film-production-style-control/style-control-f84b2ba9034a, film-production-style-control/style-control-fc8ef8be9186, film-production-style-control/style-control-ff888ede11ee"
+      ],
+      "verifyCriteria": [
+        "Genre is not automatically a pack.",
+        "Retain all 13 baselines and each load/skip recommendation."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "genre-baselines-e477db36b513",
+      "title": "Documentary (style)",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "genre-baselines"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for genre defaults and knowledge selector; pack-specific overrides",
+      "guidance": [
+        "## Documentary (style)\n**Contract:** credibility — the form must read as witnessed, not staged. **Defaults:** interview grammar (eyeline just off-lens, motivated window/practical light, shallow-focus environment context) · B-roll logic (cutaways that PROVE the narration) · handheld observational restraint, zoom-and-refocus honesty · available light doctrine · lower-third/archive conventions (post!) · VO or interview audio as spine, ambience beds. **Subgenres:** nature doc (long-lens patience, macro grammar, Attenborough pacing) · true crime (reenactment style: soft-focus anonymity, moody reconstruction light) · essay film (Wenders/Malick contemplation) · vérité (no interviews, pure observation). **Recipes:** Wenders (essay) · Greengrass (vérité energy) · UGC (raw witness) + Lubezki (nature-poetic). **AI notes:** AI-generated \"documentary\" of real events is a disclosure minefield (ch. 20 EU AI Act) — fictional subjects or clearly-labeled reconstruction; the doc LOOK itself is low-risk and artifact-tolerant; interview talking-heads = lip-sync quality gate — build them via the interview path (production-pipeline ch. 7b: audio-first, B-roll escape, coverage convention). **Filter:** production-pipeline.md ch. 7b (interviews) · post-audio-legal.md ch. 18/20 · style-control.md §6b · renderability.md.\n\n",
+        "Required ancestor context: # Genre Baselines: Entry Points & Skill Filters\n\nThe FIRST file to read when a project's genre is known. Per genre: the audience contract, craft defaults (vocabulary from film-craft.md), subgenre shifts, a recipe shortlist (director-recipes.md), AI-production notes, and a **skill filter** — which files belong in context for this project type. Baselines are starting points the user bends, never rules.\n\nTags and confidence labels: legend in sources.md. **Always in context regardless of genre:** SKILL.md (routing + always-rules). Add per the filter lines below (they are the files the SKILL.md routing table's spine names for this project type); load video-prompting.md when prompts are actually being written.\n\n---\n\n",
+        "Read applicable linked procedures and exceptions by exact entryID: film-production-post-audio-legal/post-audio-legal-1c65925d87d5, film-production-post-audio-legal/post-audio-legal-5949409d78e1, film-production-post-audio-legal/post-audio-legal-9aca3116b4f9, film-production-post-audio-legal/post-audio-legal-d966bfa722d1, film-production-post-audio-legal/post-audio-legal-fd0a7b340780, film-production-production-pipeline/production-pipeline-0fdca1da8970, film-production-production-pipeline/production-pipeline-1bb10d449ca5, film-production-production-pipeline/production-pipeline-3e7423e91475, film-production-production-pipeline/production-pipeline-3f320156d67f, film-production-production-pipeline/production-pipeline-41c7b8294114, film-production-production-pipeline/production-pipeline-446e57806ce5, film-production-production-pipeline/production-pipeline-455241c73ce4, film-production-production-pipeline/production-pipeline-524c7d64a7f3, film-production-production-pipeline/production-pipeline-668103488e98, film-production-production-pipeline/production-pipeline-99e7beb6f331, film-production-production-pipeline/production-pipeline-9bf4e03af57e, film-production-production-pipeline/production-pipeline-a2fb95cff485, film-production-production-pipeline/production-pipeline-b4b53fe52130, film-production-production-pipeline/production-pipeline-d16d62c31ae0, film-production-production-pipeline/production-pipeline-d1f0cfe8e195, film-production-production-pipeline/production-pipeline-f418e48ce02f, film-production-production-pipeline/production-pipeline-f7091f27c6d1, film-production-production-pipeline/production-pipeline-fe8ae664fb1e, film-production-renderability/renderability-0a1e0a4a4edc, film-production-renderability/renderability-111b29259b37, film-production-renderability/renderability-1b6016907c61, film-production-renderability/renderability-28385106c00e, film-production-renderability/renderability-32075c011ed3, film-production-renderability/renderability-4074c75ffcb1, film-production-renderability/renderability-d07031e108b5, film-production-renderability/renderability-d58da1655e55, film-production-style-control/style-control-23d9278937c0, film-production-style-control/style-control-2baa47554330, film-production-style-control/style-control-2cf209a10276, film-production-style-control/style-control-481af1471ae1, film-production-style-control/style-control-5257ea810f14, film-production-style-control/style-control-63a866503413, film-production-style-control/style-control-666cdb1219e7, film-production-style-control/style-control-671a457dd443, film-production-style-control/style-control-73867a0b4daf, film-production-style-control/style-control-7665e999d1da, film-production-style-control/style-control-79b3e6b7c14b, film-production-style-control/style-control-7b703384f157, film-production-style-control/style-control-ab661985aaa4, film-production-style-control/style-control-b73f6f0f3ffe, film-production-style-control/style-control-bfffd977ce4d, film-production-style-control/style-control-c58bd9c5a494, film-production-style-control/style-control-cbe1c1252598, film-production-style-control/style-control-d208337fba85, film-production-style-control/style-control-da4feb1794ad, film-production-style-control/style-control-f84b2ba9034a, film-production-style-control/style-control-fc8ef8be9186, film-production-style-control/style-control-ff888ede11ee"
+      ],
+      "verifyCriteria": [
+        "Genre is not automatically a pack.",
+        "Retain all 13 baselines and each load/skip recommendation."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "genre-baselines-6dd720cce1ef",
+      "title": "Anime (as genre dramaturgy)",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "genre-baselines"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for genre defaults and knowledge selector; pack-specific overrides",
+      "guidance": [
+        "## Anime (as genre dramaturgy)\n**Contract:** heightened emotion made visible — inner states externalized as visual events. **Defaults:** emotion beats get HELD poses and full stops (sakuga economy: spend motion on peaks, hold between) · impact frames, speed lines, smears at action peaks · monologue-under-action convention legitimate · tournament/escalation arcs, named-attack beats · scenery-porn pause shots (Ghibli \"ma\") as breathing · music-synced emotional crescendos. **Subgenres:** shōnen action (escalation ladders, power-up reveals) · slice-of-life (Ozu-adjacent stillness, seasonal markers) · mecha (scale grammar: human cockpit ↔ machine wide) · isekai/fantasy (establish world-rule early, travel montages). **Recipes:** Miyazaki (the humanist pole) · Leone (standoff DNA — anime inherited it) · Boyle (music-drive) + anime vocabularies (style-control §6). **AI notes:** high-action anime is a documented model SWEET SPOT (renderability §1); flat 2D punishes wobble — style-control §5b anti-3D rules; held poses are cheap AND correct here. **Filter:** style-control.md §5b/§6 (critical) · renderability.md · film-craft.md §7.\n\n",
+        "Required ancestor context: # Genre Baselines: Entry Points & Skill Filters\n\nThe FIRST file to read when a project's genre is known. Per genre: the audience contract, craft defaults (vocabulary from film-craft.md), subgenre shifts, a recipe shortlist (director-recipes.md), AI-production notes, and a **skill filter** — which files belong in context for this project type. Baselines are starting points the user bends, never rules.\n\nTags and confidence labels: legend in sources.md. **Always in context regardless of genre:** SKILL.md (routing + always-rules). Add per the filter lines below (they are the files the SKILL.md routing table's spine names for this project type); load video-prompting.md when prompts are actually being written.\n\n---\n\n",
+        "Read applicable linked procedures and exceptions by exact entryID: film-production-film-craft/film-craft-08c1a1b2c538, film-production-film-craft/film-craft-2248687307ab, film-production-film-craft/film-craft-250a592981e5, film-production-film-craft/film-craft-3467e7856eaf, film-production-film-craft/film-craft-53cc6a016d88, film-production-film-craft/film-craft-56d3d772fec2, film-production-film-craft/film-craft-570fba3d71dd, film-production-film-craft/film-craft-67a9384f75ea, film-production-film-craft/film-craft-9ebd24a43e12, film-production-film-craft/film-craft-b70a3b38e137, film-production-renderability/renderability-0a1e0a4a4edc, film-production-renderability/renderability-111b29259b37, film-production-renderability/renderability-1b6016907c61, film-production-renderability/renderability-28385106c00e, film-production-renderability/renderability-32075c011ed3, film-production-renderability/renderability-4074c75ffcb1, film-production-renderability/renderability-d07031e108b5, film-production-renderability/renderability-d58da1655e55, film-production-style-control/style-control-23d9278937c0, film-production-style-control/style-control-2baa47554330, film-production-style-control/style-control-2cf209a10276, film-production-style-control/style-control-481af1471ae1, film-production-style-control/style-control-5257ea810f14, film-production-style-control/style-control-63a866503413, film-production-style-control/style-control-666cdb1219e7, film-production-style-control/style-control-671a457dd443, film-production-style-control/style-control-73867a0b4daf, film-production-style-control/style-control-7665e999d1da, film-production-style-control/style-control-79b3e6b7c14b, film-production-style-control/style-control-7b703384f157, film-production-style-control/style-control-ab661985aaa4, film-production-style-control/style-control-b73f6f0f3ffe, film-production-style-control/style-control-bfffd977ce4d, film-production-style-control/style-control-c58bd9c5a494, film-production-style-control/style-control-cbe1c1252598, film-production-style-control/style-control-d208337fba85, film-production-style-control/style-control-da4feb1794ad, film-production-style-control/style-control-f84b2ba9034a, film-production-style-control/style-control-fc8ef8be9186, film-production-style-control/style-control-ff888ede11ee"
+      ],
+      "verifyCriteria": [
+        "Genre is not automatically a pack.",
+        "Retain all 13 baselines and each load/skip recommendation."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "genre-baselines-5cabde8905e6",
+      "title": "Family Animation (\"Pixar/Disney\" as dramaturgy, not look)",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "genre-baselines"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for genre defaults and knowledge selector; pack-specific overrides",
+      "guidance": [
+        "## Family Animation (\"Pixar/Disney\" as dramaturgy, not look)\n**Contract:** two audiences at once — sincere emotional core for everyone, wit layered for adults; the ending EARNS its warmth. **Defaults:** want-vs-need spine (hero pursues the want, discovers the need) · sidekick as externalized inner voice · villain-as-mirror or system-as-antagonist · gag-per-page density WITHOUT breaking sincerity · setpiece + heart-beat alternation (\"laugh, laugh, gut-punch\") · the all-is-lost beat before the truth · physical comedy choreographed like action · color script tracks the emotional arc explicitly (pixar-look §3). **Subgenres:** buddy/road (two-hander chemistry, Wenders structure in bright colors) · fish-out-of-water (world-rule comedy) · fairy-tale musical (see Music film for numbers). **Recipes:** Spielberg (wonder grammar) · Miyazaki (quiet pole) · Anderson (deadpan variant) + pixar-look.md as the visual bible when the look is also Pixar. **AI notes:** the format's error tolerance is the strategic reason to choose it (renderability §4); figure-anchor rule governs all stills; squash-and-stretch motion must be prompted or physics-correct models flatten the comedy. **Filter:** pixar-look.md (critical) · style-control.md · film-craft.md §7–8 · renderability.md.\n\n",
+        "Required ancestor context: # Genre Baselines: Entry Points & Skill Filters\n\nThe FIRST file to read when a project's genre is known. Per genre: the audience contract, craft defaults (vocabulary from film-craft.md), subgenre shifts, a recipe shortlist (director-recipes.md), AI-production notes, and a **skill filter** — which files belong in context for this project type. Baselines are starting points the user bends, never rules.\n\nTags and confidence labels: legend in sources.md. **Always in context regardless of genre:** SKILL.md (routing + always-rules). Add per the filter lines below (they are the files the SKILL.md routing table's spine names for this project type); load video-prompting.md when prompts are actually being written.\n\n---\n\n",
+        "Read applicable linked procedures and exceptions by exact entryID: film-production-film-craft/film-craft-08c1a1b2c538, film-production-film-craft/film-craft-2248687307ab, film-production-film-craft/film-craft-250a592981e5, film-production-film-craft/film-craft-3467e7856eaf, film-production-film-craft/film-craft-53cc6a016d88, film-production-film-craft/film-craft-56d3d772fec2, film-production-film-craft/film-craft-570fba3d71dd, film-production-film-craft/film-craft-67a9384f75ea, film-production-film-craft/film-craft-9ebd24a43e12, film-production-film-craft/film-craft-b70a3b38e137, film-production-pixar-look/pixar-look-1da5c9533bf3, film-production-pixar-look/pixar-look-266b78d1a40e, film-production-pixar-look/pixar-look-441de0d8a9d1, film-production-pixar-look/pixar-look-56847cb20874, film-production-pixar-look/pixar-look-6067d37adaa1, film-production-pixar-look/pixar-look-67b9aafd568b, film-production-pixar-look/pixar-look-68ec1764bb32, film-production-pixar-look/pixar-look-79aef52eb72e, film-production-pixar-look/pixar-look-8448fb177d42, film-production-pixar-look/pixar-look-e2bffc9f8b7c, film-production-pixar-look/pixar-look-eeafb6781cc6, film-production-pixar-look/pixar-look-f22e3f8ad2cd, film-production-pixar-look/pixar-look-fdcec6b2c0f0, film-production-pixar-look/pixar-look-ffa1fc7ecbcc, film-production-renderability/renderability-0a1e0a4a4edc, film-production-renderability/renderability-111b29259b37, film-production-renderability/renderability-1b6016907c61, film-production-renderability/renderability-28385106c00e, film-production-renderability/renderability-32075c011ed3, film-production-renderability/renderability-4074c75ffcb1, film-production-renderability/renderability-d07031e108b5, film-production-renderability/renderability-d58da1655e55, film-production-style-control/style-control-23d9278937c0, film-production-style-control/style-control-2baa47554330, film-production-style-control/style-control-2cf209a10276, film-production-style-control/style-control-481af1471ae1, film-production-style-control/style-control-5257ea810f14, film-production-style-control/style-control-63a866503413, film-production-style-control/style-control-666cdb1219e7, film-production-style-control/style-control-671a457dd443, film-production-style-control/style-control-73867a0b4daf, film-production-style-control/style-control-7665e999d1da, film-production-style-control/style-control-79b3e6b7c14b, film-production-style-control/style-control-7b703384f157, film-production-style-control/style-control-ab661985aaa4, film-production-style-control/style-control-b73f6f0f3ffe, film-production-style-control/style-control-bfffd977ce4d, film-production-style-control/style-control-c58bd9c5a494, film-production-style-control/style-control-cbe1c1252598, film-production-style-control/style-control-d208337fba85, film-production-style-control/style-control-da4feb1794ad, film-production-style-control/style-control-f84b2ba9034a, film-production-style-control/style-control-fc8ef8be9186, film-production-style-control/style-control-ff888ede11ee"
+      ],
+      "verifyCriteria": [
+        "Genre is not automatically a pack.",
+        "Retain all 13 baselines and each load/skip recommendation."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "genre-baselines-fc0343dda7d2",
+      "title": "Music Film / Musical",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "genre-baselines"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for genre defaults and knowledge selector; pack-specific overrides",
+      "guidance": [
+        "## Music Film / Musical\n**Contract:** emotion exceeds speech and becomes performance — the audience accepts the world singing. **Defaults:** numbers as setpieces with their own visual identity each · cut ON the beat, move WITH the phrase (audio-first workflow: track before image — post-audio-legal ch. 18 score logic inverted) · wide enough to prove the choreography, inserts for accents · light shifts mid-number legitimate (reality bends) · saturated palette jumps per number · between numbers: drama defaults apply. **Subgenres:** backstage/band story (doc grammar + performance setpieces) · dance film (full-body framing law, longer takes, floor visible) · concert film (coverage grammar: master + roaming + crowd + detail) · jukebox/montage (Boyle needle-drop structure) · music video (3–5-min single-track piece: ONE visual concept committed fully, any recipe legitimate, beat-cut discipline — the format with the widest stylistic license). **Recipes:** Boyle (music-cut DNA) · Wong Kar-wai (mood-music fusion) · Anderson (choreographed-frame numbers) + Storaro (number-per-color ideology). **AI notes:** audio-to-video path (music as timing skeleton, production-pipeline ch. 9) and beat-synced choreography prompting (audio reference as timing input — video-prompting ch. 14b [H-off, P48]); instrument fingering stays yellow (frame around it); song RIGHTS come first — ch. 18 licensing before any number is built. **Filter:** post-audio-legal.md ch. 18 (first!) · film-craft.md §4/§7 · production-pipeline.md ch. 9.\n\n",
+        "Required ancestor context: # Genre Baselines: Entry Points & Skill Filters\n\nThe FIRST file to read when a project's genre is known. Per genre: the audience contract, craft defaults (vocabulary from film-craft.md), subgenre shifts, a recipe shortlist (director-recipes.md), AI-production notes, and a **skill filter** — which files belong in context for this project type. Baselines are starting points the user bends, never rules.\n\nTags and confidence labels: legend in sources.md. **Always in context regardless of genre:** SKILL.md (routing + always-rules). Add per the filter lines below (they are the files the SKILL.md routing table's spine names for this project type); load video-prompting.md when prompts are actually being written.\n\n---\n\n",
+        "Read applicable linked procedures and exceptions by exact entryID: film-production-film-craft/film-craft-08c1a1b2c538, film-production-film-craft/film-craft-2248687307ab, film-production-film-craft/film-craft-250a592981e5, film-production-film-craft/film-craft-3467e7856eaf, film-production-film-craft/film-craft-53cc6a016d88, film-production-film-craft/film-craft-56d3d772fec2, film-production-film-craft/film-craft-570fba3d71dd, film-production-film-craft/film-craft-67a9384f75ea, film-production-film-craft/film-craft-9ebd24a43e12, film-production-film-craft/film-craft-b70a3b38e137, film-production-post-audio-legal/post-audio-legal-1c65925d87d5, film-production-post-audio-legal/post-audio-legal-5949409d78e1, film-production-post-audio-legal/post-audio-legal-9aca3116b4f9, film-production-post-audio-legal/post-audio-legal-d966bfa722d1, film-production-post-audio-legal/post-audio-legal-fd0a7b340780, film-production-production-pipeline/production-pipeline-0fdca1da8970, film-production-production-pipeline/production-pipeline-1bb10d449ca5, film-production-production-pipeline/production-pipeline-3e7423e91475, film-production-production-pipeline/production-pipeline-3f320156d67f, film-production-production-pipeline/production-pipeline-41c7b8294114, film-production-production-pipeline/production-pipeline-446e57806ce5, film-production-production-pipeline/production-pipeline-455241c73ce4, film-production-production-pipeline/production-pipeline-524c7d64a7f3, film-production-production-pipeline/production-pipeline-668103488e98, film-production-production-pipeline/production-pipeline-99e7beb6f331, film-production-production-pipeline/production-pipeline-9bf4e03af57e, film-production-production-pipeline/production-pipeline-a2fb95cff485, film-production-production-pipeline/production-pipeline-b4b53fe52130, film-production-production-pipeline/production-pipeline-d16d62c31ae0, film-production-production-pipeline/production-pipeline-d1f0cfe8e195, film-production-production-pipeline/production-pipeline-f418e48ce02f, film-production-production-pipeline/production-pipeline-f7091f27c6d1, film-production-production-pipeline/production-pipeline-fe8ae664fb1e"
+      ],
+      "verifyCriteria": [
+        "Genre is not automatically a pack.",
+        "Retain all 13 baselines and each load/skip recommendation."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "genre-baselines-38db61f05ab2",
+      "title": "Commercial / Ad",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "genre-baselines"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for genre defaults and knowledge selector; pack-specific overrides",
+      "guidance": [
+        "## Commercial / Ad\n**Contract:** one message, remembered — every second earns its place; the product is protagonist or payoff, never wallpaper. **Defaults:** format dramaturgy by length (6 s: one gag/one image · 15 s: setup–payoff · 30 s: mini-arc · 60 s+: short-film grammar with brand restraint) · product-hero grammar (tabletop: macro detail, controlled highlights, slow orbital/reveal moves) · ONE polish position chosen up front: commercial sheen (Ridley Scott ad lineage — atmosphere, backlight, surface control) OR deliberate UGC authenticity — never both · light default for product/lifestyle spots [H-off, P48]: \"kill the contre-jour and shadow-side framing — soft even daylight from the camera side, bright and clean\" (the 12c shadow-side rule is drama doctrine) · end-card discipline: logo/claim/pack shot as designed graphics in post, never generated · platform aspect ratios and casting decided before the first still. **Subgenres:** product/tabletop (food, cosmetics, tech — macro + slow moves, physics-risky pours/steam) · lifestyle/performance (people using it — drama/comedy defaults apply) · UGC-style ad (creator-camera authenticity; disclosure rules!) · brand film (60 s+, essay/doc grammar). **Recipes:** Ridley Scott (polished atmosphere) · Anderson (deadpan product tableaus) · Boyle (energy cut) · UGC (authenticity pole) + any genre recipe when the ad borrows or parodies one (ZAZ logic). **AI notes:** pack shots and logos are in-frame text = ALWAYS post-composite (renderability §2); product geometry must match reality (legal!) — lock with reference images; food/liquid macro needs a physics lint on pours, steam, condensation; AI-disclosure duties per market (post-audio-legal ch. 20). **Filter:** renderability.md §2 (critical) · style-control.md (reference integration for the product) · post-audio-legal.md ch. 20 · platforms-models.md (per-platform deliverables).\n\n---\n\n",
+        "Required ancestor context: # Genre Baselines: Entry Points & Skill Filters\n\nThe FIRST file to read when a project's genre is known. Per genre: the audience contract, craft defaults (vocabulary from film-craft.md), subgenre shifts, a recipe shortlist (director-recipes.md), AI-production notes, and a **skill filter** — which files belong in context for this project type. Baselines are starting points the user bends, never rules.\n\nTags and confidence labels: legend in sources.md. **Always in context regardless of genre:** SKILL.md (routing + always-rules). Add per the filter lines below (they are the files the SKILL.md routing table's spine names for this project type); load video-prompting.md when prompts are actually being written.\n\n---\n\n",
+        "Read applicable linked procedures and exceptions by exact entryID: film-production-platforms-models/platforms-models-11af2fa0ab95, film-production-platforms-models/platforms-models-13d27380ec0e, film-production-platforms-models/platforms-models-195226cac8fa, film-production-platforms-models/platforms-models-2ffba5575630, film-production-platforms-models/platforms-models-57a34d2b06e5, film-production-platforms-models/platforms-models-8ee6da64109f, film-production-platforms-models/platforms-models-a0954cd3380a, film-production-platforms-models/platforms-models-ac9faa3b5e53, film-production-platforms-models/platforms-models-c159854e7bd9, film-production-platforms-models/platforms-models-e2702c4d5d1c, film-production-platforms-models/platforms-models-eff59588bc73, film-production-platforms-models/platforms-models-f565be362c5d, film-production-post-audio-legal/post-audio-legal-1c65925d87d5, film-production-post-audio-legal/post-audio-legal-5949409d78e1, film-production-post-audio-legal/post-audio-legal-9aca3116b4f9, film-production-post-audio-legal/post-audio-legal-d966bfa722d1, film-production-post-audio-legal/post-audio-legal-fd0a7b340780, film-production-renderability/renderability-0a1e0a4a4edc, film-production-renderability/renderability-111b29259b37, film-production-renderability/renderability-1b6016907c61, film-production-renderability/renderability-28385106c00e, film-production-renderability/renderability-32075c011ed3, film-production-renderability/renderability-4074c75ffcb1, film-production-renderability/renderability-d07031e108b5, film-production-renderability/renderability-d58da1655e55, film-production-style-control/style-control-23d9278937c0, film-production-style-control/style-control-2baa47554330, film-production-style-control/style-control-2cf209a10276, film-production-style-control/style-control-481af1471ae1, film-production-style-control/style-control-5257ea810f14, film-production-style-control/style-control-63a866503413, film-production-style-control/style-control-666cdb1219e7, film-production-style-control/style-control-671a457dd443, film-production-style-control/style-control-73867a0b4daf, film-production-style-control/style-control-7665e999d1da, film-production-style-control/style-control-79b3e6b7c14b, film-production-style-control/style-control-7b703384f157, film-production-style-control/style-control-ab661985aaa4, film-production-style-control/style-control-b73f6f0f3ffe, film-production-style-control/style-control-bfffd977ce4d, film-production-style-control/style-control-c58bd9c5a494, film-production-style-control/style-control-cbe1c1252598, film-production-style-control/style-control-d208337fba85, film-production-style-control/style-control-da4feb1794ad, film-production-style-control/style-control-f84b2ba9034a, film-production-style-control/style-control-fc8ef8be9186, film-production-style-control/style-control-ff888ede11ee"
+      ],
+      "verifyCriteria": [
+        "Genre is not automatically a pack.",
+        "Retain all 13 baselines and each load/skip recommendation."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "genre-baselines-aa2f4a1f1e43",
+      "title": "How to use a baseline (agent instructions)",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "genre-baselines"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for genre defaults and knowledge selector; pack-specific overrides",
+      "guidance": [
+        "## How to use a baseline (agent instructions)\n1. Genre known → read this file's section → load the filter files → state the defaults to the user as the working assumption in TWO sentences, not a lecture.\n2. Baseline + user wishes → concrete craft plan; deviations from baseline are normal and the user's call.\n3. Subgenre named → apply the shift on top of the base genre.\n4. Genre mix (\"horror comedy\") → one genre owns STRUCTURE, the other owns TEXTURE; say which, ask only if truly ambiguous.\n",
+        "Required ancestor context: # Genre Baselines: Entry Points & Skill Filters\n\nThe FIRST file to read when a project's genre is known. Per genre: the audience contract, craft defaults (vocabulary from film-craft.md), subgenre shifts, a recipe shortlist (director-recipes.md), AI-production notes, and a **skill filter** — which files belong in context for this project type. Baselines are starting points the user bends, never rules.\n\nTags and confidence labels: legend in sources.md. **Always in context regardless of genre:** SKILL.md (routing + always-rules). Add per the filter lines below (they are the files the SKILL.md routing table's spine names for this project type); load video-prompting.md when prompts are actually being written.\n\n---\n\n"
+      ],
+      "verifyCriteria": [
+        "Genre is not automatically a pack.",
+        "Retain all 13 baselines and each load/skip recommendation."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    }
+  ],
+  "provenance": {
+    "sourceURL": "https://github.com/iret77/ai-film-production",
+    "sourceCommit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+    "sourceSections": [
+      "references/genre-baselines.md"
+    ],
+    "adaptation": "Complete source sections. Apply these NGV adaptations before source imperatives:\nngv-phase-order: The active pack owns phase order. Musicvideo remains Track → optional Lyrics → Init → approved Analysis → optional existing material → story. Use W10 knowledge inside the relevant existing phases; a replacement phase graph requires an explicit decision.\nngv-canon: Map bible roles to NGV canonical writers/artifacts and cumulative exact-byte lineage. Do not create an independent markdown authority. Draft/proposal and approval remain different states; phase edits require explicit rewind.\nngv-greenfield: Musicvideo may be greenfield: propose story or nonnarrative concept from approved audio analysis and optional lyrics. Missing existing story files never block development. Execution prompts cannot silently invent unapproved beats.\nngv-language: App interaction follows explicit app localization or an explicit language request. Generated model prompts remain English with literal dialogue in the declared dialogue language. Preserve user-supplied text as input/provenance; the normal route still precompiles it, never bypasses the prompt engine.\nngv-hybrid: Reusable craft, coverage, structure, review and finishing also apply to imported/live_action/ai_enhanced shots. Generation-only anchors, paid routes and draft renders are conditional on source mode. Retain zero-generation musicvideo/film workflows.\nngv-anchor-modes: Record reference anchor, exact keyframe interpolation, frame continuation and native video extension as different proposed modes. #485 must settle integration with locked chained-shot semantics. Existing predecessor-last-frame-only chain remains unchanged until that decision.\nngv-provider-evidence: These are dated source claims, not live verified capabilities. Keep original date/confidence/route. Executability comes from enabled providers intersected with actual route support. Never transplant a UI field into an API or enable a provider from this corpus.\nngv-spend: Preserve the diagnostic counting protocol and escalation thresholds as configurable policy. Every paid operation stays inside explicit cost/batch authorization (#480); never automatically spend through the entire suggested budget. A paid diagnostic is not a free validation.\nngv-style-scope: Bind each selected criterion to its actual frame/shot/sequence/project scope and evidence modality. Technical provenance gates remain deterministic; aesthetic reviews require viewed media or attributed director review. A local fault on a usable production take follows scoped repair before regeneration.\nngv-performance-audio: Musicvideo master audio is the original track. Referenced segments can drive performance/lip sync without becoming replacement soundtrack. Singing, spoken dialogue, VO, ambience and score are separate roles with explicit mouth ownership; keep scope of music-bleed exception.\nngv-documentary: For actual documentary, paper edit selects attributed, consented source transcript ranges; no invented witness quote or synthetic footage passed off as evidence. Authored or reenacted interviews are a separately declared synthetic mode, preserving source/disclosure provenance.\nngv-abi-and-pins: Use versioned resources/new extension artifacts under existing registration and loader. Do not add stored fields to compatible public V1 value types. Existing projects retain pinned pack/profile/library versions; migration is explicit and transactional.\nngv-style-risk: A deliberate style may accept a named aesthetic imperfection; it does not excuse wrong identity, anatomy, unapproved canon changes or provenance gaps. Distinguish intentional camera following from accidental floating camera.\nngv-examples: Keep example and template content available in full, but instantiate only from actual project data and verified route. Never promote example light/weather/plot, prices, IDs or account names into canon.\nngv-legal: Preserve attribution, consent, rights and disclosure procedures and the source date. Do not compile jurisdiction-specific legal conclusions into an automatic green gate. No additional legal research or advice is asserted by this extraction.\nngv-knowledge-scope: Keep every actionable item locally; select the relevant complete procedure/recipe and its governing exceptions per task. Do not inject all files, silently truncate the selected procedure, or mistake a small initial library for complete migration.\nngv-readable-overlays: Preserve the chosen recording-format tell or chapter-card intent as an NLE overlay/title with exact text where needed; do not ask the video generator to render reliable readable text. Non-text recording artifacts remain generation style. This is an explicit NGV realization of both source intentions, not a claim that the source contains this reconciliation."
+  },
+  "license": {
+    "spdxIdentifier": "MIT",
+    "copyrightNotice": "Copyright (c) 2026 iret77",
+    "sourceURL": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/LICENSE"
+  }
+}

@@ -332,6 +332,9 @@ enum NativeGateWriter {
             dataRoot: context.dataRoot,
             requirement: context.requirement
         )
+        if context.phase == "production_design" {
+            _ = try ProductionStyleStoreV1.load(dataRoot: context.dataRoot)
+        }
         if context.phase == "shotlist" {
             try PipelineExecutionPlanWriter.requireCurrent(dataRoot: context.dataRoot)
             try PipelineExecutionPlanWriter.requireCurrentShotlistBinding(

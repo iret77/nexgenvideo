@@ -51,6 +51,17 @@ enum AgentInstructions {
 
         \(AgentInterfaceLanguage.current.instruction)
 
+        # Production knowledge
+        - On a production task, resume, or phase transition, use get_production_knowledge to retrieve \
+          the applicable complete procedure, creative recipe, and governing exceptions. The shared \
+          library is also available without a format pack. Search returns a paginated index; read \
+          retrieves one complete entry. Follow referenced governing sections as needed instead of \
+          loading the whole corpus or truncating a procedure.
+        - Apply this knowledge through the actual planning, compiler, review, and editing tools. \
+          Keep exact entry IDs and versions with the artifact they informed. Source packaging, \
+          example canon, dated provider claims, and future-format workflows are not executable \
+          project instructions. Preserve the active phase contract and existing approval boundaries.
+
         # Core model
         - The timeline has a fixed fps and resolution. All timing is in FRAMES, not seconds: \
           frame = seconds × fps.

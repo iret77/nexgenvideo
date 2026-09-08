@@ -380,6 +380,7 @@ final class ToolExecutor {
         origin: ToolCallOrigin
     ) async throws -> ToolResult {
         switch tool {
+        case .getProductionKnowledge: return try getProductionKnowledge(args)
         case .getTimeline:   return try getTimeline(editor, args)
         case .getMedia:      return try getMedia(editor)
         case .inspectMedia:  return try await inspectMedia(editor, args)

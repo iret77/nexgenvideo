@@ -194,6 +194,9 @@ final class PipelineAgentHarness {
                 prompt = instructions
             }
             guard var prompt else { return nil }
+            if let style = try ProductionStyleContext.prompt(dataRoot: dataRoot, phase: phase) {
+                prompt += "\n\n" + style
+            }
             let registry = PackCatalog.registry(activePack: packName)
             let consumers = try ProductionKnowledgeConsumerRegistryV1(
                 registrations: registry.productionKnowledgeConsumers
@@ -269,6 +272,8 @@ final class PipelineAgentHarness {
                 prompt += "\n\nFollow this selected core production knowledge:\n\n\(assembly.prompt)"
             }
             if !assembly.omittedLibraryEntryIDs.isEmpty {
+                prompt += "\n\nAdditional selected guidance is available through get_production_knowledge(operation: read, entryID: ...). Retrieve complete applicable entries before using them: "
+                    + assembly.omittedLibraryEntryIDs.joined(separator: ", ")
                 Log.agent.warning(
                     "production knowledge budget omitted="
                         + assembly.omittedLibraryEntryIDs.joined(separator: ",")
@@ -443,7 +448,7 @@ final class PipelineAgentHarness {
             ) else {
                 return Reconciliation(
                     isReady: true,
-                    agentPrompt: nil,
+                    agentPrompt: try genericStylePrompt(dataRoot: dataRoot),
                     failure: nil
                 )
             }
@@ -646,11 +651,17 @@ final class PipelineAgentHarness {
             declaredPack: nil,
             declaredBinding: nil,
             requireMutationBinding: false
-        ) else { return nil }
+        ) else { return try genericStylePrompt(dataRoot: dataRoot) }
         return try loadContext(
             dataRoot: dataRoot,
             packName: packName
         ).agentPrompt()
+    }
+
+    private func genericStylePrompt(dataRoot: URL) throws -> String? {
+        let gates = try YAMLArtifactStore(dataRoot: dataRoot).load(Gates.self, at: PipelineLayout.gatesFile)
+        let phase = coreGatePhases.first { !gates.get($0).approved } ?? "finish"
+        return try ProductionStyleContext.prompt(dataRoot: dataRoot, phase: phase)
     }
 
     func guardAgentDecision(

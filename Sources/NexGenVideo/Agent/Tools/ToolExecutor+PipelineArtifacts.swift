@@ -211,6 +211,8 @@ extension ToolExecutor {
         payload["project"] = projectName(dataRoot: root)
         payload["generated"] = currentTimestamp()
         payload["generator"] = "production-design-agent@write_production_design"
+        payload.removeValue(forKey: "style_selection")
+        payload.removeValue(forKey: "clear_style")
         payload["color_script"] = try keyedStrings(
             payload["color_script"],
             key: "section",
@@ -241,7 +243,11 @@ extension ToolExecutor {
         let relative = "production_design/production_design.yaml"
         try archiveExisting(relative, dataRoot: root)
         do {
-            try YAMLArtifactStore(dataRoot: root).save(design, to: relative)
+            let selection: ProductionStyleSelectionV1? = try (args["style_selection"] as? [String: Any]).map {
+                try decodeArtifact($0, as: ProductionStyleSelectionV1.self, label: "style selection")
+            }
+            try ProductionStyleStoreV1.write(design: design, selection: selection,
+                                             clearStyle: args.bool("clear_style") ?? false, dataRoot: root)
         } catch {
             throw ToolError("Couldn't write production design: \(error)")
         }

@@ -168,7 +168,8 @@ enum MusicvideoPipelineLineage {
                 PipelineLayout.assetProofFile(
                     scope: "production_design"
                 ),
-            ]
+            ] + (FileManager.default.fileExists(atPath: dataRoot.appendingPathComponent(ResolvedProductionStyleV1.relativePath).path)
+                ? [ResolvedProductionStyleV1.relativePath] : [])
         case "treatment":
             return treatmentSelectors(dataRoot: dataRoot)
         case "storyboard":

@@ -1,0 +1,528 @@
+{
+  "schemaVersion": "creative-library.v1",
+  "id": "film-production-readme",
+  "version": "3.1.1",
+  "applicability": {
+    "packIDs": [],
+    "phases": [
+      "init",
+      "analysis",
+      "brief",
+      "production_design",
+      "treatment",
+      "storyboard",
+      "bible",
+      "shotlist",
+      "sanity",
+      "frames",
+      "render",
+      "review",
+      "assembly",
+      "finish",
+      "generic"
+    ],
+    "intentTags": [
+      "readme"
+    ],
+    "activeProfileIDs": []
+  },
+  "entries": [
+    {
+      "id": "readme-9c045e69c849",
+      "title": "ai-film-production",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "readme"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for provenance archive only",
+      "guidance": [
+        "# ai-film-production\n\n![From clay blockout to final take — one continuous scene, one method](assets/hero.jpg)\n\n[![Download the latest skill (.skill)](https://img.shields.io/badge/download-latest%20skill%20(.skill)-2563eb?style=flat-square)](https://github.com/iret77/ai-film-production/releases/latest/download/ai-film-production.skill)\n\nA complete film-production methodology for Claude — 25 chapters of sourced, confidence-labeled craft that turn the model into your crew: DoP, editor, gaffer, script consultant, line producer. You stay the director. Built for a **Seedance 2.5 / Higgsfield Cinema Studio** stills-first pipeline, with a MiniMax H3 profile rebuilt on MiniMax's official prompt-writing guides and compact syntax profiles for Kling 3.0, Veo 3.1, and Grok Imagine.\n\n"
+      ],
+      "verifyCriteria": [
+        "Installation and skill-trigger instructions are not NGV runtime instructions."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "readme-3a81446b4f64",
+      "title": "The problem",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "readme"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for provenance archive only",
+      "guidance": [
+        "## The problem\n\nAI video is easy to generate and hard to direct. The default way people prompt a video model looks like this:\n\n```\nEpic cinematic shot of a hero on a wooden ship in a violent storm,\nultra realistic, 8k, dramatic lighting, masterpiece, trending\n```\n\nWhat comes back: a drifting face, physics from a dream, a camera that does whatever it wants, quality words the model never reads — and after five rerolls, render budget spent on slop. There is room for something better. How about:\n\n```\nSCENE CONTEXT   Ilias crosses the storm deck toward the mast while the crew\n                hauls a torn sail. Night, mid-Aegean.\nACTIVE REFERENCES\n                @ilias — 30s, lean deckhand, soaked linen shirt, rope-scarred\n                hands. 100% matches the reference.\nCAMERA          Handheld at chest height, 3 m behind @ilias, matching his\n                pace at 5 km/h; no drift mid-segment.\nACTION          0-4s: @ilias grabs the rail, a wave bursts over the bow —\n                spray hits him a beat later, he flinches, keeps moving. …\nLIGHTING        Single practical: swinging deck lantern, 3200K, hard swings\n                of shadow with the ship's roll.\nPOSITIVE LOCKS  Lantern stays lit in every frame. The crew stays aft of the\n                mast. One continuous shot, no cuts.\n```\n\nSame model. The difference is method: every aspect has one home, everything is measurable, and the prompt is written in the logic the model was trained on — not in the logic of a human reader.\n\n",
+        "Required ancestor context: # ai-film-production\n\n![From clay blockout to final take — one continuous scene, one method](assets/hero.jpg)\n\n[![Download the latest skill (.skill)](https://img.shields.io/badge/download-latest%20skill%20(.skill)-2563eb?style=flat-square)](https://github.com/iret77/ai-film-production/releases/latest/download/ai-film-production.skill)\n\nA complete film-production methodology for Claude — 25 chapters of sourced, confidence-labeled craft that turn the model into your crew: DoP, editor, gaffer, script consultant, line producer. You stay the director. Built for a **Seedance 2.5 / Higgsfield Cinema Studio** stills-first pipeline, with a MiniMax H3 profile rebuilt on MiniMax's official prompt-writing guides and compact syntax profiles for Kling 3.0, Veo 3.1, and Grok Imagine.\n\n"
+      ],
+      "verifyCriteria": [
+        "Installation and skill-trigger instructions are not NGV runtime instructions."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "readme-f0379e57e094",
+      "title": "How it works",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "readme"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for provenance archive only",
+      "guidance": [
+        "## How it works\n\nIt starts the moment you say \"plan my short film.\" The skill doesn't jump into prompts. It reads your genre's craft baseline, asks for the story before the style, and offers a dramaturgical container. Then it builds the way productions build: locations and cast as approved reference assets first, every shot as an approved still before any video — attached as a reference anchor, not as a start frame, unless a take must chain frame-exactly onto an existing clip — every prompt through a fixed seven-step checklist — canon, routing, references, writing, lint, delivery, review — and delivered under a Render Slate that names the platform, the surface, the model and mode, every input and where the result is stored. Platform facts are never invented: each slate carries a receipt that says whether the route was live-checked or taken from the skill's dated ledger. When a take comes back 90% right, it doesn't reroll; it repairs the 10% with the platform's edit modes. And everything that survives your approval becomes canon in a living production bible, so the next session picks up exactly where this one stopped.\n\nClaude just runs a film production.\n\n",
+        "Required ancestor context: # ai-film-production\n\n![From clay blockout to final take — one continuous scene, one method](assets/hero.jpg)\n\n[![Download the latest skill (.skill)](https://img.shields.io/badge/download-latest%20skill%20(.skill)-2563eb?style=flat-square)](https://github.com/iret77/ai-film-production/releases/latest/download/ai-film-production.skill)\n\nA complete film-production methodology for Claude — 25 chapters of sourced, confidence-labeled craft that turn the model into your crew: DoP, editor, gaffer, script consultant, line producer. You stay the director. Built for a **Seedance 2.5 / Higgsfield Cinema Studio** stills-first pipeline, with a MiniMax H3 profile rebuilt on MiniMax's official prompt-writing guides and compact syntax profiles for Kling 3.0, Veo 3.1, and Grok Imagine.\n\n"
+      ],
+      "verifyCriteria": [
+        "Installation and skill-trigger instructions are not NGV runtime instructions."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "readme-069a79a5ab3d",
+      "title": "Quick start",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "readme"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for provenance archive only",
+      "guidance": [
+        "## Quick start\n\n1. [Download the latest `ai-film-production.skill`](https://github.com/iret77/ai-film-production/releases/latest/download/ai-film-production.skill) — built automatically for every release. It's a zip with a custom suffix; macOS won't auto-extract it.\n2. Upload it in Claude's skill settings (the dialog takes `.skill` directly), or unzip into your agent's skills path (e.g. `~/.claude/skills/` for Claude Code).\n3. Talk to it like a director:\n\n> \"Break this logline into a treatment with a shot list: a lighthouse keeper finds a message that was never sent.\"\n> \"Make this scene AI-ready — can it even be generated?\"\n> \"The take is perfect except the camera. Fix it without touching the performance.\"\n\nThe skill triggers on its own whenever the production path is clearly generative video — treatments, scripts, shot lists, asset orders, Seedance/Veo/Kling/Higgsfield prompts.\n\n",
+        "Required ancestor context: # ai-film-production\n\n![From clay blockout to final take — one continuous scene, one method](assets/hero.jpg)\n\n[![Download the latest skill (.skill)](https://img.shields.io/badge/download-latest%20skill%20(.skill)-2563eb?style=flat-square)](https://github.com/iret77/ai-film-production/releases/latest/download/ai-film-production.skill)\n\nA complete film-production methodology for Claude — 25 chapters of sourced, confidence-labeled craft that turn the model into your crew: DoP, editor, gaffer, script consultant, line producer. You stay the director. Built for a **Seedance 2.5 / Higgsfield Cinema Studio** stills-first pipeline, with a MiniMax H3 profile rebuilt on MiniMax's official prompt-writing guides and compact syntax profiles for Kling 3.0, Veo 3.1, and Grok Imagine.\n\n"
+      ],
+      "verifyCriteria": [
+        "Installation and skill-trigger instructions are not NGV runtime instructions."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "readme-14533f67587a",
+      "title": "What's inside",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "readme"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for provenance archive only",
+      "guidance": [
+        "## What's inside\n\n**25 chapters · 16 always-on rules · a 7-step per-prompt checklist · a Render Slate per prompt · 10 workflow runbooks incl. the storyboard-first production model · 13 genre baselines · 31 director recipes + 11 DoP signatures · 11 animation style vocabularies + footage/era/optics packages · 6 video models profiled · a platform ledger re-verified 2026-09-04.**\n\n- **Direction & craft** — model-independent film language (composition, editing, light, color, dramaturgy), director and DoP recipes with per-recipe verify gates, genre entry points, story structures from three-act to kishōtenketsu.\n- **Prompting method** — the block-structure prompt template with camera-third ordering and FOV-in-degrees discipline; how image models actually read prompts (position, scale, count, negation — with the research receipts); style enforcement that survives more than one shot.\n- **Production operations** — stills-first pipeline, the storyboard-first production model (eight gated stages: idea → bible + beat lint → storyboard with camera setup system and take/cut table → sheets → 3D blockout → location anchors → draft takes → production takes), asset and reference-pool build-out, renderability linting with green/red lists and rescue paths, coverage ladder, continuity ledger, a living production-bible convention for multi-session projects.\n- **Built to be executed, not just read** — v3.0 reworked the whole skill for weaker agents: one meaning per term (`references/glossary.md`), a precedence ladder for conflicting sources, a citation convention that makes every chapter reference unambiguous, fixed order of operations, slate rows with fixed labels, receipt states that forbid fabricated platform facts, a copy-ready worked example, and six review passes with a fixed take-verdict order.\n- **Platform knowledge** — Seedance 2.5 doctrine (50-reference control incl. clay-render staging — Blender-built or Seedance-generated — the edit suite, extension chains), Higgsfield Cinema Studio settings, the MiniMax H3 official schema (cut-point timestamps, six-section reference form, retention markers), compact profiles for Kling, Veo, and Grok, production rules distilled from Higgsfield's open-sourced feature films (headless sheets, one asset per state, speech-count lock, crowd scale in three layers, the negation third class), dated platform caveats, and a real-face moderation plan for licensed likenesses.\n\n",
+        "Required ancestor context: # ai-film-production\n\n![From clay blockout to final take — one continuous scene, one method](assets/hero.jpg)\n\n[![Download the latest skill (.skill)](https://img.shields.io/badge/download-latest%20skill%20(.skill)-2563eb?style=flat-square)](https://github.com/iret77/ai-film-production/releases/latest/download/ai-film-production.skill)\n\nA complete film-production methodology for Claude — 25 chapters of sourced, confidence-labeled craft that turn the model into your crew: DoP, editor, gaffer, script consultant, line producer. You stay the director. Built for a **Seedance 2.5 / Higgsfield Cinema Studio** stills-first pipeline, with a MiniMax H3 profile rebuilt on MiniMax's official prompt-writing guides and compact syntax profiles for Kling 3.0, Veo 3.1, and Grok Imagine.\n\n",
+        "Read applicable linked procedures and exceptions by exact entryID: film-production-glossary/glossary-f7cde8a25df6"
+      ],
+      "verifyCriteria": [
+        "Installation and skill-trigger instructions are not NGV runtime instructions."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "readme-bad66faf92e5",
+      "title": "Why you'd use it — and why you wouldn't",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "readme"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for provenance archive only",
+      "guidance": [
+        "## Why you'd use it — and why you wouldn't\n\n**Use it if** you want AI footage that doesn't look AI-generated: the whole method designs every shot around the failure classes of current video models — identity drift, physics errors, broken in-frame text, interaction errors — instead of fighting them in post. And if you burn money on rerolls: the checklist, the lint passes, and the repair-before-reroll rule exist because every skipped step has already cost real render budget.\n\n**Skip it if** you want a one-click text-to-video toy — this is a methodology that expects a director's decisions, and it will ask for them. Skip it if your pipeline is built on a stack it doesn't cover deeply (it's Seedance/Higgsfield-first; MiniMax H3 gets a full official-schema profile, Kling, Veo, and Grok compact profiles, everything else principles only). And know that model facts age in weeks: version-volatile claims are marked as such and should be re-verified against the live platforms before a production run.\n\n",
+        "Required ancestor context: # ai-film-production\n\n![From clay blockout to final take — one continuous scene, one method](assets/hero.jpg)\n\n[![Download the latest skill (.skill)](https://img.shields.io/badge/download-latest%20skill%20(.skill)-2563eb?style=flat-square)](https://github.com/iret77/ai-film-production/releases/latest/download/ai-film-production.skill)\n\nA complete film-production methodology for Claude — 25 chapters of sourced, confidence-labeled craft that turn the model into your crew: DoP, editor, gaffer, script consultant, line producer. You stay the director. Built for a **Seedance 2.5 / Higgsfield Cinema Studio** stills-first pipeline, with a MiniMax H3 profile rebuilt on MiniMax's official prompt-writing guides and compact syntax profiles for Kling 3.0, Veo 3.1, and Grok Imagine.\n\n"
+      ],
+      "verifyCriteria": [
+        "Installation and skill-trigger instructions are not NGV runtime instructions."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "readme-47d75f7205f2",
+      "title": "Where the rules come from",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "readme"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for provenance archive only",
+      "guidance": [
+        "## Where the rules come from\n\nNo rule ships without a label: 🟢 verified across sources / official / production-proven · 🟡 plausible but single-source or untested · 🔴 marketing claim — test yourself. Source tags ([H-off], [BD-off], [MM-off], [F], [P1–P50] — itemized in `references/sources.md` —, [PP], [W], …) trace every rule to its origin — official platform docs and prompt-writing guides, the vendor's own open-sourced feature-film breakdowns, practitioner protocols, deep-research passes over papers and benchmarks, and first-party production sessions whose lessons flow back here as generalized rules. Where sources conflict, the conflict is documented with ⚠️ instead of silently resolved.\n\n",
+        "Required ancestor context: # ai-film-production\n\n![From clay blockout to final take — one continuous scene, one method](assets/hero.jpg)\n\n[![Download the latest skill (.skill)](https://img.shields.io/badge/download-latest%20skill%20(.skill)-2563eb?style=flat-square)](https://github.com/iret77/ai-film-production/releases/latest/download/ai-film-production.skill)\n\nA complete film-production methodology for Claude — 25 chapters of sourced, confidence-labeled craft that turn the model into your crew: DoP, editor, gaffer, script consultant, line producer. You stay the director. Built for a **Seedance 2.5 / Higgsfield Cinema Studio** stills-first pipeline, with a MiniMax H3 profile rebuilt on MiniMax's official prompt-writing guides and compact syntax profiles for Kling 3.0, Veo 3.1, and Grok Imagine.\n\n",
+        "Read applicable linked procedures and exceptions by exact entryID: film-production-sources/sources-9de87ed0c000"
+      ],
+      "verifyCriteria": [
+        "Installation and skill-trigger instructions are not NGV runtime instructions."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "readme-ae47b92afe70",
+      "title": "Philosophy",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "readme"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for provenance archive only",
+      "guidance": [
+        "## Philosophy\n\n- **Stills-first** — the look is won in the image; video only secures it.\n- **Canon before invention** — every beat is read from the script, never guessed into a prompt.\n- **References over prose** — prose is for what happens; references are for what persists.\n- **Repair before reroll** — an approved take is edited, never re-diced.\n- **Ellipsis over simulation** — what the model can't render, the edit implies.\n\n",
+        "Required ancestor context: # ai-film-production\n\n![From clay blockout to final take — one continuous scene, one method](assets/hero.jpg)\n\n[![Download the latest skill (.skill)](https://img.shields.io/badge/download-latest%20skill%20(.skill)-2563eb?style=flat-square)](https://github.com/iret77/ai-film-production/releases/latest/download/ai-film-production.skill)\n\nA complete film-production methodology for Claude — 25 chapters of sourced, confidence-labeled craft that turn the model into your crew: DoP, editor, gaffer, script consultant, line producer. You stay the director. Built for a **Seedance 2.5 / Higgsfield Cinema Studio** stills-first pipeline, with a MiniMax H3 profile rebuilt on MiniMax's official prompt-writing guides and compact syntax profiles for Kling 3.0, Veo 3.1, and Grok Imagine.\n\n"
+      ],
+      "verifyCriteria": [
+        "Installation and skill-trigger instructions are not NGV runtime instructions."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "readme-a992d075c47d",
+      "title": "Structure",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "readme"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for provenance archive only",
+      "guidance": [
+        "## Structure\n\n<details>\n<summary>All 20 files at a glance</summary>\n\n| File | Role |\n|---|---|\n| `SKILL.md` | Entry point: citation convention, precedence, order of operations + task routing table, 16 inline always-rules, the mandatory per-prompt checklist, Render Slate contract with ID grammar, 5-step project workflow |\n| `references/genre-baselines.md` | 13 genre entry points (incl. Commercial/Ad): craft defaults, subgenres, recipe shortlists, per-genre skill filters |\n| `references/production-pipeline.md` | Ch. 1–11 + 16: pipeline principles, assets, QA, model choice, coverage ladder, interview production path (7b) |\n| `references/video-prompting.md` | Ch. 12 + 14 + 14b: THE block-structure prompt template, cross-model adaptation, sequence prompting, negation classes, Seedance 2.5 doctrine (reference-maximal control, edit suite, extension chains, large casts, montage ceiling, Dreamina-only surfaces) |\n| `references/platforms-models.md` | Ch. 13 + 21: archival Higgsfield Cinema Studio notes; MiniMax H3 profile on the official guides (three-field base form, six-section Ref2VA, camera vocabulary, dialogue tags); Kling/Veo/Grok compact profiles |\n| `references/platform-ui-workflows.md` | Current, source-linked UI/workflow reference and version ledger: which web/MCP/ChatGPT surface owns each selectable setting in Higgsfield, fal.ai, Runway, OpenArt, Arcads, and GPT Image 2; plus re-verification rules |\n| `references/post-audio-legal.md` | Ch. 17–20: post, audio/music/voices, continuity, legal & AI disclosure |\n| `references/style-control.md` | Style enforcement across image and video models, vocabularies, reference protocol |\n| `references/image-model-logic.md` | Ch. 24: how generators read prompts — writing contract, position/scale/count/negation recipes, mask strictness per platform |\n| `references/renderability.md` | Green/red lists, rescue paths, format matrix, model quick profiles |\n| `references/film-craft.md` | Model-independent film language: composition, camera, editing, light, color, timing, dramaturgy |\n| `references/director-recipes.md` | 31 director recipes + 11 DoP signatures; selection index, per-recipe Verify gates, harmony map |\n| `references/pixar-look.md` | Sourced Pixar look bible incl. figure-anchor rule, style-forcing method, and the hybrid previs-to-AI case study (wide-shot rescue, hidden faces, style donor) |\n| `references/production-bible.md` | Ch. 22: living project-state document — template (incl. storyboard canon section B3b and take/cut columns on the shot board), session rules, platform mapping, ID grammar (Render ID tokens, instance chain, bootstrap) |\n| `references/story-structures.md` | Ch. 23: dramaturgical containers — intake gate, classic/alternative structures, series poles & online-native formats |\n| `references/workflows.md` | Ch. 25: ten runbooks for the typical production jobs — project start to session close, with interaction contract, lock gate and receipt states; W10 = the storyboard-first production model in eight gated stages |\n| `references/worked-example.md` | Compact end-to-end mini production: shot table, asset order, Render Slate + ch. 12 prompt, risk register, extension round, bible rows |\n| `references/glossary.md` | One meaning per term: shot/take/sequence, plates and sheets, the seven kinds of anchor, locks, channel/axis, camera setup / panel / take-cut table / state ladder, artefact names |\n| `references/sources.md` | Registry of practitioner and vendor-thread protocols P17–P50 plus the official MiniMax guides [MM-off] (date, URL, sponsorship flag) behind the source tags |\n| `LICENSE` | MIT |\n\n</details>\n\n",
+        "Required ancestor context: # ai-film-production\n\n![From clay blockout to final take — one continuous scene, one method](assets/hero.jpg)\n\n[![Download the latest skill (.skill)](https://img.shields.io/badge/download-latest%20skill%20(.skill)-2563eb?style=flat-square)](https://github.com/iret77/ai-film-production/releases/latest/download/ai-film-production.skill)\n\nA complete film-production methodology for Claude — 25 chapters of sourced, confidence-labeled craft that turn the model into your crew: DoP, editor, gaffer, script consultant, line producer. You stay the director. Built for a **Seedance 2.5 / Higgsfield Cinema Studio** stills-first pipeline, with a MiniMax H3 profile rebuilt on MiniMax's official prompt-writing guides and compact syntax profiles for Kling 3.0, Veo 3.1, and Grok Imagine.\n\n",
+        "Read applicable linked procedures and exceptions by exact entryID: film-production-director-recipes/director-recipes-056ac0ea6c03, film-production-director-recipes/director-recipes-17cfc8bdffd7, film-production-director-recipes/director-recipes-ead52cc58afb, film-production-director-recipes/director-recipes-ed7e5494d54b, film-production-film-craft/film-craft-08c1a1b2c538, film-production-film-craft/film-craft-2248687307ab, film-production-film-craft/film-craft-250a592981e5, film-production-film-craft/film-craft-3467e7856eaf, film-production-film-craft/film-craft-53cc6a016d88, film-production-film-craft/film-craft-56d3d772fec2, film-production-film-craft/film-craft-570fba3d71dd, film-production-film-craft/film-craft-67a9384f75ea, film-production-film-craft/film-craft-9ebd24a43e12, film-production-film-craft/film-craft-b70a3b38e137, film-production-genre-baselines/genre-baselines-26a2df9e7d9a, film-production-genre-baselines/genre-baselines-37d395f687f6, film-production-genre-baselines/genre-baselines-388bc706ea77, film-production-genre-baselines/genre-baselines-38db61f05ab2, film-production-genre-baselines/genre-baselines-41eb04e85ab9, film-production-genre-baselines/genre-baselines-5cabde8905e6, film-production-genre-baselines/genre-baselines-5cf688811c5e, film-production-genre-baselines/genre-baselines-6dd720cce1ef, film-production-genre-baselines/genre-baselines-7c42d9ae1707, film-production-genre-baselines/genre-baselines-aa2f4a1f1e43, film-production-genre-baselines/genre-baselines-bf25776c9d83, film-production-genre-baselines/genre-baselines-c56dc8097a52, film-production-genre-baselines/genre-baselines-d3d8f306e5b2, film-production-genre-baselines/genre-baselines-e477db36b513, film-production-genre-baselines/genre-baselines-fc0343dda7d2, film-production-glossary/glossary-f7cde8a25df6, film-production-image-model-logic/image-model-logic-22b73abae673, film-production-image-model-logic/image-model-logic-22bf602239dc, film-production-image-model-logic/image-model-logic-3eccf19c66e7, film-production-image-model-logic/image-model-logic-41396add3783, film-production-image-model-logic/image-model-logic-5799d83263ad, film-production-image-model-logic/image-model-logic-981739564d0a, film-production-image-model-logic/image-model-logic-9fca2f3509ec, film-production-image-model-logic/image-model-logic-abe5c3ee6575, film-production-image-model-logic/image-model-logic-df953370803e, film-production-pixar-look/pixar-look-1da5c9533bf3, film-production-pixar-look/pixar-look-266b78d1a40e, film-production-pixar-look/pixar-look-441de0d8a9d1, film-production-pixar-look/pixar-look-56847cb20874, film-production-pixar-look/pixar-look-6067d37adaa1, film-production-pixar-look/pixar-look-67b9aafd568b, film-production-pixar-look/pixar-look-68ec1764bb32, film-production-pixar-look/pixar-look-79aef52eb72e, film-production-pixar-look/pixar-look-8448fb177d42, film-production-pixar-look/pixar-look-e2bffc9f8b7c, film-production-pixar-look/pixar-look-eeafb6781cc6, film-production-pixar-look/pixar-look-f22e3f8ad2cd, film-production-pixar-look/pixar-look-fdcec6b2c0f0, film-production-pixar-look/pixar-look-ffa1fc7ecbcc, film-production-platform-ui-workflows/platform-ui-workflows-03c0f524fd96, film-production-platform-ui-workflows/platform-ui-workflows-04c305aa5fa4, film-production-platform-ui-workflows/platform-ui-workflows-071ec10c4b30, film-production-platform-ui-workflows/platform-ui-workflows-0d16d75d5809, film-production-platform-ui-workflows/platform-ui-workflows-0fcd03ac29bc, film-production-platform-ui-workflows/platform-ui-workflows-1800a14f8efb, film-production-platform-ui-workflows/platform-ui-workflows-1b8baeb4fe8e, film-production-platform-ui-workflows/platform-ui-workflows-1bbc05467732, film-production-platform-ui-workflows/platform-ui-workflows-21265d567b98, film-production-platform-ui-workflows/platform-ui-workflows-2793dec3f603, film-production-platform-ui-workflows/platform-ui-workflows-2ed9b643b727, film-production-platform-ui-workflows/platform-ui-workflows-2f26645f5b2d, film-production-platform-ui-workflows/platform-ui-workflows-2fc39d4c2fa2, film-production-platform-ui-workflows/platform-ui-workflows-3b8acc5f6415, film-production-platform-ui-workflows/platform-ui-workflows-4418f52deb3c, film-production-platform-ui-workflows/platform-ui-workflows-446046bb6ca5, film-production-platform-ui-workflows/platform-ui-workflows-47ed307fe438, film-production-platform-ui-workflows/platform-ui-workflows-4976feb5aef0, film-production-platform-ui-workflows/platform-ui-workflows-4b6d0762ce25, film-production-platform-ui-workflows/platform-ui-workflows-4c833d2eab54, film-production-platform-ui-workflows/platform-ui-workflows-4cb5fa24727f, film-production-platform-ui-workflows/platform-ui-workflows-55a52d3a83bb, film-production-platform-ui-workflows/platform-ui-workflows-58cb6bb8864b, film-production-platform-ui-workflows/platform-ui-workflows-6176107bac0a, film-production-platform-ui-workflows/platform-ui-workflows-63c227d438e9, film-production-platform-ui-workflows/platform-ui-workflows-6692176f1743, film-production-platform-ui-workflows/platform-ui-workflows-6dc670fc3f91, film-production-platform-ui-workflows/platform-ui-workflows-7a41a20d840f, film-production-platform-ui-workflows/platform-ui-workflows-7a7a82672859, film-production-platform-ui-workflows/platform-ui-workflows-7d54a0037e59, film-production-platform-ui-workflows/platform-ui-workflows-85eec349cf69, film-production-platform-ui-workflows/platform-ui-workflows-86a70ac78823, film-production-platform-ui-workflows/platform-ui-workflows-87281cdfb693, film-production-platform-ui-workflows/platform-ui-workflows-890d79b44fab, film-production-platform-ui-workflows/platform-ui-workflows-904199cbdc1a, film-production-platform-ui-workflows/platform-ui-workflows-905b7b1a103b, film-production-platform-ui-workflows/platform-ui-workflows-93d12ca52dd2, film-production-platform-ui-workflows/platform-ui-workflows-9afe66081c3f, film-production-platform-ui-workflows/platform-ui-workflows-a2f90ea048dd, film-production-platform-ui-workflows/platform-ui-workflows-a54da21dd877, film-production-platform-ui-workflows/platform-ui-workflows-ad5ae3bbf61d, film-production-platform-ui-workflows/platform-ui-workflows-afd48d04b60f, film-production-platform-ui-workflows/platform-ui-workflows-ba1359d74f17, film-production-platform-ui-workflows/platform-ui-workflows-bb1c0df9af39, film-production-platform-ui-workflows/platform-ui-workflows-c25a75d5f8b0, film-production-platform-ui-workflows/platform-ui-workflows-c58d776d3e35, film-production-platform-ui-workflows/platform-ui-workflows-c80b9d082feb, film-production-platform-ui-workflows/platform-ui-workflows-cc3e829c0f33, film-production-platform-ui-workflows/platform-ui-workflows-cc6f1d24d639, film-production-platform-ui-workflows/platform-ui-workflows-cfc45e4aa90b, film-production-platform-ui-workflows/platform-ui-workflows-d6cf98a9c992, film-production-platform-ui-workflows/platform-ui-workflows-dac737fb48cd, film-production-platform-ui-workflows/platform-ui-workflows-dffe420e1652, film-production-platform-ui-workflows/platform-ui-workflows-e065c23134cc, film-production-platform-ui-workflows/platform-ui-workflows-e23bc75bdf23, film-production-platform-ui-workflows/platform-ui-workflows-e4f03834a023, film-production-platform-ui-workflows/platform-ui-workflows-e7ff5638cd65, film-production-platform-ui-workflows/platform-ui-workflows-e9b2d1bc61c4, film-production-platform-ui-workflows/platform-ui-workflows-ef1df540bb42, film-production-platform-ui-workflows/platform-ui-workflows-f4622546e4ea, film-production-platform-ui-workflows/platform-ui-workflows-f9e9c67e2b82, film-production-platforms-models/platforms-models-11af2fa0ab95, film-production-platforms-models/platforms-models-13d27380ec0e, film-production-platforms-models/platforms-models-195226cac8fa, film-production-platforms-models/platforms-models-2ffba5575630, film-production-platforms-models/platforms-models-57a34d2b06e5, film-production-platforms-models/platforms-models-8ee6da64109f, film-production-platforms-models/platforms-models-a0954cd3380a, film-production-platforms-models/platforms-models-ac9faa3b5e53, film-production-platforms-models/platforms-models-c159854e7bd9, film-production-platforms-models/platforms-models-e2702c4d5d1c, film-production-platforms-models/platforms-models-eff59588bc73, film-production-platforms-models/platforms-models-f565be362c5d, film-production-post-audio-legal/post-audio-legal-1c65925d87d5, film-production-post-audio-legal/post-audio-legal-5949409d78e1, film-production-post-audio-legal/post-audio-legal-9aca3116b4f9, film-production-post-audio-legal/post-audio-legal-d966bfa722d1, film-production-post-audio-legal/post-audio-legal-fd0a7b340780, film-production-production-bible/production-bible-3072a82d206e, film-production-production-bible/production-bible-667997dee933, film-production-production-bible/production-bible-82235e8038c5, film-production-production-bible/production-bible-a27a5ed127e1, film-production-production-bible/production-bible-c3cd847c925c, film-production-production-bible/production-bible-f5df78b14f2f, film-production-production-pipeline/production-pipeline-0fdca1da8970, film-production-production-pipeline/production-pipeline-1bb10d449ca5, film-production-production-pipeline/production-pipeline-3e7423e91475, film-production-production-pipeline/production-pipeline-3f320156d67f, film-production-production-pipeline/production-pipeline-41c7b8294114, film-production-production-pipeline/production-pipeline-446e57806ce5, film-production-production-pipeline/production-pipeline-455241c73ce4, film-production-production-pipeline/production-pipeline-524c7d64a7f3, film-production-production-pipeline/production-pipeline-668103488e98, film-production-production-pipeline/production-pipeline-99e7beb6f331, film-production-production-pipeline/production-pipeline-9bf4e03af57e, film-production-production-pipeline/production-pipeline-a2fb95cff485, film-production-production-pipeline/production-pipeline-b4b53fe52130, film-production-production-pipeline/production-pipeline-d16d62c31ae0, film-production-production-pipeline/production-pipeline-d1f0cfe8e195, film-production-production-pipeline/production-pipeline-f418e48ce02f, film-production-production-pipeline/production-pipeline-f7091f27c6d1, film-production-production-pipeline/production-pipeline-fe8ae664fb1e, film-production-renderability/renderability-0a1e0a4a4edc, film-production-renderability/renderability-111b29259b37, film-production-renderability/renderability-1b6016907c61, film-production-renderability/renderability-28385106c00e, film-production-renderability/renderability-32075c011ed3, film-production-renderability/renderability-4074c75ffcb1, film-production-renderability/renderability-d07031e108b5, film-production-renderability/renderability-d58da1655e55, film-production-skill/skill-05a8c920538c, film-production-skill/skill-11d6f150df4d, film-production-skill/skill-2e42f043c413, film-production-skill/skill-705399a08ca6, film-production-skill/skill-97ff9b201107, film-production-skill/skill-9fc6d6e46c26, film-production-skill/skill-a9c8ddc59709, film-production-skill/skill-c1c24ea6da18, film-production-skill/skill-cffc1e447b50, film-production-skill/skill-da7177bac7a7, film-production-skill/skill-dceff66d0b82, film-production-skill/skill-f468f0c333ce, film-production-sources/sources-9de87ed0c000, film-production-story-structures/story-structures-2461c94b52af, film-production-story-structures/story-structures-7abc87b68e5a, film-production-story-structures/story-structures-7b9e691860d5, film-production-story-structures/story-structures-7e4cbcfc1e56, film-production-story-structures/story-structures-810d3217fe16, film-production-story-structures/story-structures-8b5165de10fc, film-production-story-structures/story-structures-90eb64a2ea6a, film-production-story-structures/story-structures-a2ef1752ee94, film-production-story-structures/story-structures-aa0a70987b00, film-production-story-structures/story-structures-ac4719f483f6, film-production-style-control/style-control-23d9278937c0, film-production-style-control/style-control-2baa47554330, film-production-style-control/style-control-2cf209a10276, film-production-style-control/style-control-481af1471ae1, film-production-style-control/style-control-5257ea810f14, film-production-style-control/style-control-63a866503413, film-production-style-control/style-control-666cdb1219e7, film-production-style-control/style-control-671a457dd443, film-production-style-control/style-control-73867a0b4daf, film-production-style-control/style-control-7665e999d1da, film-production-style-control/style-control-79b3e6b7c14b, film-production-style-control/style-control-7b703384f157, film-production-style-control/style-control-ab661985aaa4, film-production-style-control/style-control-b73f6f0f3ffe, film-production-style-control/style-control-bfffd977ce4d, film-production-style-control/style-control-c58bd9c5a494, film-production-style-control/style-control-cbe1c1252598, film-production-style-control/style-control-d208337fba85, film-production-style-control/style-control-da4feb1794ad, film-production-style-control/style-control-f84b2ba9034a, film-production-style-control/style-control-fc8ef8be9186, film-production-style-control/style-control-ff888ede11ee, film-production-video-prompting/video-prompting-2d077c405e26, film-production-video-prompting/video-prompting-3145b34f3b5d, film-production-video-prompting/video-prompting-33ae6df5c3f0, film-production-video-prompting/video-prompting-39026ee6df7f, film-production-video-prompting/video-prompting-4a8d407dff7a, film-production-video-prompting/video-prompting-5275ee1254bc, film-production-video-prompting/video-prompting-6ebc68114145, film-production-video-prompting/video-prompting-77153717e7be, film-production-video-prompting/video-prompting-a3510dce6126, film-production-video-prompting/video-prompting-ae84e7dfae96, film-production-video-prompting/video-prompting-b8193dd15dd6, film-production-video-prompting/video-prompting-cb91fd3500e1, film-production-video-prompting/video-prompting-cd15da11c9c9, film-production-video-prompting/video-prompting-d87cde00835d, film-production-video-prompting/video-prompting-ddfa67879961, film-production-video-prompting/video-prompting-f6e454e1d76b, film-production-worked-example/worked-example-139e9c1e8417, film-production-worked-example/worked-example-35cfa29f22f4, film-production-worked-example/worked-example-65f26dd4a67e, film-production-worked-example/worked-example-7671e3cd2a49, film-production-worked-example/worked-example-bb187e0467ef, film-production-worked-example/worked-example-f3d5fa6b6205, film-production-worked-example/worked-example-fa7721159cff, film-production-workflows/workflows-0979effa719d, film-production-workflows/workflows-35ea99e846a8, film-production-workflows/workflows-4d964bcaead8, film-production-workflows/workflows-6f957f7120f1, film-production-workflows/workflows-9ff2b6097758, film-production-workflows/workflows-a32d2b8635bd, film-production-workflows/workflows-ca2a59d14ade, film-production-workflows/workflows-d91a72e57720, film-production-workflows/workflows-de63f05d633e, film-production-workflows/workflows-eccdac4aed0c, film-production-workflows/workflows-ef7dba1933ce"
+      ],
+      "verifyCriteria": [
+        "Installation and skill-trigger instructions are not NGV runtime instructions."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "readme-b9ebf627db34",
+      "title": "Versioning",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "readme"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for provenance archive only",
+      "guidance": [
+        "## Versioning\n\nv3.1.1-en (2026-09). Universal — contains nothing project- or person-specific. This repository is the source of truth for the skill; lessons from production flow back here via commits, and every release ships an upload-ready `.skill` package.\n\n",
+        "Required ancestor context: # ai-film-production\n\n![From clay blockout to final take — one continuous scene, one method](assets/hero.jpg)\n\n[![Download the latest skill (.skill)](https://img.shields.io/badge/download-latest%20skill%20(.skill)-2563eb?style=flat-square)](https://github.com/iret77/ai-film-production/releases/latest/download/ai-film-production.skill)\n\nA complete film-production methodology for Claude — 25 chapters of sourced, confidence-labeled craft that turn the model into your crew: DoP, editor, gaffer, script consultant, line producer. You stay the director. Built for a **Seedance 2.5 / Higgsfield Cinema Studio** stills-first pipeline, with a MiniMax H3 profile rebuilt on MiniMax's official prompt-writing guides and compact syntax profiles for Kling 3.0, Veo 3.1, and Grok Imagine.\n\n"
+      ],
+      "verifyCriteria": [
+        "Installation and skill-trigger instructions are not NGV runtime instructions."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "readme-09c5d7d8a535",
+      "title": "Changelog",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "readme"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for provenance archive only",
+      "guidance": [
+        "### Changelog\n\n- **v3.1.1-en (2026-09-07)** — version line directly under the SKILL.md title; no rule changes.\n- **v3.1-en (2026-09-07)** — W10 storyboard-first production model (eight gated stages with deliverable, gate and reads; camera setup system, take/cut table, state ladder, layout map; blockout trigger rule; draft-tier test takes; production-take edit route as a documented exception); STORYBOARD deliverable shape + export schema (production-pipeline ch. 2); bible section B3b + shot-board columns Internal TC / Cut type / Continuity lock / State; glossary terms; FilmFlow Pro planning ledger key `FILMFLOW-WEB@2026-09-07`; the rules W10 relies on were unified into their canonical chapters (build-order rule with three cases in ch. 1, anchor standard ch. 3, light openings and scale relations ch. 4, position lock ch. 6, blockout trigger rule ch. 8, two storyboard roles ch. 9, production-take exception W3 step 6, four new renderability §2 rows) and W10 only cites them.\n- **v3.0-en (2026-09-05)** — executability rework for weaker models (89 review findings), platform ledger re-verified 2026-09-04, glossary and ID grammar as reference files, trigger eval 19/20.\n\n",
+        "Required ancestor context: # ai-film-production\n\n![From clay blockout to final take — one continuous scene, one method](assets/hero.jpg)\n\n[![Download the latest skill (.skill)](https://img.shields.io/badge/download-latest%20skill%20(.skill)-2563eb?style=flat-square)](https://github.com/iret77/ai-film-production/releases/latest/download/ai-film-production.skill)\n\nA complete film-production methodology for Claude — 25 chapters of sourced, confidence-labeled craft that turn the model into your crew: DoP, editor, gaffer, script consultant, line producer. You stay the director. Built for a **Seedance 2.5 / Higgsfield Cinema Studio** stills-first pipeline, with a MiniMax H3 profile rebuilt on MiniMax's official prompt-writing guides and compact syntax profiles for Kling 3.0, Veo 3.1, and Grok Imagine.\n\n",
+        "Required ancestor context: ## Versioning\n\nv3.1.1-en (2026-09). Universal — contains nothing project- or person-specific. This repository is the source of truth for the skill; lessons from production flow back here via commits, and every release ships an upload-ready `.skill` package.\n\n",
+        "Read applicable linked procedures and exceptions by exact entryID: film-production-skill/skill-05a8c920538c, film-production-skill/skill-11d6f150df4d, film-production-skill/skill-2e42f043c413, film-production-skill/skill-705399a08ca6, film-production-skill/skill-97ff9b201107, film-production-skill/skill-9fc6d6e46c26, film-production-skill/skill-a9c8ddc59709, film-production-skill/skill-c1c24ea6da18, film-production-skill/skill-cffc1e447b50, film-production-skill/skill-da7177bac7a7, film-production-skill/skill-dceff66d0b82, film-production-skill/skill-f468f0c333ce"
+      ],
+      "verifyCriteria": [
+        "Installation and skill-trigger instructions are not NGV runtime instructions."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    },
+    {
+      "id": "readme-e04770fdc3ef",
+      "title": "License",
+      "applicability": {
+        "packIDs": [],
+        "phases": [
+          "init",
+          "analysis",
+          "brief",
+          "production_design",
+          "treatment",
+          "storyboard",
+          "bible",
+          "shotlist",
+          "sanity",
+          "frames",
+          "render",
+          "review",
+          "assembly",
+          "finish",
+          "generic"
+        ],
+        "intentTags": [
+          "readme"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [],
+      "outputIntent": "Source knowledge for provenance archive only",
+      "guidance": [
+        "## License\n\n[MIT](LICENSE).\n",
+        "Required ancestor context: # ai-film-production\n\n![From clay blockout to final take — one continuous scene, one method](assets/hero.jpg)\n\n[![Download the latest skill (.skill)](https://img.shields.io/badge/download-latest%20skill%20(.skill)-2563eb?style=flat-square)](https://github.com/iret77/ai-film-production/releases/latest/download/ai-film-production.skill)\n\nA complete film-production methodology for Claude — 25 chapters of sourced, confidence-labeled craft that turn the model into your crew: DoP, editor, gaffer, script consultant, line producer. You stay the director. Built for a **Seedance 2.5 / Higgsfield Cinema Studio** stills-first pipeline, with a MiniMax H3 profile rebuilt on MiniMax's official prompt-writing guides and compact syntax profiles for Kling 3.0, Veo 3.1, and Grok Imagine.\n\n"
+      ],
+      "verifyCriteria": [
+        "Installation and skill-trigger instructions are not NGV runtime instructions."
+      ],
+      "incompatibilities": [
+        "Source examples are not project canon. Provider and platform claims retain their source date and require current route evidence."
+      ]
+    }
+  ],
+  "provenance": {
+    "sourceURL": "https://github.com/iret77/ai-film-production",
+    "sourceCommit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+    "sourceSections": [
+      "README.md"
+    ],
+    "adaptation": "Complete source sections. Apply these NGV adaptations before source imperatives:\nngv-phase-order: The active pack owns phase order. Musicvideo remains Track → optional Lyrics → Init → approved Analysis → optional existing material → story. Use W10 knowledge inside the relevant existing phases; a replacement phase graph requires an explicit decision.\nngv-canon: Map bible roles to NGV canonical writers/artifacts and cumulative exact-byte lineage. Do not create an independent markdown authority. Draft/proposal and approval remain different states; phase edits require explicit rewind.\nngv-greenfield: Musicvideo may be greenfield: propose story or nonnarrative concept from approved audio analysis and optional lyrics. Missing existing story files never block development. Execution prompts cannot silently invent unapproved beats.\nngv-language: App interaction follows explicit app localization or an explicit language request. Generated model prompts remain English with literal dialogue in the declared dialogue language. Preserve user-supplied text as input/provenance; the normal route still precompiles it, never bypasses the prompt engine.\nngv-hybrid: Reusable craft, coverage, structure, review and finishing also apply to imported/live_action/ai_enhanced shots. Generation-only anchors, paid routes and draft renders are conditional on source mode. Retain zero-generation musicvideo/film workflows.\nngv-anchor-modes: Record reference anchor, exact keyframe interpolation, frame continuation and native video extension as different proposed modes. #485 must settle integration with locked chained-shot semantics. Existing predecessor-last-frame-only chain remains unchanged until that decision.\nngv-provider-evidence: These are dated source claims, not live verified capabilities. Keep original date/confidence/route. Executability comes from enabled providers intersected with actual route support. Never transplant a UI field into an API or enable a provider from this corpus.\nngv-spend: Preserve the diagnostic counting protocol and escalation thresholds as configurable policy. Every paid operation stays inside explicit cost/batch authorization (#480); never automatically spend through the entire suggested budget. A paid diagnostic is not a free validation.\nngv-style-scope: Bind each selected criterion to its actual frame/shot/sequence/project scope and evidence modality. Technical provenance gates remain deterministic; aesthetic reviews require viewed media or attributed director review. A local fault on a usable production take follows scoped repair before regeneration.\nngv-performance-audio: Musicvideo master audio is the original track. Referenced segments can drive performance/lip sync without becoming replacement soundtrack. Singing, spoken dialogue, VO, ambience and score are separate roles with explicit mouth ownership; keep scope of music-bleed exception.\nngv-documentary: For actual documentary, paper edit selects attributed, consented source transcript ranges; no invented witness quote or synthetic footage passed off as evidence. Authored or reenacted interviews are a separately declared synthetic mode, preserving source/disclosure provenance.\nngv-abi-and-pins: Use versioned resources/new extension artifacts under existing registration and loader. Do not add stored fields to compatible public V1 value types. Existing projects retain pinned pack/profile/library versions; migration is explicit and transactional.\nngv-style-risk: A deliberate style may accept a named aesthetic imperfection; it does not excuse wrong identity, anatomy, unapproved canon changes or provenance gaps. Distinguish intentional camera following from accidental floating camera.\nngv-examples: Keep example and template content available in full, but instantiate only from actual project data and verified route. Never promote example light/weather/plot, prices, IDs or account names into canon.\nngv-legal: Preserve attribution, consent, rights and disclosure procedures and the source date. Do not compile jurisdiction-specific legal conclusions into an automatic green gate. No additional legal research or advice is asserted by this extraction.\nngv-knowledge-scope: Keep every actionable item locally; select the relevant complete procedure/recipe and its governing exceptions per task. Do not inject all files, silently truncate the selected procedure, or mistake a small initial library for complete migration.\nngv-readable-overlays: Preserve the chosen recording-format tell or chapter-card intent as an NLE overlay/title with exact text where needed; do not ask the video generator to render reliable readable text. Non-text recording artifacts remain generation style. This is an explicit NGV realization of both source intentions, not a claim that the source contains this reconciliation."
+  },
+  "license": {
+    "spdxIdentifier": "MIT",
+    "copyrightNotice": "Copyright (c) 2026 iret77",
+    "sourceURL": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/LICENSE"
+  }
+}
