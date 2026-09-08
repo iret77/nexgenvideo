@@ -1,0 +1,1190 @@
+[
+  {
+    "id": "genre-baselines-c56dc8097a52",
+    "title": "Genre Baselines: Entry Points & Skill Filters",
+    "ancestry": [
+      "Genre Baselines: Entry Points & Skill Filters"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "genres",
+    "source": {
+      "path": "references/genre-baselines.md",
+      "startLine": 1,
+      "endLine": 8,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/genre-baselines.md#L1",
+      "sha256": "918008fa90483b4da9c4509f6bc2ce296b1f93c95428fec84c78a1d574544e3a"
+    },
+    "contentMarkdown": "# Genre Baselines: Entry Points & Skill Filters\n\nThe FIRST file to read when a project's genre is known. Per genre: the audience contract, craft defaults (vocabulary from film-craft.md), subgenre shifts, a recipe shortlist (director-recipes.md), AI-production notes, and a **skill filter** — which files belong in context for this project type. Baselines are starting points the user bends, never rules.\n\nTags and confidence labels: legend in sources.md. **Always in context regardless of genre:** SKILL.md (routing + always-rules). Add per the filter lines below (they are the files the SKILL.md routing table's spine names for this project type); load video-prompting.md when prompts are actually being written.\n\n---\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [
+      {
+        "sourceName": "SKILL.md",
+        "entryIDs": [
+          "skill-9fc6d6e46c26",
+          "skill-dceff66d0b82",
+          "skill-97ff9b201107",
+          "skill-c1c24ea6da18",
+          "skill-705399a08ca6",
+          "skill-05a8c920538c",
+          "skill-f468f0c333ce",
+          "skill-a9c8ddc59709",
+          "skill-cffc1e447b50",
+          "skill-11d6f150df4d",
+          "skill-2e42f043c413",
+          "skill-da7177bac7a7"
+        ]
+      },
+      {
+        "sourceName": "director-recipes.md",
+        "entryIDs": [
+          "director-recipes-ead52cc58afb",
+          "director-recipes-056ac0ea6c03",
+          "director-recipes-ed7e5494d54b",
+          "director-recipes-17cfc8bdffd7"
+        ]
+      },
+      {
+        "sourceName": "film-craft.md",
+        "entryIDs": [
+          "film-craft-2248687307ab",
+          "film-craft-570fba3d71dd",
+          "film-craft-67a9384f75ea",
+          "film-craft-b70a3b38e137",
+          "film-craft-53cc6a016d88",
+          "film-craft-250a592981e5",
+          "film-craft-08c1a1b2c538",
+          "film-craft-3467e7856eaf",
+          "film-craft-9ebd24a43e12",
+          "film-craft-56d3d772fec2"
+        ]
+      },
+      {
+        "sourceName": "sources.md",
+        "entryIDs": [
+          "sources-9de87ed0c000"
+        ]
+      },
+      {
+        "sourceName": "video-prompting.md",
+        "entryIDs": [
+          "video-prompting-6ebc68114145",
+          "video-prompting-b8193dd15dd6",
+          "video-prompting-ddfa67879961",
+          "video-prompting-33ae6df5c3f0",
+          "video-prompting-4a8d407dff7a",
+          "video-prompting-a3510dce6126",
+          "video-prompting-f6e454e1d76b",
+          "video-prompting-5275ee1254bc",
+          "video-prompting-d87cde00835d",
+          "video-prompting-cd15da11c9c9",
+          "video-prompting-77153717e7be",
+          "video-prompting-3145b34f3b5d",
+          "video-prompting-39026ee6df7f",
+          "video-prompting-cb91fd3500e1",
+          "video-prompting-2d077c405e26",
+          "video-prompting-ae84e7dfae96"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "genre-baselines-41eb04e85ab9",
+    "title": "Action",
+    "ancestry": [
+      "Genre Baselines: Entry Points & Skill Filters",
+      "Action"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "genres",
+    "source": {
+      "path": "references/genre-baselines.md",
+      "startLine": 9,
+      "endLine": 11,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/genre-baselines.md#L9",
+      "sha256": "bb19e743552997d967c57073a8e57099139dc99e7b0c35060da5e18017dc572d"
+    },
+    "contentMarkdown": "## Action\n**Contract:** kinetic clarity — the audience must always know who, where, and what's at stake mid-chaos. **Defaults:** sequence-approach structure (setpieces as mini-films) · escalating setpiece scale · geography established BEFORE chaos (one orienting master per beat) · shot lengths shorten into impacts, one long \"oner\" showpiece per act · wide-to-tight lens pattern, low angles on heroes · hard motivated light, high contrast · desaturated base + heat accents · impacts on the cut, silence before the biggest hit. **Subgenres:** martial-arts (longer takes, full bodies in frame, choreography readable) · car/chase (parallel cross-cutting, cockpit inserts, wheel rules) · disaster (scale reveals, crowd logistics) · superhero (icon poses as held frames). **Recipes:** Kurosawa (ensemble motion + weather) · Greengrass (verité chaos) · Nolan (engineered setpieces) · Leone (standoff tension) · Wachowskis/Pope (wire-fu techno-noir) + Kamiński (combat realism). **AI notes:** fights = attack–reaction beats cut in the edit (renderability §3); vehicles/wheels rescue paths; crowd rules; blockout path for complex camera chains (production-pipeline ch. 8). **Filter:** renderability.md (critical) · production-pipeline.md · film-craft.md §3–4.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [
+      {
+        "sourceName": "film-craft.md",
+        "entryIDs": [
+          "film-craft-2248687307ab",
+          "film-craft-570fba3d71dd",
+          "film-craft-67a9384f75ea",
+          "film-craft-b70a3b38e137",
+          "film-craft-53cc6a016d88",
+          "film-craft-250a592981e5",
+          "film-craft-08c1a1b2c538",
+          "film-craft-3467e7856eaf",
+          "film-craft-9ebd24a43e12",
+          "film-craft-56d3d772fec2"
+        ]
+      },
+      {
+        "sourceName": "production-pipeline.md",
+        "entryIDs": [
+          "production-pipeline-3e7423e91475",
+          "production-pipeline-fe8ae664fb1e",
+          "production-pipeline-0fdca1da8970",
+          "production-pipeline-524c7d64a7f3",
+          "production-pipeline-41c7b8294114",
+          "production-pipeline-455241c73ce4",
+          "production-pipeline-f7091f27c6d1",
+          "production-pipeline-668103488e98",
+          "production-pipeline-d16d62c31ae0",
+          "production-pipeline-d1f0cfe8e195",
+          "production-pipeline-3f320156d67f",
+          "production-pipeline-a2fb95cff485",
+          "production-pipeline-446e57806ce5",
+          "production-pipeline-99e7beb6f331",
+          "production-pipeline-1bb10d449ca5",
+          "production-pipeline-b4b53fe52130",
+          "production-pipeline-9bf4e03af57e",
+          "production-pipeline-f418e48ce02f"
+        ]
+      },
+      {
+        "sourceName": "renderability.md",
+        "entryIDs": [
+          "renderability-1b6016907c61",
+          "renderability-d58da1655e55",
+          "renderability-111b29259b37",
+          "renderability-0a1e0a4a4edc",
+          "renderability-32075c011ed3",
+          "renderability-d07031e108b5",
+          "renderability-28385106c00e",
+          "renderability-4074c75ffcb1"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "genre-baselines-388bc706ea77",
+    "title": "Spy / Espionage",
+    "ancestry": [
+      "Genre Baselines: Entry Points & Skill Filters",
+      "Spy / Espionage"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "genres",
+    "source": {
+      "path": "references/genre-baselines.md",
+      "startLine": 12,
+      "endLine": 14,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/genre-baselines.md#L12",
+      "sha256": "4f6dae402fbe6e9de8f59544024f89da2cdfbd2bc1cb771b8ed1691a386041d9"
+    },
+    "contentMarkdown": "## Spy / Espionage\n**Contract:** controlled paranoia — information is the weapon, watching is the action. **Defaults:** cross-cut parallel operations · surveillance grammar (long-lens compression, foreground occlusion, observation patterns — video-prompting ch. 12e) · immaculate wides for glamour variants, gray realism for le-Carré variants · practicals in offices/safehouses, faces half-lit · steel blue/gray + amber interior pockets · quiet tension, sudden violence in short bursts. **Subgenres:** glamour spy (anamorphic gloss, exotic establishing porn, tux-and-neon) · bureaucratic/le Carré (static frames, fluorescent light, silence, paper) · action-spy (borrow Action defaults for setpieces only). **Recipes:** Fincher (surgical watching) · Nolan (mechanism) · Hitchcock (suspense grammar) + Willis (institutional darkness) or Hoytema (sober scale). **AI notes:** observation patterns are copy-ready (ch. 12e); dialogue-heavy → reverse plates + 180° lock mandatory; in-frame documents/screens = post-compositing. **Filter:** film-craft.md §4/§7 (suspense mechanics) · renderability.md · platforms-models.md if multi-model.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [
+      {
+        "sourceName": "film-craft.md",
+        "entryIDs": [
+          "film-craft-2248687307ab",
+          "film-craft-570fba3d71dd",
+          "film-craft-67a9384f75ea",
+          "film-craft-b70a3b38e137",
+          "film-craft-53cc6a016d88",
+          "film-craft-250a592981e5",
+          "film-craft-08c1a1b2c538",
+          "film-craft-3467e7856eaf",
+          "film-craft-9ebd24a43e12",
+          "film-craft-56d3d772fec2"
+        ]
+      },
+      {
+        "sourceName": "platforms-models.md",
+        "entryIDs": [
+          "platforms-models-c159854e7bd9",
+          "platforms-models-8ee6da64109f",
+          "platforms-models-ac9faa3b5e53",
+          "platforms-models-eff59588bc73",
+          "platforms-models-57a34d2b06e5",
+          "platforms-models-f565be362c5d",
+          "platforms-models-a0954cd3380a",
+          "platforms-models-11af2fa0ab95",
+          "platforms-models-e2702c4d5d1c",
+          "platforms-models-2ffba5575630",
+          "platforms-models-195226cac8fa",
+          "platforms-models-13d27380ec0e"
+        ]
+      },
+      {
+        "sourceName": "renderability.md",
+        "entryIDs": [
+          "renderability-1b6016907c61",
+          "renderability-d58da1655e55",
+          "renderability-111b29259b37",
+          "renderability-0a1e0a4a4edc",
+          "renderability-32075c011ed3",
+          "renderability-d07031e108b5",
+          "renderability-28385106c00e",
+          "renderability-4074c75ffcb1"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "genre-baselines-bf25776c9d83",
+    "title": "Horror",
+    "ancestry": [
+      "Genre Baselines: Entry Points & Skill Filters",
+      "Horror"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "genres",
+    "source": {
+      "path": "references/genre-baselines.md",
+      "startLine": 15,
+      "endLine": 17,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/genre-baselines.md#L15",
+      "sha256": "35a6bfea0315d43d3974cb5b938cefc577ab96481c70769c6293f433d60ea666"
+    },
+    "contentMarkdown": "## Horror\n**Contract:** dread before shock — the audience imagines worse than you can show. **Defaults:** withholding as system (off-screen space, negative space, what the frame does NOT show) · slow static or creeping camera; handheld only in panic peaks · low-key light, single motivated sources, pools in darkness · underexposure trusted · desaturated cold base, one signal color · long silence, sound-before-source, held shots past comfort · the monster in fragments until the latest possible reveal. **Subgenres:** found footage (UGC recipe wholesale — device logic, four-tell rule) · supernatural/haunted (Kubrick geometry, Lynch wrongness) · slasher (POV shots, Hitchcock look-triads) · body horror (macro detail, texture emphasis) · folk horror (daylight dread — inverted: bright wides, wrongness in openness). **Recipes:** Kubrick (fate geometry) · Lynch (uncanny) · Hitchcock (grammar) · Ridley Scott (layered-atmosphere dread) + Young (soft darkness) or Willis. **AI notes:** darkness hides model artifacts (advantage); found footage = highest artifact tolerance; gore is a content-policy boundary — imply via reaction and aftermath (also better craft). **Filter:** film-craft.md §5/§7 · renderability.md §3 · style-control.md §6b (footage authenticity).\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [
+      {
+        "sourceName": "film-craft.md",
+        "entryIDs": [
+          "film-craft-2248687307ab",
+          "film-craft-570fba3d71dd",
+          "film-craft-67a9384f75ea",
+          "film-craft-b70a3b38e137",
+          "film-craft-53cc6a016d88",
+          "film-craft-250a592981e5",
+          "film-craft-08c1a1b2c538",
+          "film-craft-3467e7856eaf",
+          "film-craft-9ebd24a43e12",
+          "film-craft-56d3d772fec2"
+        ]
+      },
+      {
+        "sourceName": "renderability.md",
+        "entryIDs": [
+          "renderability-1b6016907c61",
+          "renderability-d58da1655e55",
+          "renderability-111b29259b37",
+          "renderability-0a1e0a4a4edc",
+          "renderability-32075c011ed3",
+          "renderability-d07031e108b5",
+          "renderability-28385106c00e",
+          "renderability-4074c75ffcb1"
+        ]
+      },
+      {
+        "sourceName": "style-control.md",
+        "entryIDs": [
+          "style-control-671a457dd443",
+          "style-control-79b3e6b7c14b",
+          "style-control-2cf209a10276",
+          "style-control-f84b2ba9034a",
+          "style-control-481af1471ae1",
+          "style-control-7665e999d1da",
+          "style-control-63a866503413",
+          "style-control-b73f6f0f3ffe",
+          "style-control-bfffd977ce4d",
+          "style-control-cbe1c1252598",
+          "style-control-c58bd9c5a494",
+          "style-control-666cdb1219e7",
+          "style-control-ab661985aaa4",
+          "style-control-d208337fba85",
+          "style-control-2baa47554330",
+          "style-control-23d9278937c0",
+          "style-control-ff888ede11ee",
+          "style-control-73867a0b4daf",
+          "style-control-5257ea810f14",
+          "style-control-7b703384f157",
+          "style-control-da4feb1794ad",
+          "style-control-fc8ef8be9186"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "genre-baselines-5cf688811c5e",
+    "title": "Thriller",
+    "ancestry": [
+      "Genre Baselines: Entry Points & Skill Filters",
+      "Thriller"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "genres",
+    "source": {
+      "path": "references/genre-baselines.md",
+      "startLine": 18,
+      "endLine": 20,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/genre-baselines.md#L18",
+      "sha256": "a426b1cb73ef8e24ea9bec5ae39203d88d0dee91f70123ab6cba1ad4bcfdca57"
+    },
+    "contentMarkdown": "## Thriller\n**Contract:** the audience knows more than the character (suspense) or exactly as little (mystery) — pick per scene, mostly the former. **Defaults:** bomb-under-the-table cross-cutting · delay engines (cutaways before doors, pauses before answers) · tightening framings as the net closes · clean controlled camera drifting ever closer · low-key motivated light, venetian/architectural shadow patterns · cool desaturation, sickly practicals · relentless even pacing, no wasted scene. **Subgenres:** psycho-thriller (subjective camera, unreliable frames, Lynch borrowings) · conspiracy (70s grammar: zooms, long-lens voyeurism, Willis darkness) · survival (geography as antagonist, wide isolation frames). **Recipes:** Fincher (the genre default) · Hitchcock (grammar source) · Villeneuve (slow dread variant) + Fraser or Willis. **AI notes:** dialogue discipline (production-pipeline ch. 7) carries most scenes; suspense = editing structure, cheap to generate — the craft is in the cut order, not the pixels. **Filter:** film-craft.md §4/§7 (core) · renderability.md · post-audio-legal.md ch. 19 (continuity ledger — thrillers punish continuity errors hardest).\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [
+      {
+        "sourceName": "film-craft.md",
+        "entryIDs": [
+          "film-craft-2248687307ab",
+          "film-craft-570fba3d71dd",
+          "film-craft-67a9384f75ea",
+          "film-craft-b70a3b38e137",
+          "film-craft-53cc6a016d88",
+          "film-craft-250a592981e5",
+          "film-craft-08c1a1b2c538",
+          "film-craft-3467e7856eaf",
+          "film-craft-9ebd24a43e12",
+          "film-craft-56d3d772fec2"
+        ]
+      },
+      {
+        "sourceName": "post-audio-legal.md",
+        "entryIDs": [
+          "post-audio-legal-5949409d78e1",
+          "post-audio-legal-d966bfa722d1",
+          "post-audio-legal-9aca3116b4f9",
+          "post-audio-legal-fd0a7b340780",
+          "post-audio-legal-1c65925d87d5"
+        ]
+      },
+      {
+        "sourceName": "renderability.md",
+        "entryIDs": [
+          "renderability-1b6016907c61",
+          "renderability-d58da1655e55",
+          "renderability-111b29259b37",
+          "renderability-0a1e0a4a4edc",
+          "renderability-32075c011ed3",
+          "renderability-d07031e108b5",
+          "renderability-28385106c00e",
+          "renderability-4074c75ffcb1"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "genre-baselines-26a2df9e7d9a",
+    "title": "Crime / Krimi",
+    "ancestry": [
+      "Genre Baselines: Entry Points & Skill Filters",
+      "Crime / Krimi"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "genres",
+    "source": {
+      "path": "references/genre-baselines.md",
+      "startLine": 21,
+      "endLine": 23,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/genre-baselines.md#L21",
+      "sha256": "47be8c7b2a37d6b0b1bc2badbaf18539a7b69a69faf3a86bbfa0ea0a44eb1341"
+    },
+    "contentMarkdown": "## Crime / Krimi\n**Contract:** procedure meets morality — solving as narrative spine, milieu as texture. **Defaults:** scene-of-crime grammar (detail inserts, top-down pattern shots) · interview/interrogation coverage (two-sided reverse plates, table geometry) · milieu realism in light (available, unglamorous) · muted palette with era/city identity · measured pacing with discovery beats · voiceover legitimate (noir lineage). **Subgenres:** noir (hard keys, blinds, night-wet streets, fatalist VO) · Scandinavian (gray daylight, institutional interiors, silence) · heist (mechanism structure — Nolan cross-cut planning/execution, playful tempo) · cozy/whodunit (warm palette, ensemble tableaus, Anderson-adjacent order). **Recipes:** Fincher (procedural) · Gilligan (slow-burn empire/corrosion) · Scorsese (kinetic rise-and-fall) · Willis (dynasty darkness) · Nolan (heist mechanism) · Anderson (cozy variant). **AI notes:** interrogations = the dialogue-scene discipline verbatim; evidence close-ups (documents!) = in-frame-text rules; crime scenes = still-heavy, cheap to produce. **Filter:** film-craft.md §4/§8 · renderability.md §2 (text!) · production-pipeline.md ch. 7.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [
+      {
+        "sourceName": "film-craft.md",
+        "entryIDs": [
+          "film-craft-2248687307ab",
+          "film-craft-570fba3d71dd",
+          "film-craft-67a9384f75ea",
+          "film-craft-b70a3b38e137",
+          "film-craft-53cc6a016d88",
+          "film-craft-250a592981e5",
+          "film-craft-08c1a1b2c538",
+          "film-craft-3467e7856eaf",
+          "film-craft-9ebd24a43e12",
+          "film-craft-56d3d772fec2"
+        ]
+      },
+      {
+        "sourceName": "production-pipeline.md",
+        "entryIDs": [
+          "production-pipeline-3e7423e91475",
+          "production-pipeline-fe8ae664fb1e",
+          "production-pipeline-0fdca1da8970",
+          "production-pipeline-524c7d64a7f3",
+          "production-pipeline-41c7b8294114",
+          "production-pipeline-455241c73ce4",
+          "production-pipeline-f7091f27c6d1",
+          "production-pipeline-668103488e98",
+          "production-pipeline-d16d62c31ae0",
+          "production-pipeline-d1f0cfe8e195",
+          "production-pipeline-3f320156d67f",
+          "production-pipeline-a2fb95cff485",
+          "production-pipeline-446e57806ce5",
+          "production-pipeline-99e7beb6f331",
+          "production-pipeline-1bb10d449ca5",
+          "production-pipeline-b4b53fe52130",
+          "production-pipeline-9bf4e03af57e",
+          "production-pipeline-f418e48ce02f"
+        ]
+      },
+      {
+        "sourceName": "renderability.md",
+        "entryIDs": [
+          "renderability-1b6016907c61",
+          "renderability-d58da1655e55",
+          "renderability-111b29259b37",
+          "renderability-0a1e0a4a4edc",
+          "renderability-32075c011ed3",
+          "renderability-d07031e108b5",
+          "renderability-28385106c00e",
+          "renderability-4074c75ffcb1"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "genre-baselines-7c42d9ae1707",
+    "title": "Drama",
+    "ancestry": [
+      "Genre Baselines: Entry Points & Skill Filters",
+      "Drama"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "genres",
+    "source": {
+      "path": "references/genre-baselines.md",
+      "startLine": 24,
+      "endLine": 26,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/genre-baselines.md#L24",
+      "sha256": "a9aa9f11b8ddadd892e8d9342e1d195ad8c14be35b19bd4da458414bd687bba2"
+    },
+    "contentMarkdown": "## Drama\n**Contract:** emotional truth — the audience watches people change. **Defaults:** performance first: coverage that protects acting (longer takes, reaction-side cutting, L-cuts for listening) · camera restraint (static/slow, moves only on emotional shifts) · naturalistic motivated light, window-side modelling · palette tracks the emotional arc (color script discipline) · scenes enter late/leave early but BREATHE inside · silence and processing beats as content. **Subgenres:** chamber (Bergman wholesale) · family/generational (Ozu stillness, seasons) · social realism (the Dardenne/Arnold recipe: following handheld, available light, no score) · romance (two-shot intimacy, warm practicals, Wong Kar-wai for longing variants) · coming-of-age (Malick fragments, golden memory). **Recipes:** Bergman · Ozu · Wenders · Malick · Wong Kar-wai · Sciamma (+ Mathon) · Dardenne/Arnold + Nykvist or Young. **AI notes:** THE hardest genre for AI — everything hangs on face performance: multi-stage emotion formulas (ch. 14), PERFORMANCE block, expression sheets, 2.5 for emotion transitions; budget rerolls on emotional peaks. **Filter:** video-prompting.md ch. 12/14 (emotion formulas critical) · film-craft.md §7–8 · pixar-look.md only if stylized.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [
+      {
+        "sourceName": "film-craft.md",
+        "entryIDs": [
+          "film-craft-2248687307ab",
+          "film-craft-570fba3d71dd",
+          "film-craft-67a9384f75ea",
+          "film-craft-b70a3b38e137",
+          "film-craft-53cc6a016d88",
+          "film-craft-250a592981e5",
+          "film-craft-08c1a1b2c538",
+          "film-craft-3467e7856eaf",
+          "film-craft-9ebd24a43e12",
+          "film-craft-56d3d772fec2"
+        ]
+      },
+      {
+        "sourceName": "pixar-look.md",
+        "entryIDs": [
+          "pixar-look-e2bffc9f8b7c",
+          "pixar-look-6067d37adaa1",
+          "pixar-look-ffa1fc7ecbcc",
+          "pixar-look-8448fb177d42",
+          "pixar-look-67b9aafd568b",
+          "pixar-look-79aef52eb72e",
+          "pixar-look-eeafb6781cc6",
+          "pixar-look-441de0d8a9d1",
+          "pixar-look-f22e3f8ad2cd",
+          "pixar-look-266b78d1a40e",
+          "pixar-look-1da5c9533bf3",
+          "pixar-look-68ec1764bb32",
+          "pixar-look-fdcec6b2c0f0",
+          "pixar-look-56847cb20874"
+        ]
+      },
+      {
+        "sourceName": "video-prompting.md",
+        "entryIDs": [
+          "video-prompting-6ebc68114145",
+          "video-prompting-b8193dd15dd6",
+          "video-prompting-ddfa67879961",
+          "video-prompting-33ae6df5c3f0",
+          "video-prompting-4a8d407dff7a",
+          "video-prompting-a3510dce6126",
+          "video-prompting-f6e454e1d76b",
+          "video-prompting-5275ee1254bc",
+          "video-prompting-d87cde00835d",
+          "video-prompting-cd15da11c9c9",
+          "video-prompting-77153717e7be",
+          "video-prompting-3145b34f3b5d",
+          "video-prompting-39026ee6df7f",
+          "video-prompting-cb91fd3500e1",
+          "video-prompting-2d077c405e26",
+          "video-prompting-ae84e7dfae96"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "genre-baselines-d3d8f306e5b2",
+    "title": "Comedy",
+    "ancestry": [
+      "Genre Baselines: Entry Points & Skill Filters",
+      "Comedy"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "genres",
+    "source": {
+      "path": "references/genre-baselines.md",
+      "startLine": 27,
+      "endLine": 29,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/genre-baselines.md#L27",
+      "sha256": "52dedf03f690ed1ff4d2e82b05e52cddc7569d891fd379c2b8cb26855be06bc5"
+    },
+    "contentMarkdown": "## Comedy\n**Contract:** timing is the content — the frame and the cut ARE the joke. **Defaults:** wider framings than drama (bodies + spatial relationships carry gags) · flat/even \"sitcom-bright\" light unless the joke needs mood · static camera lets comedy play; the pan/push-in AS punchline · hold after the gag (deadpan air) · rhythm: setup–beat–punch, rule of three, callback economy · reaction shots are the laugh multiplier. **Subgenres:** deadpan (Anderson wholesale: symmetry + metronome) · slapstick/physical (full bodies, longer takes, choreography readable — animation's home turf) · dark comedy (drama light + comedy timing, the collision is the tone) · rom-com (warm high-key, two-shot chemistry, montage sequences) · mockumentary (UGC/doc grammar + straight-face interviews). **Recipes:** Anderson (the precision pole) · ZAZ/Brooks (parody deadpan) · Allen lineage (master-shot talk) · Wright (comedy in the cut) · Boyle (kinetic-comedy energy) · UGC (mockumentary). **AI notes:** comedy timing lives in the EDIT — generate reaction coverage deliberately; slapstick choreography = move-by-move writing (never \"he stumbles funny\"); animation formats forgive and amplify physical comedy. **Filter:** film-craft.md §4/§7 (rhythm!) · director-recipes (Anderson) · production-pipeline.md ch. 2.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [
+      {
+        "sourceName": "film-craft.md",
+        "entryIDs": [
+          "film-craft-2248687307ab",
+          "film-craft-570fba3d71dd",
+          "film-craft-67a9384f75ea",
+          "film-craft-b70a3b38e137",
+          "film-craft-53cc6a016d88",
+          "film-craft-250a592981e5",
+          "film-craft-08c1a1b2c538",
+          "film-craft-3467e7856eaf",
+          "film-craft-9ebd24a43e12",
+          "film-craft-56d3d772fec2"
+        ]
+      },
+      {
+        "sourceName": "production-pipeline.md",
+        "entryIDs": [
+          "production-pipeline-3e7423e91475",
+          "production-pipeline-fe8ae664fb1e",
+          "production-pipeline-0fdca1da8970",
+          "production-pipeline-524c7d64a7f3",
+          "production-pipeline-41c7b8294114",
+          "production-pipeline-455241c73ce4",
+          "production-pipeline-f7091f27c6d1",
+          "production-pipeline-668103488e98",
+          "production-pipeline-d16d62c31ae0",
+          "production-pipeline-d1f0cfe8e195",
+          "production-pipeline-3f320156d67f",
+          "production-pipeline-a2fb95cff485",
+          "production-pipeline-446e57806ce5",
+          "production-pipeline-99e7beb6f331",
+          "production-pipeline-1bb10d449ca5",
+          "production-pipeline-b4b53fe52130",
+          "production-pipeline-9bf4e03af57e",
+          "production-pipeline-f418e48ce02f"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "genre-baselines-37d395f687f6",
+    "title": "Biopic",
+    "ancestry": [
+      "Genre Baselines: Entry Points & Skill Filters",
+      "Biopic"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "genres",
+    "source": {
+      "path": "references/genre-baselines.md",
+      "startLine": 30,
+      "endLine": 32,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/genre-baselines.md#L30",
+      "sha256": "fa5dc2bd27a505e88a00fb5ced25a98609d3d987ed35e350f603a62a96ea38c8"
+    },
+    "contentMarkdown": "## Biopic\n**Contract:** a life shaped into meaning — truth-adjacent, dramaturgically honest. **Defaults:** era grammar as system (period-correct palette, film-stock look, production design — style-control §6b era looks) · structure choice UP FRONT: cradle-to-grave vs. decisive-window vs. mosaic · archive-style inserts (era-matched footage grammar) as texture · restrained camera dignity, documentary borrowings for authenticity beats · one signature visual motif tied to the person. **Subgenres:** artist/musician (performance recreations — see Music film) · political (institutional grammar, Willis/Hoytema sobriety) · sports (training montage + event coverage grammar). **Recipes:** Spielberg (classical dignity) · Fincher (procedural lives) · Malick (memory-mosaic variant) + Kamiński (testimony). **AI notes:** REAL PERSONS = the legal boundary — likeness/voice only with documented consent, AND test platform acceptance of the face before casting a licensed likeness (moderation plan, post-audio-legal ch. 20); fictionalized-inspired characters are the safe route; era looks are cheap style wins. **Filter:** post-audio-legal.md ch. 20 (critical, first) · style-control.md §6b · film-craft.md §8.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [
+      {
+        "sourceName": "film-craft.md",
+        "entryIDs": [
+          "film-craft-2248687307ab",
+          "film-craft-570fba3d71dd",
+          "film-craft-67a9384f75ea",
+          "film-craft-b70a3b38e137",
+          "film-craft-53cc6a016d88",
+          "film-craft-250a592981e5",
+          "film-craft-08c1a1b2c538",
+          "film-craft-3467e7856eaf",
+          "film-craft-9ebd24a43e12",
+          "film-craft-56d3d772fec2"
+        ]
+      },
+      {
+        "sourceName": "post-audio-legal.md",
+        "entryIDs": [
+          "post-audio-legal-5949409d78e1",
+          "post-audio-legal-d966bfa722d1",
+          "post-audio-legal-9aca3116b4f9",
+          "post-audio-legal-fd0a7b340780",
+          "post-audio-legal-1c65925d87d5"
+        ]
+      },
+      {
+        "sourceName": "style-control.md",
+        "entryIDs": [
+          "style-control-671a457dd443",
+          "style-control-79b3e6b7c14b",
+          "style-control-2cf209a10276",
+          "style-control-f84b2ba9034a",
+          "style-control-481af1471ae1",
+          "style-control-7665e999d1da",
+          "style-control-63a866503413",
+          "style-control-b73f6f0f3ffe",
+          "style-control-bfffd977ce4d",
+          "style-control-cbe1c1252598",
+          "style-control-c58bd9c5a494",
+          "style-control-666cdb1219e7",
+          "style-control-ab661985aaa4",
+          "style-control-d208337fba85",
+          "style-control-2baa47554330",
+          "style-control-23d9278937c0",
+          "style-control-ff888ede11ee",
+          "style-control-73867a0b4daf",
+          "style-control-5257ea810f14",
+          "style-control-7b703384f157",
+          "style-control-da4feb1794ad",
+          "style-control-fc8ef8be9186"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "genre-baselines-e477db36b513",
+    "title": "Documentary (style)",
+    "ancestry": [
+      "Genre Baselines: Entry Points & Skill Filters",
+      "Documentary (style)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "genres",
+    "source": {
+      "path": "references/genre-baselines.md",
+      "startLine": 33,
+      "endLine": 35,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/genre-baselines.md#L33",
+      "sha256": "58901bd7f3448575f7a6574c34325161979217ce7c01ecbef0be2e751f43a3b2"
+    },
+    "contentMarkdown": "## Documentary (style)\n**Contract:** credibility — the form must read as witnessed, not staged. **Defaults:** interview grammar (eyeline just off-lens, motivated window/practical light, shallow-focus environment context) · B-roll logic (cutaways that PROVE the narration) · handheld observational restraint, zoom-and-refocus honesty · available light doctrine · lower-third/archive conventions (post!) · VO or interview audio as spine, ambience beds. **Subgenres:** nature doc (long-lens patience, macro grammar, Attenborough pacing) · true crime (reenactment style: soft-focus anonymity, moody reconstruction light) · essay film (Wenders/Malick contemplation) · vérité (no interviews, pure observation). **Recipes:** Wenders (essay) · Greengrass (vérité energy) · UGC (raw witness) + Lubezki (nature-poetic). **AI notes:** AI-generated \"documentary\" of real events is a disclosure minefield (ch. 20 EU AI Act) — fictional subjects or clearly-labeled reconstruction; the doc LOOK itself is low-risk and artifact-tolerant; interview talking-heads = lip-sync quality gate — build them via the interview path (production-pipeline ch. 7b: audio-first, B-roll escape, coverage convention). **Filter:** production-pipeline.md ch. 7b (interviews) · post-audio-legal.md ch. 18/20 · style-control.md §6b · renderability.md.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [
+      {
+        "sourceName": "post-audio-legal.md",
+        "entryIDs": [
+          "post-audio-legal-5949409d78e1",
+          "post-audio-legal-d966bfa722d1",
+          "post-audio-legal-9aca3116b4f9",
+          "post-audio-legal-fd0a7b340780",
+          "post-audio-legal-1c65925d87d5"
+        ]
+      },
+      {
+        "sourceName": "production-pipeline.md",
+        "entryIDs": [
+          "production-pipeline-3e7423e91475",
+          "production-pipeline-fe8ae664fb1e",
+          "production-pipeline-0fdca1da8970",
+          "production-pipeline-524c7d64a7f3",
+          "production-pipeline-41c7b8294114",
+          "production-pipeline-455241c73ce4",
+          "production-pipeline-f7091f27c6d1",
+          "production-pipeline-668103488e98",
+          "production-pipeline-d16d62c31ae0",
+          "production-pipeline-d1f0cfe8e195",
+          "production-pipeline-3f320156d67f",
+          "production-pipeline-a2fb95cff485",
+          "production-pipeline-446e57806ce5",
+          "production-pipeline-99e7beb6f331",
+          "production-pipeline-1bb10d449ca5",
+          "production-pipeline-b4b53fe52130",
+          "production-pipeline-9bf4e03af57e",
+          "production-pipeline-f418e48ce02f"
+        ]
+      },
+      {
+        "sourceName": "renderability.md",
+        "entryIDs": [
+          "renderability-1b6016907c61",
+          "renderability-d58da1655e55",
+          "renderability-111b29259b37",
+          "renderability-0a1e0a4a4edc",
+          "renderability-32075c011ed3",
+          "renderability-d07031e108b5",
+          "renderability-28385106c00e",
+          "renderability-4074c75ffcb1"
+        ]
+      },
+      {
+        "sourceName": "style-control.md",
+        "entryIDs": [
+          "style-control-671a457dd443",
+          "style-control-79b3e6b7c14b",
+          "style-control-2cf209a10276",
+          "style-control-f84b2ba9034a",
+          "style-control-481af1471ae1",
+          "style-control-7665e999d1da",
+          "style-control-63a866503413",
+          "style-control-b73f6f0f3ffe",
+          "style-control-bfffd977ce4d",
+          "style-control-cbe1c1252598",
+          "style-control-c58bd9c5a494",
+          "style-control-666cdb1219e7",
+          "style-control-ab661985aaa4",
+          "style-control-d208337fba85",
+          "style-control-2baa47554330",
+          "style-control-23d9278937c0",
+          "style-control-ff888ede11ee",
+          "style-control-73867a0b4daf",
+          "style-control-5257ea810f14",
+          "style-control-7b703384f157",
+          "style-control-da4feb1794ad",
+          "style-control-fc8ef8be9186"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "genre-baselines-6dd720cce1ef",
+    "title": "Anime (as genre dramaturgy)",
+    "ancestry": [
+      "Genre Baselines: Entry Points & Skill Filters",
+      "Anime (as genre dramaturgy)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "genres",
+    "source": {
+      "path": "references/genre-baselines.md",
+      "startLine": 36,
+      "endLine": 38,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/genre-baselines.md#L36",
+      "sha256": "aae608d95eba07ba57a6a88f09ce3bd50480ada4878b75576188d6a5e9f86c4f"
+    },
+    "contentMarkdown": "## Anime (as genre dramaturgy)\n**Contract:** heightened emotion made visible — inner states externalized as visual events. **Defaults:** emotion beats get HELD poses and full stops (sakuga economy: spend motion on peaks, hold between) · impact frames, speed lines, smears at action peaks · monologue-under-action convention legitimate · tournament/escalation arcs, named-attack beats · scenery-porn pause shots (Ghibli \"ma\") as breathing · music-synced emotional crescendos. **Subgenres:** shōnen action (escalation ladders, power-up reveals) · slice-of-life (Ozu-adjacent stillness, seasonal markers) · mecha (scale grammar: human cockpit ↔ machine wide) · isekai/fantasy (establish world-rule early, travel montages). **Recipes:** Miyazaki (the humanist pole) · Leone (standoff DNA — anime inherited it) · Boyle (music-drive) + anime vocabularies (style-control §6). **AI notes:** high-action anime is a documented model SWEET SPOT (renderability §1); flat 2D punishes wobble — style-control §5b anti-3D rules; held poses are cheap AND correct here. **Filter:** style-control.md §5b/§6 (critical) · renderability.md · film-craft.md §7.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [
+      {
+        "sourceName": "film-craft.md",
+        "entryIDs": [
+          "film-craft-2248687307ab",
+          "film-craft-570fba3d71dd",
+          "film-craft-67a9384f75ea",
+          "film-craft-b70a3b38e137",
+          "film-craft-53cc6a016d88",
+          "film-craft-250a592981e5",
+          "film-craft-08c1a1b2c538",
+          "film-craft-3467e7856eaf",
+          "film-craft-9ebd24a43e12",
+          "film-craft-56d3d772fec2"
+        ]
+      },
+      {
+        "sourceName": "renderability.md",
+        "entryIDs": [
+          "renderability-1b6016907c61",
+          "renderability-d58da1655e55",
+          "renderability-111b29259b37",
+          "renderability-0a1e0a4a4edc",
+          "renderability-32075c011ed3",
+          "renderability-d07031e108b5",
+          "renderability-28385106c00e",
+          "renderability-4074c75ffcb1"
+        ]
+      },
+      {
+        "sourceName": "style-control.md",
+        "entryIDs": [
+          "style-control-671a457dd443",
+          "style-control-79b3e6b7c14b",
+          "style-control-2cf209a10276",
+          "style-control-f84b2ba9034a",
+          "style-control-481af1471ae1",
+          "style-control-7665e999d1da",
+          "style-control-63a866503413",
+          "style-control-b73f6f0f3ffe",
+          "style-control-bfffd977ce4d",
+          "style-control-cbe1c1252598",
+          "style-control-c58bd9c5a494",
+          "style-control-666cdb1219e7",
+          "style-control-ab661985aaa4",
+          "style-control-d208337fba85",
+          "style-control-2baa47554330",
+          "style-control-23d9278937c0",
+          "style-control-ff888ede11ee",
+          "style-control-73867a0b4daf",
+          "style-control-5257ea810f14",
+          "style-control-7b703384f157",
+          "style-control-da4feb1794ad",
+          "style-control-fc8ef8be9186"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "genre-baselines-5cabde8905e6",
+    "title": "Family Animation (\"Pixar/Disney\" as dramaturgy, not look)",
+    "ancestry": [
+      "Genre Baselines: Entry Points & Skill Filters",
+      "Family Animation (\"Pixar/Disney\" as dramaturgy, not look)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "genres",
+    "source": {
+      "path": "references/genre-baselines.md",
+      "startLine": 39,
+      "endLine": 41,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/genre-baselines.md#L39",
+      "sha256": "071639106e70c9657201f4d2477fa807398a1700447786f21bef0fe83c284db8"
+    },
+    "contentMarkdown": "## Family Animation (\"Pixar/Disney\" as dramaturgy, not look)\n**Contract:** two audiences at once — sincere emotional core for everyone, wit layered for adults; the ending EARNS its warmth. **Defaults:** want-vs-need spine (hero pursues the want, discovers the need) · sidekick as externalized inner voice · villain-as-mirror or system-as-antagonist · gag-per-page density WITHOUT breaking sincerity · setpiece + heart-beat alternation (\"laugh, laugh, gut-punch\") · the all-is-lost beat before the truth · physical comedy choreographed like action · color script tracks the emotional arc explicitly (pixar-look §3). **Subgenres:** buddy/road (two-hander chemistry, Wenders structure in bright colors) · fish-out-of-water (world-rule comedy) · fairy-tale musical (see Music film for numbers). **Recipes:** Spielberg (wonder grammar) · Miyazaki (quiet pole) · Anderson (deadpan variant) + pixar-look.md as the visual bible when the look is also Pixar. **AI notes:** the format's error tolerance is the strategic reason to choose it (renderability §4); figure-anchor rule governs all stills; squash-and-stretch motion must be prompted or physics-correct models flatten the comedy. **Filter:** pixar-look.md (critical) · style-control.md · film-craft.md §7–8 · renderability.md.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [
+      {
+        "sourceName": "film-craft.md",
+        "entryIDs": [
+          "film-craft-2248687307ab",
+          "film-craft-570fba3d71dd",
+          "film-craft-67a9384f75ea",
+          "film-craft-b70a3b38e137",
+          "film-craft-53cc6a016d88",
+          "film-craft-250a592981e5",
+          "film-craft-08c1a1b2c538",
+          "film-craft-3467e7856eaf",
+          "film-craft-9ebd24a43e12",
+          "film-craft-56d3d772fec2"
+        ]
+      },
+      {
+        "sourceName": "pixar-look.md",
+        "entryIDs": [
+          "pixar-look-e2bffc9f8b7c",
+          "pixar-look-6067d37adaa1",
+          "pixar-look-ffa1fc7ecbcc",
+          "pixar-look-8448fb177d42",
+          "pixar-look-67b9aafd568b",
+          "pixar-look-79aef52eb72e",
+          "pixar-look-eeafb6781cc6",
+          "pixar-look-441de0d8a9d1",
+          "pixar-look-f22e3f8ad2cd",
+          "pixar-look-266b78d1a40e",
+          "pixar-look-1da5c9533bf3",
+          "pixar-look-68ec1764bb32",
+          "pixar-look-fdcec6b2c0f0",
+          "pixar-look-56847cb20874"
+        ]
+      },
+      {
+        "sourceName": "renderability.md",
+        "entryIDs": [
+          "renderability-1b6016907c61",
+          "renderability-d58da1655e55",
+          "renderability-111b29259b37",
+          "renderability-0a1e0a4a4edc",
+          "renderability-32075c011ed3",
+          "renderability-d07031e108b5",
+          "renderability-28385106c00e",
+          "renderability-4074c75ffcb1"
+        ]
+      },
+      {
+        "sourceName": "style-control.md",
+        "entryIDs": [
+          "style-control-671a457dd443",
+          "style-control-79b3e6b7c14b",
+          "style-control-2cf209a10276",
+          "style-control-f84b2ba9034a",
+          "style-control-481af1471ae1",
+          "style-control-7665e999d1da",
+          "style-control-63a866503413",
+          "style-control-b73f6f0f3ffe",
+          "style-control-bfffd977ce4d",
+          "style-control-cbe1c1252598",
+          "style-control-c58bd9c5a494",
+          "style-control-666cdb1219e7",
+          "style-control-ab661985aaa4",
+          "style-control-d208337fba85",
+          "style-control-2baa47554330",
+          "style-control-23d9278937c0",
+          "style-control-ff888ede11ee",
+          "style-control-73867a0b4daf",
+          "style-control-5257ea810f14",
+          "style-control-7b703384f157",
+          "style-control-da4feb1794ad",
+          "style-control-fc8ef8be9186"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "genre-baselines-fc0343dda7d2",
+    "title": "Music Film / Musical",
+    "ancestry": [
+      "Genre Baselines: Entry Points & Skill Filters",
+      "Music Film / Musical"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "genres",
+    "source": {
+      "path": "references/genre-baselines.md",
+      "startLine": 42,
+      "endLine": 44,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/genre-baselines.md#L42",
+      "sha256": "10a4d9ca8da8e46f766eb52e5c51ac0a20a7558c94663c36d41cd4e572d1e655"
+    },
+    "contentMarkdown": "## Music Film / Musical\n**Contract:** emotion exceeds speech and becomes performance — the audience accepts the world singing. **Defaults:** numbers as setpieces with their own visual identity each · cut ON the beat, move WITH the phrase (audio-first workflow: track before image — post-audio-legal ch. 18 score logic inverted) · wide enough to prove the choreography, inserts for accents · light shifts mid-number legitimate (reality bends) · saturated palette jumps per number · between numbers: drama defaults apply. **Subgenres:** backstage/band story (doc grammar + performance setpieces) · dance film (full-body framing law, longer takes, floor visible) · concert film (coverage grammar: master + roaming + crowd + detail) · jukebox/montage (Boyle needle-drop structure) · music video (3–5-min single-track piece: ONE visual concept committed fully, any recipe legitimate, beat-cut discipline — the format with the widest stylistic license). **Recipes:** Boyle (music-cut DNA) · Wong Kar-wai (mood-music fusion) · Anderson (choreographed-frame numbers) + Storaro (number-per-color ideology). **AI notes:** audio-to-video path (music as timing skeleton, production-pipeline ch. 9) and beat-synced choreography prompting (audio reference as timing input — video-prompting ch. 14b [H-off, P48]); instrument fingering stays yellow (frame around it); song RIGHTS come first — ch. 18 licensing before any number is built. **Filter:** post-audio-legal.md ch. 18 (first!) · film-craft.md §4/§7 · production-pipeline.md ch. 9.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [
+      {
+        "sourceName": "film-craft.md",
+        "entryIDs": [
+          "film-craft-2248687307ab",
+          "film-craft-570fba3d71dd",
+          "film-craft-67a9384f75ea",
+          "film-craft-b70a3b38e137",
+          "film-craft-53cc6a016d88",
+          "film-craft-250a592981e5",
+          "film-craft-08c1a1b2c538",
+          "film-craft-3467e7856eaf",
+          "film-craft-9ebd24a43e12",
+          "film-craft-56d3d772fec2"
+        ]
+      },
+      {
+        "sourceName": "post-audio-legal.md",
+        "entryIDs": [
+          "post-audio-legal-5949409d78e1",
+          "post-audio-legal-d966bfa722d1",
+          "post-audio-legal-9aca3116b4f9",
+          "post-audio-legal-fd0a7b340780",
+          "post-audio-legal-1c65925d87d5"
+        ]
+      },
+      {
+        "sourceName": "production-pipeline.md",
+        "entryIDs": [
+          "production-pipeline-3e7423e91475",
+          "production-pipeline-fe8ae664fb1e",
+          "production-pipeline-0fdca1da8970",
+          "production-pipeline-524c7d64a7f3",
+          "production-pipeline-41c7b8294114",
+          "production-pipeline-455241c73ce4",
+          "production-pipeline-f7091f27c6d1",
+          "production-pipeline-668103488e98",
+          "production-pipeline-d16d62c31ae0",
+          "production-pipeline-d1f0cfe8e195",
+          "production-pipeline-3f320156d67f",
+          "production-pipeline-a2fb95cff485",
+          "production-pipeline-446e57806ce5",
+          "production-pipeline-99e7beb6f331",
+          "production-pipeline-1bb10d449ca5",
+          "production-pipeline-b4b53fe52130",
+          "production-pipeline-9bf4e03af57e",
+          "production-pipeline-f418e48ce02f"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "genre-baselines-38db61f05ab2",
+    "title": "Commercial / Ad",
+    "ancestry": [
+      "Genre Baselines: Entry Points & Skill Filters",
+      "Commercial / Ad"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "genres",
+    "source": {
+      "path": "references/genre-baselines.md",
+      "startLine": 45,
+      "endLine": 49,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/genre-baselines.md#L45",
+      "sha256": "a38a42aab9083fc0dab2bc78eb9fdb3d56a2c5e9f0b54e9ac77bee31739fc8f6"
+    },
+    "contentMarkdown": "## Commercial / Ad\n**Contract:** one message, remembered — every second earns its place; the product is protagonist or payoff, never wallpaper. **Defaults:** format dramaturgy by length (6 s: one gag/one image · 15 s: setup–payoff · 30 s: mini-arc · 60 s+: short-film grammar with brand restraint) · product-hero grammar (tabletop: macro detail, controlled highlights, slow orbital/reveal moves) · ONE polish position chosen up front: commercial sheen (Ridley Scott ad lineage — atmosphere, backlight, surface control) OR deliberate UGC authenticity — never both · light default for product/lifestyle spots [H-off, P48]: \"kill the contre-jour and shadow-side framing — soft even daylight from the camera side, bright and clean\" (the 12c shadow-side rule is drama doctrine) · end-card discipline: logo/claim/pack shot as designed graphics in post, never generated · platform aspect ratios and casting decided before the first still. **Subgenres:** product/tabletop (food, cosmetics, tech — macro + slow moves, physics-risky pours/steam) · lifestyle/performance (people using it — drama/comedy defaults apply) · UGC-style ad (creator-camera authenticity; disclosure rules!) · brand film (60 s+, essay/doc grammar). **Recipes:** Ridley Scott (polished atmosphere) · Anderson (deadpan product tableaus) · Boyle (energy cut) · UGC (authenticity pole) + any genre recipe when the ad borrows or parodies one (ZAZ logic). **AI notes:** pack shots and logos are in-frame text = ALWAYS post-composite (renderability §2); product geometry must match reality (legal!) — lock with reference images; food/liquid macro needs a physics lint on pours, steam, condensation; AI-disclosure duties per market (post-audio-legal ch. 20). **Filter:** renderability.md §2 (critical) · style-control.md (reference integration for the product) · post-audio-legal.md ch. 20 · platforms-models.md (per-platform deliverables).\n\n---\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [
+      {
+        "sourceName": "platforms-models.md",
+        "entryIDs": [
+          "platforms-models-c159854e7bd9",
+          "platforms-models-8ee6da64109f",
+          "platforms-models-ac9faa3b5e53",
+          "platforms-models-eff59588bc73",
+          "platforms-models-57a34d2b06e5",
+          "platforms-models-f565be362c5d",
+          "platforms-models-a0954cd3380a",
+          "platforms-models-11af2fa0ab95",
+          "platforms-models-e2702c4d5d1c",
+          "platforms-models-2ffba5575630",
+          "platforms-models-195226cac8fa",
+          "platforms-models-13d27380ec0e"
+        ]
+      },
+      {
+        "sourceName": "post-audio-legal.md",
+        "entryIDs": [
+          "post-audio-legal-5949409d78e1",
+          "post-audio-legal-d966bfa722d1",
+          "post-audio-legal-9aca3116b4f9",
+          "post-audio-legal-fd0a7b340780",
+          "post-audio-legal-1c65925d87d5"
+        ]
+      },
+      {
+        "sourceName": "renderability.md",
+        "entryIDs": [
+          "renderability-1b6016907c61",
+          "renderability-d58da1655e55",
+          "renderability-111b29259b37",
+          "renderability-0a1e0a4a4edc",
+          "renderability-32075c011ed3",
+          "renderability-d07031e108b5",
+          "renderability-28385106c00e",
+          "renderability-4074c75ffcb1"
+        ]
+      },
+      {
+        "sourceName": "style-control.md",
+        "entryIDs": [
+          "style-control-671a457dd443",
+          "style-control-79b3e6b7c14b",
+          "style-control-2cf209a10276",
+          "style-control-f84b2ba9034a",
+          "style-control-481af1471ae1",
+          "style-control-7665e999d1da",
+          "style-control-63a866503413",
+          "style-control-b73f6f0f3ffe",
+          "style-control-bfffd977ce4d",
+          "style-control-cbe1c1252598",
+          "style-control-c58bd9c5a494",
+          "style-control-666cdb1219e7",
+          "style-control-ab661985aaa4",
+          "style-control-d208337fba85",
+          "style-control-2baa47554330",
+          "style-control-23d9278937c0",
+          "style-control-ff888ede11ee",
+          "style-control-73867a0b4daf",
+          "style-control-5257ea810f14",
+          "style-control-7b703384f157",
+          "style-control-da4feb1794ad",
+          "style-control-fc8ef8be9186"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "genre-baselines-aa2f4a1f1e43",
+    "title": "How to use a baseline (agent instructions)",
+    "ancestry": [
+      "Genre Baselines: Entry Points & Skill Filters",
+      "How to use a baseline (agent instructions)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "genres",
+    "source": {
+      "path": "references/genre-baselines.md",
+      "startLine": 50,
+      "endLine": 54,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/genre-baselines.md#L50",
+      "sha256": "5fc6c8e9ad413c36f730120fd75fcd904df4a92e9c3618f432eb3510d36f1b24"
+    },
+    "contentMarkdown": "## How to use a baseline (agent instructions)\n1. Genre known → read this file's section → load the filter files → state the defaults to the user as the working assumption in TWO sentences, not a lecture.\n2. Baseline + user wishes → concrete craft plan; deviations from baseline are normal and the user's call.\n3. Subgenre named → apply the shift on top of the base genre.\n4. Genre mix (\"horror comedy\") → one genre owns STRUCTURE, the other owns TEXTURE; say which, ask only if truly ambiguous.\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  }
+]

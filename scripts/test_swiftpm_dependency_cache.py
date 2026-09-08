@@ -42,7 +42,7 @@ class SwiftPMDependencyCacheTests(unittest.TestCase):
             )
         self.assertEqual(
             set(workflows),
-            {"ci.yml", "bundle.yml", "release.yml", "private-example-analysis.yml", "chat-hang-replay.yml"},
+            {"ci.yml", "bundle.yml", "release.yml", "private-example-analysis.yml", "chat-hang-replay.yml", "recorded-hang-replay.yml"},
         )
 
     def test_cache_is_scoped_to_dependencies_and_the_exact_toolchain(self):

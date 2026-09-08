@@ -1,0 +1,687 @@
+[
+  {
+    "files": [
+      "SKILL"
+    ],
+    "consumer": "production-profile + prompt preflight + host approval",
+    "phases": [
+      "all"
+    ],
+    "issues": [
+      482,
+      484,
+      486
+    ],
+    "trigger": "Start/resume a production task, compile a prompt, or request an approval",
+    "inputs": [
+      "active pack and phase",
+      "approved canon",
+      "route and reference plan"
+    ],
+    "outputs": [
+      "phase-scoped instructions",
+      "canon-grounded prompt package",
+      "attributed review"
+    ],
+    "checks": [
+      "No source workflow can change a locked pack phase order.",
+      "A proposal never becomes canon without explicit approval.",
+      "The seven prompt checks remain ordered; content-model prompts go through the compiler."
+    ],
+    "id": "orchestration",
+    "adaptationAuthority": "NGV extraction design, not a quote from the skill",
+    "runtimeStatus": "specified-not-wired"
+  },
+  {
+    "files": [
+      "director-recipes"
+    ],
+    "consumer": "creative knowledge library + style selection + scoped QA",
+    "phases": [
+      "story",
+      "production-design",
+      "bible",
+      "frames",
+      "render",
+      "assembly"
+    ],
+    "issues": [
+      482,
+      442,
+      443,
+      492
+    ],
+    "trigger": "Select a look, synthesize named influences, compile an active style, or review style adherence",
+    "inputs": [
+      "genre/mood or named lineage",
+      "budget and constraints",
+      "active style dimensions"
+    ],
+    "outputs": [
+      "one base recipe and optional DoP",
+      "dimension overrides",
+      "scope-qualified Verify checks"
+    ],
+    "checks": [
+      "Preserve every complete recipe and pairing rule.",
+      "NLE editing instructions never override within-take geometry.",
+      "Only selected and applicable checks participate in QA."
+    ],
+    "id": "blueprints",
+    "adaptationAuthority": "NGV extraction design, not a quote from the skill",
+    "runtimeStatus": "specified-not-wired"
+  },
+  {
+    "files": [
+      "film-craft"
+    ],
+    "consumer": "shared film-craft library + storyboard + editor",
+    "phases": [
+      "story",
+      "production-design",
+      "shotlist",
+      "assembly"
+    ],
+    "issues": [
+      482,
+      483,
+      443
+    ],
+    "trigger": "Translate an intended feeling into composition, camera, edit, light, color or pacing",
+    "inputs": [
+      "dramatic intent",
+      "continuity and geography",
+      "active style contract"
+    ],
+    "outputs": [
+      "motivated craft choices",
+      "coverage and edit intent"
+    ],
+    "checks": [
+      "Tie each choice to an intended effect.",
+      "Apply sequence-level editing rules to the edit rather than every generated frame."
+    ],
+    "id": "craft",
+    "adaptationAuthority": "NGV extraction design, not a quote from the skill",
+    "runtimeStatus": "specified-not-wired"
+  },
+  {
+    "files": [
+      "genre-baselines"
+    ],
+    "consumer": "genre defaults and knowledge selector; pack-specific overrides",
+    "phases": [
+      "story",
+      "production-design",
+      "shotlist"
+    ],
+    "issues": [
+      482,
+      489,
+      490,
+      491
+    ],
+    "trigger": "A genre is named or inferred and needs defaults, a recipe shortlist or knowledge routing",
+    "inputs": [
+      "genre",
+      "format",
+      "approved story or song analysis"
+    ],
+    "outputs": [
+      "genre defaults",
+      "recipe shortlist",
+      "relevant knowledge selection"
+    ],
+    "checks": [
+      "Genre is not automatically a pack.",
+      "Retain all 13 baselines and each load/skip recommendation."
+    ],
+    "id": "genres",
+    "adaptationAuthority": "NGV extraction design, not a quote from the skill",
+    "runtimeStatus": "specified-not-wired"
+  },
+  {
+    "files": [
+      "story-structures"
+    ],
+    "consumer": "narrative profile + format-specific story planner",
+    "phases": [
+      "story"
+    ],
+    "issues": [
+      484,
+      489,
+      491
+    ],
+    "trigger": "Develop or revise a treatment, container, scene, episode, argument or concept arc",
+    "inputs": [
+      "approved intake",
+      "format constraints",
+      "canon and proposed delta"
+    ],
+    "outputs": [
+      "draft container and beats",
+      "causal change report",
+      "format-specific spine"
+    ],
+    "checks": [
+      "Apply narrative causality where the selected container requires it; do not force a plot onto a music concept.",
+      "Greenfield musicvideo develops from approved analysis and optional lyrics.",
+      "Real documentary testimony must not be invented."
+    ],
+    "id": "story",
+    "adaptationAuthority": "NGV extraction design, not a quote from the skill",
+    "runtimeStatus": "specified-not-wired"
+  },
+  {
+    "files": [
+      "production-pipeline"
+    ],
+    "consumer": "asset graph + storyboard + production planning + reference selector",
+    "phases": [
+      "production-design",
+      "bible",
+      "shotlist",
+      "frames",
+      "render"
+    ],
+    "issues": [
+      437,
+      438,
+      440,
+      442,
+      483,
+      485,
+      490,
+      491
+    ],
+    "trigger": "Plan assets, geography, dialogue, coverage, generation grouping or a batch",
+    "inputs": [
+      "approved beats",
+      "typed asset/state references",
+      "available routes"
+    ],
+    "outputs": [
+      "asset orders",
+      "setup and take/cut plans",
+      "scoped reference sets",
+      "coverage/rescue choices"
+    ],
+    "checks": [
+      "Sheets, plates, anchors, state variants and boards keep distinct roles.",
+      "Do not interpret 50 attachment slots as 50 stable identities.",
+      "Every kept renderability risk has an executable rescue."
+    ],
+    "id": "assets",
+    "adaptationAuthority": "NGV extraction design, not a quote from the skill",
+    "runtimeStatus": "specified-not-wired"
+  },
+  {
+    "files": [
+      "production-bible"
+    ],
+    "consumer": "canonical artifacts + project context + immutable lineage",
+    "phases": [
+      "all"
+    ],
+    "issues": [
+      438,
+      440,
+      484,
+      486
+    ],
+    "trigger": "Create/update project truth, assign IDs, resume or record decisions and results",
+    "inputs": [
+      "canonical phase artifacts",
+      "user approvals",
+      "take provenance"
+    ],
+    "outputs": [
+      "typed asset registry",
+      "continuity ledger",
+      "decision and iteration records"
+    ],
+    "checks": [
+      "Map the single-bible principle onto NGV canonical artifacts; do not add a competing mutable truth file.",
+      "Prompt revision, generation result, shot and creative variant are distinct identities.",
+      "Example names and dates are not project canon."
+    ],
+    "id": "canon",
+    "adaptationAuthority": "NGV extraction design, not a quote from the skill",
+    "runtimeStatus": "specified-not-wired"
+  },
+  {
+    "files": [
+      "video-prompting"
+    ],
+    "consumer": "route-specific video prompt compiler + preflight",
+    "phases": [
+      "frames",
+      "render"
+    ],
+    "issues": [
+      439,
+      437,
+      440,
+      485,
+      488
+    ],
+    "trigger": "Compile or repair a video prompt for a particular model and operation",
+    "inputs": [
+      "exact route/model/version/mode",
+      "approved beat and anchor roles",
+      "audio ownership",
+      "ending state"
+    ],
+    "outputs": [
+      "model-specific prompt",
+      "reference role lines",
+      "ending/boundary contract",
+      "lint findings"
+    ],
+    "checks": [
+      "Seedance blocks are not the H3 schema.",
+      "Preserve mandatory blocks, placement, verbatim strings and their scoped exceptions.",
+      "Do not turn suggested duration or quality budgets into global provider limits."
+    ],
+    "id": "video",
+    "adaptationAuthority": "NGV extraction design, not a quote from the skill",
+    "runtimeStatus": "specified-not-wired"
+  },
+  {
+    "files": [
+      "image-model-logic"
+    ],
+    "consumer": "image compiler + spatial control and repair planner",
+    "phases": [
+      "production-design",
+      "bible",
+      "frames"
+    ],
+    "issues": [
+      439,
+      438,
+      442
+    ],
+    "trigger": "Write/revise an image prompt or fix position, scale, count, exclusion or locality",
+    "inputs": [
+      "target model family",
+      "positive target state",
+      "available sketch/mask/reference channels"
+    ],
+    "outputs": [
+      "channel-aware prompt",
+      "control-ladder escalation",
+      "local edit scope"
+    ],
+    "checks": [
+      "Keep negation in the model-appropriate channel.",
+      "Escalate a failing axis to stronger control rather than endless synonym changes.",
+      "Numbers in prose do not replace numeric spatial controls."
+    ],
+    "id": "image",
+    "adaptationAuthority": "NGV extraction design, not a quote from the skill",
+    "runtimeStatus": "specified-not-wired"
+  },
+  {
+    "files": [
+      "style-control"
+    ],
+    "consumer": "look library + per-model style compiler + reference planner",
+    "phases": [
+      "production-design",
+      "bible",
+      "frames",
+      "render"
+    ],
+    "issues": [
+      439,
+      438,
+      482
+    ],
+    "trigger": "Establish or preserve animation, footage authenticity, era, optics or restyle intent",
+    "inputs": [
+      "active look",
+      "model dialect",
+      "identity versus style references"
+    ],
+    "outputs": [
+      "style token package",
+      "placement and exclusions",
+      "reference roles"
+    ],
+    "checks": [
+      "Keep all animation and non-animation packages.",
+      "Style donor is not an identity or geometry donor unless explicitly assigned.",
+      "Still and video exclusion rules remain distinct."
+    ],
+    "id": "style",
+    "adaptationAuthority": "NGV extraction design, not a quote from the skill",
+    "runtimeStatus": "specified-not-wired"
+  },
+  {
+    "files": [
+      "pixar-look"
+    ],
+    "consumer": "stylized-3D library and future animation specialization",
+    "phases": [
+      "production-design",
+      "bible",
+      "frames",
+      "render"
+    ],
+    "issues": [
+      438,
+      439,
+      482,
+      491
+    ],
+    "trigger": "Design stylized 3D assets or solve figureless/dark/wide-shot style failures",
+    "inputs": [
+      "figure presence",
+      "light state",
+      "style anchor",
+      "geometry/previs"
+    ],
+    "outputs": [
+      "shape/light/color/camera plan",
+      "model-specific environment template",
+      "hybrid rescue procedure"
+    ],
+    "checks": [
+      "Retain figure-in-frame, bright figureless and dark-scene cases separately.",
+      "Case studies are reusable production lessons, not instructions to copy characters/scenes."
+    ],
+    "id": "animation",
+    "adaptationAuthority": "NGV extraction design, not a quote from the skill",
+    "runtimeStatus": "specified-not-wired"
+  },
+  {
+    "files": [
+      "renderability"
+    ],
+    "consumer": "preflight + reference/routing planner + rescue planner",
+    "phases": [
+      "story",
+      "shotlist",
+      "frames",
+      "render"
+    ],
+    "issues": [
+      437,
+      439,
+      442,
+      483
+    ],
+    "trigger": "Evaluate a proposed shot, lighting plan, difficult interaction or fallback route",
+    "inputs": [
+      "shot action and camera",
+      "source mode",
+      "model evidence",
+      "accepted risk"
+    ],
+    "outputs": [
+      "green/yellow/red rationale",
+      "rescue cut",
+      "route/technique options"
+    ],
+    "checks": [
+      "Preserve exact risk conditions: reflections as texture are not frame-exact mirror acting.",
+      "Hand closeups retain the short single-action exception.",
+      "Aesthetic handheld/following intent is not automatically camera slop."
+    ],
+    "id": "feasibility",
+    "adaptationAuthority": "NGV extraction design, not a quote from the skill",
+    "runtimeStatus": "specified-not-wired"
+  },
+  {
+    "files": [
+      "workflows"
+    ],
+    "consumer": "phase-scoped profile instructions + pack adapters",
+    "phases": [
+      "all"
+    ],
+    "issues": [
+      482,
+      483,
+      442,
+      485,
+      491
+    ],
+    "trigger": "Execute W1–W10: intake, assets, shot, sequence, repair, coverage, style, failure or session lifecycle",
+    "inputs": [
+      "current phase and capabilities",
+      "canon",
+      "task trigger",
+      "existing approved artifacts"
+    ],
+    "outputs": [
+      "ordered procedure",
+      "stop/approval conditions",
+      "artifact updates"
+    ],
+    "checks": [
+      "Read complete steps and their dependencies; never select an isolated instruction without exceptions.",
+      "W10 is a reusable production method, not permission to replace the locked musicvideo startup.",
+      "Draft-to-production is a new generation, not extending a draft."
+    ],
+    "id": "runbooks",
+    "adaptationAuthority": "NGV extraction design, not a quote from the skill",
+    "runtimeStatus": "specified-not-wired"
+  },
+  {
+    "files": [
+      "post-audio-legal"
+    ],
+    "consumer": "review + assembly + finishing + audio and rights metadata",
+    "phases": [
+      "render",
+      "assembly",
+      "finish"
+    ],
+    "issues": [
+      442,
+      443,
+      444,
+      445,
+      488,
+      491
+    ],
+    "trigger": "Review takes, assemble, dub/sync, finish or record rights/disclosure",
+    "inputs": [
+      "actually viewable/hearable result",
+      "source track/voice and rights",
+      "edit ranges and continuity"
+    ],
+    "outputs": [
+      "six-pass attributed review",
+      "hard-reject then emotional ranking",
+      "repairs",
+      "delivery provenance"
+    ],
+    "checks": [
+      "No review claims without actual observation or attributed user review.",
+      "Generated dialogue/voice must not replace the musicvideo master track.",
+      "Legal source prose is dated guidance, not an automatic legal determination."
+    ],
+    "id": "post",
+    "adaptationAuthority": "NGV extraction design, not a quote from the skill",
+    "runtimeStatus": "specified-not-wired"
+  },
+  {
+    "files": [
+      "platforms-models"
+    ],
+    "consumer": "prompt dialect resources + dated capability evidence",
+    "phases": [
+      "frames",
+      "render"
+    ],
+    "issues": [
+      434,
+      436,
+      439,
+      482
+    ],
+    "trigger": "Choose a model-specific prompt syntax or consult a historical platform example",
+    "inputs": [
+      "model version",
+      "operation",
+      "verified schema receipt"
+    ],
+    "outputs": [
+      "copy-ready scoped dialect",
+      "historical evidence record"
+    ],
+    "checks": [
+      "Archived Cinema tables are not current UI selectors.",
+      "H3 exact fields and reference schema remain intact.",
+      "Model examples do not authorize or enable a provider."
+    ],
+    "id": "dialects",
+    "adaptationAuthority": "NGV extraction design, not a quote from the skill",
+    "runtimeStatus": "specified-not-wired"
+  },
+  {
+    "files": [
+      "platform-ui-workflows"
+    ],
+    "consumer": "capability research overlays + route receipt + external handoff UI",
+    "phases": [
+      "all"
+    ],
+    "issues": [
+      434,
+      436,
+      437,
+      486
+    ],
+    "trigger": "Translate a creative task to a specific UI/API/MCP route or inspect a platform claim",
+    "inputs": [
+      "enabled provider",
+      "live operation schema",
+      "workspace/account when known",
+      "stored receipt"
+    ],
+    "outputs": [
+      "route receipt and state",
+      "control-plane ownership",
+      "verification requirement"
+    ],
+    "checks": [
+      "UI, API and MCP are not interchangeable.",
+      "Stored dates remain their original dates; no fabricated live-check.",
+      "Research alone never makes a route executable or authorizes spend."
+    ],
+    "id": "routes",
+    "adaptationAuthority": "NGV extraction design, not a quote from the skill",
+    "runtimeStatus": "specified-not-wired"
+  },
+  {
+    "files": [
+      "sources"
+    ],
+    "consumer": "source registry and confidence preservation",
+    "phases": [
+      "research"
+    ],
+    "issues": [
+      436,
+      482
+    ],
+    "trigger": "Audit a claim or source confidence and sponsorship",
+    "inputs": [
+      "source tag"
+    ],
+    "outputs": [
+      "original evidence and confidence context"
+    ],
+    "checks": [
+      "Preserve practitioner, official, sponsored and marketing distinctions.",
+      "House-doctrine green is not independently live-verified API evidence."
+    ],
+    "id": "evidence",
+    "adaptationAuthority": "NGV extraction design, not a quote from the skill",
+    "runtimeStatus": "specified-not-wired"
+  },
+  {
+    "files": [
+      "glossary"
+    ],
+    "consumer": "shared terminology and schema mapping",
+    "phases": [
+      "all"
+    ],
+    "issues": [
+      438,
+      440,
+      482,
+      483
+    ],
+    "trigger": "Resolve ambiguous artifact or cinematography vocabulary",
+    "inputs": [
+      "qualified term"
+    ],
+    "outputs": [
+      "precise definition and consumer mapping"
+    ],
+    "checks": [
+      "Never collapse shot/take, panel/anchor, or style/identity reference."
+    ],
+    "id": "glossary",
+    "adaptationAuthority": "NGV extraction design, not a quote from the skill",
+    "runtimeStatus": "specified-not-wired"
+  },
+  {
+    "files": [
+      "worked-example"
+    ],
+    "consumer": "compiler and planning acceptance fixtures",
+    "phases": [
+      "planning"
+    ],
+    "issues": [
+      439,
+      440,
+      448,
+      486
+    ],
+    "trigger": "Implement a complete prompt-package fixture or inspect boundary-state examples",
+    "inputs": [
+      "fixture-only canon and routes"
+    ],
+    "outputs": [
+      "expected deliverable shape",
+      "risk and continuation examples"
+    ],
+    "checks": [
+      "Examples are not current project truth, provider availability or production defaults.",
+      "Scoped rules and NGV contracts override an outdated example."
+    ],
+    "id": "examples",
+    "adaptationAuthority": "NGV extraction design, not a quote from the skill",
+    "runtimeStatus": "specified-not-wired"
+  },
+  {
+    "files": [
+      "README"
+    ],
+    "consumer": "provenance archive only",
+    "phases": [],
+    "issues": [
+      482
+    ],
+    "trigger": "Audit original release documentation",
+    "inputs": [],
+    "outputs": [
+      "release and packaging provenance"
+    ],
+    "checks": [
+      "Installation and skill-trigger instructions are not NGV runtime instructions."
+    ],
+    "id": "packaging",
+    "adaptationAuthority": "NGV extraction design, not a quote from the skill",
+    "runtimeStatus": "specified-not-wired"
+  }
+]

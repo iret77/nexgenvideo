@@ -8,25 +8,12 @@ enum HangDiagnosticSelfTest {
     static var requested: Bool {
         ProcessInfo.processInfo.environment["NGV_HANG_SELFTEST"] == "wait"
             || ProcessInfo.processInfo.environment["NGV_HANG_SELFTEST"] == "spin"
-            || ProcessInfo.processInfo.environment["NGV_HANG_SELFTEST"] == "startup"
     }
 
     @MainActor
     static func start() {
         let content = ProcessInfo.processInfo.environment["NGV_HANG_SELFTEST_KEY"] != nil
         HangDiagnosticRecorder.shared.start(includeContent: content)
-        if ProcessInfo.processInfo.environment["NGV_HANG_SELFTEST"] == "startup" {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                if let account = ProcessInfo.processInfo.environment["NGV_HANG_SELFTEST_VERIFY_ACCOUNT"] {
-                    guard let path = ProcessInfo.processInfo.environment["NGV_HANG_SELFTEST_VERIFY_KEY_FILE"],
-                          let expected = try? String(contentsOfFile: path, encoding: .utf8)
-                            .trimmingCharacters(in: .whitespacesAndNewlines),
-                          KeychainStore.load(account: account) == expected else { exit(71) }
-                }
-                NSApp.terminate(nil)
-            }
-            return
-        }
         if content {
             let editor = EditorViewModel()
             editor.workspaceFocus = .produce

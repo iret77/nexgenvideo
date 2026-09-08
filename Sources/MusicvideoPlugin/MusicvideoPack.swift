@@ -5,7 +5,7 @@ import NexGenEngine
 /// (id/version/minAppVersion/displayName/tagline) mirrors `plugins/musicvideo.json`,
 /// which the release assembles into the `.ngvpack`'s Info.plist `NGVMinAppVersion` —
 /// the value the load gate checks BEFORE loading this code. Keep the two in lockstep.
-let musicvideoMinAppVersion = "1.5.4"
+let musicvideoMinAppVersion = "1.5.5"
 
 /// The musicvideo pack — registers music-specific behavior into the generic
 /// engine. Port of `nexgen_pack_musicvideo/pack.py`.
@@ -33,7 +33,7 @@ public struct MusicDurationPolicy: DurationPolicy {
 
 public struct MusicvideoPack: Pack {
     public let name = "musicvideo"
-    public let version = "0.5.4"
+    public let version = "0.5.6"
 
     static let productionProfiles: [ProductionProfile] = [
         StandardProductionProfiles.generativeFilm,
@@ -189,7 +189,7 @@ public struct MusicvideoPack: Pack {
         benefit: "Reads your track and plans shots to the beat.",
         minAppVersion: musicvideoMinAppVersion,
         badgeURL: PackKnowledge.badgeURL(),
-        accentHex: "#FF2D55"
+        accentHex: "#D940A0"
     )
 
     /// Hidden host-to-agent handoff after the ordered startup intake completes.

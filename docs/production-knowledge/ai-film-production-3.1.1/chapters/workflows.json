@@ -1,0 +1,586 @@
+[
+  {
+    "id": "workflows-eccdac4aed0c",
+    "title": "Workflows: The Typical Jobs, as Runbooks (ch. 25)",
+    "ancestry": [
+      "Workflows: The Typical Jobs, as Runbooks (ch. 25)"
+    ],
+    "kind": "procedure",
+    "applicationContract": "runbooks",
+    "source": {
+      "path": "references/workflows.md",
+      "startLine": 1,
+      "endLine": 4,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/workflows.md#L1",
+      "sha256": "9878769da337920264bc79c3be28e2375508ef05b8e7c83eaba6e13ec0af5fea"
+    },
+    "contentMarkdown": "# Workflows: The Typical Jobs, as Runbooks (ch. 25)\n\nNamed, ordered procedures for the recurring jobs of an AI-film production. They add NO new rules — they chain the existing chapters into the order that has proven to work, so a session never improvises the sequence. Every step that writes a prompt runs the per-prompt checklist (SKILL.md); every workflow ends by updating the production bible (SKILL rule 11). Every external generation/edit first receives a RECEIPT line (SKILL.md Scope & version; state `live-checked <date>` or `from reference <KEY>`, SKILL rule 16) in that bible. Pick the workflow by trigger; if two apply, run the earlier-numbered one first — except W10, which is a production MODEL: when a project runs storyboard-first, W10 is the spine and calls W1–W3 and W7 at the stages it names. Citations: `production-pipeline ch. N` for chapters 1–11, `<file> §N` for section-numbered files (SKILL.md citation convention).\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [
+      {
+        "sourceName": "SKILL.md",
+        "entryIDs": [
+          "skill-9fc6d6e46c26",
+          "skill-dceff66d0b82",
+          "skill-97ff9b201107",
+          "skill-c1c24ea6da18",
+          "skill-705399a08ca6",
+          "skill-05a8c920538c",
+          "skill-f468f0c333ce",
+          "skill-a9c8ddc59709",
+          "skill-cffc1e447b50",
+          "skill-11d6f150df4d",
+          "skill-2e42f043c413",
+          "skill-da7177bac7a7"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "workflows-6f957f7120f1",
+    "title": "W1 — New project (trigger: a new film/short/ad/social video begins)",
+    "ancestry": [
+      "Workflows: The Typical Jobs, as Runbooks (ch. 25)",
+      "W1 — New project (trigger: a new film/short/ad/social video begins)"
+    ],
+    "kind": "procedure",
+    "applicationContract": "runbooks",
+    "source": {
+      "path": "references/workflows.md",
+      "startLine": 5,
+      "endLine": 12,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/workflows.md#L5",
+      "sha256": "4d10c6e36a8b4ba595eb17626a6394ed772160b46281085c7df470a1cfbfdc20"
+    },
+    "contentMarkdown": "## W1 — New project (trigger: a new film/short/ad/social video begins)\n1. Genre named or evident? Read `genre-baselines.md` FIRST — it pre-answers craft defaults and names the files THIS project type needs.\n2. Story intake gate (story-structures ch. 23a): the story comes from the user; offer a dramaturgical container before any craft settles.\n3. Settle only what the conversation hasn't: format/look (stylized and UGC absorb errors; photoreal demands discipline; ~70% realism is the uncanny danger zone) · target length & platform · deliverable · model stack (renderability §6 quick profiles, production-pipeline ch. 5) · dialogue language + route (native test take / audio dub / video dub — SKILL Workflow 1). Interaction contract (SKILL.md Workflow 1): one grouped question message, then ASSUMED defaults, logged in the bible decision log.\n4. Style direction: user names a director/DoP or a mood → W7.\n5. Create the production bible (ch. 22, template 22b) BEFORE the first asset order — every project, even one that looks like a single session (SKILL rule 11); register the decisions above as canon. The bible's Verify-line row is never left empty: with a recipe, copy its Verify line; without one, write a DEFAULT VERIFY LINE of three binary checks derived from the style anchor and the genre baseline defaults, e.g. \"palette = anchor palette? · key light from the stated side and motivated? · sequence camera grammar as planned?\" — label it DEFAULT so W7 can replace it if a recipe is chosen later.\nExit: bible exists, container chosen, look decided, model stack named (Render-ID tokens fixed in bible section B1), Verify line present.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [
+      {
+        "sourceName": "SKILL.md",
+        "entryIDs": [
+          "skill-9fc6d6e46c26",
+          "skill-dceff66d0b82",
+          "skill-97ff9b201107",
+          "skill-c1c24ea6da18",
+          "skill-705399a08ca6",
+          "skill-05a8c920538c",
+          "skill-f468f0c333ce",
+          "skill-a9c8ddc59709",
+          "skill-cffc1e447b50",
+          "skill-11d6f150df4d",
+          "skill-2e42f043c413",
+          "skill-da7177bac7a7"
+        ]
+      },
+      {
+        "sourceName": "genre-baselines.md",
+        "entryIDs": [
+          "genre-baselines-c56dc8097a52",
+          "genre-baselines-41eb04e85ab9",
+          "genre-baselines-388bc706ea77",
+          "genre-baselines-bf25776c9d83",
+          "genre-baselines-5cf688811c5e",
+          "genre-baselines-26a2df9e7d9a",
+          "genre-baselines-7c42d9ae1707",
+          "genre-baselines-d3d8f306e5b2",
+          "genre-baselines-37d395f687f6",
+          "genre-baselines-e477db36b513",
+          "genre-baselines-6dd720cce1ef",
+          "genre-baselines-5cabde8905e6",
+          "genre-baselines-fc0343dda7d2",
+          "genre-baselines-38db61f05ab2",
+          "genre-baselines-aa2f4a1f1e43"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "workflows-d91a72e57720",
+    "title": "W2 — Asset & reference-pool build-out (trigger: project has a bible, no approved assets yet; or a new character/location/prop enters)",
+    "ancestry": [
+      "Workflows: The Typical Jobs, as Runbooks (ch. 25)",
+      "W2 — Asset & reference-pool build-out (trigger: project has a bible, no approved assets yet; or a new character/location/prop enters)"
+    ],
+    "kind": "procedure",
+    "applicationContract": "runbooks",
+    "source": {
+      "path": "references/workflows.md",
+      "startLine": 13,
+      "endLine": 21,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/workflows.md#L13",
+      "sha256": "a328714e47f14f9c5975aed4058de8f5ef7fbf6225115a77267c566e10231fa3"
+    },
+    "contentMarkdown": "## W2 — Asset & reference-pool build-out (trigger: project has a bible, no approved assets yet; or a new character/location/prop enters)\n1. Order of build per the production-pipeline ch. 1 build-order rule — case (a) default: location plates → characters → props → composite stills; case (b) stylized 3D/Pixar: character sheets first, figure-anchored plates, then derived empty plates (pixar-look §8); case (c) any project with a blockout stage (W10): sheets → blockout → plates.\n2. Per character: minimal sheet (or animation variant: 1 pose + 8 expressions), defensive anatomy locks, one-face rule, iterated to the anchor standard (production-pipeline ch. 3). Persistent state changes = NEW state sheets, never prompt adjectives. Each order ships as a Render Slate + still prompt (asset order shape, production-pipeline ch. 3).\n3. Per location: master wide + 2–3 detail plates at ONE exposure; decide reverses UP FRONT (production-pipeline ch. 4 / ch. 16 — late reverse plates are the most expensive single mistake; in a storyboard-first project the camera setup system of ch. 2 IS this decision). Location needs counter-angles (dialogue, cross-room action)? Produce the plates NOW at rung-3 tools — a purpose-built angle tool IF the live Higgsfield shell has one (production-pipeline ch. 16 tool section: undated, verify in the tool picker and mint a fresh receipt first) or GPT Image 2 WITH the layout map or master plate as input, never free-text \"same scene from behind\" — and reverse-test against the master (anchors, openings, light side, palette; production-pipeline ch. 16 rung 3, platforms-models ch. 13b). The coverage ladder of W6 is for angles needed on an EXISTING take; it does not delay planned plates.\n4. Build the reference POOL as a deliverable (ch. 14b) = the bible's asset registry (section B3): wardrobe details, prop stills, style stills, motion clips, voice/audio refs, clay blockouts — one reference for every element that must stay consistent anywhere, each row carrying its reference class (@Image / @Video / @Audio / @Clay Render).\n5. Register everything as named elements with EXACT tag names (@hero, @loc_x, @anchor_1A); a name mismatch silently unbinds (production-pipeline ch. 5b; token form per surface: video-prompting ch. 12b).\n6. Lock gate per LEAD asset (recurring characters, hero locations, hero props): ten-of-ten stress test (production-pipeline ch. 3 — ten generations with the sheet attached, varied pose and light, recognisable in ten of ten; run as image-model stills at draft tier — the cheap form — a fail means the description/sheet is wrong, not the model: fix and re-run). Only after it passes may the bible status move approved → locked (user approval still required, bible rule 3); cameos, extras and one-scene props stop at approved. The motion ladder is the STYLE/model gate and runs once per model in W7 step 4, not per asset.\nExit: every element the script needs exists as an approved, tagged reference; leads have passed the lock gate; bible asset registry updated.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "workflows-ef7dba1933ce",
+    "title": "W3 — Produce one shot (trigger: a numbered shot needs its first take)",
+    "ancestry": [
+      "Workflows: The Typical Jobs, as Runbooks (ch. 25)",
+      "W3 — Produce one shot (trigger: a numbered shot needs its first take)"
+    ],
+    "kind": "procedure",
+    "applicationContract": "runbooks",
+    "source": {
+      "path": "references/workflows.md",
+      "startLine": 22,
+      "endLine": 30,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/workflows.md#L22",
+      "sha256": "39487ca7f7029fe1c4d93fa80f5f1f5a4544cb64409ca6ad8ce3fc90353810ba"
+    },
+    "contentMarkdown": "## W3 — Produce one shot (trigger: a numbered shot needs its first take)\n1. CANON: read the beat in treatment/script/bible (rule 13; canon-bound vs craft-fillable content per rule 13) — content before platform, same order as the per-prompt checklist.\n2. ROUTE RECEIPT: mint or reuse the project KEY and write its RECEIPT line (SKILL.md Scope & version) in one of its two states — `live-checked <date>` when you or the user read the live form in THIS session, else `from reference <KEY>` with the stored key's own date. A from-reference receipt (rule 16) is enough to draft; live confirmation is the Generate-time gate, done by whoever has the form open. Do not choose controls until the receipt exists.\n3. Lint the shot against `renderability.md` (red list §2, rescues §3) — rewrite or attach a rescue BEFORE spending a render.\n4. Stills-first: generate the shot's still (per-prompt checklist; style mechanics per style-control §2–4 for the routed model) → user approves → register as `@anchor_<shot>`.\n5. Motion test as a BATCH OF 4 at draft resolution (480/720p, 10 s; production-pipeline ch. 10 batch protocol — watch all four fully: one odd take is a roll, four are the prompt) with the anchor attached as a tagged reference, take opening in motion (start-frame slot only for rule 1's two cases — say which path in the slate); judge with the project's Verify line (recipe's, or the default line from W1 step 5) + shot criteria (review loop, production-pipeline ch. 1; verdict order post-audio-legal ch. 19). When the agent cannot view the result, the director answers the six passes (SKILL checklist step 7).\n6. Production take only after the motion test sits: target resolution, full duration — a new generation of the locked prompt (same Render ID, new settings row), not an extension of the draft take. **Exception (🟡 [PP]):** when the target-resolution generation loses scale or structure the draft had, route draft → scoped `video_edit` / upscale (W5, post-audio-legal ch. 17) instead of rerolling — a new Take ID (bible rule 3); offered, never forced, and draft pixels never go into the final. A defect accepted at the still stage propagates — surface that trade-off, the user decides.\nExit: approved take; anchor + statuses + render/take log rows in the bible.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [
+      {
+        "sourceName": "SKILL.md",
+        "entryIDs": [
+          "skill-9fc6d6e46c26",
+          "skill-dceff66d0b82",
+          "skill-97ff9b201107",
+          "skill-c1c24ea6da18",
+          "skill-705399a08ca6",
+          "skill-05a8c920538c",
+          "skill-f468f0c333ce",
+          "skill-a9c8ddc59709",
+          "skill-cffc1e447b50",
+          "skill-11d6f150df4d",
+          "skill-2e42f043c413",
+          "skill-da7177bac7a7"
+        ]
+      },
+      {
+        "sourceName": "renderability.md",
+        "entryIDs": [
+          "renderability-1b6016907c61",
+          "renderability-d58da1655e55",
+          "renderability-111b29259b37",
+          "renderability-0a1e0a4a4edc",
+          "renderability-32075c011ed3",
+          "renderability-d07031e108b5",
+          "renderability-28385106c00e",
+          "renderability-4074c75ffcb1"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "workflows-9ff2b6097758",
+    "title": "W4 — Build a scene/sequence (trigger: several shots of one scene; anything longer than one take)",
+    "ancestry": [
+      "Workflows: The Typical Jobs, as Runbooks (ch. 25)",
+      "W4 — Build a scene/sequence (trigger: several shots of one scene; anything longer than one take)"
+    ],
+    "kind": "procedure",
+    "applicationContract": "runbooks",
+    "source": {
+      "path": "references/workflows.md",
+      "startLine": 31,
+      "endLine": 37,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/workflows.md#L31",
+      "sha256": "043e70034b264f607924a2f06ea9b5c8b8ea80a96fc881903c90eafc224b7324"
+    },
+    "contentMarkdown": "## W4 — Build a scene/sequence (trigger: several shots of one scene; anything longer than one take)\n1. Plan in shots (4–12 s), generate in takes: 1–3 internal shots per take (single shot for calm single-event beats, 2–3 only where a cut is needed for pace or coverage — production-pipeline ch. 2), every internal shot's anchor attached and time-scoped (production-pipeline ch. 1), explicit ENDING STATE, never a dramatic peak at a take's end (SKILL rule 2, ch. 14).\n2. Chain takes with state chaining: each take's prompt begins from the previous ENDING STATE (\"continue forward, do not replay\"). Pick ONE join mechanism per model, never both for the same join: Seedance 2.5 → `video_extension` (30 s base + ONE extension round ≈60 s, boundary-frame contract each round from the last CLEAN frame of the raw export, then re-anchor a NEW generation from the original references — ch. 14b; no cold stitching, no harvested start frame; harvest the source's last frame only to WRITE the boundary state); models without a native extension mode (Seedance 2.0; check renderability §6 for others) → harvest the final frame as the next take's start frame — the chain case, the one place a start frame is doctrine; outside chained continuation the anchor is a reference, not a start frame (production-pipeline ch. 1).\n3. Dialogue scenes: shot/reverse-shot with the multi-plate set + 180° lock (production-pipeline ch. 7; multi-plate set platforms-models ch. 13b); strongest lock = 3D blockout path (production-pipeline ch. 8). No recipe overrides the in-take axis lock (director-recipes header).\n4. Assemble; the score is built in post — never in the video model (rule 9).\nExit: scene cut together from approved takes; continuity ledger (bible section B7) updated (ch. 19).\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "workflows-0979effa719d",
+    "title": "W5 — Repair a faulty take (trigger: a take that passed the hard rejects and won its batch by emotion — post-audio-legal ch. 19 verdict order — has a local fault)",
+    "ancestry": [
+      "Workflows: The Typical Jobs, as Runbooks (ch. 25)",
+      "W5 — Repair a faulty take (trigger: a take that passed the hard rejects and won its batch by emotion — post-audio-legal ch. 19 verdict order — has a local fault)"
+    ],
+    "kind": "procedure",
+    "applicationContract": "runbooks",
+    "source": {
+      "path": "references/workflows.md",
+      "startLine": 38,
+      "endLine": 53,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/workflows.md#L38",
+      "sha256": "f7c6c9a4b0bbd7236f6a65e2f35daed128a107e18f5f48aac0ed33ec907c7007"
+    },
+    "contentMarkdown": "## W5 — Repair a faulty take (trigger: a take that passed the hard rejects and won its batch by emotion — post-audio-legal ch. 19 verdict order — has a local fault)\nSeedance 2.5: never reroll an approved take for a local fault (rule 12) — route by the table. Other models: use the last two rows.\n| Fault | Fix |\n|---|---|\n| Wrong object/face/detail in a region or time window | `video_edit`, region description + explicit time scope (ch. 14b/14) |\n| Right performance, wrong camera | camera-perspective edit — segmented camera plan, everything else locked (ch. 14b); [PP]-unproven, one test, then rung 3 of W6 |\n| Right performance, wrong environment | green-screen relocation via `omni_reference` (ch. 14b) |\n| Wrong subject, right timeline | subject swap + Timeline Inheritance clause (ch. 14) |\n| Audio only (music/voice/language/SFX) | audio-category edit — never touch pixels (ch. 14b) |\n| Too short / scene continues | `video_extension` with boundary-frame contract (ch. 14b) |\n| Wrong object, prop, wardrobe or location in an existing clip, any model's output, on Higgsfield | **Genjutsu — Object Swap** (Video → model selector → Genjutsu; one clip ≤30 s + up to 30 reference photos, output ≤1080p; `HF-WEB@2026-09-04`, changelog 2026-09-01) — untested here [🟡]; confirm the live form and treat the result as a new Take ID |\n| Model/surface has no scoped edit route for this fault (Seedance 2.0, Kling, Veo, Grok; check the model's quick profile, renderability §6, and the surface in platform-ui-workflows — Runway = Aleph 2.0 Edit Studio, H3 = V2V edit) | harvest clean 2–4 s as coverage (production-pipeline ch. 10), fix the weakest instruction, regenerate; `extend` only where the model offers it (Veo 3.1, Seedance) |\n| Fault is global (style, light, physics everywhere) | back to the prompt: fix the weakest instruction, regenerate (production-pipeline ch. 1 review loop) |\nConstraints (ch. 14b): source ≤20 s recommended, 1–5 refs; edits bill the source's full duration; ≤3 edit rounds per source, then branch from the best intermediate .mov export as the new @Video 1 (ch. 14b edit-round ceiling). Every edit result is a new Take ID (bible rule 3).\nExit: fixed take approved; its RECEIPT KEY and render/take log row noted in the bible.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "workflows-de63f05d633e",
+    "title": "W6 — Get a new angle / coverage (trigger: a reverse, insert, or B-camera view is needed on an EXISTING take or approved still set; planned reverse plates for dialogue/cross-room sets are pre-production → W2 step 3)",
+    "ancestry": [
+      "Workflows: The Typical Jobs, as Runbooks (ch. 25)",
+      "W6 — Get a new angle / coverage (trigger: a reverse, insert, or B-camera view is needed on an EXISTING take or approved still set; planned reverse plates for dialogue/cross-room sets are pre-production → W2 step 3)"
+    ],
+    "kind": "procedure",
+    "applicationContract": "runbooks",
+    "source": {
+      "path": "references/workflows.md",
+      "startLine": 54,
+      "endLine": 61,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/workflows.md#L54",
+      "sha256": "319eac50d236b5125e155aa806c0ba5aeeb56acee03ae6d1a309124c9787f845"
+    },
+    "contentMarkdown": "## W6 — Get a new angle / coverage (trigger: a reverse, insert, or B-camera view is needed on an EXISTING take or approved still set; planned reverse plates for dialogue/cross-room sets are pre-production → W2 step 3)\nClimb the ladder, exhaust each rung (ch. 16):\n1. New angles as internal shots of the SAME take (cheapest, most reliable).\n2. Harvest frames from an existing successful generation as references (last frame + \"continue forward, do not replay\"); or ONE camera-perspective edit on the approved take (B-camera pass — [PP]-unproven, budget one test only, bills the source's full duration; ch. 16 rung 2, ch. 14b). A failed single test → rung 3, not a second edit.\n3. Still needed as a STILL: a purpose-built angle tool IF the live Higgsfield shell has one (production-pipeline ch. 16 tool section: undated, verify in the tool picker and mint a fresh receipt first) or GPT Image 2 WITH a layout map — never free-text \"same scene from behind\". Reverse test: anchors, openings, light side, palette against the master plate.\n4. Nothing pins → geometry inputs: 3D blockout/clay render (production-pipeline ch. 8; video-prompting ch. 14b).\nExit: coverage that passes the reverse test.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "workflows-35ea99e846a8",
+    "title": "W7 — Define & lock a style (trigger: user names a director/film/mood, or the look drifts)",
+    "ancestry": [
+      "Workflows: The Typical Jobs, as Runbooks (ch. 25)",
+      "W7 — Define & lock a style (trigger: user names a director/film/mood, or the look drifts)"
+    ],
+    "kind": "procedure",
+    "applicationContract": "runbooks",
+    "source": {
+      "path": "references/workflows.md",
+      "startLine": 62,
+      "endLine": 69,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/workflows.md#L62",
+      "sha256": "c8259c5978f298da91ff2313f2e78382229a0d125cdcb550ab8fef4471012ed9"
+    },
+    "contentMarkdown": "## W7 — Define & lock a style (trigger: user names a director/film/mood, or the look drifts)\n1. User names a direction → `director-recipes.md` selection index; cap = ONE director recipe + at most ONE DoP signature (two packages, one dominant); two directors named → synthesis (selection index step 6), never two recipes side by side.\n2. Build the project style anchor (the style-contract paragraph) from look-defining references via LLM reverse-engineering (style-control §7), or from the vocabulary packages (style-control §6) — plus its 4–8 look tokens (SKILL.md Workflow step 4).\n3. Stylized 3D: figure anchor or style-forcing blocks (SKILL rule 8; pixar-look §8/§9).\n4. Validate on ONE still + one motion-ladder test per model before rolling out (style-control §5b); the recipe's Verify line becomes the standing reroll gate (replacing a DEFAULT line from W1 step 5).\n5. Write the final style anchor + look tokens into the bible (section B2); from then on it is canon, distributed into every prompt per SKILL.md Workflow step 4.\nExit: style anchor + look tokens + Verify line in the bible + a passing verify still.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [
+      {
+        "sourceName": "SKILL.md",
+        "entryIDs": [
+          "skill-9fc6d6e46c26",
+          "skill-dceff66d0b82",
+          "skill-97ff9b201107",
+          "skill-c1c24ea6da18",
+          "skill-705399a08ca6",
+          "skill-05a8c920538c",
+          "skill-f468f0c333ce",
+          "skill-a9c8ddc59709",
+          "skill-cffc1e447b50",
+          "skill-11d6f150df4d",
+          "skill-2e42f043c413",
+          "skill-da7177bac7a7"
+        ]
+      },
+      {
+        "sourceName": "director-recipes.md",
+        "entryIDs": [
+          "director-recipes-ead52cc58afb",
+          "director-recipes-056ac0ea6c03",
+          "director-recipes-ed7e5494d54b",
+          "director-recipes-17cfc8bdffd7"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "workflows-ca2a59d14ade",
+    "title": "W8 — A generation keeps failing (trigger: one prompt has failed on the same axis on a full batch of 4, or two iterations in a row)",
+    "ancestry": [
+      "Workflows: The Typical Jobs, as Runbooks (ch. 25)",
+      "W8 — A generation keeps failing (trigger: one prompt has failed on the same axis on a full batch of 4, or two iterations in a row)"
+    ],
+    "kind": "procedure",
+    "applicationContract": "runbooks",
+    "source": {
+      "path": "references/workflows.md",
+      "startLine": 70,
+      "endLine": 77,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/workflows.md#L70",
+      "sha256": "84e80f878d3d45d8a07e1c8ea8d0d3c605a833705f335696663edba8ac7f33b9"
+    },
+    "contentMarkdown": "## W8 — A generation keeps failing (trigger: one prompt has failed on the same axis on a full batch of 4, or two iterations in a row)\n1. Suspect the PROMPT first (in first-party production sessions [PP, 🟡 heuristic, not a measured statistic] roughly 8 of 10 presumed model limits were prompt faults, SKILL rule 14): lint for internal contradictions, missing positive lock on the failing axis, stacked instructions on one axis, meta commentary (ch. 24b).\n2. Count in ITERATIONS (one prompt revision judged on one batch of 4, production-pipeline ch. 10): one or two weird rolls are rolls — reroll; four bad rolls = a failed iteration. Iterations 1–3: surgical fixes, one line per iteration.\n3. After the 3rd failed iteration: rewrite short from scratch AND change CHANNEL, not vocabulary: reference/sketch/mask/clay render/seed reroll/other model (ch. 24b contract item 7; stills ladders ch. 24c–g; video ch. 14b).\n4. Only after that clean minimal prompt fails twice on the same axis (two clean iterations, at least two channels): declare a model limit, route the shot to another model (renderability §6) or rescue/rewrite the beat (renderability §3 rescue paths). Flag a kept risk in the delivery risk register (SKILL rule 10) and, at close, in the shot board's Risk → rescue cell.\n5. Budget per shot across all steps: 10–15 iterations → simplify the SHOT (split it, remove an action, change the angle), not the words (production-pipeline ch. 10).\nExit: working result, or a documented model limit with a rescue.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "workflows-4d964bcaead8",
+    "title": "W9 — Session open & close (trigger: every working session in an existing project)",
+    "ancestry": [
+      "Workflows: The Typical Jobs, as Runbooks (ch. 25)",
+      "W9 — Session open & close (trigger: every working session in an existing project)"
+    ],
+    "kind": "procedure",
+    "applicationContract": "runbooks",
+    "source": {
+      "path": "references/workflows.md",
+      "startLine": 78,
+      "endLine": 81,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/workflows.md#L78",
+      "sha256": "dbb52f17fcd2eec3d155def9289bff34a4b8c5d6793eeadcbc0f8551d7bba36a"
+    },
+    "contentMarkdown": "## W9 — Session open & close (trigger: every working session in an existing project)\nOpen: load the production bible FIRST (rule 11); read only the files the active runbook step names; revalidate the RECEIPT line (SKILL.md Scope & version) for every active generation route before relying on a control — state `live-checked <date>` only for a form actually read this session, otherwise keep `from reference <KEY>`.\nClose: update the bible LAST — add each actual generation/edit's KEY and render/take log row (section B4b) to the shot board and the delivery's Render Slates; statuses only on user approval, decisions as canon, open risks into the shot board's Risk → rescue cell (copied from the delivery risk registers); reviews the agent could not perform as `TKnn — review pending (director)` in Handoff; nothing outside the bible is canon. Offer ONCE per project (bible decision log: `feedback-to-skill offer: made / declined`) to feed genuinely new production findings back to the public skill (generalized, no project content — SKILL.md closing section).\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [
+      {
+        "sourceName": "SKILL.md",
+        "entryIDs": [
+          "skill-9fc6d6e46c26",
+          "skill-dceff66d0b82",
+          "skill-97ff9b201107",
+          "skill-c1c24ea6da18",
+          "skill-705399a08ca6",
+          "skill-05a8c920538c",
+          "skill-f468f0c333ce",
+          "skill-a9c8ddc59709",
+          "skill-cffc1e447b50",
+          "skill-11d6f150df4d",
+          "skill-2e42f043c413",
+          "skill-da7177bac7a7"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "workflows-a32d2b8635bd",
+    "title": "W10 — Storyboard-first production model (trigger: a new project adopts the storyboard-first model; \"how do we go about this\" / \"wie gehen wir vor\"; any project with more than one camera axis per location, vertical geography, or a documented geography drift between takes)",
+    "ancestry": [
+      "Workflows: The Typical Jobs, as Runbooks (ch. 25)",
+      "W10 — Storyboard-first production model (trigger: a new project adopts the storyboard-first model; \"how do we go about this\" / \"wie gehen wir vor\"; any project with more than one camera axis per location, vertical geography, or a documented geography drift between takes)"
+    ],
+    "kind": "procedure",
+    "applicationContract": "runbooks",
+    "source": {
+      "path": "references/workflows.md",
+      "startLine": 82,
+      "endLine": 104,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/workflows.md#L82",
+      "sha256": "8889e6b21fd00c7402cbf147883a29ac4330d2ffbb97d295e0b36ad2f434791d"
+    },
+    "contentMarkdown": "## W10 — Storyboard-first production model (trigger: a new project adopts the storyboard-first model; \"how do we go about this\" / \"wie gehen wir vor\"; any project with more than one camera axis per location, vertical geography, or a documented geography drift between takes)\nEight gated stages. Each stage names its **Deliverable**, its **Gate** (what must exist before the next stage starts — a gate not passed means the next stage does not start) and its **Reads** (the only files opened in that stage). W10 adds no rules of its own: every rule it applies lives in the chapter it cites (build order ch. 1, anchor standard ch. 3, blockout trigger ch. 8, storyboard roles ch. 9, deliverable shape ch. 2, production-take exception W3 step 6); W10 fixes the ORDER in which W1–W3 and W7 run and inserts the two planning artefacts (camera setup system, take/cut table) the other runbooks consume.\n\n1. **Idea & brainstorming** — the director brings the idea; the agent moderates (story intake gate story-structures 23a, container offer 23f, causal change lint 23g). Reads: `genre-baselines.md` if a genre is named, `story-structures.md` 23a/23f/23g. Deliverable: logline + beat chain as a DRAFT proposal (SKILL rule 13), every beat written cause→effect (rule 15). Gate: the director confirms the logline AND the beat chain; an unconfirmed beat is not drawn in stage 3.\n2. **Project briefing / bible** — create the bible (production-bible 22b) with story, look contract (W7 if a style is named), character/location/prop list (names + planned statuses), format, length, platform, model stack (W1 steps 3–5). Reads: `production-bible.md` 22a/22b, `renderability.md` §2–3, W1. Then the **renderability lint of the briefing**: classify EVERY beat against the renderability §2 rows — in particular \"Physics as hero\", \"Tiny hero object\", \"Dark, figure-less macro\", \"Continuous approach over distance\", \"Cut back onto the same emissive object\", \"Long continuous camera moves\", \"Wide shots\". Every red beat receives an ellipsis or still rescue (renderability §3) or is cut — BEFORE the storyboard. Why: these beat classes are the documented time-eaters; a storyboard that draws them plans shots that never come out. Deliverable: bible B1–B3 filled, beat-level risk register (SKILL rule 10 shape, Decision column filled by the director). Gate: bible exists; no beat is red without a decided rescue.\n3. **Storyboard = shot planning** — deliver the STORYBOARD of production-pipeline ch. 2, all four parts: (1) camera setup system per location, (2) look-free panels with setup tags and a/b pairs, (3) take/cut table with the state ladder, (4) layout map — and the ranking stated there (setup system + table + ladder + anchors bind; panels are the director's checking view). Reads: `production-pipeline.md` ch. 2 (shape, rules, export schema), ch. 4 (the setup system IS the reverse decision), ch. 8 (layout map), ch. 9 (storyboard roles; grey sketch template); `film-craft.md` for coverage grammar. Tool: **FilmFlow Pro** (`FILMFLOW-WEB@2026-09-07`, platform-ui-workflows ledger) is the recommended environment for stages 2–3 IF (a) its frames stay look-free (sketch/clay, no rendered look) and (b) it yields an agent-readable export in the ch. 2 schema; otherwise a Markdown shot board + grey image-model sketches. Gate: director sign-off on all four parts; the storyboard is linked in bible section B3b with version and sign-off date. From here every prompt is written from panel + setup line + take row — never from prose.\n4. **Character & prop sheets (Elements)** — BEFORE the blockout: build-order case (c) of production-pipeline ch. 1 (the blockout needs the proportions; body length is the scale unit of the layout map). W2 steps 2, 5 and 6 per character; prop sheets and state pairs per the state ladder (ch. 4). Iterate every sheet to the **anchor standard** (ch. 3: exact, never \"good enough\"). Reads: `production-pipeline.md` ch. 1 (order), ch. 3–4, `style-control.md` for the routed still model, W2. Gate: sheets approved (leads through the W2 step-6 lock gate), scale written as object relations in B3 (ch. 4).\n5. **3D blocking / blockout** — the ch. 8 blockout, run as a stage under the **blockout trigger rule** (ch. 8: optional for one axis + flat geography, mandatory for vertical geography, several axes, or documented drift): one scene per location, every panel placed as a camera on it; viewport render per the ch. 8 blockout-video requirements (24 fps, overlays off, 3–5 s per move, ≈30 s reference budget) as the `@Clay Render` staging reference — role split blockout = camera/blocking/timing, images = look (ch. 8 mandatory companions). Tool-neutral (ch. 8 evidence tiers; Blender + Bridge MCP `HF-BRIDGE-MCP@2026-09-04` is the documented baseline). Reads: `production-pipeline.md` ch. 8, `video-prompting.md` ch. 14b (reference budgets, @Clay Render role line). Gate: blockout frames match the panels (framing, position, gaze direction); a mismatch is fixed in the blockout or marked on the panel — the panel is never redrawn to match the blockout.\n6. **Location anchors** — plates AFTER the blockout (ch. 1 case (c)): the blockout frame or the layout schematic is the geography reference of the plate prompt, the look comes from the style contract (B2); light openings described as geometry per ch. 4. W2 step 3 and production-pipeline ch. 4 per location, one plate per setup that needs its own view. Storyboard panels never enter a generation (ch. 9 storyboard roles). Reads: `production-pipeline.md` ch. 4, `style-control.md`, W2 step 3. Gate: anchors exact (anchor standard, ch. 3) — light direction, scale, geography match the layout map.\n7. **Test takes at draft tier (720p)** — per take W3 steps 1–5: canon from panel + take row, receipt, lint, still anchor, batch of 4 at 720p; rule-14 iteration count. Reads: W3, W4 (chaining), W8 (failing), `video-prompting.md` ch. 12/14. Gate: the STRUCTURE of the take holds — cuts land on the take-table timecodes, continuity states in and out match, identities hold. Polish is not judged here.\n8. **Production takes (1080p / 4K)** — W3 step 6: a new generation of the locked prompt at target resolution by default; its documented exception (draft → `video_edit` / upscale when the reroll loses scale or structure) applies as written there. Never cut draft pixels into the final: the draft cut fixes structure, not pixels. Then picture lock → audio → grade as dated stages (post-audio-legal ch. 17/18; dates in B6, state in B8). Reads: W3 step 6, W5, `post-audio-legal.md` ch. 17–19.\nExit: storyboard, setup system and take/cut table in the bible as canon (B3b, B4 columns filled); every shot at status ≥ take; picture lock dated.\n\n**W10 house rules** (each lives in the chapter named; listed here so a session sees them together):\n- Anchor standard — iterate until exact, deadline pressure does not lower it (production-pipeline ch. 3).\n- A post-state needs a visible cause in frame — break point, debris, crack — or it reads as placed (state ladder, ch. 2; state pairs, ch. 4).\n- Continuity between takes = the join mechanism of W4 step 2 (keeper's end frame per rule 1) + a position lock over all internal shots + one axis (ch. 6 position lock).\n- Scale only as object relations, never adjectives (ch. 4; image-model-logic 24b).\n- Light openings as geometry; light-geometry words generate rays (ch. 4).\n- Actions as two states, uninvolved objects fixed, gaze written after every action (ch. 6 position lock).\n- Panels from an image model are independent inventions — consistency comes from the setup system on paper and the blockout in geometry; the storyboard says WHAT must stay the same, the blockout says HOW (ch. 9 storyboard roles).\n- A storyboard without a camera setup system is unusable — free camera positions per panel produce the perspective inconsistency that later shows up in the takes (ch. 2).\n- A storyboard is canon only when linked in the bible (section B3b); a document beside the bible is ignored by the next session.\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [
+      {
+        "sourceName": "film-craft.md",
+        "entryIDs": [
+          "film-craft-2248687307ab",
+          "film-craft-570fba3d71dd",
+          "film-craft-67a9384f75ea",
+          "film-craft-b70a3b38e137",
+          "film-craft-53cc6a016d88",
+          "film-craft-250a592981e5",
+          "film-craft-08c1a1b2c538",
+          "film-craft-3467e7856eaf",
+          "film-craft-9ebd24a43e12",
+          "film-craft-56d3d772fec2"
+        ]
+      },
+      {
+        "sourceName": "genre-baselines.md",
+        "entryIDs": [
+          "genre-baselines-c56dc8097a52",
+          "genre-baselines-41eb04e85ab9",
+          "genre-baselines-388bc706ea77",
+          "genre-baselines-bf25776c9d83",
+          "genre-baselines-5cf688811c5e",
+          "genre-baselines-26a2df9e7d9a",
+          "genre-baselines-7c42d9ae1707",
+          "genre-baselines-d3d8f306e5b2",
+          "genre-baselines-37d395f687f6",
+          "genre-baselines-e477db36b513",
+          "genre-baselines-6dd720cce1ef",
+          "genre-baselines-5cabde8905e6",
+          "genre-baselines-fc0343dda7d2",
+          "genre-baselines-38db61f05ab2",
+          "genre-baselines-aa2f4a1f1e43"
+        ]
+      },
+      {
+        "sourceName": "post-audio-legal.md",
+        "entryIDs": [
+          "post-audio-legal-5949409d78e1",
+          "post-audio-legal-d966bfa722d1",
+          "post-audio-legal-9aca3116b4f9",
+          "post-audio-legal-fd0a7b340780",
+          "post-audio-legal-1c65925d87d5"
+        ]
+      },
+      {
+        "sourceName": "production-bible.md",
+        "entryIDs": [
+          "production-bible-c3cd847c925c",
+          "production-bible-3072a82d206e",
+          "production-bible-a27a5ed127e1",
+          "production-bible-667997dee933",
+          "production-bible-82235e8038c5",
+          "production-bible-f5df78b14f2f"
+        ]
+      },
+      {
+        "sourceName": "production-pipeline.md",
+        "entryIDs": [
+          "production-pipeline-3e7423e91475",
+          "production-pipeline-fe8ae664fb1e",
+          "production-pipeline-0fdca1da8970",
+          "production-pipeline-524c7d64a7f3",
+          "production-pipeline-41c7b8294114",
+          "production-pipeline-455241c73ce4",
+          "production-pipeline-f7091f27c6d1",
+          "production-pipeline-668103488e98",
+          "production-pipeline-d16d62c31ae0",
+          "production-pipeline-d1f0cfe8e195",
+          "production-pipeline-3f320156d67f",
+          "production-pipeline-a2fb95cff485",
+          "production-pipeline-446e57806ce5",
+          "production-pipeline-99e7beb6f331",
+          "production-pipeline-1bb10d449ca5",
+          "production-pipeline-b4b53fe52130",
+          "production-pipeline-9bf4e03af57e",
+          "production-pipeline-f418e48ce02f"
+        ]
+      },
+      {
+        "sourceName": "renderability.md",
+        "entryIDs": [
+          "renderability-1b6016907c61",
+          "renderability-d58da1655e55",
+          "renderability-111b29259b37",
+          "renderability-0a1e0a4a4edc",
+          "renderability-32075c011ed3",
+          "renderability-d07031e108b5",
+          "renderability-28385106c00e",
+          "renderability-4074c75ffcb1"
+        ]
+      },
+      {
+        "sourceName": "story-structures.md",
+        "entryIDs": [
+          "story-structures-7abc87b68e5a",
+          "story-structures-90eb64a2ea6a",
+          "story-structures-aa0a70987b00",
+          "story-structures-7b9e691860d5",
+          "story-structures-a2ef1752ee94",
+          "story-structures-2461c94b52af",
+          "story-structures-7e4cbcfc1e56",
+          "story-structures-ac4719f483f6",
+          "story-structures-8b5165de10fc",
+          "story-structures-810d3217fe16"
+        ]
+      },
+      {
+        "sourceName": "style-control.md",
+        "entryIDs": [
+          "style-control-671a457dd443",
+          "style-control-79b3e6b7c14b",
+          "style-control-2cf209a10276",
+          "style-control-f84b2ba9034a",
+          "style-control-481af1471ae1",
+          "style-control-7665e999d1da",
+          "style-control-63a866503413",
+          "style-control-b73f6f0f3ffe",
+          "style-control-bfffd977ce4d",
+          "style-control-cbe1c1252598",
+          "style-control-c58bd9c5a494",
+          "style-control-666cdb1219e7",
+          "style-control-ab661985aaa4",
+          "style-control-d208337fba85",
+          "style-control-2baa47554330",
+          "style-control-23d9278937c0",
+          "style-control-ff888ede11ee",
+          "style-control-73867a0b4daf",
+          "style-control-5257ea810f14",
+          "style-control-7b703384f157",
+          "style-control-da4feb1794ad",
+          "style-control-fc8ef8be9186"
+        ]
+      },
+      {
+        "sourceName": "video-prompting.md",
+        "entryIDs": [
+          "video-prompting-6ebc68114145",
+          "video-prompting-b8193dd15dd6",
+          "video-prompting-ddfa67879961",
+          "video-prompting-33ae6df5c3f0",
+          "video-prompting-4a8d407dff7a",
+          "video-prompting-a3510dce6126",
+          "video-prompting-f6e454e1d76b",
+          "video-prompting-5275ee1254bc",
+          "video-prompting-d87cde00835d",
+          "video-prompting-cd15da11c9c9",
+          "video-prompting-77153717e7be",
+          "video-prompting-3145b34f3b5d",
+          "video-prompting-39026ee6df7f",
+          "video-prompting-cb91fd3500e1",
+          "video-prompting-2d077c405e26",
+          "video-prompting-ae84e7dfae96"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  }
+]

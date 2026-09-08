@@ -29,6 +29,7 @@ on:
       - 'Sources/NexGenVideo/App/AppRelaunchSelfTest.swift'
       - 'Sources/NexGenVideo/App/ExampleAudioAnalysisSelfTest.swift'
       - 'Sources/NexGenVideo/App/main.swift'
+      - 'Sources/NexGenVideo/Utilities/HangDiagnostic*.swift'
       - 'Sources/NexGenVideo/Project/HomeView.swift'
       - 'Sources/NexGenVideo/Project/UpdateOverlay.swift'
       - 'Sources/NexGenVideo/Inspector/Cockpit/NativeCockpitReader.swift'
@@ -198,3 +199,36 @@ jobs:
           name: NexGenVideo-app
           path: .build/NexGenVideo.zip
           if-no-files-found: error
+
+  diagnostic-startup:
+    needs: bundle-app
+    runs-on: macos-26
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: diagnostic-release-evidence
+          run-id: 34175620480
+          github-token: ${{ github.token }}
+          path: control
+      - name: Prove shipped build 97 misses normal recorder startup
+        run: |
+          ditto -x -k control/diagnostic-app.zip control
+          python3 scripts/verify_hang_startup.py control/NexGenVideo.app --expect-missing-recorder --output evidence/control.json
+      - uses: actions/download-artifact@v4
+        with:
+          name: NexGenVideo-app
+          path: candidate
+      - name: Verify normal startup and disabled preference
+        run: |
+          ditto -x -k candidate/NexGenVideo.zip candidate
+          python3 scripts/verify_hang_startup.py candidate/NexGenVideo.app --output evidence/candidate.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diagnostic-normal-startup
+          path: evidence/*.json

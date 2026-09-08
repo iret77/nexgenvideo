@@ -8,6 +8,21 @@ struct EditorView: NSViewControllerRepresentable {
         EditorSplitViewController(editor: editor)
     }
 
+    func sizeThatFits(_ proposal: ProposedViewSize, nsViewController: EditorSplitViewController,
+                      context: Context) -> CGSize? {
+        Self.containerSize(for: proposal)
+    }
+
+    // The window allocates the editor; measuring nested hosting views feeds content back into its size.
+    static func containerSize(for proposal: ProposedViewSize) -> CGSize {
+        func dimension(_ value: CGFloat?, fallback: CGFloat) -> CGFloat {
+            guard let value, value.isFinite else { return fallback }
+            return max(0, value)
+        }
+        return CGSize(width: dimension(proposal.width, fallback: AppTheme.Window.projectDefault.width),
+                      height: dimension(proposal.height, fallback: AppTheme.Window.projectDefault.height))
+    }
+
     func updateNSViewController(_ controller: EditorSplitViewController, context: Context) {
         controller.applyLayoutIfNeeded(editor.layoutPreset)
         controller.applyFocusIfNeeded(editor.workspaceFocus)
@@ -549,6 +564,8 @@ private final class PanelHostingController<Content: View>: NSViewController, Pan
         hostingController = NSHostingController(rootView: rootView)
         self.panel = panel
         super.init(nibName: nil, bundle: nil)
+        // The split view owns panel geometry; content must not feed sizes back into Auto Layout.
+        hostingController.sizingOptions = []
     }
 
     @available(*, unavailable)
@@ -586,7 +603,10 @@ private final class PanelHostingController<Content: View>: NSViewController, Pan
         super.viewDidLayout()
         let inset = AppTheme.Layout.panelGap / 2
         let bounds = view.bounds
-        hostingController.view.frame = bounds.insetBy(dx: inset, dy: inset)
+        let panelFrame = bounds.insetBy(dx: inset, dy: inset)
+        if hostingController.view.frame != panelFrame {
+            hostingController.view.frame = panelFrame
+        }
         focusRing.frame = bounds
         focusRing.path = CGPath(
             roundedRect: bounds.insetBy(dx: inset, dy: inset),

@@ -2,12 +2,33 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.5.6",
+      "date": "2026-09-08",
+      "sections": [
+        {
+          "heading": "Diagnostics",
+          "items": [
+            "Hang recording now resumes the selected recording mode on normal app launches. Disabled recording remains disabled.",
+            "Startup verification exercises the shipped application entry point instead of directly starting the recorder."
+          ]
+        },
+        {
+          "heading": "Appearance",
+          "items": [
+            "Music Video pack 0.5.6 aligns project accents with the magenta in its banner artwork."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.5.5",
       "date": "2026-09-08",
       "sections": [
         {
           "heading": "Fixes",
           "items": [
+            "Editor panels use the space assigned by the split view without generating competing content-size constraints during chat updates.",
+            "Model research accepts valid source titles and capability text in optimized builds while rejecting control characters.",
             "Selection questions retain their original casing and use readable text sizing without expanded letter spacing.",
             "Analysis navigation uses the same neutral styling as other pipeline destinations. Pack tabs no longer show a colored dot that can be mistaken for an error.",
             "Transcript blocks isolate descendant alignment during layout updates. The original reported UI hang remains under investigation."

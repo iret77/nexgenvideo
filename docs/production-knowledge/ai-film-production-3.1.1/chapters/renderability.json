@@ -1,0 +1,311 @@
+[
+  {
+    "id": "renderability-1b6016907c61",
+    "title": "Renderability: Green/Red Lists, Formats, Model Profiles",
+    "ancestry": [
+      "Renderability: Green/Red Lists, Formats, Model Profiles"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "feasibility",
+    "source": {
+      "path": "references/renderability.md",
+      "startLine": 1,
+      "endLine": 4,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/renderability.md#L1",
+      "sha256": "94e0b91c66cdde61b3241c745a9bb28286ad10c844313721bb038bc5cb500b4f"
+    },
+    "contentMarkdown": "# Renderability: Green/Red Lists, Formats, Model Profiles\n\nWhat current video models render reliably vs. what fails. Tags and confidence labels: legend in sources.md.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [
+      {
+        "sourceName": "sources.md",
+        "entryIDs": [
+          "sources-9de87ed0c000"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "renderability-d58da1655e55",
+    "title": "1. Green list (reliable)",
+    "ancestry": [
+      "Renderability: Green/Red Lists, Formats, Model Profiles",
+      "1. Green list (reliable)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "feasibility",
+    "source": {
+      "path": "references/renderability.md",
+      "startLine": 5,
+      "endLine": 7,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/renderability.md#L5",
+      "sha256": "ee2d2ed58deefd5f996c8256b62fbb35c9064c6caa62606a9bfd4b629c5f06c4"
+    },
+    "contentMarkdown": "## 1. Green list (reliable)\nSingle-subject action with one camera move · dialogue in shot/reverse-shot coverage · weather, fog, dust, embers · fire/water/smoke as atmosphere (not as hero physics) · slow reveals · stylized 3D (most forgiving discipline) · high-action anime · UGC/handheld realism · reflections and light rhythm across cuts (Seedance 2.5) · macro/product turns · creatures from image references.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "renderability-111b29259b37",
+    "title": "2. Red/yellow list (avoid or mitigate)",
+    "ancestry": [
+      "Renderability: Green/Red Lists, Formats, Model Profiles",
+      "2. Red/yellow list (avoid or mitigate)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "feasibility",
+    "source": {
+      "path": "references/renderability.md",
+      "startLine": 8,
+      "endLine": 27,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/renderability.md#L8",
+      "sha256": "e45218d0ed4a43d6930fa801df74fc9c287ce43d07930bd9cc7819530b178b32"
+    },
+    "contentMarkdown": "## 2. Red/yellow list (avoid or mitigate)\n| Element | Failure | Mitigation |\n|---|---|---|\n| **In-frame text — unified rule** | Text, logos, subtitles, formulas render as scribble or drift between frames | Default: ALL exact on-screen text goes to post-compositing (officially confirmed by the model vendor's guide). Two documented exceptions: (a) **static short text locked via master plate** — content frozen in the reference image + prompt lock \"exactly this one line, frozen and identical in every frame\" (production-proven, platforms-models ch. 13b); (b) 🟡 MiniMax H3 has an official quoted-text channel (visible text in double quotes, verbatim, untranslated [MM-off]) and renders UI/text comparatively stably — syntax documented, quality practitioner-rated: test before relying. Dynamic/changing text stays red everywhere. |\n| Crowds | Clone extras, melting faces in distance | Multi-variant sheet (production-pipeline ch. 3) with extras as silhouette-distinct CLASSES (\"heavy brute\" / \"light scout\") — classes, not outfit variants, kill the clone read; crowds to mid/background; small faces stay unreliable even at high res; fog capped at a stated distance (\"visibility 20 m\") hides background glitches at army scale (less needed at 4K, still works) [H-off, P25] |\n| Hands + fine object manipulation | Finger errors, object morphing | Close-ups only as short single-action beats, cut away before the fine work; the handling invariant is written as a POSITIVE LOCKS line in the ch. 12 structure (\"ALWAYS by the handle\") — there is no separate CRITICAL block |\n| Vehicles/wheels/mechanics | Wrong rotation, illogical mechanics | See rescue paths below |\n| Long continuous camera moves | Collapse after several moves (proven in 2.5 too) | One move per shot; cuts instead of tours |\n| Instrument fingering, precise sports technique | Approximate only | Frame around it; cutaways |\n| Physics as hero (glass shattering exactly, complex fluid pours) | Plausible-but-wrong | Describe end state; hide peak behind cut |\n| Tiny hero object carrying the beat (a key, a pill, a seed in a hand) | Object morphs, vanishes or changes size between frames; detail vs. size contradiction (ch. 24b) | Cut to an insert as its own short shot at close scale; carry the beat by the character's reaction; object as a prop sheet (production-pipeline ch. 4) |\n| Dark, figure-less macro (no scale anchor, no figure, low light) | No scale read, no material read — the model fills with generic texture or invents a subject | Add a scale anchor or a figure (rule 8 on stylized projects), lift a motivated practical, or replace by a still + ellipsis |\n| Continuous approach over distance (a walk/drive/flight that must close the gap on camera) | Scale collapses on the way (same class as wide-shot scale, above); the approach stalls or teleports | Two shots: departure state, arrival state — the distance is an ellipsis (manual cut); never one continuous take |\n| Cut back onto the same emissive object (lamp, screen, fire) whose state must match frame-exactly | Brightness, colour temperature and shape differ between takes; the object appears \"re-lit\" | One state per state sheet (production-pipeline ch. 4); the second view inside the same take, or the object kept in one setup (W10 anchor composition); otherwise accept a grade-side match (post-audio-legal ch. 17) |\n| **Wide shots** (stylized 3D; photoreal crowd scale too) | Scale and distance break at wide range; a flat camera path at constant height/speed leaves characters as dots (vendor-confirmed on Higgsfield's own short and its Hell Grind rebuild) | Open the take on a close/medium of the character and transition into the wide inside the same generation; positions locked by the previs/clay render, not by the wide (pixar-look §10) |\n| Faces that must stay blank (silent passengers, listeners with no beat) | Model animates them anyway — micro-expressions, drift | Hide by design with a motivated occlusion: reflective glass, backlight silhouette, hat brim, distance — copy-ready GLASS block in video-prompting 12e |\n| **Mirror/reflection beats** where a reflected face or pose must match the subject frame-exactly | Reflected face/pose diverges from the subject; reflection doubled, missing, or lagging a beat behind | 🟡 (derivation, not yet [PP]-tested) Reflections as texture/light — glass, water, wet street, chrome — stay GREEN on Seedance 2.5 (§1). For a story mirror beat: Seedance 2.5 only, static camera, ONE readable face in frame — either the reflection alone (subject from behind / over the shoulder) or the subject alone with the mirror as shape (film-craft §2 frame-in-frame); never subject and reflection both readable; otherwise split subject and reflection across a cut. |\n\n**Feasibility answer (\"can this scene be generated?\") — fixed shape:** one verdict line (green / yellow with rescues / red), then the SKILL rule-10 risk register as a table: Beat or element | Rating 🟢🟡🔴 | Failure (§2 row) | Rescue (§3) | Decision (keep / rescue / cut — the director's, left blank until they decide). Never answer in prose only and never rewrite the scene silently.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "renderability-0a1e0a4a4edc",
+    "title": "3. Rescue paths for red/yellow action elements",
+    "ancestry": [
+      "Renderability: Green/Red Lists, Formats, Model Profiles",
+      "3. Rescue paths for red/yellow action elements"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "feasibility",
+    "source": {
+      "path": "references/renderability.md",
+      "startLine": 28,
+      "endLine": 38,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/renderability.md#L28",
+      "sha256": "3f54b31f89e12a8e5b6ed00884a4d8f18b19f513ca5813b457cc252e4775553e"
+    },
+    "contentMarkdown": "## 3. Rescue paths for red/yellow action elements\n- **Fights/multi-person action:** never one long choreography. Decompose into **attack–reaction beats as separate short clips** (attack = clip, reaction = clip), characters locked via references; the EDIT is the fight choreography. Write contacts + settling per beat (video-prompting ch. 14).\n- **Stunt that will not generate → shoot it yourself [H-off, P24]:** two bodies in constant contact over a prop (a struggle for a gun in a car: limbs fused, weapon vanishing) would not converge in text; the feature-film fix was stunt performers in a real car filmed on a phone, fed as MOTION reference — the model laid the cast, interior and light over it. One day of phone footage instead of a week of iterations; the only place a text-to-video-only production stepped outside its rule (production-pipeline ch. 8 phone-shot blocking).\n- **Dance/choreography move by move [H-off, P48]:** \"'dances' means nothing to Seedance\" — write the moves: \"two head nods, shoulders rolling one at a time, a knee dip, a finger snap, a quarter spin at the door\"; per cut one register (\"slow head bob left and right\" · \"sharp footwork, skips, stomps, quick weight shifts\" · \"locking style, arms snapping into frozen geometric poses\" · \"wide arms, shoulder isolations, stopping on the beat\"); the track as timing input (video-prompting ch. 14b).\n- **Vehicles/wheels:** hide wheel rotation — night/rain (motivated motion blur), framing above wheel height, parallel tracking (wheel detail unreadable), cockpit coverage; wheel close-ups only as short beats with water/mud eruption as distraction.\n- **Subject vs. camera motion:** never combine opposing directions (subject runs right + dolly-in = mush) — one motion direction dominates per shot.\n- **Animals:** short single beats, no long behavior chains; image reference instead of species name for fantasy/hybrid creatures.\n- **Moving crowds:** multi-variant sheet + crowd in mid/background layer only; foreground extras directed individually.\n- **Crowd scale — never a number, always three layers [H-off, P25]:** \"the prompt never says show a thousand samurai\": one sharp warrior up front, a dense crowd behind him, silhouettes fading into the mist — about 40 soldiers read clearly and the brain fills in the rest. Pair with the fog cap (§2) and silhouette classes. A synchronised army drop-into-stance is a legitimate held ENDING STATE (formation reads as drilled, not as animation — the async rule applies to individuals, video-prompting ch. 12).\n- **Degradation looks as rescue style:** VHS/CCTV/16mm grain has built-in fault tolerance — a footage format (style-control §6b) is a legitimate rescue for risk shots.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "renderability-32075c011ed3",
+    "title": "4. Format matrix (what each look forgives)",
+    "ancestry": [
+      "Renderability: Green/Red Lists, Formats, Model Profiles",
+      "4. Format matrix (what each look forgives)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "feasibility",
+    "source": {
+      "path": "references/renderability.md",
+      "startLine": 39,
+      "endLine": 48,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/renderability.md#L39",
+      "sha256": "818f65d002d1dce14e011107b2b68496e4697e33e66adfe720bcfddc5f40f50e"
+    },
+    "contentMarkdown": "## 4. Format matrix (what each look forgives)\n| Format | Fit | Note |\n|---|---|---|\n| **Pixar/stylized 3D** | **Excellent — safest \"cinema look\"** | Stylization absorbs physics/texture errors; audiences expect no real physics. Look definition and evidence: pixar-look.md |\n| High-action anime | Excellent | Speed lines/held poses mask model weaknesses |\n| UGC/found footage | Excellent | Degradation hides artifacts |\n| Photoreal drama, static dialogue | Good with discipline | Reverse plates + framing recycling mandatory |\n| Flat 2D/limited animation | Hard | Punishes every wobble; simple motion only (style-control §5b) |\n| Photoreal action with hero physics | Hardest | Plan rescue cuts per risk shot |\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [
+      {
+        "sourceName": "pixar-look.md",
+        "entryIDs": [
+          "pixar-look-e2bffc9f8b7c",
+          "pixar-look-6067d37adaa1",
+          "pixar-look-ffa1fc7ecbcc",
+          "pixar-look-8448fb177d42",
+          "pixar-look-67b9aafd568b",
+          "pixar-look-79aef52eb72e",
+          "pixar-look-eeafb6781cc6",
+          "pixar-look-441de0d8a9d1",
+          "pixar-look-f22e3f8ad2cd",
+          "pixar-look-266b78d1a40e",
+          "pixar-look-1da5c9533bf3",
+          "pixar-look-68ec1764bb32",
+          "pixar-look-fdcec6b2c0f0",
+          "pixar-look-56847cb20874"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "renderability-d07031e108b5",
+    "title": "5. Camera & cut rules",
+    "ancestry": [
+      "Renderability: Green/Red Lists, Formats, Model Profiles",
+      "5. Camera & cut rules"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "feasibility",
+    "source": {
+      "path": "references/renderability.md",
+      "startLine": 49,
+      "endLine": 51,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/renderability.md#L49",
+      "sha256": "becd17f4be9d8d249fdbe2e863eee39e31aabdfddb794da9e1ffd38bcee3c41a"
+    },
+    "contentMarkdown": "## 5. Camera & cut rules\nOne camera verb per shot · fixed camera grammar per sequence, repeated verbatim · lock positions by previs/clay render or plate, not by the take's opener — the establishing wide is a SHOT, not the opening beat, wherever crowd scale or stylized 3D is involved (open close/medium, arrive at the wide by transition — §2 wide-shot row, pixar-look §10); a plain photoreal two-hander may still open wide · never cross the axis (state it) · match cuts across scene borders bind on identical motion · hectic cuts exactly at hard motion = model hiding failure → reject take.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "renderability-28385106c00e",
+    "title": "5b. Lighting consistency: directional light vs. whole-body brightness [PP]",
+    "ancestry": [
+      "Renderability: Green/Red Lists, Formats, Model Profiles",
+      "5b. Lighting consistency: directional light vs. whole-body brightness [PP]"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "feasibility",
+    "source": {
+      "path": "references/renderability.md",
+      "startLine": 52,
+      "endLine": 56,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/renderability.md#L52",
+      "sha256": "aed13f4d2d499f63e354847e8decfe01d760dde6f7e35050e7da056aecb6ddef"
+    },
+    "contentMarkdown": "## 5b. Lighting consistency: directional light vs. whole-body brightness [PP]\n🟢 **Directional light and whole-body brightness adjectives on the same object are mutually exclusive.** Once a prompt demands a light DIRECTION, phase, or partial shading on an object (moon phase, backlight, terminator, half-shadow, rim light), never pair it with global brightness words for that same object — \"bright\", \"fully lit\", \"luminous\", \"brightly glowing\", \"strong contrast\". Whole-body words grab the entire object and override the phase: documented failure — a moon prompted with a side-lit phase (lit side toward a low sun, shadow side away) PLUS \"clear bright lunar disc\" rendered as a fully lit disc with no shadow side, physically inconsistent with the stated sun position.\n🟢 **Instead:** describe light exclusively per direction — which side/surface is lit, which lies in shadow. If contrast is wanted, name the contrast of the LIT EDGE against the background (\"the lit edge stands out against the black sky\"), never the brightness of the whole object.\nMemory hook: a phase instruction only wins when no contradicting brightness word stands next to it.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "renderability-4074c75ffcb1",
+    "title": "6. Model quick profiles (for shot assignment)",
+    "ancestry": [
+      "Renderability: Green/Red Lists, Formats, Model Profiles",
+      "6. Model quick profiles (for shot assignment)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "feasibility",
+    "source": {
+      "path": "references/renderability.md",
+      "startLine": 57,
+      "endLine": 72,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/renderability.md#L57",
+      "sha256": "4444b05788ffb3a509e19ebebe7f990db5ef5c99f5318ea1117bff50a08f439a"
+    },
+    "contentMarkdown": "## 6. Model quick profiles (for shot assignment)\n| Model | Strengths | Limits / slop accent |\n|---|---|---|\n| **Seedance 2.0** | resolution: native 4K last documented on Higgsfield under HF-CS4-HIST@2026-08 (platforms-models ch. 13 archive, unverified since — working assumption 1080p until the live output dropdown shows 4K), 15-s takes, cost/quality champion, UGC home turf | Peak at take end fails; plastic skin tendency |\n| **Seedance 2.5** | 30-s takes (extension chains ≈60 s; 180 s beta is Dreamina-only), 50 refs (30i/10v/10a incl. @Clay Render + voice refs), **edit suite** (region/timestamp-scoped, camera-perspective, green-screen, subject-swap, audio-category — video-prompting ch. 14b), complex continuous camera, choreography with weight, in-shot transformations, multi-stage emotions, reflections, skin texture | ~2× price; resolution platform-dependent (Higgsfield 1080p since Aug 2026, one practitioner aggregator run at 1080p/30 s with sound, Sep 2026 [P19], Dreamina 480/720p; 4K on Higgsfield only via Upscale / FLUX 3 Video Upscaler per HF-WEB@2026-09-04 — no native 2K/4K verified; other surfaces: read the live form); real-face references are rejected by most hosted surfaces (moderation plan + face-grid fallback: post-audio-legal ch. 20); baked-in artifacts → upscaler; logic decays with take length; in-frame text still broken |\n| **Veo 3.1** | Polished cinematic realism, environments, ingredients/first-last/extension | Physics-correct motion fights stylized looks |\n| **Kling 3.0** | Directed movement, multi-shot storytelling, strongest stylization of the photoreal class, MotionControl | Style drifts per generation → repeat keywords+style ref every prompt; 2–3× rerolls for anime |\n| **MiniMax H3 (Hailuo 3)** | 2D/anime line quality, official quoted-text channel + stable UI/text 🟡, LoRA style lock, physics (passes glass test), cheap, native 2K hosted, Ref2VA omni mode (9i/3v/3a), V2V edits without masks, L2VA (events before the image) | Plastic under realism demands [P43], audio loops 🟡 [W], one beat per shot [MM-off], weak IP moderation 🟡 [W] (legally risky) |\n| **Grok Imagine 1.5** | Native stylization bias (anime/cartoon/art-directed), fast, cheap, native audio | Drifts cartoonish on photoreal intent; negatives unreliable; Grok Imagine 1.5: 1080p only in specific modes (mode names unverified — read the live selector), 720p otherwise; plan the upscale path unless the receipt shows 1080p |\n| **Wan 2.6/2.7/3.0** (open-weight family; version per surface — Higgsfield: Wan 3.0 / 3.0 Prime, OpenArt: WAN 2.7 and a WAN 3.0 page, 2026-09-04) | Open-weight, LoRA, multi-shot, reference-to-video, 1080p, budget | Less polished than top class |\n| **PixVerse** | Fast social iteration, transition mode | Not for long-form/high-end. No syntax profile in this skill — if a PixVerse prompt is requested, say so and use the generic ch. 12 block structure with the platform's live docs as the receipt |\n\n⚠️ **Resolution/duration cells above are capability notes, not receipts.** Before any resolution or duration goes into a Render Slate `Settings` row: apply the platform-ui-workflows.md output-configuration rule — use the LOWER verified value for the surface (Higgsfield: 1080p / 30 s under HF-CS4@2026-09-04), ask the user to read the live model/plan dropdown, and write `unverified` in the slate if neither is possible. Never write a reference key you did not check.\n\nNo universal winner: run the motion ladder (post-audio-legal ch. 19) per style/model before committing.\n⚠️ **Retired/wound down — do not plan pipelines on:** Sora 2 (wind-down 2026) · Runway Gen-3 family (retired Jul 2026) · OpenArt Workflows (sunset Jan 2026). Current surfaces + retirement tracking: platform-ui-workflows.md.\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [
+      {
+        "sourceName": "platform-ui-workflows.md",
+        "entryIDs": [
+          "platform-ui-workflows-6dc670fc3f91",
+          "platform-ui-workflows-3b8acc5f6415",
+          "platform-ui-workflows-7d54a0037e59",
+          "platform-ui-workflows-04c305aa5fa4",
+          "platform-ui-workflows-4c833d2eab54",
+          "platform-ui-workflows-446046bb6ca5",
+          "platform-ui-workflows-63c227d438e9",
+          "platform-ui-workflows-1bbc05467732",
+          "platform-ui-workflows-a54da21dd877",
+          "platform-ui-workflows-1800a14f8efb",
+          "platform-ui-workflows-93d12ca52dd2",
+          "platform-ui-workflows-87281cdfb693",
+          "platform-ui-workflows-ef1df540bb42",
+          "platform-ui-workflows-4cb5fa24727f",
+          "platform-ui-workflows-d6cf98a9c992",
+          "platform-ui-workflows-dffe420e1652",
+          "platform-ui-workflows-071ec10c4b30",
+          "platform-ui-workflows-7a41a20d840f",
+          "platform-ui-workflows-c25a75d5f8b0",
+          "platform-ui-workflows-e065c23134cc",
+          "platform-ui-workflows-2fc39d4c2fa2",
+          "platform-ui-workflows-55a52d3a83bb",
+          "platform-ui-workflows-afd48d04b60f",
+          "platform-ui-workflows-cfc45e4aa90b",
+          "platform-ui-workflows-f9e9c67e2b82",
+          "platform-ui-workflows-2793dec3f603",
+          "platform-ui-workflows-6176107bac0a",
+          "platform-ui-workflows-e7ff5638cd65",
+          "platform-ui-workflows-0d16d75d5809",
+          "platform-ui-workflows-904199cbdc1a",
+          "platform-ui-workflows-4418f52deb3c",
+          "platform-ui-workflows-e9b2d1bc61c4",
+          "platform-ui-workflows-86a70ac78823",
+          "platform-ui-workflows-7a7a82672859",
+          "platform-ui-workflows-bb1c0df9af39",
+          "platform-ui-workflows-a2f90ea048dd",
+          "platform-ui-workflows-890d79b44fab",
+          "platform-ui-workflows-9afe66081c3f",
+          "platform-ui-workflows-f4622546e4ea",
+          "platform-ui-workflows-0fcd03ac29bc",
+          "platform-ui-workflows-c80b9d082feb",
+          "platform-ui-workflows-c58d776d3e35",
+          "platform-ui-workflows-58cb6bb8864b",
+          "platform-ui-workflows-4976feb5aef0",
+          "platform-ui-workflows-85eec349cf69",
+          "platform-ui-workflows-6692176f1743",
+          "platform-ui-workflows-21265d567b98",
+          "platform-ui-workflows-4b6d0762ce25",
+          "platform-ui-workflows-2f26645f5b2d",
+          "platform-ui-workflows-03c0f524fd96",
+          "platform-ui-workflows-cc6f1d24d639",
+          "platform-ui-workflows-47ed307fe438",
+          "platform-ui-workflows-e4f03834a023",
+          "platform-ui-workflows-1b8baeb4fe8e",
+          "platform-ui-workflows-dac737fb48cd",
+          "platform-ui-workflows-cc3e829c0f33",
+          "platform-ui-workflows-e23bc75bdf23",
+          "platform-ui-workflows-2ed9b643b727",
+          "platform-ui-workflows-905b7b1a103b",
+          "platform-ui-workflows-ad5ae3bbf61d",
+          "platform-ui-workflows-ba1359d74f17"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  }
+]

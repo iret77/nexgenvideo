@@ -14,7 +14,14 @@ struct LottieExportTests {
         let lottieURL = try LottieVideoGeneratorTests.writeSample()
         defer { try? FileManager.default.removeItem(at: lottieURL) }
 
-        let mediaRef = "lottie-fixture"
+        let mediaRef = "lottie-export-\(UUID().uuidString)"
+        defer {
+            for url in (try? FileManager.default.contentsOfDirectory(
+                at: LottieVideoGenerator.cacheDirectory, includingPropertiesForKeys: nil
+            )) ?? [] where url.lastPathComponent.hasPrefix(mediaRef + "_") {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
         var manifest = MediaManifest()
         manifest.entries = [MediaManifestEntry(
             id: mediaRef, name: "probe", type: .lottie,
@@ -49,6 +56,16 @@ struct LottieExportTests {
         gen.requestedTimeToleranceAfter = .zero
         let frame = try gen.copyCGImage(at: CMTime(value: 0, timescale: 600), actualTime: nil)
         let rep = NSBitmapImageRep(cgImage: frame)
+        if let directory = ProcessInfo.processInfo.environment["RUNNER_TEMP"] {
+            let evidence = URL(fileURLWithPath: directory).appendingPathComponent("lottie-export-evidence")
+            try FileManager.default.createDirectory(at: evidence, withIntermediateDirectories: true)
+            try rep.representation(using: .png, properties: [:])?.write(to: evidence.appendingPathComponent("export.png"))
+            for url in try FileManager.default.contentsOfDirectory(
+                at: LottieVideoGenerator.cacheDirectory, includingPropertiesForKeys: nil
+            ) where url.lastPathComponent.hasPrefix(mediaRef + "_") || url.lastPathComponent.hasPrefix("lottie-fixture_") {
+                try FileManager.default.copyItem(at: url, to: evidence.appendingPathComponent(url.lastPathComponent))
+            }
+        }
         let topLeft = try #require(rep.colorAt(x: frame.width / 4, y: frame.height / 4))
         let bottomRight = try #require(rep.colorAt(x: frame.width * 3 / 4, y: frame.height * 3 / 4))
         #expect(topLeft.redComponent > 0.5)

@@ -519,7 +519,7 @@ enum ModelCapabilityResearchValidator {
                       return item == trimmed
                           && !trimmed.isEmpty
                           && trimmed.count <= 120
-                          && !trimmed.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
+                          && trimmed.rangeOfCharacter(from: .controlCharacters) == nil
                           && !containsEmbeddedInstruction(trimmed)
                   }) else {
                 throw ModelCapabilityResearchValidationError.invalidValue(field)
@@ -674,7 +674,7 @@ enum ModelCapabilityResearchValidator {
         guard title == evidence.sourceTitle,
               !title.isEmpty,
               title.count <= 180,
-              !title.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
+              title.rangeOfCharacter(from: .controlCharacters) == nil,
               !containsEmbeddedInstruction(title) else {
             throw ModelCapabilityResearchValidationError.invalidEvidence(field)
         }
@@ -687,7 +687,7 @@ enum ModelCapabilityResearchValidator {
             guard conflict == trimmed,
                   !trimmed.isEmpty,
                   trimmed.count <= 400,
-                  !trimmed.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
+                  trimmed.rangeOfCharacter(from: .controlCharacters) == nil else {
                 throw ModelCapabilityResearchValidationError.invalidEvidence(field)
             }
             if containsEmbeddedInstruction(trimmed) {

@@ -1,0 +1,90 @@
+name: Recorded Hang Replay
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/recorded-hang-replay.yml
+      - scripts/recorded_hang_replay.py
+      - Tests/PrivateFixtures/hang-recording.enc
+      - Sources/NexGenVideo/App/HangDiagnosticReplay.swift
+      - Sources/NexGenVideo/Editor/EditorView.swift
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: recorded-hang-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/lint_app_theme.py
+      - run: python3 -m unittest discover -s scripts -p 'test_*.py'
+
+  build:
+    needs: source
+    runs-on: xcode-27
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [baseline, candidate]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-xcode-27
+      - uses: ./.github/actions/cache-swiftpm-dependencies
+      - name: Restore shipped panel and transcript sizing for control
+        if: matrix.variant == 'baseline'
+        run: |
+          git show 6798bb32ec214247133a932ac94ba1743032286f:Sources/NexGenVideo/Editor/EditorView.swift > Sources/NexGenVideo/Editor/EditorView.swift
+          git show 6798bb32ec214247133a932ac94ba1743032286f:Sources/NexGenVideo/Agent/Panel/AgentMessageView.swift > Sources/NexGenVideo/Agent/Panel/AgentMessageView.swift
+      - name: Build optimized replay app
+        run: |
+          scripts/bundle.sh release
+          ditto -c -k --keepParent .build/NexGenVideo.app "$RUNNER_TEMP/replay-app.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: recorded-app-${{ matrix.variant }}
+          path: ${{ runner.temp }}/replay-app.zip
+          retention-days: 3
+
+  baseline:
+    needs: build
+    runs-on: macos-26
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [baseline, candidate]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: recorded-app-${{ matrix.variant }}
+          path: ${{ runner.temp }}/replay
+      - name: Replay captured states with recorded dimensions
+        env:
+          NGV_HANG_FIXTURE_KEY: ${{ secrets.NGV_HANG_FIXTURE_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 -m venv "$RUNNER_TEMP/replay-python"
+          source "$RUNNER_TEMP/replay-python/bin/activate"
+          pip install --quiet cryptography==46.0.5
+          ditto -x -k "$RUNNER_TEMP/replay/replay-app.zip" "$RUNNER_TEMP/replay"
+          python3 scripts/recorded_hang_replay.py "$RUNNER_TEMP/replay/NexGenVideo.app" Tests/PrivateFixtures/hang-recording.enc "$RUNNER_TEMP/evidence" --match-geometry
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: recorded-hang-${{ matrix.variant }}
+          path: |
+            ${{ runner.temp }}/evidence/result.json
+            ${{ runner.temp }}/evidence/diagnostics.enc
+          retention-days: 3
