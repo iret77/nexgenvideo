@@ -1921,6 +1921,9 @@ extension ToolExecutor {
                     throw ToolError("The selected take's event or output changed. Refresh the take history.")
                 }
                 let take = try PipelineRenderTakeStore.take(id: expectedTakeID, dataRoot: root)
+                guard take.phase == phase, take.shotID == shotId else {
+                    throw ToolError("That take belongs to \(take.phase)/\(take.shotID). Select a take recorded for this phase and shot.")
+                }
                 guard let review = try TakeReview.load(take: take, dataRoot: root), review.accepted else {
                     throw ToolError("Review and accept the exact take before selecting it.")
                 }
@@ -2107,11 +2110,22 @@ extension ToolExecutor {
         let takes: [[String: Any]] = try takeIndex.takeIDs.map { id in
             let take = try PipelineRenderTakeStore.take(id: id, dataRoot: root)
             let review = try TakeReview.load(take: take, dataRoot: root)
-            return ["take_id": id, "shot_id": take.shotID, "planned_generation_id": take.plannedGenerationID,
+            var result: [String: Any] = ["take_id": id, "shot_id": take.shotID, "planned_generation_id": take.plannedGenerationID,
                     "prompt_revision_id": take.promptRevisionID, "generation_event_id": take.generationEventID,
                     "output": take.output.path, "output_sha256": take.output.sha256,
                     "selected_candidate": takeIndex.selected[take.shotID] == id,
                     "review_status": review.map { $0.accepted ? "accepted" : "rejected" } ?? "pending", "recorded_at": take.recordedAt]
+            if let review {
+                result["review"] = ["reviewer": review.reviewer, "reviewed_at": review.reviewedAt,
+                    "output_sha256": review.outputSHA256,
+                    "duration_value": review.durationValue, "duration_timescale": review.durationTimescale,
+                    "findings": review.findings.map { finding in
+                        ["pass": finding.pass.rawValue, "verdict": finding.verdict.rawValue,
+                         "observation": finding.observation, "start_seconds": finding.startSeconds,
+                         "end_seconds": finding.endSeconds] as [String: Any]
+                    }] as [String: Any]
+            }
+            return result
         }
         return try jsonResult([
             "project": manifest.project,
@@ -3091,13 +3105,10 @@ extension ToolExecutor {
                     + "shot production plan. Generate it again before recording it."
             )
         }
-        let providerPrompt = gi.prompt.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        )
-        let generationModel = gi.model.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        )
-        guard !providerPrompt.isEmpty, !generationModel.isEmpty else {
+        let providerPrompt = gi.prompt
+        let generationModel = gi.model
+        guard !providerPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !generationModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ToolError(
                 "The rendered video has no compiled provider prompt or generation model."
             )

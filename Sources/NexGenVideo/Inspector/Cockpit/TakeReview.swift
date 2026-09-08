@@ -73,7 +73,7 @@ struct TakeReview: Codable, Sendable, Equatable {
         }
         for finding in findings {
             guard !finding.observation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  !(finding.pass == .identity && finding.verdict == .acceptedDeviation),
+                  !(finding.pass == .identity && [.acceptedDeviation, .notApplicable].contains(finding.verdict)),
                   finding.startSeconds.isFinite, finding.endSeconds.isFinite,
                   finding.startSeconds >= 0, finding.endSeconds > finding.startSeconds,
                   finding.endSeconds <= duration else { throw ToolError("Every review pass needs an observation and a valid range within the take.") }
@@ -116,6 +116,25 @@ struct TakeReview: Codable, Sendable, Equatable {
         guard editor.workingRoot == home, let root = DataRootResolver.dataRoot(of: home),
               let review = try load(take: take, dataRoot: root), review.accepted else {
             throw ToolError("Review the take before selecting it in the active project.")
+        }
+        try PipelinePhaseAccess.requireCurrentPhaseAndIntake("render", dataRoot: root,
+            declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)
+        if !editor.mediaAssets.contains(where: { $0.id == take.generationEventID }) {
+            let source = try await capture(takeID: take.id, home: home)
+            let asset = MediaAsset(id: take.generationEventID, url: source.mediaURL, type: .video,
+                name: "\(take.shotID) · \(take.phase) take", duration: source.durationSeconds, generationInput: take.generationInput)
+            await asset.loadMetadata()
+            guard editor.workingRoot == home, let key = editor.openWorkingCopyKey,
+                  editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) == nil else {
+                throw ToolError("The project or pipeline operation changed. Select the take again when Render is idle.")
+            }
+            _ = try ProjectPackGate.requireLiveMutation(projectURL: home, declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)
+            try PipelinePhaseAccess.requireCurrentPhaseAndIntake("render", dataRoot: root,
+                declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)
+            if !editor.mediaAssets.contains(where: { $0.id == take.generationEventID }) {
+                try ProjectWorkingCopy.markDirty(key: key)
+                editor.importMediaAsset(asset)
+            }
         }
         let proof = try JSONDecoder().decode(RenderShotProvenanceProofV1.self,
             from: Data(contentsOf: ProjectLocalFile.requireHash(take.provenance.sha256, at: take.provenance.path, dataRoot: root)))

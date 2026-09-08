@@ -67,11 +67,15 @@ struct TakeReviewView: View {
                     if findings.count < TakeReview.Pass.allCases.count && findings.last?.verdict != .rejected {
                         let pass = TakeReview.Pass.allCases[findings.count]
                         Text("\(findings.count + 1) of 6 · \(pass.label)").fontWeight(AppTheme.FontWeight.semibold)
+                        if pass == .identity {
+                            Text("Check subject and scene identity, including objects when no person is present.")
+                                .foregroundStyle(AppTheme.Text.secondaryColor)
+                        }
                         Picker("Finding", selection: $verdict) {
                             Text("Meets the approved plan").tag(TakeReview.Verdict.conforms)
                             Text("Reject").tag(TakeReview.Verdict.rejected)
                             if pass != .identity { Text("Accept deviation — explain").tag(TakeReview.Verdict.acceptedDeviation) }
-                            Text("Not applicable — explain").tag(TakeReview.Verdict.notApplicable)
+                            if pass != .identity { Text("Not applicable — explain").tag(TakeReview.Verdict.notApplicable) }
                         }
                         TextField("Describe what you observed in this take", text: $observation)
                         HStack {
@@ -148,10 +152,10 @@ struct TakeReviewView: View {
             let value = try await TakeReview.capture(takeID: id, home: home)
             guard selectedID == id, editor.workingRoot == home else { return }
             snapshot = value; start = 0; end = value.durationSeconds; verdict = .conforms
+            player = AVPlayer(url: value.mediaURL)
             if let root = DataRootResolver.dataRoot(of: home), let review = try TakeReview.load(take: value.take, dataRoot: root) {
                 findings = review.findings; canSelect = review.accepted
             }
-            player = AVPlayer(url: value.mediaURL)
         } catch { if selectedID == id, editor.workingRoot == home { message = error.localizedDescription } }
     }
 }

@@ -42,6 +42,7 @@ private enum NativeGateApprovalPreparation: Sendable {
 // module functions wrap.
 @MainActor
 enum NativeGateWriter {
+    nonisolated private static let readinessDigests = FileDigestReadinessCache()
 
     enum WriteError: LocalizedError, Sendable, Equatable {
         case notInitialized
@@ -539,10 +540,9 @@ enum NativeGateWriter {
                     Gates.self,
                     at: PipelineLayout.gatesFile
                 )
-                try checkApproval(
-                    context: context,
-                    gates: gates
-                )
+                try FileDigest.$readinessCache.withValue(nil) {
+                    try checkApproval(context: context, gates: gates)
+                }
             }.value
         } catch let blocked as GateBlocked {
             throw WriteError.failed(blocked.message)
@@ -600,7 +600,9 @@ enum NativeGateWriter {
         gates: Gates
     ) -> NativeGateApprovalReadiness {
         do {
-            try checkApproval(context: context, gates: gates)
+            try FileDigest.$readinessCache.withValue(readinessDigests) {
+                try checkApproval(context: context, gates: gates)
+            }
             return .ready
         } catch {
             return .blocked(error.localizedDescription)

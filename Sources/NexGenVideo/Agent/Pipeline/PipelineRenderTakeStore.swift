@@ -55,12 +55,12 @@ enum PipelineRenderTakeStore {
     }
 
     static func indexPath(phase: String) -> String { "renders/takes/index-\(phase).v1.json" }
-    static func takePath(id: String) -> String { "renders/takes/\(id).v1.json" }
+    static func takePath(id: String, phase: String) -> String { "renders/takes/\(phase)/\(id).v1.json" }
 
     static func isRecoveryPath(_ path: String, phase: String) -> Bool {
-        guard phase != "frames" else { return false }
+        guard ["preview", "final"].contains(phase) else { return false }
         if path == indexPath(phase: phase) { return true }
-        let prefix = "renders/takes/"
+        let prefix = "renders/takes/\(phase)/"
         let suffix = ".v1.json"
         guard path.hasPrefix(prefix), path.hasSuffix(suffix) else { return false }
         let id = path.dropFirst(prefix.count).dropLast(suffix.count)
@@ -68,7 +68,8 @@ enum PipelineRenderTakeStore {
     }
 
     static func load(dataRoot: URL, project: String, phase: String) throws -> PipelineTakeIndexV1 {
-        try safeID(phase)
+        guard ["frames", "preview", "final"].contains(phase) else { throw ToolError("Unknown render phase.") }
+        if phase == "frames" { return .init(schema: "take-index/v1", project: project, phase: phase, takeIDs: [], decisions: []) }
         let path = indexPath(phase: phase)
         let url = dataRoot.appendingPathComponent(path)
         let archivedIDs = try archivedTakeIDs(dataRoot: dataRoot, phase: phase)
@@ -85,7 +86,7 @@ enum PipelineRenderTakeStore {
         }
         var shots: [String: String] = [:]
         for id in value.takeIDs {
-            let record = try take(id: id, dataRoot: dataRoot)
+            let record = try take(id: id, dataRoot: dataRoot, phase: phase)
             guard record.project == project, record.phase == phase else { throw ToolError("Take history crosses project or phase boundaries.") }
             shots[id] = record.shotID
         }
@@ -96,11 +97,17 @@ enum PipelineRenderTakeStore {
         return value
     }
 
-    static func take(id: String, dataRoot: URL) throws -> PipelineRenderTakeV1 {
+    static func take(id: String, dataRoot: URL, phase: String? = nil) throws -> PipelineRenderTakeV1 {
         try safeID(id)
+        let phases = phase.map { [$0] } ?? ["preview", "final"]
+        guard phases.allSatisfy({ ["preview", "final"].contains($0) }) else { throw ToolError("Only video render phases have takes.") }
+        let paths = phases.map { takePath(id: id, phase: $0) }.filter {
+            FileManager.default.fileExists(atPath: dataRoot.appendingPathComponent($0).path)
+        }
+        guard paths.count == 1, let path = paths.first else { throw ToolError("The take is missing or recorded in more than one phase. Restore its original history before continuing.") }
         let value = try JSONDecoder().decode(PipelineRenderTakeV1.self,
-            from: Data(contentsOf: ProjectLocalFile.resolve(takePath(id: id), dataRoot: dataRoot)))
-        guard value.schema == "render-take/v1", value.id == id,
+            from: Data(contentsOf: ProjectLocalFile.resolve(path, dataRoot: dataRoot)))
+        guard value.schema == "render-take/v1", value.id == id, phases.contains(value.phase),
               value.id == identity(eventID: value.generationEventID, outputSHA256: value.output.sha256) else {
             throw ToolError("Take identity does not match its generation event and output.")
         }
@@ -145,7 +152,11 @@ enum PipelineRenderTakeStore {
                     plannedGenerationID: plannedIdentity(input: completed.generationInput, project: manifest.project, shotID: shotID),
                     promptRevisionID: try promptRevision(completed.generationInput), generationEventID: completed.eventID,
                     generationInput: completed.generationInput, provenance: provenance, output: outputProof, recordedAt: currentTimestamp())
-                let path = takePath(id: id)
+                let otherPhase = manifest.phase == "preview" ? "final" : "preview"
+                guard !FileManager.default.fileExists(atPath: dataRoot.appendingPathComponent(takePath(id: id, phase: otherPhase)).path) else {
+                    throw ToolError("This generation is already recorded in \(otherPhase). Keep that take in its original phase. Final production needs its own generation or an explicitly planned edit/upscale; recording the same event again is not an upgrade.")
+                }
+                let path = takePath(id: id, phase: manifest.phase)
                 guard !FileManager.default.fileExists(atPath: dataRoot.appendingPathComponent(path).path) else {
                     throw ToolError("An unindexed immutable take already occupies this event identity. Restore the take index before retrying.")
                 }
@@ -185,8 +196,8 @@ enum PipelineRenderTakeStore {
     }
 
     private static func archivedTakeIDs(dataRoot: URL, phase: String) throws -> Set<String> {
-        let directory = dataRoot.appendingPathComponent("renders/takes")
-        guard directory.resolvingSymlinksInPath() == dataRoot.resolvingSymlinksInPath().appendingPathComponent("renders/takes") else {
+        let directory = dataRoot.appendingPathComponent("renders/takes/\(phase)")
+        guard directory.resolvingSymlinksInPath() == dataRoot.resolvingSymlinksInPath().appendingPathComponent("renders/takes/\(phase)") else {
             throw ToolError("Take history cannot traverse symbolic links.")
         }
         guard FileManager.default.fileExists(atPath: directory.path) else { return [] }
@@ -195,14 +206,14 @@ enum PipelineRenderTakeStore {
             let name = url.lastPathComponent
             guard name.hasSuffix(".v1.json"), !name.hasPrefix("index-") else { continue }
             let id = String(name.dropLast(".v1.json".count))
-            let record = try take(id: id, dataRoot: dataRoot)
+            let record = try take(id: id, dataRoot: dataRoot, phase: phase)
             if record.phase == phase { ids.insert(id) }
         }
         return ids
     }
 
     private static func safeID(_ id: String) throws {
-        guard !id.isEmpty, id.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45 || $0 == 95 }) else {
+        guard id.count == 64, id.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else {
             throw ToolError("Invalid take path identity.")
         }
     }

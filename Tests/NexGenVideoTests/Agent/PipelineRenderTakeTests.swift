@@ -56,6 +56,24 @@ struct PipelineRenderTakeTests {
         #expect(firstRecord.plannedGenerationID == secondRecord.plannedGenerationID)
         #expect(try PipelineRenderTakeStore.load(dataRoot: root, project: "demo", phase: "final").takeIDs.count == 2)
         #expect(throws: (any Error).self) { try prepare("event-1", input(date: Date(timeIntervalSince1970: 300), transaction: "different")) }
+        var preview = RenderManifest(project: "demo", phase: "preview")
+        record(&preview, shotId: "s001", output: output.path, costEur: 1, phase: "preview")
+        let previewProof = RenderShotProvenanceProofV1(project: "demo", phase: "preview", shotID: "s001",
+            renderEntry: try #require(preview.entries["s001"]), renderProofEntry: proof.renderProofEntry,
+            routingProofEntry: nil, frames: nil, lastFrame: nil, outputs: [output])
+        do {
+            _ = try PipelineRenderTakeStore.prepare(completed: .init(eventID: "event-1", generationInput: firstInput),
+                provenance: artifact, shotProof: previewProof, manifest: preview, shotID: "s001", dataRoot: root)
+            Issue.record("One paid generation must not become a new take by changing phase.")
+        } catch let error as ToolError {
+            #expect(error.message.contains("already recorded in final"))
+        }
+        let corruptPreview = root.appendingPathComponent(PipelineRenderTakeStore.takePath(id: String(repeating: "c", count: 64), phase: "preview"))
+        try FileManager.default.createDirectory(at: corruptPreview.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("truncated".utf8).write(to: corruptPreview)
+        #expect(try PipelineRenderTakeStore.load(dataRoot: root, project: "demo", phase: "final").takeIDs.count == 2)
+        #expect(try PipelineRenderTakeStore.load(dataRoot: root, project: "demo", phase: "frames").takeIDs.isEmpty)
+        #expect(throws: (any Error).self) { try PipelineRenderTakeStore.load(dataRoot: root, project: "demo", phase: "preview") }
         try FileManager.default.removeItem(at: root.appendingPathComponent(PipelineRenderTakeStore.indexPath(phase: "final")))
         #expect(throws: (any Error).self) { try PipelineRenderTakeStore.load(dataRoot: root, project: "demo", phase: "final") }
     }
@@ -70,6 +88,9 @@ struct PipelineRenderTakeTests {
             TakeReview.Finding(pass: $0, verdict: .conforms, observation: "Observed the approved \($0.rawValue) over the complete take.", startSeconds: 0, endSeconds: 4)
         }
         try TakeReview.validate(findings, duration: 4)
+        var bypass = findings
+        bypass[0] = .init(pass: .identity, verdict: .notApplicable, observation: "Identity drift is not relevant.", startSeconds: 0, endSeconds: 4)
+        #expect(throws: (any Error).self) { try TakeReview.validate(bypass, duration: 4) }
         #expect(throws: (any Error).self) { try TakeReview.validate(Array(findings.reversed()), duration: 4) }
         #expect(throws: (any Error).self) { try TakeReview.validate(findings, duration: 3) }
     }
@@ -77,9 +98,10 @@ struct PipelineRenderTakeTests {
     @Test("recovery accepts only the take index and immutable take records")
     func recoveryPaths() {
         #expect(PipelineRenderTakeStore.isRecoveryPath("renders/takes/index-final.v1.json", phase: "final"))
-        #expect(PipelineRenderTakeStore.isRecoveryPath("renders/takes/" + String(repeating: "a", count: 64) + ".v1.json", phase: "final"))
+        #expect(PipelineRenderTakeStore.isRecoveryPath("renders/takes/final/" + String(repeating: "a", count: 64) + ".v1.json", phase: "final"))
         #expect(!PipelineRenderTakeStore.isRecoveryPath("renders/takes/index-preview.v1.json", phase: "final"))
         #expect(!PipelineRenderTakeStore.isRecoveryPath("renders/takes/../../brief.yaml", phase: "final"))
         #expect(!PipelineRenderTakeStore.isRecoveryPath("renders/takes/index-frames.v1.json", phase: "frames"))
+        #expect(!PipelineRenderTakeStore.isRecoveryPath("renders/takes/preview/" + String(repeating: "a", count: 64) + ".v1.json", phase: "final"))
     }
 }
