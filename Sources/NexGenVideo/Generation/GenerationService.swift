@@ -69,6 +69,7 @@ final class GenerationService {
         numImages: Int = 1,
         folderId: String? = nil,
         buildParams: @escaping ([String]) -> BackendGenerationParams,
+        preparedParameters: PreparedProviderParameters? = nil,
         snapshotRefs: (@Sendable (inout GenerationInput, [String]) -> Void)? = nil,
         preprocessRef: (@Sendable (Int, MediaAsset) async throws -> URL?)? = nil,
         resolvedVideoCapabilities: ResolvedVideoOfferingCapabilitiesV1? = nil,
@@ -214,7 +215,7 @@ final class GenerationService {
                     placeholder.generationInput = finalGenInput
                 }
 
-                let params = buildParams(uploaded)
+                let params = try preparedParameters?.bind(uploaded) ?? buildParams(uploaded)
                 try Self.validateVideoDispatchCapabilities(
                     resolvedVideoCapabilities,
                     target: target,

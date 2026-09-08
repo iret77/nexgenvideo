@@ -8,6 +8,10 @@ import Foundation
 /// sequence for all of them. The provider stack (Video/Image/Audio/MusicGenerationSubmission) is
 /// untouched; this is the funnel above it.
 struct GenerationRequest {
+    typealias UpscaleSubmission = @MainActor (
+        GenerationService, URL?, EditorViewModel, GenerationAuthorization,
+        (@MainActor (MediaAsset) -> Void)?, (@MainActor () -> Void)?
+    ) -> String
     /// `.upscale` is promptless — its controller path skips the compile stage but shares the same
     /// preflight → submit → feedback sequence as the rest.
     enum Modality: Sendable, Equatable { case video, image, audio, music, upscale }
@@ -34,11 +38,7 @@ struct GenerationRequest {
         /// Upscale is promptless — no submission struct to compose a prompt into. The thunk performs
         /// the `service.generate` (source asset uploaded as its reference) and returns the placeholder
         /// id, so the controller's compile stage is skipped while placement/feedback stay shared.
-        case upscale(run: @MainActor (
-            _ service: GenerationService, _ projectURL: URL?, _ editor: EditorViewModel,
-            _ authorization: GenerationAuthorization,
-            _ onComplete: (@MainActor (MediaAsset) -> Void)?, _ onFailure: (@MainActor () -> Void)?
-        ) -> String)
+        case upscale(run: UpscaleSubmission)
     }
 
     let modality: Modality
@@ -149,6 +149,36 @@ struct GenerationOutcome: Sendable {
 /// SUBMIT (existing provider submission) → FEEDBACK (placeholder placed + selected, uniform outcome).
 @MainActor
 enum GenerationController {
+    @MainActor
+    enum PreparedSubmission {
+        case video(VideoGenerationSubmission, PreparedProviderParameters)
+        case image(ImageGenerationSubmission, PreparedProviderParameters)
+        case audio(AudioGenerationSubmission)
+        case music(MusicGenerationSubmission)
+        case upscale(GenerationRequest.UpscaleSubmission)
+
+        init(_ submission: GenerationRequest.Submission, compiledPrompt: String) throws {
+            switch submission {
+            case .video(let make):
+                let value = make(compiledPrompt)
+                let parameters = try PreparedProviderParameters(referenceCount: value.references.count, build: value.buildParams)
+                guard case .video = parameters.parameters else { throw GenerationRequestError.optionsInvalid("Expected video parameters.") }
+                self = .video(value, parameters)
+            case .image(let make):
+                let value = make(compiledPrompt)
+                let count = value.preUploadedURLs.flatMap { $0.isEmpty ? nil : $0.count } ?? value.references.count
+                let parameters = try PreparedProviderParameters(referenceCount: count, build: value.buildParams)
+                guard case .image(let image) = parameters.parameters, image.numImages == value.numImages,
+                      (1...4).contains(image.numImages) else {
+                    throw GenerationRequestError.optionsInvalid("The image output count does not match the prepared request.")
+                }
+                self = .image(value, parameters)
+            case .audio(let make): self = .audio(make(compiledPrompt))
+            case .music(let make): self = .music(make(compiledPrompt))
+            case .upscale(let run): self = .upscale(run)
+            }
+        }
+    }
 
     /// Optional preflight validation the adapter supplies — it already knows the model config and
     /// its reference/option rules (see `VideoGenerationSubmission.InputAssets.validate`). Returning a
@@ -194,10 +224,13 @@ enum GenerationController {
         }
 
         let target = request.target ?? GenerationService.dispatchTarget(modelId: request.modelId)
+        let prepared: PreparedSubmission
+        do { prepared = try PreparedSubmission(request.submission, compiledPrompt: compiled) }
+        catch { return .failure(.optionsInvalid(error.localizedDescription)) }
         let authorization: GenerationAuthorization
         do {
             authorization = try await GenerationBudgetGuard.authorize(
-                input: pricingInput(request, compiledPrompt: compiled),
+                input: pricingInput(request, prepared: prepared, compiledPrompt: compiled),
                 target: target,
                 editor: editor,
                 quoteLoader: quoteLoader
@@ -222,7 +255,7 @@ enum GenerationController {
         // (c) SUBMIT — the adapter's existing provider submission, with the compiled prompt injected.
         // (d) FEEDBACK — placeholder auto-selected where placed; the outcome is returned uniformly.
         let placeholderId = dispatch(
-            request, compiledPrompt: compiled, editor: editor,
+            request, prepared: prepared, editor: editor,
             authorization: authorization,
             musicProgress: musicProgress, onSuccess: onSuccess, onFailure: onFailure)
         return .success(GenerationOutcome(placeholderId: placeholderId, notes: notes))
@@ -304,7 +337,7 @@ enum GenerationController {
 
     private static func dispatch(
         _ request: GenerationRequest,
-        compiledPrompt: String,
+        prepared: PreparedSubmission,
         editor: EditorViewModel,
         authorization: GenerationAuthorization,
         musicProgress: MusicProgress?,
@@ -314,37 +347,37 @@ enum GenerationController {
         let service = editor.generationService
         let projectURL = editor.workingRoot
 
-        switch request.submission {
-        case .video(let make):
+        switch prepared {
+        case .video(let submission, let parameters):
             let onComplete = replacementOnComplete(request, editor: editor, then: onSuccess)
-            let id = make(compiledPrompt).submit(
+            let id = submission.submit(
                 service: service, projectURL: projectURL, editor: editor,
-                authorization: authorization,
+                authorization: authorization, preparedParameters: parameters,
                 onComplete: onComplete, onFailure: failureHandler(request, editor: editor, then: onFailure))
             place(request, placeholderId: id, editor: editor)
             return id
-        case .image(let make):
+        case .image(let submission, let parameters):
             let onComplete = replacementOnComplete(request, editor: editor, then: onSuccess)
-            let id = make(compiledPrompt).submit(
+            let id = submission.submit(
                 service: service, projectURL: projectURL, editor: editor,
-                authorization: authorization,
+                authorization: authorization, preparedParameters: parameters,
                 onComplete: onComplete, onFailure: failureHandler(request, editor: editor, then: onFailure))
             place(request, placeholderId: id, editor: editor)
             return id
-        case .audio(let make):
-            let id = make(compiledPrompt).submit(
+        case .audio(let submission):
+            let id = submission.submit(
                 service: service, projectURL: projectURL, editor: editor,
                 authorization: authorization,
                 onComplete: audioOnComplete(request, editor: editor, then: onSuccess),
                 onFailure: failureHandler(request, editor: editor, then: onFailure))
             place(request, placeholderId: id, editor: editor)
             return id
-        case .music(let make):
+        case .music(let submission):
             // MusicGenerationSubmission owns its own async run + placement; the outcome flows through
             // the success/failure callbacks (the music tab renders them as its Banner). No library
             // placeholder id to return, so the outcome carries an empty id for this path.
             runMusic(
-                make(compiledPrompt), editor: editor,
+                submission, editor: editor,
                 authorization: authorization,
                 progress: musicProgress, onSuccess: onSuccess, onFailure: onFailure)
             return ""
@@ -361,6 +394,7 @@ enum GenerationController {
 
     private static func pricingInput(
         _ request: GenerationRequest,
+        prepared: PreparedSubmission,
         compiledPrompt: String
     ) -> GenerationPricingInput {
         var duration = request.durationSeconds
@@ -369,26 +403,24 @@ enum GenerationController {
         var quality: String?
         var generateAudio: Bool?
 
-        switch request.submission {
-        case .video(let make):
-            let submission = make(compiledPrompt)
+        switch prepared {
+        case .video(let submission, let parameters):
             duration = submission.placeholderDuration
-            if case .video(let params) = submission.buildParams([]) {
+            if case .video(let params) = parameters.parameters {
+                duration = params.duration.seconds.map(Double.init) ?? duration
                 resolution = params.resolution
                 generateAudio = params.generateAudio
             }
-        case .image(let make):
-            let submission = make(compiledPrompt)
+        case .image(let submission, let parameters):
             outputCount = max(1, submission.numImages)
-            if case .image(let params) = submission.buildParams([]) {
+            if case .image(let params) = parameters.parameters {
                 resolution = params.resolution
                 quality = params.quality
             }
-        case .audio(let make):
-            let params = make(compiledPrompt).params
+        case .audio(let submission):
+            let params = submission.params
             duration = params.durationSeconds.map(Double.init) ?? duration
-        case .music(let make):
-            let submission = make(compiledPrompt)
+        case .music(let submission):
             duration = submission.spanSeconds
         case .upscale:
             break

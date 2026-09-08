@@ -155,18 +155,21 @@ struct GenerationControllerTests {
     @Test func compileSkippedForEmptyIntentStillSubmits() async {
         let editor = stubEditor(projectURL: nil)
         let before = editor.mediaAssets.count
+        var preparations = 0
         // Empty intent (e.g. audio scored from video) → nothing to compose; the request still submits.
         let request = GenerationRequest(
             modality: .video, modelId: "fal-ai/veo3", intent: "",
             placement: .mediaLibrary(folderId: nil), origin: .panel,
             submission: .video(make: { compiled in
+                preparations += 1
                 #expect(compiled.isEmpty)
-                let genInput = GenerationInput(prompt: compiled, model: "fal-ai/veo3", duration: 5, aspectRatio: "16:9")
+                let duration = preparations == 1 ? 5 : 10
+                let genInput = GenerationInput(prompt: compiled, model: "fal-ai/veo3", duration: duration, aspectRatio: "16:9")
                 return VideoGenerationSubmission(
-                    genInput: genInput, placeholderDuration: 5, references: [],
+                    genInput: genInput, placeholderDuration: Double(duration), references: [],
                     trimmedSourceOverride: nil, name: nil, folderId: nil,
                     buildParams: { _ in .video(VideoGenerationParams(
-                        prompt: compiled, duration: 5, aspectRatio: "16:9", resolution: nil,
+                        prompt: compiled, duration: duration, aspectRatio: "16:9", resolution: nil,
                         sourceVideoURL: nil, startFrameURL: nil, endFrameURL: nil,
                         referenceImageURLs: [], generateAudio: true)) },
                     snapshotRefs: nil, preprocessRef: nil,
@@ -178,6 +181,9 @@ struct GenerationControllerTests {
             return
         }
         #expect(editor.mediaAssets.count == before + 1)
+        #expect(preparations == 1)
+        #expect(editor.mediaAssets.last?.generationInput?.duration == 5)
+        #expect(editor.mediaAssets.last?.duration == 5)
     }
 
     // MARK: Gate (agentTool origin)
