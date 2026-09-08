@@ -11,6 +11,12 @@
             "Hang recording now resumes the selected recording mode on normal app launches. Disabled recording remains disabled.",
             "Startup verification exercises the shipped application entry point instead of directly starting the recorder."
           ]
+        },
+        {
+          "heading": "Appearance",
+          "items": [
+            "Music Video pack 0.5.6 aligns project accents with the magenta in its banner artwork."
+          ]
         }
       ]
     },

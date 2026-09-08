@@ -405,7 +405,7 @@ struct MusicvideoPackTests {
     func packSatisfiesContract() {
         let pack: Pack = MusicvideoPack()
         #expect(pack.name == "musicvideo")
-        #expect(pack.version == "0.5.5")
+        #expect(pack.version == "0.5.6")
         #expect(pack.manifest.minAppVersion == "1.5.5")
     }
 
