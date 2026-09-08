@@ -17,6 +17,12 @@ The owner requires all applicable extracted ai-film-production 3.1.1 knowledge t
 
 Existing infrastructure and completed issues remain the baseline. Extraction, runtime access, consumer behavior, and CI acceptance are distinct milestones. No row is complete merely because resources decode or documentation agrees with code.
 
+## Implemented consumers awaiting complete acceptance
+
+The current draft includes full-section retrieval with ancestors and procedures; project-bound director/DoP dimensions; visual compile and execution-plan bindings; visible resolved-style review; and image-scoped style criteria backed by exact supplied-image receipts. Temporal and audio criteria remain outside frame verdicts. Source-video transforms and directional extensions now have distinct input-policy identities; executable native extension routing is still pending.
+
+Frame audit expectations now use the declared start/end execution state, expose those requirements before inspection, and identify a configured proportion-anchor shot. End audits require a current execution plan. New verdicts require image observations, and `n/a` requires an explanation. This does not yet complete explicit user acceptance of deviations or the independent general frame-approval gate.
+
 ## Compatibility and verification
 
 Preserve stored layouts of public pack-facing V1 value types. Add new versioned artifacts through existing extension carriers and canonical writers. Retain exact pack pins; persistent upgrades remain explicit Recovery-copy operations. Musicvideo phase order and approval boundaries remain unchanged unless the owner explicitly decides otherwise.

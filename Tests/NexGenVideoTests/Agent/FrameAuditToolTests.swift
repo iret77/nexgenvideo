@@ -35,7 +35,7 @@ struct FrameAuditToolTests {
     private func checks(_ overrides: [String: String] = [:], extra: [String: [String: Any]] = [:]) -> [String: Any] {
         var out: [String: Any] = [:]
         for k in standardAuditCheckKeys {
-            var c: [String: Any] = ["status": overrides[k] ?? "clean"]
+            var c: [String: Any] = ["status": overrides[k] ?? "clean", "observed": "Fixture observation for " + k, "note": ""]
             for (ek, ev) in extra[k] ?? [:] { c[ek] = ev }
             out[k] = c
         }
@@ -164,5 +164,66 @@ struct FrameAuditToolTests {
             "project_dir": dataRoot.path, "shot_id": "s001",
         ]) as? [String: Any]
         #expect(got?["exists"] as? Bool == false)
+    }
+
+    @Test("end-frame expectations use the planned exit state and camera endpoint")
+    func endStateIsNotStartPose() throws {
+        let shot = try #require(minimalShotlist().shots.first)
+        let execution = ExecutionShotV1(id: shot.id, sourceMode: .generated,
+            startState: ExecutionStateV1(summary: "mouse seated at table", spatialState: "table zone"),
+            endState: ExecutionStateV1(summary: "mouse exits through door", spatialState: "door zone"),
+            primaryAction: "walk to door",
+            camera: ExecutionCameraPlanV1(movementID: "dolly", placement: "table close-up", endpoint: "door wide shot"),
+            renderability: .green)
+        let end = try FrameAuditExpectations.make(shot: shot, role: "end", execution: execution, brief: nil, bible: nil)
+        #expect(end["anchor_at_t0"]?.contains("mouse exits through door") == true)
+        #expect(end["character_position"]?.contains("mouse seated") == false)
+        #expect(end["camera_angle"] == "door wide shot")
+        #expect(end["visible_zones"] == "door zone")
+        let start = try FrameAuditExpectations.make(shot: shot, role: "start", execution: execution, brief: nil, bible: nil)
+        #expect(start["anchor_at_t0"]?.contains("mouse seated at table") == true)
+        #expect(start["anchor_at_t0"]?.contains("exits") == false)
+    }
+
+    @Test("end audit cannot invent an end state from a legacy shot")
+    func endRequiresPlan() async throws {
+        let (h, root, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        _ = try saveShotlist(try minimalShotlist(), to: root)
+        let path = try writeFrame("end", dataRoot: root, name: "s001-end.png")
+        let result = await h.runRaw("save_frame_audit", args: [
+            "project_dir": root.path, "shot_id": "s001", "role": "end", "auditor": "fixture",
+            "overall": "clean", "path": path, "checks": checks(),
+        ])
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("declared end state"))
+    }
+
+    @Test("an unknown shot cannot supply its own audit expectations")
+    func unknownShotRejected() async throws {
+        let (h, root, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let path = try writeFrame("frame", dataRoot: root)
+        let result = await h.runRaw("save_frame_audit", args: [
+            "project_dir": root.path, "shot_id": "invented", "auditor": "fixture",
+            "overall": "clean", "path": path, "checks": checks(),
+        ])
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("No canonical shot"))
+    }
+
+    @Test("empty observations and unexplained n/a are not inspection evidence")
+    func emptyObservationsRejected() async throws {
+        let (h, root, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        _ = try saveShotlist(try minimalShotlist(), to: root)
+        let path = try writeFrame("frame", dataRoot: root)
+        for status in ["clean", "n/a"] {
+            let result = await h.runRaw("save_frame_audit", args: [
+                "project_dir": root.path, "shot_id": "s001", "auditor": "fixture", "overall": "clean", "path": path,
+                "checks": checks(["framing": status], extra: ["framing": ["observed": "  ", "note": ""]]),
+            ])
+            #expect(result.isError)
+        }
     }
 }

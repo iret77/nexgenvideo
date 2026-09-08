@@ -2220,9 +2220,12 @@ extension ToolExecutor {
 
         // Expected per standard check comes from the shot spec, never the model.
         let shotlist = try readShotlist(dataRoot: root)
-        let shot = shotlist?.shots.first { $0.id == shotId }
-        var expected = frameAuditExpected(
-            for: shot,
+        guard let shot = shotlist?.shots.first(where: { $0.id == shotId }) else {
+            throw ToolError("No canonical shot exists for this frame audit: " + shotId)
+        }
+        let executionShot = try FrameAuditExpectations.executionShot(shotID: shotId, role: role, dataRoot: root)
+        var expected = try FrameAuditExpectations.make(
+            shot: shot, role: role, execution: executionShot,
             brief: try readBriefIfPresent(dataRoot: root),
             bible: try loadBible(dataRoot: root)
         )
@@ -2244,11 +2247,20 @@ extension ToolExecutor {
             guard let status = AuditStatus(rawValue: statusRaw), status != .pending else {
                 throw ToolError("check '\(key)' has invalid status '\(statusRaw)'. Expected clean/minor/blocking/n/a.")
             }
+            let observed = cd.string("observed") ?? ""
+            let note = cd.string("note") ?? ""
+            if status == .notApplicable {
+                guard !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw ToolError("check '\(key)' needs a reason why it is not applicable.")
+                }
+            } else if observed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                throw ToolError("check '\(key)' needs a concrete image observation before assigning a verdict.")
+            }
             checks[key] = AuditCheck(
                 status: status,
                 expected: expected[key] ?? (cd.string("expected") ?? ""),
-                observed: cd.string("observed") ?? "",
-                note: cd.string("note") ?? "")
+                observed: observed,
+                note: note)
         }
         if style != nil {
             let receipt = try FrameObservationStoreV1.require(try args.requireString("observation_receipt"),
@@ -2303,14 +2315,29 @@ extension ToolExecutor {
         let root = try resolveDataRoot(args, editor: editor)
         let shotId = try args.requireString("shot_id")
         let role = args.string("role") ?? "start"
-        guard let audit = try readFrameAudit(
+        guard role == "start" || role == "end" else {
+            throw ToolError("Unknown frame audit role. Expected start or end.")
+        }
+        let audit = try readFrameAudit(
             dataRoot: root,
             shotId: shotId,
             role: role
-        ) else {
-            return try jsonResult(["exists": false, "shot_id": shotId, "role": role])
+        )
+        var body = audit.map { frameAuditJSON($0, exists: true) }
+            ?? ["exists": false, "shot_id": shotId, "role": role]
+        if let shot = try readShotlist(dataRoot: root)?.shots.first(where: { $0.id == shotId }) {
+            var expected = try FrameAuditExpectations.make(shot: shot, role: role,
+                execution: FrameAuditExpectations.executionShot(shotID: shotId, role: role, dataRoot: root),
+                brief: readBriefIfPresent(dataRoot: root), bible: loadBible(dataRoot: root))
+            if let style = try ProductionStyleStoreV1.load(dataRoot: root) {
+                for criterion in style.criteria where criterion.scope == .frame && criterion.evidenceKind == .image {
+                    expected[criterion.auditKey] = criterion.expected
+                }
+            }
+            body["current_expected"] = expected
+            body["inspection_instruction"] = "Inspect the actual image against current_expected. The legacy anchor_at_t0 key describes the requested start or end boundary. Supply concrete observations, or explain why a check is not applicable."
         }
-        return try jsonResult(frameAuditJSON(audit, exists: true))
+        return try jsonResult(body)
     }
 
     /// #199: deterministic render-larger-then-crop. Resolves the source frame (explicit path or the
@@ -2616,39 +2643,6 @@ extension ToolExecutor {
               let frame = manifest.shot(shotId)?.frames.first(where: { $0.role == role }),
               !frame.path.isEmpty else { return nil }
         return projectImage(frame.path)
-    }
-
-    /// Machine-derived `expected` per standard audit key, from the shot spec. Port of the Python
-    /// audit-skeleton derivation (`frames/audit.py::skeleton`). Empty shot ⇒ empty expecteds.
-    private func frameAuditExpected(for shot: Shot?, brief: Brief?, bible: Bible?) -> [String: String] {
-        guard let shot else { return [:] }
-        let productionPlan = shot.productionPlan
-        let blocking = shot.characterBlocking
-        let blockingExpected = blocking
-            .map {
-                "\($0.characterRef)@\($0.position) (\($0.pose), gaze=\($0.gaze), "
-                    + "anchor=\(productionPlan?.setAnchor(for: $0.characterRef) ?? ""), "
-                    + "relation=\($0.relationToSet))"
-            }
-            .joined(separator: "; ")
-        let gazeExpected = blocking
-            .map { "\($0.characterRef): \($0.gaze)" }
-            .joined(separator: "; ")
-        var forbidden: [String] = []
-        if !(brief?.allowTextOverlays ?? false) { forbidden.append("no text overlays / title cards") }
-        forbidden.append("no characters beyond declared character_refs")
-        return [
-            "character_count": "\(ProductionDiscipline.visibleCharacterCount(shot, bible: bible))",
-            "framing": shot.framing?.rawValue ?? "",
-            "camera_angle": shot.cameraSetup?.angle.rawValue ?? "",
-            "camera_height": shot.cameraSetup?.height.rawValue ?? "",
-            "character_position": blockingExpected,
-            "gaze": gazeExpected,
-            "forbidden_elements": forbidden.joined(separator: "; "),
-            "visible_zones": shot.visibleZones.joined(separator: ", "),
-            "anchor_at_t0": "exact t=0 state: subject in start pose, no objects from later in the shot already visible",
-            "proportion_anchor_match": "match figure-to-set scale of proportion_anchor_shot if set",
-        ]
     }
 
     private func frameAuditJSON(_ a: FrameAudit, exists: Bool) -> [String: Any] {

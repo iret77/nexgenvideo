@@ -1574,11 +1574,11 @@ enum ToolDefinitions {
                     "type": "string", "enum": ["clean", "minor", "blocking", "n/a"],
                     "description": "Verdict for this audit point (\"n/a\" when the spec doesn't constrain it).",
                 ],
-                "observed": ["type": "string", "description": "What the image shows."],
-                "note": ["type": "string", "description": "Short finding for the user / re-render patch."],
+                "observed": ["type": "string", "description": "Concrete image observation, required for every clean/minor/blocking verdict."],
+                "note": ["type": "string", "description": "Short finding or re-render patch; required explanation when status is n/a."],
                 "expected": ["type": "string", "description": "Ignored; the executor derives this from the shot spec."],
             ],
-            "required": ["status"],
+            "required": ["status", "observed", "note"],
         ]
         var properties: [String: Any] = [:]
         for key in standardAuditCheckKeys { properties[key] = checkSchema }
