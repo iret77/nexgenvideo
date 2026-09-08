@@ -2127,11 +2127,30 @@ extension ToolExecutor {
             }
             return result
         }
+        var iterationDecisions: [String: Any] = [:]
+        var iterationDecisionErrors: [String: String] = [:]
+        for shotID in Set(takes.compactMap { $0["shot_id"] as? String }) {
+            do {
+                guard let current = try TakeRepairPlan.current(shotID: shotID, dataRoot: root) else { continue }
+                iterationDecisions[shotID] = ["id": current.id, "take_id": current.plan.takeID,
+                    "operation": current.plan.operation.rawValue, "reason": current.plan.reason,
+                    "decided_by": current.plan.decidedBy,
+                    "rolls_per_prompt": current.plan.policy.rollsPerPrompt,
+                    "failures_before_rewrite": current.plan.policy.failuresBeforeRewrite,
+                    "clean_failures_before_model_limit": current.plan.policy.cleanFailuresBeforeModelLimit,
+                    "channels_before_model_limit": current.plan.policy.channelsBeforeModelLimit,
+                    "iterations_before_simplification": current.plan.policy.iterationsBeforeSimplification] as [String: Any]
+            } catch {
+                iterationDecisionErrors[shotID] = error.localizedDescription
+            }
+        }
         return try jsonResult([
             "project": manifest.project,
             "phase": phase,
             "entries": entries,
             "takes": takes,
+            "iteration_decisions": iterationDecisions,
+            "iteration_decision_errors": iterationDecisionErrors,
             "summary": [
                 "total": ordered.count,
                 "rendered": rendered,

@@ -202,6 +202,7 @@ enum GenerationController {
         onFailure: (@MainActor () -> Void)? = nil,
         quoteLoader: GenerationBudgetGuard.QuoteLoader = LiveGenerationPricing.quote
     ) async -> Result<GenerationOutcome, GenerationRequestError> {
+        let requestHome = editor.workingRoot
         // (a) PREFLIGHT — model exists + options validate (adapter's model.validate lives here).
         if let message = preflight?() {
             return .failure(.optionsInvalid(message))
@@ -224,17 +225,30 @@ enum GenerationController {
         }
 
         let target = request.target ?? GenerationService.dispatchTarget(modelId: request.modelId)
+        guard editor.workingRoot == requestHome else { return .failure(.gate("The active project changed during prompt compilation. Prepare the request again.")) }
         let prepared: PreparedSubmission
         do { prepared = try PreparedSubmission(request.submission, compiledPrompt: compiled) }
         catch { return .failure(.optionsInvalid(error.localizedDescription)) }
         let authorization: GenerationAuthorization
         do {
-            authorization = try await GenerationBudgetGuard.authorize(
+            let recipe = request.precompiled.flatMap {
+                PromptCompiler.rememberedRecipe(token: $0.token, text: compiled, modelId: request.modelId)
+            }
+            let repairPlanID: String?
+            if case .video(let video, _) = prepared {
+                var input = video.genInput
+                input.compileRecipe = recipe
+                repairPlanID = try await TakeRepairPlan.requireForGeneration(input: input, home: requestHome)
+            } else { repairPlanID = nil }
+            guard editor.workingRoot == requestHome else { return .failure(.gate("The active project changed while reviewing this iteration.")) }
+            let priced = try await GenerationBudgetGuard.authorize(
                 input: pricingInput(request, prepared: prepared, compiledPrompt: compiled),
                 target: target,
                 editor: editor,
                 quoteLoader: quoteLoader
             )
+            authorization = GenerationAuthorization(transactionId: priced.transactionId, target: priced.target, estimate: priced.estimate,
+                projectMutationScope: priced.projectMutationScope, takeRepairPlanID: repairPlanID, compileRecipe: recipe)
         } catch {
             return .failure(.budget(error.localizedDescription))
         }

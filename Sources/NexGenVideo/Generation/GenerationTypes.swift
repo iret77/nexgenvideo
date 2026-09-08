@@ -146,17 +146,23 @@ struct GenerationAuthorization: Sendable {
     let target: ResolvedGenerationTarget
     let estimate: GenerationMoney?
     let projectMutationScope: GenerationProjectMutationScope?
+    let takeRepairPlanID: String?
+    let compileRecipe: GenerationCompileRecipe?
 
     init(
         transactionId: String?,
         target: ResolvedGenerationTarget,
         estimate: GenerationMoney?,
-        projectMutationScope: GenerationProjectMutationScope? = nil
+        projectMutationScope: GenerationProjectMutationScope? = nil,
+        takeRepairPlanID: String? = nil,
+        compileRecipe: GenerationCompileRecipe? = nil
     ) {
         self.transactionId = transactionId
         self.target = target
         self.estimate = estimate
         self.projectMutationScope = projectMutationScope
+        self.takeRepairPlanID = takeRepairPlanID
+        self.compileRecipe = compileRecipe
     }
 }
 

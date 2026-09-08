@@ -108,6 +108,17 @@ struct GenerationInput: Codable, Sendable, Equatable {
     var videoDuration: VideoDuration? = nil
     /// Exact host-owned route and ordered conditioning inputs for a pipeline generation.
     var productionRouting: ProductionGenerationRoutingProofV1? = nil
+    var takeRepairPlanID: String? = nil
+    var compileRecipe: GenerationCompileRecipe? = nil
+}
+
+struct GenerationCompileRecipe: Codable, Sendable, Equatable {
+    let intent: String
+    let setting: String
+    let lighting: String
+    let style: String
+    let preserveComposition: Bool
+    let styleFingerprint: String
 }
 
 struct ProductionGenerationRoutingBindingV1: Codable, Sendable, Equatable {

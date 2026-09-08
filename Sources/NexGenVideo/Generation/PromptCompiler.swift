@@ -215,6 +215,14 @@ enum PromptCompiler {
     }
 
     @MainActor
+    static func rememberedRecipe(token: String, text: String, modelId: String) -> GenerationCompileRecipe? {
+        guard let recipe = recipesByToken[token], recipe.modelId == modelId,
+              validate(token: token, text: text, modelId: modelId, binding: recipe.binding) else { return nil }
+        return GenerationCompileRecipe(intent: recipe.intent, setting: recipe.setting, lighting: recipe.lighting,
+            style: recipe.style, preserveComposition: recipe.preserveComposition, styleFingerprint: recipe.binding.styleFingerprint)
+    }
+
+    @MainActor
     static func rememberedCompositionModeMatches(
         token: String,
         text: String,

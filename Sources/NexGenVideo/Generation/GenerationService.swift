@@ -83,6 +83,8 @@ final class GenerationService {
         let count = max(1, min(4, numImages))
         var authorizedGenInput = genInput
         authorizedGenInput.spendTransactionId = authorization.transactionId
+        authorizedGenInput.takeRepairPlanID = authorization.takeRepairPlanID
+        authorizedGenInput.compileRecipe = authorization.compileRecipe
         let baseName = name ?? String(authorizedGenInput.prompt.prefix(30))
 
         let resolvedFolderId = folderId.flatMap { id in
@@ -228,15 +230,14 @@ final class GenerationService {
                     uploadedReferences: uploaded
                 )
 
-                if assetType == .video {
-                    try PipelineProductionRouting.validateSubmission(
-                        genInput: finalGenInput,
-                        target: target,
-                        references: references,
-                        editor: editor
-                    )
+                let currentRepairPlan = try await TakeRepairPlan.requireForGeneration(input: finalGenInput, home: projectURL)
+                guard currentRepairPlan == authorization.takeRepairPlanID else {
+                    throw ToolError("The iteration decision changed before submission. Review the current request again.")
                 }
-
+                try authorization.projectMutationScope?.requireCurrent(editor: editor)
+                if assetType == .video {
+                    try PipelineProductionRouting.validateSubmission(genInput: finalGenInput, target: target, references: references, editor: editor)
+                }
                 await self.runJob(
                     placeholders: placeholders,
                     params: params,

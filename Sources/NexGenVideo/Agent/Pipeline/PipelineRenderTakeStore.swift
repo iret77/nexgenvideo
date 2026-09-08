@@ -188,11 +188,29 @@ enum PipelineRenderTakeStore {
             input.productionRouting?.requirementSHA256 ?? "frame"].joined(separator: "\n").utf8))
     }
 
-    private static func promptRevision(_ input: GenerationInput) throws -> String {
+    static func promptRevision(_ input: GenerationInput) throws -> String {
+        struct Revision: Encodable {
+            let input: GenerationInput
+            let target: [String?]
+            let bindings: [[String]]
+        }
         var revision = input
         revision.createdAt = nil; revision.spendTransactionId = nil; revision.imageURLs = nil
         revision.referenceImageURLs = nil; revision.referenceVideoURLs = nil; revision.referenceAudioURLs = nil
-        return FileDigest.sha256(of: try canonical(revision))
+        revision.takeRepairPlanID = nil
+        revision.compileRecipe = nil; revision.intent = nil
+        let routing = input.productionRouting
+        revision.productionRouting = nil
+        if routing != nil {
+            revision.imageURLAssetIds = nil; revision.referenceImageAssetIds = nil
+            revision.referenceVideoAssetIds = nil; revision.referenceAudioAssetIds = nil
+            revision.sourceVideoAssetId = nil; revision.startFrameAssetId = nil; revision.endFrameAssetId = nil
+        }
+        let value = Revision(input: revision,
+            target: [routing?.providerID, routing?.transportID, routing?.endpointID, routing?.modelParam,
+                     routing?.offeringCapabilities.inputPolicy.sourceOperation?.rawValue],
+            bindings: routing?.orderedBindings.map { [$0.semanticJobID, $0.inputSlotID, $0.modeID, $0.sha256] } ?? [])
+        return FileDigest.sha256(of: try canonical(value))
     }
 
     private static func archivedTakeIDs(dataRoot: URL, phase: String) throws -> Set<String> {

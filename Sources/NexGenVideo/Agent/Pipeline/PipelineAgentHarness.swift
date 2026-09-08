@@ -197,6 +197,9 @@ final class PipelineAgentHarness {
             if let causality = StoryCausalityContext.prompt(dataRoot: dataRoot, phase: phase) {
                 prompt += "\n\n" + causality
             }
+            if let iteration = TakeRepairPlan.runtimeInstructions(phase: phase) {
+                prompt += "\n\n" + iteration
+            }
             if let style = try ProductionStyleContext.prompt(dataRoot: dataRoot, phase: phase) {
                 prompt += "\n\n" + style
             }
@@ -665,7 +668,8 @@ final class PipelineAgentHarness {
         let gates = try YAMLArtifactStore(dataRoot: dataRoot).load(Gates.self, at: PipelineLayout.gatesFile)
         let phase = coreGatePhases.first { !gates.get($0).approved } ?? "finish"
         let parts = [try ProductionStyleContext.prompt(dataRoot: dataRoot, phase: phase),
-                     StoryCausalityContext.prompt(dataRoot: dataRoot, phase: phase)].compactMap { $0 }
+                     StoryCausalityContext.prompt(dataRoot: dataRoot, phase: phase),
+                     TakeRepairPlan.runtimeInstructions(phase: phase)].compactMap { $0 }
         return parts.isEmpty ? nil : parts.joined(separator: "\n\n")
     }
 
