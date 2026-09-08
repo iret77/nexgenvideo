@@ -148,16 +148,6 @@ enum HangDiagnosticReplay {
         if abs(sidebar.frame.width - target) > 0.5 {
             split.setPosition(target, ofDividerAt: 0)
         }
-        if split.subviews.count == 3 {
-            split.setPosition(934, ofDividerAt: 1)
-        }
-        if let right = descendants(of: content).compactMap({ $0 as? NSSplitView })
-            .first(where: { $0.autosaveName == "editor.produce.right" }),
-           let controller = right.delegate as? NSSplitViewController,
-           controller.splitViewItems.count == 2 {
-            controller.splitViewItems[1].isCollapsed = false
-            right.setPosition(694, ofDividerAt: 0)
-        }
     }
 
     private static func writeProgress(sequence: UInt64?, window: NSWindow, environment: [String: String]) {

@@ -9,6 +9,7 @@
           "heading": "Fixes",
           "items": [
             "Editor panels use the space assigned by the split view without generating competing content-size constraints during chat updates.",
+            "Model research accepts valid source titles and capability text in optimized builds while rejecting control characters.",
             "Selection questions retain their original casing and use readable text sizing without expanded letter spacing.",
             "Analysis navigation uses the same neutral styling as other pipeline destinations. Pack tabs no longer show a colored dot that can be mistaken for an error.",
             "Transcript blocks isolate descendant alignment during layout updates. The original reported UI hang remains under investigation."
