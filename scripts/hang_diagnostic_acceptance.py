@@ -9,6 +9,7 @@ import tempfile
 import time
 
 from analyze_hang_diagnostics import analyze
+from verify_hang_startup import verify_startup
 
 
 def main():
@@ -127,22 +128,11 @@ def main():
             process.kill()
             process.wait(timeout=5)
     retained_recordings.append(folder)
-    with tempfile.TemporaryDirectory() as retention_temporary:
-        expected_key = Path(retention_temporary) / "expected.key"
-        expected_key.write_text(replay_key)
-        expected_key.chmod(0o600)
-        for _ in range(6):
-            before = set(root.glob("*"))
-            subprocess.run([str(args.app / "Contents/MacOS/NexGenVideo")],
-                env={**os.environ, "NGV_HANG_SELFTEST": "startup",
-                     "NGV_HANG_SELFTEST_VERIFY_ACCOUNT": replay_account,
-                     "NGV_HANG_SELFTEST_VERIFY_KEY_FILE": str(expected_key)}, check=True, timeout=15,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            started = set(root.glob("*")) - before
-            assert len(started) == 1, "startup did not create exactly one recording"
-            assert (started.pop() / "build.json").is_file(), "startup did not initialize recording"
-            assert all(recording.is_dir() for recording in retained_recordings), "restart removed hang evidence"
-    results.append({"mode": "repeated-startup-retention", "starts": 6, "passed": True})
+    results.append(verify_startup(args.app, protected_recordings=retained_recordings))
+    stored_key = subprocess.check_output([
+        "security", "find-generic-password", "-s", "de.h5ventures.nexgenvideo",
+        "-a", replay_account, "-w"], text=True, timeout=10).strip()
+    assert stored_key == replay_key, "normal restarts lost the replay key"
     (args.output / "result.json").write_text(json.dumps(results, indent=2))
 
 

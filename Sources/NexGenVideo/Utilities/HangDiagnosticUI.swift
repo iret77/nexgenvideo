@@ -11,7 +11,6 @@ enum HangDiagnosticUI {
             HangDiagnosticSelfTest.start()
             return
         }
-        guard Bundle.main.object(forInfoDictionaryKey: "NGVDiagnosticBuild") as? Bool == true else { return }
         HangDiagnosticRecorder.shared.pruneExpiredRecordings()
         switch UserDefaults.standard.string(forKey: "hangDiagnosticMode") {
         case "replay": HangDiagnosticRecorder.shared.start(includeContent: true)

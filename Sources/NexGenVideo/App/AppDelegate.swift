@@ -2,9 +2,7 @@ import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        if Bundle.main.object(forInfoDictionaryKey: "NGVDiagnosticBuild") as? Bool != true {
-            MainThreadHangWatchdog.shared.start()
-        }
+        MainThreadHangWatchdog.shared.start()
         AppRelaunchSelfTest.checkpoint("delegate-started")
 
         // Activate the app (required when launched from CLI, not a .app bundle)
