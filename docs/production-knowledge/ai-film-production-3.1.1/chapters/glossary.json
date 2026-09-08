@@ -1,0 +1,46 @@
+[
+  {
+    "id": "glossary-f7cde8a25df6",
+    "title": "Glossary — the terms every rule uses (one meaning each)",
+    "ancestry": [
+      "Glossary — the terms every rule uses (one meaning each)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "glossary",
+    "source": {
+      "path": "references/glossary.md",
+      "startLine": 1,
+      "endLine": 13,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/glossary.md#L1",
+      "sha256": "988dd45dc630ed47b2be3a2fc9116415388e36d1d5e2bb42d958fe3226687e3d"
+    },
+    "contentMarkdown": "# Glossary — the terms every rule uses (one meaning each)\n\nHouse doctrine (ranks 🟢, SKILL.md Precedence). Read this file when a term in a rule, slate or asset order is ambiguous — every term below has exactly one meaning in this skill; where a word carries several (anchor, sequence, lock, state), the qualified form is the one to write.\n\n- **Shot** — planned unit, 4–12 s, one row of the shot table/board. **Take** — one generated video result (`TK01`…). **Sequence (generation)** — one take carrying 1–3 internal shots (rule 2, ch. 14); **sequence (story)** — a run of scenes / the \"sequence approach\" (film-craft); say which when ambiguous.\n- **Plate** — an approved still of a location (master wide or detail plate) used as a location reference; figure-less by default, but stylized/Pixar projects build **figure-anchored plates** first and derive the empty plate (production-pipeline ch. 1). **Reverse plate** — the same location generated from the counter-angle for shot/reverse-shot (production-pipeline ch. 4/16). **Sheet** — a character reference still set (turnaround/expressions, neutral light); **state sheet** — a new sheet for a persistent state change (wet, wounded, costume change).\n- **Anchor still / `@anchor_<shot>`** — the approved still of a shot, registered as an element and attached as a reference (rule 1); bible asset Type \"anchor\" means only this. **Anchor line** — the one-line identity text after an @tag (ch. 12b). **Style anchor** — the project's style-contract paragraph in the bible (section B2), distributed into prompts per Workflow step 4 — never pasted as a prefix. **Figure anchor** — a character placed in frame to force a stylized render (rule 8, pixar-look §8). **Anchor object** — the fixed prop in a location all staging is tied to (production-pipeline ch. 4). **Anchor composition** — a locked composition (camera setup + framing) that recurs across acts so that change reads as difference inside an identical frame (production-pipeline ch. 2 STORYBOARD). **Anchors & business** — acting term: props/tasks that ground a performance (film-craft).\n- **Lock (prompt)** — a positive sentence protecting one attribute (POSITIVE LOCKS); **180° lock** — the axis-of-action rule for coverage; **locked (status)** — bible asset status after user approval (draft → approved → locked); **style lock** — W7, fixing recipe + style anchor + verify line.\n- **ENDING STATE** — the last-frame description a take ends on and the next begins from; **state** otherwise = an asset's persistent condition (state sheet).\n- **Channel** — the control path an instruction travels by: prose, reference image, sketch, mask, seed, clay render, model choice (ch. 24b contract item 7). **Axis** — one controllable aspect of the output (size, count, position, light…); \"three failures on one axis\" = same aspect, unrelated to the 180° axis.\n- **`@Clay Render`** — Seedance 2.5 reference class: a textureless 3D blockout video that carries camera movement, pacing, shot-size transitions and blocking (ch. 14b). **Style donor** — the reference declared to give its rendering style to the other references (style-control §7, pixar-look §10).\n- **Shot board** — the bible's shot table (section B4); **storyboard** — in the storyboard-first model (W10) the four-part planning artefact of production-pipeline ch. 2 (camera setup system + panels + take/cut table + layout map); elsewhere drawn/previs frames with motion arrows. **Storyboard panel** — one look-free planning frame (grey sketch or blockout frame) with its setup tag and motion arrows; panel pair `a/b` = start and end state of one shot; never a generation reference. **Camera setup (`K1…`)** — a named camera position fixed in the location's floor plan: position, axis side, height, focal length, move; every shot belongs to exactly one setup — always write \"camera setup\", never bare \"setup\" (which also names the Cinema Studio settings). **Take/cut table** — the W10 table of which shots share one take, their internal timecodes, cut type (model / manual), continuity and position locks and reference set per take (export schema in ch. 2). **State ladder** — the ordered list of an object's visible states across the act (intact → cracked → broken), each with its in-frame cause; every step spawns a state sheet or state pair. **Position lock** — a POSITIVE LOCKS sentence fixing where each character and object starts, faces and ends relative to the anchor object, carried verbatim across all internal shots of a take (production-pipeline ch. 6).\n- **Artefacts by name:** **treatment** = prose + one shot table per scene (Workflow step 5) · **prompt shot list** (= shot-level script) = the same Shot IDs, one Render Slate + code block per take, followed by one risk register · **shot board** = the bible's status view of the same rows · **reference pool** = the bible's asset registry (section B3) · **delivery note** = the risk register block that closes a prompt shot list (Receipt KEYs are cited in its slates).\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [
+      {
+        "sourceName": "SKILL.md",
+        "entryIDs": [
+          "skill-9fc6d6e46c26",
+          "skill-dceff66d0b82",
+          "skill-97ff9b201107",
+          "skill-c1c24ea6da18",
+          "skill-705399a08ca6",
+          "skill-05a8c920538c",
+          "skill-f468f0c333ce",
+          "skill-a9c8ddc59709",
+          "skill-cffc1e447b50",
+          "skill-11d6f150df4d",
+          "skill-2e42f043c413",
+          "skill-da7177bac7a7"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  }
+]

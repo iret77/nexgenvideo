@@ -1,0 +1,296 @@
+[
+  {
+    "id": "production-bible-c3cd847c925c",
+    "title": "Production Bible: Project State Across Sessions (Ch. 22)",
+    "ancestry": [
+      "Production Bible: Project State Across Sessions (Ch. 22)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "canon",
+    "source": {
+      "path": "references/production-bible.md",
+      "startLine": 1,
+      "endLine": 4,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/production-bible.md#L1",
+      "sha256": "fc7cfd959e3960c2bb08dd4a419fc79f9cd6a67b59fb02f05e64d760acc266d5"
+    },
+    "contentMarkdown": "# Production Bible: Project State Across Sessions (Ch. 22)\n\nOne living markdown document per project — the single source of truth for everything a fresh session needs to continue losslessly. Industry ground rule: **if it isn't in the bible, it isn't canon** — a decision that lives only in a chat that ended does not exist. The bible is operational memory; the creative grammar it carries (recipe, style anchor) is decided once and then quoted, not re-litigated. Bible sections are cited as `bible section B3`, never as `ch. 3`.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "production-bible-3072a82d206e",
+    "title": "22a. Rules",
+    "ancestry": [
+      "Production Bible: Project State Across Sessions (Ch. 22)",
+      "22a. Rules"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "canon",
+    "source": {
+      "path": "references/production-bible.md",
+      "startLine": 5,
+      "endLine": 14,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/production-bible.md#L5",
+      "sha256": "7645221713897283ee6dbdcb2fa29d1e60b615620afa441dec15fca6c4c98a16"
+    },
+    "contentMarkdown": "## 22a. Rules\n\n1. **Session boot:** on any resumed project, read the bible FIRST — before answering, before generating. No bible offered? Ask for it once (once = once per session when no bible exists), or offer to create one from the conversation. EVERY project gets a bible before its first asset order (SKILL rule 11, W1 step 5).\n2. **Session close:** update the bible at the end of every work block (statuses, decisions, handoff). The agent proposes the update; wording of decisions stays terse. Shot-list edits follow \"update only what changed\": rewrite ONLY the named shot (1A, 1B) and reproduce every other shot word for word — never let the rewrite drift into neighbouring prompts [H-off, P47]. A rewritten prompt is a NEW revision, never an overwrite: bump the Render ID (`…__P01` → `…__P02`, SKILL.md ID discipline), set the shot board's `Current Render ID` to it, and append one row to the render/take log (section B4b; full text in the iteration log, section B9) — the earlier revision text stays retrievable so the revision that produced an approved take can be re-run. When a prompt has grown by accretion and contradicts itself, sanitize it from scratch (SKILL rule 14) — that rewrite is also a new P-revision.\n3. **Approval is the user's:** statuses move forward (draft → approved → locked) only on explicit user approval; \"locked\" additionally requires the ten-of-ten stress test of production-pipeline ch. 3 (W2 step 6) to have passed — approval alone yields \"approved\". The agent never self-approves; a regenerated asset resets to draft. Every generated result — including an edit or extension of an approved take — is a NEW Take ID (TK02 from TK01, the slate's Handoff row names the source) and starts in draft; the source take keeps its status.\n4. **The bible mirrors platforms, it does not replace them.** Binary assets live in the platform (Higgsfield Elements/Soul ID, OpenArt characters, Runway tagged References, local files for fal pipelines); the bible holds names, IDs, statuses, and pointers. On conflict, the approved image/element is the visual truth, the bible is the record of WHICH one is approved.\n5. **Compact by force:** the whole bible stays pasteable into a fresh chat (target: 2–4 pages). Superseded decisions and finished shots move to an ARCHIVE section at the bottom or a second file; the active surface stays small; the full iteration log lives outside the active surface (section B9).\n6. **One bible per project.** Series/episodic work: one project bible (world, cast, style contract) + one slim episode sheet per episode (shot board, episode decisions). The pole decides the split (story-structures ch. 23d): **episodic** — universe facts live ONLY in the project bible and change only at season boundaries, episode sheets stay throwaway-slim; **serialized** (\"the overlong film\") — shot board and continuity ledger span the season in the project bible, episode sheets carry only the episode's micro-shape and status.\n7. **Platform receipt is mandatory.** Before a generation, edit, or model-choice decision becomes canon, record the RECEIPT line as defined in SKILL.md Scope & version (KEY grammar there; receipt states `live-checked <date>` / `from reference <KEY>`, SKILL rule 16) in section B1b. Never transfer a setting merely because two surfaces share a provider or model name.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [
+      {
+        "sourceName": "SKILL.md",
+        "entryIDs": [
+          "skill-9fc6d6e46c26",
+          "skill-dceff66d0b82",
+          "skill-97ff9b201107",
+          "skill-c1c24ea6da18",
+          "skill-705399a08ca6",
+          "skill-05a8c920538c",
+          "skill-f468f0c333ce",
+          "skill-a9c8ddc59709",
+          "skill-cffc1e447b50",
+          "skill-11d6f150df4d",
+          "skill-2e42f043c413",
+          "skill-da7177bac7a7"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "production-bible-a27a5ed127e1",
+    "title": "22b. Template (copy, fill, keep)",
+    "ancestry": [
+      "Production Bible: Project State Across Sessions (Ch. 22)",
+      "22b. Template (copy, fill, keep)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "canon",
+    "source": {
+      "path": "references/production-bible.md",
+      "startLine": 15,
+      "endLine": 104,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/production-bible.md#L15",
+      "sha256": "a851f59631e4ebf640ada69b7ff051105a09db141ff3af2ce6d0e95b7d26c2c0"
+    },
+    "contentMarkdown": "## 22b. Template (copy, fill, keep)\n\n```markdown\n# <PROJECT> — Production Bible          last update: <date> · by <session/user>\n\n## B1 · Frame\nFormat/length: … · Platform target(s) + aspect ratio(s): …\nModel stack: stills … [token] · motion … [token] · edit/post … [token] — Render-ID tokens in brackets, fixed once here (SKILL.md ID discipline; e.g. `motion Seedance 2.5 on Higgsfield [HF-SD25]`)\nDialogue language: … · Route: native in-model / audio dub / video dub (test-take result + date) · AI-disclosure duty: … (post-audio-legal ch. 20)\n\n## B1b · Platform / UI / MCP receipts (one RECEIPT line per row, SKILL.md Scope & version order)\n| KEY | Platform → access route | Account / workspace / project | Surface / tool | Model + mode id (\"UI label\") | Vendor version or UI snapshot | Source URL · state (live-checked <date> / from reference <KEY>) | Result / asset IDs |\n|---|---|---|---|---|---|---|---|\n| HF-CS4@<check date> | Higgsfield → web UI | … | Cinema Studio | Seedance 2.5 · t2v (\"…\") | Cinema Studio 4.0 | … · live-checked <date> | … |\n\nFor an unversioned web form write `unversioned UI @ YYYY-MM-DD`; for MCP also retain its server URL and the exposed tool/schema. Every actual generation/edit cites its KEY in the shot board and in the delivery's Render Slates. The live selected form and connected workspace always outrank an old receipt.\n\n## B2 · Style contract (decided — quote, don't re-litigate)\nPremise (one sentence the ending proves): …\nContainer: <structure from ch. 23, one line> · Series pole (if series): episodic / serialized / anthology\nRecipe: <name or synthesis, one line why>\nStyle anchor (project style contract — distributed per SKILL.md Workflow step 4, never pasted as a prefix):\n> …\nLook tokens (4–8, verbatim in every prompt's STYLE / image style section): …\nVerify line (QA gate for every still/take; recipe's line, or DEFAULT line derived from style anchor + genre baseline — never empty; W1 step 5): …\nGenre baseline: <genre> — deviations: …\n\n## B3 · Asset registry (= the reference pool)\n| @name | Type (reference class) | Status | Source of truth | Platform IDs / path | Job line + exclusions |\n|---|---|---|---|---|---|\n| @hero | character (@Image) | locked | sheet v3 (link/element) | HF element …, Soul ID … / file … | face+outfit lock; never: … |\n| @loc_bar | location (@Image) | approved | master plate v2 | … | light side left; reverse: @loc_bar_rev |\n| @anchor_1A | anchor (@Image) | approved | still 1A final | HF element … / file … | reference anchor shot 1A |\n| @clay_sc3 | clay-render (@Clay Render) | approved | blockout v2 | HF element … / file assets/clay/clay_sc3_v2.mp4 | camera move + staging + subject trajectory only; never: lighting, texture |\n| @voice_hero | voice/audio (@Audio) | approved | voice ref v1 (<30 s) | HF element … / file assets/audio/voice_hero_v1.mp4 | \"@Audio 1 defines @hero's voice\"; never: motion, identity |\nTypes (column 2 = asset type + the ch. 14b reference class it is attached as): character (@Image) · location (@Image) · prop (@Image) · wardrobe (@Image) · style-ref (@Image) · anchor (@Image) · layout-schematic (@Image, production-pipeline ch. 8) · motion-clip (@Video — motion/pacing only unless the job line says otherwise) · voice/audio (@Audio; on surfaces without an audio slot attached as @Video black-screen MP4, post-audio-legal ch. 18) · clay-render (@Clay Render — staging/camera only, never lighting). Every approved shot still becomes an @anchor_* entry (production-pipeline ch. 1). Every element of the W2 reference pool gets a row — a reference without a row is not canon.\n\n## B3b · Storyboard & camera setup system (storyboard-first projects, workflows W10 — canon only when linked HERE)\nStoryboard: <link/file or FilmFlow project + export file> · version: <n> · signed off by the director: <date> · export schema: production-pipeline ch. 2\nCamera setups per location (copy the setup line verbatim into CAMERA and FIRST FRAME/BLOCKING):\n| Location | Setup | Position (floor plan) | Axis side | Height | Focal | Move | Shots on it |\n|---|---|---|---|---|---|---|---|\n| @loc_lamproom | K1 | door corner, 3 m from the lamp | left of axis | 1.6 m | 24 mm | static | 1A, 2C (recurring wide = anchor composition) |\nState ladders (one line per changing object): `@lamp: intact → cracked (1B, cause: @hero's lantern hits it) → dark (2A) — state sheets ordered: …`\nRule: prompts are written from panel + setup line + take row, never from prose; where a panel deviates from the setup, the panel is marked (\"sketch deviates — setup rules\"), never redrawn. A storyboard not linked in this section does not exist for the next session.\n\n## B4 · Shot board\n| Shot | Seq. take | Internal TC | Cut type (model / manual) | Continuity lock | State | Len | Status | Anchor | Current Render ID | Approved-take Render ID | Platform receipt (KEY) | Risk → rescue (from the delivery risk registers) | Takes used (= Take IDs in B4b) |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n| 1A | S1 (1A+1B) | 0:00–0:08 | model (HARD CUT 0:08) | @hero at the lamp, facing the door; lantern in left hand | @lamp intact | 8s | final | @anchor_1A | LIGHTHOUSE_1A__HF-SD25__T2V__P02 | …__T2V__P02 (TK03) | HF-CS4@2026-09-04 | — | 3 |\n| 1B | S1 (1A+1B) | 0:08–0:14 | manual (ellipsis to 2A) | same positions, @hero's gaze to the lamp | @lamp cracked (cause in frame) | 6s | stills | @anchor_1B | LIGHTHOUSE_1B__HF-SD25__T2V__P01 | — | … | hands close-up → cut to reaction · ACCEPTED by user <date> | 0 |\nStatus ladder: planned → stills (approved still exists) → take (approved take) → final (in edit). Columns `Internal TC` (timecode range inside the take), `Cut type` (model cut inside the take / manual cut in the edit — every ellipsis is manual), `Continuity lock` (position lock + gaze carried over all internal shots) and `State` (state-ladder step of any changing object) come from the W10 take/cut table (production-pipeline ch. 2); projects without a storyboard-first stage leave them `—`.\nID discipline (SKILL.md Render Slate): Shot ID = canon here; Shot IDs enter this board verbatim from the delivered shot table (22e Bootstrap) — Shot/Len/Risk → rescue mirror the treatment shot table (SKILL.md Workflow 5). Seq. take = the generation unit (SKILL rule 2: 1–3 internal shots per take); label `S<n>` = sequence take, never `TK` (that is a Take ID of a generated result). Render IDs (`…__P01`) identify prompt-package revisions; Take IDs (`TK01`…) exist only for generated results — \"Takes used\" counts Take IDs, never prompt revisions. `Current Render ID` = the latest prompt package; `Approved-take Render ID` = the revision that produced the approved take (with its TK) — never overwrite this once status ≥ take. Risk → rescue holds one entry per kept red/yellow element of the shot, copied from the delivery risk register at session close (`<risk> → <rescue>`), plus heard warnings as `ACCEPTED by user <date>`; there is no separate register section in the bible.\n\n## B4b · Render / take log (one row per prompt package; move a shot's rows to ARCHIVE when it is final)\n| Render ID | KEY | Changed vs previous | Take IDs | Verdict / approved take |\n|---|---|---|---|---|\n| LIGHTHOUSE_1A__HF-SD25__T2V__P01 | HF-CS4@2026-09-04 | first package | TK01–TK02 | TK02 lever pre-lit; TK01 face drift |\n| LIGHTHOUSE_1A__HF-SD25__T2V__P02 | HF-CS4@2026-09-04 | rewrite: lever lock moved next to the action line | TK03 | TK03 approved |\n| LIGHTHOUSE_1A__HF-SD25__EDIT__P01 | HF-CS4@2026-09-04 | region edit 5–7 s, lever only (source TK03) | TK01 | final |\nCounting rule (SKILL rule 14): 3 failed iterations with the same operation on one shot = clean rewrite + channel change; 10–15 Take IDs on one shot = simplify the shot (production-pipeline ch. 10).\n\n## B5 · Reroll budget & spend priorities\nPlanned takes per shot class: standard … · face/emotion peaks … · long takes/oners …\nSpend the budget where the recipe says (its AI note); stop rule = the SKILL rule-14 ladder: 3 failed iterations → clean rewrite + channel change; 2 clean failures → model limit; 10–15 iterations per shot → simplify the shot.\nSpent so far: … (update per block)\n\n## B6 · Decision log (append-only, one line each)\n<date> — <decision> — <why / alternative rejected>\n<date> — ASSUMED: <item> = <value> — confirm\n<date> — feedback-to-skill offer: made / declined\n\n## B7 · Continuity ledger (never closes — post-audio-legal ch. 19)\n| Shot | Character state (sheet) | Key props (whose hand, state) | Time of day / weather | Light direction | Screen direction per character | Emotional state |\n|---|---|---|---|---|---|---|\n| 1A | @hero sheet v3 | lantern in @hero's left hand, unlit | night, clear | key from left, moon | @hero faces right | resolved, tired |\nOne row per shot; check the new row against the previous one before every generation; a state change spawns a sheet order, never a prompt adjective (post-audio-legal ch. 19); changes only via decision log entry.\n\n## B8 · Handoff\nLast state: … · Next: 1) … 2) … · Open questions for the user: … · Reviews pending: `TKnn — review pending (director)`\n\n## B9 · Iteration log (pointer)\nLives OUTSIDE the active bible surface (rule 5): file `<PROJECT>-iteration-log.md` next to the bible, or the ARCHIVE section if the project is small. One line per run, append-only:\n`<Render ID> · <TK or 'no result'> · what changed (one line) · verdict (reject/tell/coverage/approved)`\nThe full prompt text of every P-revision that produced an approved take or coverage is kept verbatim in that file (production-pipeline ch. 10); B4b is its per-shot summary.\n\n## ARCHIVE\n<superseded decisions, finished-and-delivered shots>\n```\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [
+      {
+        "sourceName": "SKILL.md",
+        "entryIDs": [
+          "skill-9fc6d6e46c26",
+          "skill-dceff66d0b82",
+          "skill-97ff9b201107",
+          "skill-c1c24ea6da18",
+          "skill-705399a08ca6",
+          "skill-05a8c920538c",
+          "skill-f468f0c333ce",
+          "skill-a9c8ddc59709",
+          "skill-cffc1e447b50",
+          "skill-11d6f150df4d",
+          "skill-2e42f043c413",
+          "skill-da7177bac7a7"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "production-bible-667997dee933",
+    "title": "22c. Platform mapping (what the registry means per platform)",
+    "ancestry": [
+      "Production Bible: Project State Across Sessions (Ch. 22)",
+      "22c. Platform mapping (what the registry means per platform)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "canon",
+    "source": {
+      "path": "references/production-bible.md",
+      "startLine": 105,
+      "endLine": 114,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/production-bible.md#L105",
+      "sha256": "b0e13b32732af876f6430311a716847c812912584a15116f3d280239eb92b548"
+    },
+    "contentMarkdown": "## 22c. Platform mapping (what the registry means per platform)\n\n**Version boundary:** these are storage/continuity patterns, not promises about the current selector set of a platform. For live UI or MCP choices, first record a RECEIPT line in section B1b and consult `platform-ui-workflows.md` for the matching dated reference key.\n\n- 🟢 **Higgsfield / Cinema Studio:** Elements (characters, locations, props — and registered anchors, platforms-models ch. 13b) and Soul ID persist platform-side; the registry's \"Platform IDs\" column records the element names verbatim so prompts and bible use identical tags (tag token rule: video-prompting ch. 12b). The platform's own shared Project Brief may exist for teams — the bible remains the agent-facing source of truth and must not contradict it.\n- 🟢 **Runway (RW-WEB@2026-09-04, platform-ui-workflows §3):** tagged Gen-4 Image References persist in the Runway Assets library (max three per generation); Gen-4.5 video takes text or text + one image only, no References. The registry's \"Platform IDs\" column records the Reference tag name verbatim; \"Source of truth\" still points to the local file so the asset survives a plan/library change. Session boot: confirm the tagged References still appear in Assets — if not, re-upload from the local file and record a new receipt. The live UI outranks this line; do not ask the user to verify beyond what the panel shows.\n- 🟡 **OpenArt:** character objects persist but community reports drift; keep the sheet-based anchor discipline (production-pipeline ch. 3) as the real lock, the platform character as convenience.\n- 🟢 **fal via MCP/API, local pipelines:** treat the local file tree as the durable asset store unless the selected, version-recorded fal endpoint/workspace says otherwise. The registry's path column is canonical; keep one folder per asset type (`assets/characters/`, `assets/locations/`, `assets/props/`, `assets/wardrobe/`, `assets/style/`, `assets/anchors/`, `assets/layouts/`, `assets/motion/`, `assets/audio/`, `assets/clay/`, `takes/`), filenames = @names + version (`anchor_1A_v2.png`). The bible lives at the project root next to them. Every reference is re-attached per run and addressed by the upload-order form the surface shows (video-prompting ch. 12b tag token rule).\n- **Mixed stacks** (e.g. stills local via fal, motion on Higgsfield): one registry row can carry both a path and an element ID; the status column is shared — an asset is approved once, everywhere.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [
+      {
+        "sourceName": "platform-ui-workflows.md",
+        "entryIDs": [
+          "platform-ui-workflows-6dc670fc3f91",
+          "platform-ui-workflows-3b8acc5f6415",
+          "platform-ui-workflows-7d54a0037e59",
+          "platform-ui-workflows-04c305aa5fa4",
+          "platform-ui-workflows-4c833d2eab54",
+          "platform-ui-workflows-446046bb6ca5",
+          "platform-ui-workflows-63c227d438e9",
+          "platform-ui-workflows-1bbc05467732",
+          "platform-ui-workflows-a54da21dd877",
+          "platform-ui-workflows-1800a14f8efb",
+          "platform-ui-workflows-93d12ca52dd2",
+          "platform-ui-workflows-87281cdfb693",
+          "platform-ui-workflows-ef1df540bb42",
+          "platform-ui-workflows-4cb5fa24727f",
+          "platform-ui-workflows-d6cf98a9c992",
+          "platform-ui-workflows-dffe420e1652",
+          "platform-ui-workflows-071ec10c4b30",
+          "platform-ui-workflows-7a41a20d840f",
+          "platform-ui-workflows-c25a75d5f8b0",
+          "platform-ui-workflows-e065c23134cc",
+          "platform-ui-workflows-2fc39d4c2fa2",
+          "platform-ui-workflows-55a52d3a83bb",
+          "platform-ui-workflows-afd48d04b60f",
+          "platform-ui-workflows-cfc45e4aa90b",
+          "platform-ui-workflows-f9e9c67e2b82",
+          "platform-ui-workflows-2793dec3f603",
+          "platform-ui-workflows-6176107bac0a",
+          "platform-ui-workflows-e7ff5638cd65",
+          "platform-ui-workflows-0d16d75d5809",
+          "platform-ui-workflows-904199cbdc1a",
+          "platform-ui-workflows-4418f52deb3c",
+          "platform-ui-workflows-e9b2d1bc61c4",
+          "platform-ui-workflows-86a70ac78823",
+          "platform-ui-workflows-7a7a82672859",
+          "platform-ui-workflows-bb1c0df9af39",
+          "platform-ui-workflows-a2f90ea048dd",
+          "platform-ui-workflows-890d79b44fab",
+          "platform-ui-workflows-9afe66081c3f",
+          "platform-ui-workflows-f4622546e4ea",
+          "platform-ui-workflows-0fcd03ac29bc",
+          "platform-ui-workflows-c80b9d082feb",
+          "platform-ui-workflows-c58d776d3e35",
+          "platform-ui-workflows-58cb6bb8864b",
+          "platform-ui-workflows-4976feb5aef0",
+          "platform-ui-workflows-85eec349cf69",
+          "platform-ui-workflows-6692176f1743",
+          "platform-ui-workflows-21265d567b98",
+          "platform-ui-workflows-4b6d0762ce25",
+          "platform-ui-workflows-2f26645f5b2d",
+          "platform-ui-workflows-03c0f524fd96",
+          "platform-ui-workflows-cc6f1d24d639",
+          "platform-ui-workflows-47ed307fe438",
+          "platform-ui-workflows-e4f03834a023",
+          "platform-ui-workflows-1b8baeb4fe8e",
+          "platform-ui-workflows-dac737fb48cd",
+          "platform-ui-workflows-cc3e829c0f33",
+          "platform-ui-workflows-e23bc75bdf23",
+          "platform-ui-workflows-2ed9b643b727",
+          "platform-ui-workflows-905b7b1a103b",
+          "platform-ui-workflows-ad5ae3bbf61d",
+          "platform-ui-workflows-ba1359d74f17"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "production-bible-82235e8038c5",
+    "title": "22d. Why this exists",
+    "ancestry": [
+      "Production Bible: Project State Across Sessions (Ch. 22)",
+      "22d. Why this exists"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "canon",
+    "source": {
+      "path": "references/production-bible.md",
+      "startLine": 115,
+      "endLine": 118,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/production-bible.md#L115",
+      "sha256": "a495af858e2172c087b1f6f2f7f59009cc00ad6db831ee32b88ad969849b5be6"
+    },
+    "contentMarkdown": "## 22d. Why this exists\n\nWorking studio pipelines converge on the same shape: script → shot breakdown → references → generation with planned retakes → review → post, with a shared brief and a reusable asset store carrying consistency. The failure mode this file prevents: project knowledge scattered across chat histories, loose anchor images, and platform sessions — each resumed session rebuilding context from memory, drifting a little each time. The bible is the fixed point; sessions come and go.\n\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "production-bible-f5df78b14f2f",
+    "title": "22e. ID grammar — Render ID tokens, instance chain, bootstrap",
+    "ancestry": [
+      "Production Bible: Project State Across Sessions (Ch. 22)",
+      "22e. ID grammar — Render ID tokens, instance chain, bootstrap"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "canon",
+    "source": {
+      "path": "references/production-bible.md",
+      "startLine": 119,
+      "endLine": 129,
+      "commit": "0333751214c7af17977dd33f0ba88ba9c352421e",
+      "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/production-bible.md#L119",
+      "sha256": "4a7891ac909f8678a088a3ad9ff6a728f6f1ff5ef0e29a0ea9fcd63f5351cfd6"
+    },
+    "contentMarkdown": "## 22e. ID grammar — Render ID tokens, instance chain, bootstrap\n\nThe Render Slate's `Render ID` (SKILL.md) is `<PROJECT>_<Shot ID>__<platform-model>__<operation>__P<nn>`. This section holds the full grammar; SKILL.md carries the one-line token summary.\n\n**Token rules (fixed, ASCII, no dots):** `PROJECT` = the bible's title slug in CAPITALS, no spaces (`LIGHTHOUSE`). `platform-model` = `<platform>-<model>` where the platform token is the prefix of the platform's reference key in platform-ui-workflows (`HF`, `FAL`, `RW`, `OA`, `AR`, `CGPT`; `HF-CS4-…` when the run goes through Cinema Studio) and the model token is the model name compressed to letters+digits with the version digits kept (`SD25` Seedance 2.5, `SD20`, `NBP` Nano Banana Pro, `GPTI2`, `SEEDR5`, `FLUX2`) — e.g. `HF-SD25`, `HF-CS4-SD25`, `FAL-SD25`, `CGPT-GPTI2`. `operation` = `T2V` · `OMNI` (omni_reference) · `EDIT` (video_edit) · `EXT` (video_extension) · `STILL` (shot anchor still) · `SHEET` · `PLATE` · `ANGLE` (reverse/coverage still) · `UPSCALE`. The first use of any new platform/model token is written once into the bible section B1 \"Model stack\" line in brackets (`motion Seedance 2.5 on Higgsfield [HF-SD25]`) and reused verbatim from then on. **Asset prompts** (sheets, plates, props, style refs) have no Shot ID: use the asset's @tag without the `@` in the Shot-ID slot — `LIGHTHOUSE_cat__HF-NBP__SHEET__P01`, `LIGHTHOUSE_loc_lamproom__CGPT-GPTI2__PLATE__P02`. **Variant token** `_v<letter>` directly after the Shot ID, only for a deliberate creative alternative (`1A_vB`), never for a rerun. **Take ID** is written as a suffix of the Render ID that produced it (`…__P01__TK03`) in the bible and review notes — never in a slate, because a slate precedes the result.\n\n**Instance chain:** shot board `1A` → still `LIGHTHOUSE_1A__HF-NBP__STILL__P01` → director approves → registered `@anchor_1A` → `LIGHTHOUSE_1A__HF-SD25__T2V__P01` → batch of 4 → `…__T2V__P01__TK01…TK04`, TK03 approved → local fault → `LIGHTHOUSE_1A__HF-SD25__EDIT__P01` (Handoff row: edit source `…__T2V__P01__TK03`) → `…__EDIT__P01__TK01` final. A rewrite of the t2v prompt is `…__T2V__P02`; rerunning the same text yields a new Take ID, never a new P.\n\n**Bootstrap (no bible / no shot board yet).** The numbered shot table you deliver (Workflow steps 2/5) IS the shot board — copy it into bible section B4 unchanged when the bible is created (W1 step 5, before the first asset order). Shot-ID scheme when the script carries none: `<scene number><shot letter>` — `1A, 1B … 2A` — numbered in delivery order; add `SQ`/`SC` prefixes only when the user's script already numbers sequences/scenes (that is what \"never invent sequence/scene data\" means). `<PROJECT>` = the working title from the bible header as an ASCII slug (`LIGHTHOUSE`); no title yet → ask once (production-bible 22a rule 1) and hold the Render ID row until answered — do not substitute a placeholder. A one-off prompt outside any project omits the Render ID row (slate rule: omit unknown rows) and says so in one line. Prompt-package revisions start at `P01`.\n\n**Filled instance:** worked-example.md §3 shows one complete slate + prompt + risk register; copy its row labels and value shapes (translate labels when the deliverable language is not English; IDs and @tags stay ASCII).\n",
+    "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
+    "runtimeStatus": "extracted-not-wired",
+    "localReferences": [
+      {
+        "sourceName": "SKILL.md",
+        "entryIDs": [
+          "skill-9fc6d6e46c26",
+          "skill-dceff66d0b82",
+          "skill-97ff9b201107",
+          "skill-c1c24ea6da18",
+          "skill-705399a08ca6",
+          "skill-05a8c920538c",
+          "skill-f468f0c333ce",
+          "skill-a9c8ddc59709",
+          "skill-cffc1e447b50",
+          "skill-11d6f150df4d",
+          "skill-2e42f043c413",
+          "skill-da7177bac7a7"
+        ]
+      },
+      {
+        "sourceName": "worked-example.md",
+        "entryIDs": [
+          "worked-example-f3d5fa6b6205",
+          "worked-example-fa7721159cff",
+          "worked-example-35cfa29f22f4",
+          "worked-example-65f26dd4a67e",
+          "worked-example-139e9c1e8417",
+          "worked-example-7671e3cd2a49",
+          "worked-example-bb187e0467ef"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  }
+]

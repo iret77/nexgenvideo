@@ -1,0 +1,168 @@
+{
+  "status": "NGV adaptation design; no locked contract changed",
+  "sourcePrecedence": "handbook/skill.md — Precedence",
+  "order": [
+    "Explicit current user instruction within the authorized task",
+    "Locked NGV host/pack contracts; unresolved contradictions require an explicit decision before implementation",
+    "Approved project canon within its phase and lineage",
+    "Applicable NGV adaptation below",
+    "Source always-rules plus explicitly scoped source exceptions",
+    "Model/platform/scenario-specific reference rule and original evidence confidence",
+    "Examples and templates"
+  ],
+  "overrides": [
+    {
+      "id": "ngv-phase-order",
+      "sourceBehavior": "Source W1/W10 and intake ordering",
+      "ngvApplication": "The active pack owns phase order. Musicvideo remains Track → optional Lyrics → Init → approved Analysis → optional existing material → story. Use W10 knowledge inside the relevant existing phases; a replacement phase graph requires an explicit decision.",
+      "issues": [
+        483,
+        447
+      ]
+    },
+    {
+      "id": "ngv-canon",
+      "sourceBehavior": "One production bible as source truth",
+      "ngvApplication": "Map bible roles to NGV canonical writers/artifacts and cumulative exact-byte lineage. Do not create an independent markdown authority. Draft/proposal and approval remain different states; phase edits require explicit rewind.",
+      "issues": [
+        438,
+        440,
+        484
+      ]
+    },
+    {
+      "id": "ngv-greenfield",
+      "sourceBehavior": "Story comes from user; missing story intake",
+      "ngvApplication": "Musicvideo may be greenfield: propose story or nonnarrative concept from approved audio analysis and optional lyrics. Missing existing story files never block development. Execution prompts cannot silently invent unapproved beats.",
+      "issues": [
+        484,
+        489
+      ]
+    },
+    {
+      "id": "ngv-language",
+      "sourceBehavior": "Conversation follows user language; supplied prompt stays verbatim",
+      "ngvApplication": "App interaction follows explicit app localization or an explicit language request. Generated model prompts remain English with literal dialogue in the declared dialogue language. Preserve user-supplied text as input/provenance; the normal route still precompiles it, never bypasses the prompt engine.",
+      "issues": [
+        439,
+        486
+      ]
+    },
+    {
+      "id": "ngv-hybrid",
+      "sourceBehavior": "Skill excludes live-action and real-footage editing",
+      "ngvApplication": "Reusable craft, coverage, structure, review and finishing also apply to imported/live_action/ai_enhanced shots. Generation-only anchors, paid routes and draft renders are conditional on source mode. Retain zero-generation musicvideo/film workflows.",
+      "issues": [
+        437,
+        490,
+        491
+      ]
+    },
+    {
+      "id": "ngv-anchor-modes",
+      "sourceBehavior": "Source prefers reference anchor and native video extension",
+      "ngvApplication": "Record reference anchor, exact keyframe interpolation, frame continuation and native video extension as different proposed modes. #485 must settle integration with locked chained-shot semantics. Existing predecessor-last-frame-only chain remains unchanged until that decision.",
+      "issues": [
+        485
+      ]
+    },
+    {
+      "id": "ngv-provider-evidence",
+      "sourceBehavior": "Source green labels, model versions, UI controls and capacities",
+      "ngvApplication": "These are dated source claims, not live verified capabilities. Keep original date/confidence/route. Executability comes from enabled providers intersected with actual route support. Never transplant a UI field into an API or enable a provider from this corpus.",
+      "issues": [
+        434,
+        436,
+        437
+      ]
+    },
+    {
+      "id": "ngv-spend",
+      "sourceBehavior": "Default batches of four and 10–15 iterations",
+      "ngvApplication": "Preserve the diagnostic counting protocol and escalation thresholds as configurable policy. Every paid operation stays inside explicit cost/batch authorization (#480); never automatically spend through the entire suggested budget. A paid diagnostic is not a free validation.",
+      "issues": [
+        442,
+        480
+      ]
+    },
+    {
+      "id": "ngv-style-scope",
+      "sourceBehavior": "Recipe Verify lines described as binary reroll gates",
+      "ngvApplication": "Bind each selected criterion to its actual frame/shot/sequence/project scope and evidence modality. Technical provenance gates remain deterministic; aesthetic reviews require viewed media or attributed director review. A local fault on a usable production take follows scoped repair before regeneration.",
+      "issues": [
+        442,
+        443
+      ]
+    },
+    {
+      "id": "ngv-performance-audio",
+      "sourceBehavior": "Diegetic-only generation, no generated music; musical examples",
+      "ngvApplication": "Musicvideo master audio is the original track. Referenced segments can drive performance/lip sync without becoming replacement soundtrack. Singing, spoken dialogue, VO, ambience and score are separate roles with explicit mouth ownership; keep scope of music-bleed exception.",
+      "issues": [
+        488
+      ]
+    },
+    {
+      "id": "ngv-documentary",
+      "sourceBehavior": "Source AI interviews author soundbites before generation",
+      "ngvApplication": "For actual documentary, paper edit selects attributed, consented source transcript ranges; no invented witness quote or synthetic footage passed off as evidence. Authored or reenacted interviews are a separately declared synthetic mode, preserving source/disclosure provenance.",
+      "issues": [
+        491
+      ]
+    },
+    {
+      "id": "ngv-abi-and-pins",
+      "sourceBehavior": "New knowledge entities and metadata fields",
+      "ngvApplication": "Use versioned resources/new extension artifacts under existing registration and loader. Do not add stored fields to compatible public V1 value types. Existing projects retain pinned pack/profile/library versions; migration is explicit and transactional.",
+      "issues": [
+        482,
+        440
+      ]
+    },
+    {
+      "id": "ngv-style-risk",
+      "sourceBehavior": "UGC/handheld/elliptical styles tolerate artifacts",
+      "ngvApplication": "A deliberate style may accept a named aesthetic imperfection; it does not excuse wrong identity, anatomy, unapproved canon changes or provenance gaps. Distinguish intentional camera following from accidental floating camera.",
+      "issues": [
+        442,
+        490
+      ]
+    },
+    {
+      "id": "ngv-examples",
+      "sourceBehavior": "Worked examples and templates contain invented project names and parameters",
+      "ngvApplication": "Keep example and template content available in full, but instantiate only from actual project data and verified route. Never promote example light/weather/plot, prices, IDs or account names into canon.",
+      "issues": [
+        448,
+        486
+      ]
+    },
+    {
+      "id": "ngv-legal",
+      "sourceBehavior": "Source legal/licensing statements",
+      "ngvApplication": "Preserve attribution, consent, rights and disclosure procedures and the source date. Do not compile jurisdiction-specific legal conclusions into an automatic green gate. No additional legal research or advice is asserted by this extraction.",
+      "issues": [
+        445,
+        491
+      ]
+    },
+    {
+      "id": "ngv-knowledge-scope",
+      "sourceBehavior": "Complete knowledge vs selective context",
+      "ngvApplication": "Keep every actionable item locally; select the relevant complete procedure/recipe and its governing exceptions per task. Do not inject all files, silently truncate the selected procedure, or mistake a small initial library for complete migration.",
+      "issues": [
+        482
+      ]
+    },
+    {
+      "id": "ngv-readable-overlays",
+      "sourceBehavior": "Footage-authenticity timecode/REC tells and recipe chapter cards vs source red-list readable-text ban",
+      "ngvApplication": "Preserve the chosen recording-format tell or chapter-card intent as an NLE overlay/title with exact text where needed; do not ask the video generator to render reliable readable text. Non-text recording artifacts remain generation style. This is an explicit NGV realization of both source intentions, not a claim that the source contains this reconciliation.",
+      "issues": [
+        439,
+        444,
+        482
+      ]
+    }
+  ]
+}
