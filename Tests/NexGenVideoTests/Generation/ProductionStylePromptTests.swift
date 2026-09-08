@@ -15,7 +15,8 @@ struct ProductionStylePromptTests {
             directorID: "director-wes-anderson-symmetry-deadpan", signatureID: "dop-vittorio-storaro",
             signatureDimensions: [.color], overrides: [
                 .init(dimension: .color, value: "Cobalt shadows and amber highlights.",
-                      reason: "Use the selected act palette.", sourceEntryID: "dop-vittorio-storaro"),
+                      reason: "Use the selected act palette.", sourceEntryID: "dop-vittorio-storaro", verification: .init(scope: .frame, evidenceKind: .image,
+                        criterion: "Cobalt shadows and amber highlights.")),
             ]
         )
         try ProductionStyleStoreV1.write(design: design, selection: selection, clearStyle: false, dataRoot: root)
@@ -47,4 +48,23 @@ struct ProductionStylePromptTests {
         #expect(!audio.text.isEmpty)
         #expect(!audio.text.contains("Cobalt"))
     }
+    @Test("conflicting free styles are rejected instead of silently overwritten")
+    func conflictIsExplicit() async throws {
+        let home = try fixture()
+        defer { try? FileManager.default.removeItem(at: home) }
+        await #expect(throws: (any Error).self) {
+            try await PromptComposer.compose(intent: "A traveler at a quiet station", modality: .image,
+                modelId: "fal-ai/flux-pro", projectDir: home, style: "Monochrome green night vision")
+        }
+        let root = try #require(DataRootResolver.dataRoot(of: home))
+        try Data("changed upstream brief".utf8).write(to: root.appendingPathComponent(PipelineLayout.briefFile))
+        let context = try #require(ProductionStyleContext.prompt(dataRoot: root, phase: "render"))
+        #expect(context.contains("Read-only diagnosis remains available"))
+        #expect(context.contains("explicit rewind"))
+        await #expect(throws: (any Error).self) {
+            try await PromptComposer.compose(intent: "A traveler at a quiet station", modality: .image,
+                modelId: "fal-ai/flux-pro", projectDir: home)
+        }
+    }
+
 }

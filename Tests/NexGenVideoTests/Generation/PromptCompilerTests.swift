@@ -184,22 +184,22 @@ struct PromptCompilerTests {
 
     @Test func gateRejectsUncompiledAndFabricatedTokens() async throws {
         // No token at all.
-        #expect(throws: ToolError.self) {
-            try PromptCompiler.enforceGate(args: ["prompt": "raw"], prompt: "raw", modelId: "fal-ai/veo3")
+        await #expect(throws: ToolError.self) {
+            try await PromptCompiler.enforceGate(args: ["prompt": "raw"], prompt: "raw", modelId: "fal-ai/veo3")
         }
         // Fabricated token.
-        #expect(throws: ToolError.self) {
-            try PromptCompiler.enforceGate(
+        await #expect(throws: ToolError.self) {
+            try await PromptCompiler.enforceGate(
                 args: ["compileToken": "deadbeefdeadbeef"], prompt: "raw", modelId: "fal-ai/veo3")
         }
         // A genuine compile passes the gate for its own text.
         let compiled = try await PromptCompiler.compile(
             intent: "a red car on a wet street at night", modelId: "fal-ai/veo3", modality: .video, editor: nil)
-        try PromptCompiler.enforceGate(
+        try await PromptCompiler.enforceGate(
             args: ["compileToken": compiled.token], prompt: compiled.text, modelId: "fal-ai/veo3")
     }
 
-    @Test func rawPromptRequiresProSetting() {
+    @Test func rawPromptRequiresProSetting() async {
         let key = PromptCompiler.rawPromptsDefaultsKey
         let previous = UserDefaults.standard.object(forKey: key)
         defer {
@@ -208,16 +208,16 @@ struct PromptCompilerTests {
         }
 
         UserDefaults.standard.set(false, forKey: key)
-        #expect(throws: ToolError.self) {
-            try PromptCompiler.enforceGate(args: ["rawPrompt": true], prompt: "raw", modelId: "fal-ai/veo3")
+        await #expect(throws: ToolError.self) {
+            try await PromptCompiler.enforceGate(args: ["rawPrompt": true], prompt: "raw", modelId: "fal-ai/veo3")
         }
 
         UserDefaults.standard.set(true, forKey: key)
-        #expect(throws: Never.self) {
-            try PromptCompiler.enforceGate(args: ["rawPrompt": true], prompt: "raw", modelId: "fal-ai/veo3")
+        await #expect(throws: Never.self) {
+            try await PromptCompiler.enforceGate(args: ["rawPrompt": true], prompt: "raw", modelId: "fal-ai/veo3")
         }
-        #expect(throws: ToolError.self) {
-            try PromptCompiler.enforceGate(
+        await #expect(throws: ToolError.self) {
+            try await PromptCompiler.enforceGate(
                 args: ["rawPrompt": true, "shotId": "s001"],
                 prompt: "raw",
                 modelId: "fal-ai/veo3"

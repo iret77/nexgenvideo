@@ -9,12 +9,14 @@ public struct ProductionStyleOverrideV1: Codable, Sendable, Equatable {
     public let value: String
     public let reason: String
     public let sourceEntryID: String?
+    public let verification: ProductionStyleVerificationV1?
 
-    public init(dimension: ProductionStyleDimensionV1, value: String, reason: String, sourceEntryID: String? = nil) {
+    public init(dimension: ProductionStyleDimensionV1, value: String, reason: String, sourceEntryID: String? = nil, verification: ProductionStyleVerificationV1? = nil) {
         self.dimension = dimension
         self.value = value
         self.reason = reason
         self.sourceEntryID = sourceEntryID
+        self.verification = verification
     }
 }
 
@@ -100,7 +102,15 @@ public struct ResolvedProductionStyleV1: Codable, Sendable, Equatable {
                 resolved[dimension] = (value, signature.id.rawValue, "Explicitly selected signature dimension")
             }
             verify[signature.id.rawValue] = fields["Verify"] ?? ""
-            criteria += try verification(of: signature).filter { selection.signatureDimensions.contains($0.dimension) }
+            let signatureCriteria = try verification(of: signature).filter { selection.signatureDimensions.contains($0.dimension) }
+            for dimension in selection.signatureDimensions {
+                guard signatureCriteria.contains(where: { $0.dimension == dimension })
+                        || selection.overrides.contains(where: { $0.dimension == dimension && $0.verification != nil }) else {
+                    throw invalid("The signature needs an explicit verification criterion for " + dimension.rawValue)
+                }
+            }
+            criteria.removeAll { selection.signatureDimensions.contains($0.dimension) }
+            criteria += signatureCriteria
         } else if !selection.signatureDimensions.isEmpty {
             throw invalid("Signature dimensions require a signature.")
         }
@@ -108,6 +118,7 @@ public struct ResolvedProductionStyleV1: Codable, Sendable, Equatable {
             throw invalid("A style dimension may have only one override.")
         }
         for override in selection.overrides {
+            try override.verification?.validate(dimension: override.dimension)
             guard !override.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   !override.reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw invalid("Every style override requires a value and reason.")
@@ -117,6 +128,11 @@ public struct ResolvedProductionStyleV1: Codable, Sendable, Equatable {
                 throw invalid("Unknown override source: \(source)")
             }
             resolved[override.dimension] = (override.value, override.sourceEntryID ?? "project-decision", override.reason)
+            if !criteria.contains(where: { $0.dimension == override.dimension }), let verification = override.verification {
+                criteria.append(ProductionStyleCriterionV1(id: "project-override." + override.dimension.rawValue,
+                    recipeID: override.sourceEntryID ?? "project-decision", sourceClause: verification.criterion,
+                    dimension: override.dimension, scope: verification.scope, evidenceKind: verification.evidenceKind))
+            }
         }
         return Self(schema: schemaVersion, libraryVersion: library.version.rawValue,
                     sourceCommit: library.provenance.sourceCommit, selection: selection,
@@ -132,11 +148,11 @@ public struct ResolvedProductionStyleV1: Codable, Sendable, Equatable {
                                 ? resolved[criterion.dimension]?.value : nil
                         )
                         return ResolvedProductionStyleCriterionV1(source: criterion,
-                            expected: replacement ?? criterion.sourceClause,
+                            expected: override?.verification?.criterion ?? replacement ?? criterion.sourceClause,
                             overrideReason: override?.reason ?? (replacement == nil ? nil : "Explicit signature dimension"),
-                            scope: replacement == nil ? criterion.scope : .sequence,
-                            evidenceKind: replacement == nil ? criterion.evidenceKind
-                                : (criterion.evidenceKind == .audiovisual || criterion.dimension == .sound ? .audiovisual : .video))
+                            scope: override?.verification?.scope ?? (replacement == nil ? criterion.scope : .sequence),
+                            evidenceKind: override?.verification?.evidenceKind ?? (replacement == nil ? criterion.evidenceKind
+                                : (criterion.evidenceKind == .audiovisual || criterion.dimension == .sound ? .audiovisual : .video)))
                     })
     }
 

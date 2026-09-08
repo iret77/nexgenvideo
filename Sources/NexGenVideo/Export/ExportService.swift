@@ -29,7 +29,7 @@ final class ExportService {
 
     func export(
         timeline: Timeline,
-        resolver: MediaResolver,
+        resolver liveResolver: MediaResolver,
         format: ExportFormat,
         resolution: ExportResolution,
         outputURL: URL,
@@ -40,6 +40,16 @@ final class ExportService {
         isExporting = true
         progress = 0
         defer { isExporting = false }
+        let resolver = liveResolver.snapshot()
+        var styleReview: TimelineStyleReview.Snapshot?
+        if format != .xml {
+            do {
+                styleReview = try await TimelineStyleReview.capture(timeline: timeline, resolver: resolver)
+                if let review = styleReview {
+                    try TimelineStyleReview.requireCurrent(review)
+                }
+            } catch { self.error = error.localizedDescription; return }
+        }
 
         if format == .xml {
             Log.export.notice(
@@ -72,10 +82,16 @@ final class ExportService {
         )
 
         do {
+            try await TimelineStyleReview.revalidate(styleReview, timeline: timeline, resolver: resolver)
             let prepared = try await makeExportSession(
                 timeline: timeline, resolver: resolver,
                 format: format, resolution: resolution
             )
+            if styleReview != nil {
+                guard prepared.result.offlineMediaRefs.isEmpty, prepared.result.unprocessableMediaRefs.isEmpty else {
+                    throw ToolError("The export cannot reproduce the reviewed cut because media is offline or unprocessable. Repair the media and review the resulting cut again.")
+                }
+            }
             let session = prepared.session
             guard let fileType = format.utType else { throw ExportError.invalidFormat }
 
@@ -93,6 +109,7 @@ final class ExportService {
 
             do {
                 try await session.export(to: outputURL, as: fileType)
+                try await TimelineStyleReview.revalidate(styleReview, timeline: timeline, resolver: resolver)
                 let outputSize = await Self.encodedVideoSize(of: outputURL) ?? prepared.renderSize
                 lastReport = ExportRunReport(
                     outputSize: outputSize,

@@ -2459,6 +2459,7 @@ enum MusicvideoGateChecks {
                 if let style = try ProductionStyleStoreV1.load(dataRoot: dataRoot) {
                     try FrameObservationStoreV1.requireStyleAudit(audit, style: style, dataRoot: dataRoot)
                 }
+                try FrameAuditAcceptanceStoreV1.requireResolved(audit: audit, dataRoot: dataRoot)
             }
         }
     }

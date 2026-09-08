@@ -6,6 +6,15 @@ public struct FrameObservationReceiptV1: Codable, Sendable, Equatable {
     public let transmittedImageSHA256: String
     public let mediaID: String
     public let recordedAt: String
+
+    public static func make(sourceSHA256: String, transmittedImage: Data, mediaID: String) -> Self {
+        let imageHash = FileDigest.sha256(of: transmittedImage)
+        let digest = FileDigest.sha256(of: Data((sourceSHA256 + ":" + imageHash + ":" + mediaID).utf8))
+        let hex = Array(digest.prefix(32))
+        let id = [String(hex[0..<8]), String(hex[8..<12]), String(hex[12..<16]), String(hex[16..<20]), String(hex[20..<32])].joined(separator: "-")
+        return Self(id: id, sourceSHA256: sourceSHA256, transmittedImageSHA256: imageHash,
+                    mediaID: mediaID, recordedAt: ISO8601DateFormatter().string(from: Date()))
+    }
 }
 
 public enum FrameObservationStoreV1 {
@@ -13,10 +22,24 @@ public enum FrameObservationStoreV1 {
 
     public static func record(sourceSHA256: String, transmittedImage: Data, mediaID: String,
                               dataRoot: URL) throws -> FrameObservationReceiptV1 {
+        try persist(.make(sourceSHA256: sourceSHA256, transmittedImage: transmittedImage, mediaID: mediaID),
+                    transmittedImage: transmittedImage, dataRoot: dataRoot)
+    }
+
+    public static func persist(_ receipt: FrameObservationReceiptV1, transmittedImage: Data,
+                               dataRoot: URL) throws -> FrameObservationReceiptV1 {
         _ = try ProjectLocalFile.resolve(PipelineLayout.projectFile, dataRoot: dataRoot)
-        let receipt = FrameObservationReceiptV1(id: UUID().uuidString, sourceSHA256: sourceSHA256,
-            transmittedImageSHA256: FileDigest.sha256(of: transmittedImage), mediaID: mediaID,
-            recordedAt: ISO8601DateFormatter().string(from: Date()))
+        guard receipt.transmittedImageSHA256 == FileDigest.sha256(of: transmittedImage), UUID(uuidString: receipt.id) != nil else {
+            throw GateBlocked("The image observation bytes do not match the receipt.")
+        }
+        let existing = dataRoot.appendingPathComponent("frames/observations/" + receipt.id + ".json")
+        if FileManager.default.fileExists(atPath: existing.path) {
+            let prior = try require(receipt.id, sourceSHA256: receipt.sourceSHA256, dataRoot: dataRoot)
+            guard prior.transmittedImageSHA256 == receipt.transmittedImageSHA256, prior.mediaID == receipt.mediaID else {
+                throw GateBlocked("The image observation conflicts with its stored receipt.")
+            }
+            return prior
+        }
         let directory = dataRoot.appendingPathComponent("frames/observations")
         guard directory.resolvingSymlinksInPath() == dataRoot.resolvingSymlinksInPath().appendingPathComponent("frames/observations") else {
             throw GateBlocked("Frame observations cannot be stored through a symbolic link.")
@@ -48,12 +71,11 @@ public enum FrameObservationStoreV1 {
         return receipt
     }
 
-    public static func requireStyleAudit(_ audit: FrameAudit, style: ResolvedProductionStyleV1, dataRoot: URL) throws {
+    public static func requireStyleAudit(_ audit: FrameAudit, style: ResolvedProductionStyleV1, dataRoot: URL, requireAcceptedFindings: Bool = true) throws {
         let frameCriteria = style.criteria.filter { $0.scope == .frame && $0.evidenceKind == .image }
         let allowed = Set(frameCriteria.map(\.auditKey) + [auditKey])
-        guard audit.overall == .clean,
-              audit.checks.keys.filter({ $0.hasPrefix("style.") }).allSatisfy(allowed.contains) else {
-            throw GateBlocked("The frame's findings must be resolved; a still cannot verify temporal or audio criteria.")
+        guard audit.checks.keys.filter({ $0.hasPrefix("style.") }).allSatisfy(allowed.contains) else {
+            throw GateBlocked("A still cannot verify temporal or audio criteria. Record those findings against the corresponding media.")
         }
         guard let observation = audit.checks[auditKey] else {
             throw GateBlocked("The frame's style review has no image observation receipt.")
@@ -67,16 +89,21 @@ public enum FrameObservationStoreV1 {
             guard let check = audit.checks[criterion.auditKey], check.expected == criterion.expected else {
                 throw GateBlocked("The frame is missing its current style criterion: " + criterion.source.sourceClause)
             }
-            guard check.status == .clean, !check.observed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                throw GateBlocked("Resolve the frame's style finding before approval: " + criterion.source.sourceClause)
+            guard [.clean, .minor, .blocking].contains(check.status), !check.observed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw GateBlocked("Inspect and report the frame's style criterion before approval: " + criterion.source.sourceClause)
             }
         }
+        if requireAcceptedFindings { try FrameAuditAcceptanceStoreV1.requireResolved(audit: audit, dataRoot: dataRoot) }
     }
 
     public static func requireProjectStyleFrames(dataRoot: URL) throws {
         guard let style = try ProductionStyleStoreV1.load(dataRoot: dataRoot) else { return }
         guard let shotlist = try loadShotlist(dataRoot: dataRoot) else { throw GateBlocked("The shot list is missing.") }
-        let manifest = try loadFramesManifest(dataRoot: dataRoot)
+        let manifest: FramesManifest
+        do { manifest = try loadFramesManifest(dataRoot: dataRoot) }
+        catch {
+            throw GateBlocked("The Frames manifest is missing or unreadable. Rebuild the required shot frames through record_render before approval. Details: " + error.localizedDescription)
+        }
         let required = shotlist.shots.filter { $0.sourceMode == .generated && $0.keyframeStrategy != .none }
         guard manifest.schema == framesSchemaVersion, manifest.project == shotlist.project,
               manifest.shots.count == required.count,

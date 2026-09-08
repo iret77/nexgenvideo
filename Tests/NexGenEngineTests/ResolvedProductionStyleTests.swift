@@ -32,14 +32,15 @@ struct ResolvedProductionStyleTests {
             directorID: director, signatureID: "dop-vittorio-storaro", signatureDimensions: [.color],
             overrides: [.init(dimension: .color, value: "Amber intimacy shifts into cold blue isolation.",
                               reason: "Use the chosen color symbolism while retaining frontal tableaux.",
-                              sourceEntryID: "dop-vittorio-storaro")]
+                              sourceEntryID: "dop-vittorio-storaro", verification: .init(scope: .sequence, evidenceKind: .video,
+                                criterion: "Amber intimacy shifts into cold blue isolation."))]
         ), catalog: catalog)
         #expect(selected.value(.color) == "Amber intimacy shifts into cold blue isolation.")
         #expect(selected.value(.camera) == base.value(.camera))
         #expect(selected.value(.composition) == base.value(.composition))
         #expect(selected.sourceVerifyClauses[director] == base.sourceVerifyClauses[director])
-        let color = try #require(selected.criteria.first { $0.source.recipeID == director && $0.source.dimension == .color })
-        #expect(color.source.sourceClause.contains("pastel"))
+        let color = try #require(selected.criteria.first { $0.source.recipeID == "dop-vittorio-storaro" && $0.source.dimension == .color })
+        #expect(!selected.criteria.contains { $0.source.recipeID == director && $0.source.dimension == .color })
         #expect(color.expected == "Amber intimacy shifts into cold blue isolation.")
         #expect(color.overrideReason != nil)
         #expect(selected.criteria.filter { $0.source.dimension != .color } == base.criteria.filter { $0.source.dimension != .color })
@@ -92,4 +93,19 @@ struct ResolvedProductionStyleTests {
             ), catalog: catalog)
         }
     }
+    @Test("explicit static overrides remain image-verifiable while editing cannot claim still evidence")
+    func declaredEvidence() throws {
+        let style = try ResolvedProductionStyleV1.resolve(.init(directorID: "director-wes-anderson-symmetry-deadpan",
+            overrides: [.init(dimension: .color, value: "Cobalt and amber", reason: "Approved palette",
+                verification: .init(scope: .frame, evidenceKind: .image, criterion: "Cobalt shadows and amber highlights are visible."))]),
+            catalog: EngineProductionKnowledgeResourcesV1.loadCatalog())
+        let color = try #require(style.criteria.first { $0.source.dimension == .color })
+        #expect(color.scope == .frame)
+        #expect(color.evidenceKind == .image)
+        #expect(color.expected == "Cobalt shadows and amber highlights are visible.")
+        #expect(throws: (any Error).self) {
+            try ProductionStyleVerificationV1(scope: .frame, evidenceKind: .image, criterion: "Cuts alternate at the beat.").validate(dimension: .editing)
+        }
+    }
+
 }

@@ -122,7 +122,7 @@ enum PromptCompiler {
         if shotId != "none", case .image = modality, let shot {
             try validateImageShotSourceContract(sourceMode: shot.sourceMode)
         }
-        let binding = try currentBinding(
+        let binding = try await currentBinding(
             editor: editor,
             shotId: shotId,
             modality: modality
@@ -188,7 +188,7 @@ enum PromptCompiler {
               ) else {
             throw ToolError("The compiled prompt can no longer be adapted to another model.")
         }
-        let current = try currentBinding(
+        let current = try await currentBinding(
             editor: editor,
             shotId: recipe.binding.shotId,
             modality: recipe.modality
@@ -323,16 +323,20 @@ enum PromptCompiler {
         editor: EditorViewModel?,
         shotId: String,
         modality: PromptComposer.Modality
-    ) throws -> PromptBinding {
+    ) async throws -> PromptBinding {
         let root = editor?.workingRoot.flatMap {
             DataRootResolver.dataRoot(of: $0)
         }
         let projectKey = editor?.projectId ?? root?.standardizedFileURL
             .resolvingSymlinksInPath().path ?? "none"
-        var styleFingerprint = "none"
-        if modality.usesVisualStyle, let root, try ProductionStyleStoreV1.load(dataRoot: root) != nil {
+        let styleFingerprint = try await Task.detached(priority: .utility) {
+            guard modality.usesVisualStyle, let root, try ProductionStyleStoreV1.load(dataRoot: root) != nil else { return "none" }
             let snapshot = try ProductionStyleStoreV1.snapshot(dataRoot: root)
-            styleFingerprint = FileDigest.sha256(of: Data((snapshot.inputFingerprint + ":" + snapshot.artifactFingerprint).utf8))
+            return FileDigest.sha256(of: Data((snapshot.inputFingerprint + ":" + snapshot.artifactFingerprint).utf8))
+        }.value
+        guard editor?.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }) == root,
+              (editor?.projectId ?? root?.standardizedFileURL.resolvingSymlinksInPath().path ?? "none") == projectKey else {
+            throw ToolError("The active project changed while validating its production style. Compile again in the active project.")
         }
         guard shotId != "none" else {
             return PromptBinding(
@@ -418,7 +422,7 @@ enum PromptCompiler {
         prompt: String,
         modelId: String,
         editor: EditorViewModel? = nil
-    ) throws {
+    ) async throws {
         let shotId = args.string("shotId") ?? "none"
         if args.bool("rawPrompt") == true {
             guard rawPromptsAllowed else {
@@ -434,7 +438,7 @@ enum PromptCompiler {
             }
             return
         }
-        let binding = try currentBinding(
+        let binding = try await currentBinding(
             editor: editor,
             shotId: shotId,
             modality: modalityForModel(modelId)

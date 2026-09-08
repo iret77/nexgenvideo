@@ -10,6 +10,14 @@ final class MediaResolver: @unchecked Sendable {
         self.projectURL = projectURL
     }
 
+    var projectHome: URL? { projectURL() }
+
+    func snapshot() -> MediaResolver {
+        let entries = manifest()
+        let home = projectURL()
+        return MediaResolver(manifest: { entries }, projectURL: { home })
+    }
+
     func resolveURL(for assetId: String) -> URL? {
         guard let url = expectedURL(for: assetId) else { return nil }
         return FileManager.default.fileExists(atPath: url.path) ? url : nil

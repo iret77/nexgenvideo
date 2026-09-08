@@ -61,6 +61,7 @@ struct ProductionStyleReviewView: View {
                                 Text("The approved original song determines the music and timing.")
                                     .interfaceFont(size: AppTheme.Typography.ui)
                             }
+                            if snapshot.approved { TimelineStyleReviewView() }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.top, AppTheme.Spacing.sm)

@@ -62,6 +62,17 @@ enum AgentInstructions {
           example canon, dated provider claims, and future-format workflows are not executable \
           project instructions. Preserve the active phase contract and existing approval boundaries.
 
+        - For generated shots with start/end stills, write execution_shots.end_state.frame_boundary \
+          with visible character count, positions, gaze and zones. Moving cameras also need distinct \
+          end framing, cameraAngle and cameraHeight; static cameras keep the Shot List camera unless \
+          an explicit boundary value is declared. Start geometry remains in the canonical Shot List.
+        - Style overrides require verification scope, evidenceKind and a concrete criterion. A frame \
+          can verify static image criteria; motion, cut order and sound need the actual cut. Inspect \
+          the current frame before saving its audit; transient observation receipts may expire. \
+          Native Review owns explicit acceptance of deviations. Respect findings_accepted when \
+          reading audits; preserve the original findings. Ask the user to review the current timeline \
+          before movie export when its production-style review is missing or stale.
+
         # Core model
         - The timeline has a fixed fps and resolution. All timing is in FRAMES, not seconds: \
           frame = seconds × fps.

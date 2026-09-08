@@ -47,6 +47,14 @@ story-first order, the storyboard phase runs **before** the shotlist.
   in full before asking for approval. Do not hand-print a finished
   user-facing table here.
 
+For generated `start_end` shots, each matching `execution_shots` entry must declare
+`end_state.frame_boundary`: `characterCount`, `characterPositions`, `gaze`, and
+`visibleZones`. Describe the visible end state, including entrances and exits. A moving
+camera also requires separate `framing`, `cameraAngle`, and `cameraHeight` end values.
+A static camera retains the Shot List's framing/angle/height unless explicit end values
+are declared. Start geometry belongs to the Shot List, not a second start-boundary object.
+The host validates these fields before publication and uses them for end-frame audits.
+
 ## Steps
 
 ### 1. Resume check (mandatory, before anything else)

@@ -388,6 +388,66 @@ enum NativeGateWriter {
         }
     }
 
+    static func acceptFrameFindings(editor: EditorViewModel, expectedProject: URL?, audit: FrameAudit, snapshot: String, reason: String) async throws {
+        guard let home = editor.workingRoot, home == expectedProject, let key = editor.openWorkingCopyKey else { throw WriteError.notInitialized }
+        let lease = try beginGateMutation(projectDir: home, label: "Accept frame deviations", executionCoordinator: editor.pipelinePhaseRunCoordinator)
+        var ownsLease = true
+        defer { if ownsLease { editor.pipelinePhaseRunCoordinator.endMutation(projectRoot: lease.root, id: lease.id) } }
+        let resolved = try resolvedRegistryContext(projectDir: home, declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)
+        let order = try PhaseContractRuntime.order(activePack: resolved.name)
+        try validateFrameFindings(audit, dataRoot: lease.root, order: order)
+        try ProjectWorkingCopy.markDirty(key: key)
+        let path = try FrameAuditAcceptanceStoreV1.location(audit: audit, dataRoot: lease.root)
+        let paths = [path, PipelineLayout.url(PipelineLayout.gatesFile, in: lease.root),
+                     PipelineLayout.url(PipelineLayout.lineageFile, in: lease.root)]
+        try ArtifactTransaction.perform(paths: paths, dataRoot: lease.root) {
+            try FrameAuditAcceptanceStoreV1.accept(audit: audit, expectedSnapshot: snapshot, reason: reason, dataRoot: lease.root)
+            try PipelinePhaseMutationRecorder.record(phase: "frames", dataRoot: lease.root, captureLineage: true,
+                declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)
+        }
+        editor.pipelinePhaseRunCoordinator.endMutation(projectRoot: lease.root, id: lease.id)
+        ownsLease = false
+        editor.onPipelineChanged?()
+        await editor.refreshEngineState()
+    }
+
+    private nonisolated static func validateFrameFindings(_ audit: FrameAudit, dataRoot: URL, order: [String]) throws {
+        let gates = try YAMLArtifactStore(dataRoot: dataRoot).load(Gates.self, at: PipelineLayout.gatesFile)
+        guard order.first(where: { !gates.get($0).approved }) == "frames" else {
+            throw WriteError.failed("Accept deviations only while Frames is the current phase. Explicitly rewind Frames to change an approved review.")
+        }
+        try GateGuard.requirePriorApproved(gates, order: order, phase: "frames")
+        let manifest = try loadFramesManifest(dataRoot: dataRoot)
+        guard let frame = manifest.shot(audit.shotId)?.frames.first(where: { $0.role == audit.role }),
+              try ProjectLocalFile.resolve(frame.path, dataRoot: dataRoot) == ProjectLocalFile.resolve(audit.renderPath, dataRoot: dataRoot),
+              Set(standardAuditCheckKeys).isSubset(of: Set(audit.checks.keys)) else {
+            throw WriteError.failed("The findings do not belong to the current selected frame.")
+        }
+        try FrameAuditExpectations.requireCurrent(audit, dataRoot: dataRoot)
+        if let style = try ProductionStyleStoreV1.load(dataRoot: dataRoot) {
+            try FrameObservationStoreV1.requireStyleAudit(audit, style: style, dataRoot: dataRoot, requireAcceptedFindings: false)
+        }
+    }
+
+    static func frameFindingsReadiness(editor: EditorViewModel, project: URL?, audit: FrameAudit, snapshot: String) async -> NativeGateApprovalReadiness {
+        do {
+            guard let home = project, editor.workingRoot == home,
+                  let root = DataRootResolver.dataRoot(of: home) else { throw WriteError.notInitialized }
+            try requireIdle(dataRoot: root, executionCoordinator: editor.pipelinePhaseRunCoordinator)
+            let resolved = try resolvedRegistryContext(projectDir: home, declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)
+            let order = try PhaseContractRuntime.order(activePack: resolved.name)
+            try await Task.detached(priority: .utility) {
+                try validateFrameFindings(audit, dataRoot: root, order: order)
+                guard try FrameAuditAcceptanceStoreV1.snapshot(audit: audit, dataRoot: root) == snapshot else {
+                    throw WriteError.failed("The frame findings changed. Refresh the review.")
+                }
+            }.value
+            guard editor.workingRoot == home else { throw WriteError.notInitialized }
+            try requireIdle(dataRoot: root, executionCoordinator: editor.pipelinePhaseRunCoordinator)
+            return .ready
+        } catch { return .blocked(error.localizedDescription) }
+    }
+
     private static func requireIdle(
         projectDir: URL,
         executionCoordinator: PipelinePhaseRunCoordinator

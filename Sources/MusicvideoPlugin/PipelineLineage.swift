@@ -130,6 +130,10 @@ enum MusicvideoPipelineLineage {
         selectors.append(PipelineLayout.briefFile)
         guard phase != "production_design" else { return selectors }
         selectors.append(PipelineLayout.productionDesignFile)
+        if FileManager.default.fileExists(atPath: dataRoot.appendingPathComponent(ResolvedProductionStyleV1.relativePath).path)
+            || (try? PipelineLineageStore.loadIfPresent(dataRoot: dataRoot)?.phases[ProductionStyleStoreV1.lineageID]) != nil {
+            selectors.append(ResolvedProductionStyleV1.relativePath)
+        }
         guard phase != "treatment" else { return selectors }
         selectors += treatmentSelectors(dataRoot: dataRoot)
         guard phase != "storyboard" else { return selectors }

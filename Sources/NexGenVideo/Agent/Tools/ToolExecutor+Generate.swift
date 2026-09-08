@@ -683,7 +683,7 @@ extension ToolExecutor {
         prompt: String,
         modality: PromptComposer.Modality,
         editor: EditorViewModel
-    ) throws -> (
+    ) async throws -> (
         precompiled: (text: String, token: String, binding: PromptBinding)?,
         raw: Bool
     ) {
@@ -704,7 +704,7 @@ extension ToolExecutor {
             }
             return (nil, false)
         }
-        let binding = try PromptCompiler.currentBinding(
+        let binding = try await PromptCompiler.currentBinding(
             editor: editor,
             shotId: shotId,
             modality: modality
@@ -943,7 +943,7 @@ extension ToolExecutor {
         editor: EditorViewModel
     ) async throws -> (text: String, token: String, binding: PromptBinding)? {
         guard let precompiled else { return nil }
-        let currentBinding = try PromptCompiler.currentBinding(
+        let currentBinding = try await PromptCompiler.currentBinding(
             editor: editor,
             shotId: precompiled.binding.shotId,
             modality: PromptCompiler.modalityForModel(approvedModelId)
@@ -997,7 +997,7 @@ extension ToolExecutor {
                     + "is not part of the ProductionRequirement."
             )
         }
-        let (precompiled, raw) = try Self.agentPrompt(
+        let (precompiled, raw) = try await Self.agentPrompt(
             args,
             prompt: prompt,
             modality: .video,
@@ -1267,7 +1267,7 @@ extension ToolExecutor {
             ?? offeringCapabilities.aspectRatios.first ?? ""
         let resolution = args.string("resolution")
             ?? offeringCapabilities.resolutions?.first
-        let (precompiled, raw) = try Self.agentPrompt(
+        let (precompiled, raw) = try await Self.agentPrompt(
             args,
             prompt: prompt,
             modality: .video,
@@ -1556,7 +1556,7 @@ extension ToolExecutor {
         let aspectRatio = args.string("aspectRatio") ?? model.aspectRatios.first ?? ""
         let resolution = args.string("resolution") ?? model.resolutions?.first
         let quality = args.string("quality") ?? model.qualities?.last
-        let (precompiled, raw) = try Self.agentPrompt(
+        let (precompiled, raw) = try await Self.agentPrompt(
             args,
             prompt: prompt,
             modality: .image,
@@ -2288,7 +2288,7 @@ extension ToolExecutor {
         let styleInstructions = model.supportsStyleInstructions ? args.string("styleInstructions") : nil
         let name = args.string("name")
         let folderId = try resolveFolderId(args, editor: editor)
-        let (precompiled, raw) = try Self.agentPrompt(
+        let (precompiled, raw) = try await Self.agentPrompt(
             args,
             prompt: prompt,
             modality: .audio,

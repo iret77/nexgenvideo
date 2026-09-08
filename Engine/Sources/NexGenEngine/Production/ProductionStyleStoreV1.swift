@@ -5,6 +5,13 @@ public enum ProductionStyleStoreV1 {
     private static let designPath = "production_design/production_design.yaml"
 
     public static func load(dataRoot: URL) throws -> ResolvedProductionStyleV1? {
+        do { return try loadChecked(dataRoot: dataRoot) }
+        catch {
+            throw GateBlocked("Production Design style is stale or unreadable. Explicitly rewind to Production Design and replace or clear its style before generating. Details: " + error.localizedDescription.replacingOccurrences(of: lineageID, with: "Production Design style"))
+        }
+    }
+
+    private static func loadChecked(dataRoot: URL) throws -> ResolvedProductionStyleV1? {
         let target = dataRoot.appendingPathComponent(ResolvedProductionStyleV1.relativePath)
         guard FileManager.default.fileExists(atPath: target.path) else {
             if (try? FileManager.default.destinationOfSymbolicLink(atPath: target.path)) != nil {
@@ -16,9 +23,17 @@ public enum ProductionStyleStoreV1 {
             return nil
         }
         let url = try ProjectLocalFile.resolve(ResolvedProductionStyleV1.relativePath, dataRoot: dataRoot)
-        let style = try JSONDecoder().decode(ResolvedProductionStyleV1.self, from: Data(contentsOf: url))
+        let before = try snapshot(dataRoot: dataRoot)
+        let data = try Data(contentsOf: url)
+        guard FileDigest.sha256(of: data) == before.artifactFingerprint else {
+            throw GateBlocked("Production Design changed while reading its style. Read it again.")
+        }
+        let style = try JSONDecoder().decode(ResolvedProductionStyleV1.self, from: data)
         try style.validate(catalog: EngineProductionKnowledgeResourcesV1.loadCatalog())
-        try PipelineLineageStore.requireCurrent(phase: lineageID, snapshot: snapshot(dataRoot: dataRoot), dataRoot: dataRoot)
+        try PipelineLineageStore.requireCurrent(phase: lineageID, snapshot: before, dataRoot: dataRoot)
+        guard before == (try snapshot(dataRoot: dataRoot)) else {
+            throw GateBlocked("Production Design changed while reading its style. Read it again.")
+        }
         return style
     }
 
@@ -59,6 +74,9 @@ public enum ProductionStyleStoreV1 {
         let previous = try urls.map { url -> Data? in
             FileManager.default.fileExists(atPath: url.path) ? try Data(contentsOf: url) : nil
         }
+        if let priorDesign = previous[0] {
+            try ProductionDesignRevisionV1.archive(design: priorDesign, style: previous[1], lineage: previous[2], dataRoot: dataRoot)
+        }
         do {
             try FileManager.default.createDirectory(at: urls[0].deletingLastPathComponent(), withIntermediateDirectories: true)
             try Data(YAMLCoding.encode(design).utf8).write(to: urls[0], options: .atomic)
@@ -82,7 +100,7 @@ public enum ProductionStyleStoreV1 {
                 } catch { rollbackErrors.append(error.localizedDescription) }
             }
             if !rollbackErrors.isEmpty {
-                throw GateBlocked("Production Design rollback failed: " + rollbackErrors.joined(separator: "; "))
+                throw GateBlocked("Production Design write failed: " + failure.localizedDescription + ". Rollback also failed: " + rollbackErrors.joined(separator: "; "))
             }
             throw failure
         }

@@ -124,6 +124,21 @@ the current phase's capability set is rejected before it can spend money or muta
   manifests are valid only when the current shot list requires no provider-generated assets.
 - Timeline assembly is optional editing work after renders exist. It neither completes nor re-seals the
   Render artifact and cannot change the Render gate.
+- End-frame audits bind explicit visible character count, positions, gaze, zones and distinct camera
+  fields in the canonical execution inputs. Moving cameras require end framing, angle and height;
+  static cameras retain their declared constraints unless explicit end values override them. Start
+  geometry remains owned by the Shot List. Historical audits stay readable without granting current
+  approval when execution inputs are stale.
+- Read-only image inspection never changes phase artifacts. Bounded transient observations become
+  durable exact-byte evidence only when their canonical audit is saved. Minor/blocking findings
+  require repair or native user acceptance of the exact audit, image and style with a reason. This
+  acceptance is available only in the current Frames phase, preserves original findings, and expires
+  when its bound evidence changes. Agent routing must respect a still-current explicit acceptance.
+- Style criteria declare the media evidence they require. Stills cannot attest timing, cut relations,
+  motion or audio. An approved production style requires native human review of the actual timeline
+  before movie export, with observations or explicit deviations for each criterion. The receipt
+  binds the cut and exact source/style bytes and is rechecked before and after encoding. It does not
+  re-seal the Render phase, and does not gate project backup or XML interchange.
 
 ## Release evidence
 

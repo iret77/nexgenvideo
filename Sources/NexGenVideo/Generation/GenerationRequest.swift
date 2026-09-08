@@ -244,7 +244,7 @@ enum GenerationController {
         if request.origin == .agentTool {
             if request.rawPrompt {
                 do {
-                    try PromptCompiler.enforceGate(
+                    try await PromptCompiler.enforceGate(
                         args: [
                             "rawPrompt": true,
                             "shotId": "none",
@@ -259,7 +259,7 @@ enum GenerationController {
             }
             if let precompiled = request.precompiled {
                 do {
-                    try PromptCompiler.enforceGate(
+                    try await PromptCompiler.enforceGate(
                         args: [
                             "compileToken": precompiled.token,
                             "shotId": precompiled.binding.shotId,
@@ -293,7 +293,7 @@ enum GenerationController {
                 projectDir: editor.workingRoot,
                 preserveComposition: request.target?.binding?
                     .resolvedVideoCapabilities?
-                    .inputPolicy.requiresSourceVideo == true)
+                    .inputPolicy.preservesSourceComposition == true)
             return (composition.text, composition.notes)
         } catch let e as PromptComposer.ComposeError {
             throw GenerationRequestError.compile(e.errorDescription ?? "Prompt compilation failed.")

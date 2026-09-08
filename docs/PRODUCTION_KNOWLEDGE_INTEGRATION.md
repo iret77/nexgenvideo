@@ -21,10 +21,20 @@ Existing infrastructure and completed issues remain the baseline. Extraction, ru
 
 The current draft includes full-section retrieval with ancestors and procedures; project-bound director/DoP dimensions; visual compile and execution-plan bindings; visible resolved-style review; and image-scoped style criteria backed by exact supplied-image receipts. Temporal and audio criteria remain outside frame verdicts. Source-video transforms and directional extensions now have distinct input-policy identities; executable native extension routing is still pending.
 
-Frame audit expectations now use the declared start/end execution state, expose those requirements before inspection, and identify a configured proportion-anchor shot. End audits require a current execution plan. New verdicts require image observations, and `n/a` requires an explanation. This does not yet complete explicit user acceptance of deviations or the independent general frame-approval gate.
+Frame audit expectations use separate structured end-boundary fields for visible character count, positions, gaze, zones and camera. Static cameras retain their declared constraints; moving cameras require explicit end framing, angle and height. These fields live in the app-owned canonical execution inputs, without changing released pack-facing value layouts. Historical audits remain readable when the current plan cannot be derived; new audit writes remain strict.
+
+Inspection retains bounded transient image evidence without writing project bytes. Saving an audit publishes its exact transmitted image and receipt together, with rollback on failure. A native review action can explicitly accept displayed minor/blocking deviations with a reason bound to the exact audit, image and style. Acceptance revalidates the current shot expectations and phase before updating gate lineage. Changes invalidate that acceptance.
+
+Overrides declare verification scope and evidence kind. Static image criteria remain available to frame review; temporal and sound criteria cannot become still verdicts. Native timeline review records human observations or explicit deviation acceptance for every selected criterion against the actual cut. The receipt binds timeline settings, clips, source bytes and Production Design. Movie export checks its currency before export and after encoding; project backups and XML interchange are unaffected. This human review does not claim automated motion/audio analysis or complete the broader take/repair/finish integration.
 
 ## Compatibility and verification
 
 Preserve stored layouts of public pack-facing V1 value types. Add new versioned artifacts through existing extension carriers and canonical writers. Retain exact pack pins; persistent upgrades remain explicit Recovery-copy operations. Musicvideo phase order and approval boundaries remain unchanged unless the owner explicitly decides otherwise.
 
 Use GitHub Actions for app builds and tests. No paid probe generation, local app execution, release dispatch, or partial product release is part of this integration work.
+
+## External review corrections
+
+The initial Opus 5 review of `e87d5886` produced 16 findings. Confirmed defects and the additional read-only-inspection lineage defect have implementation changes and regression coverage. The second Opus 5 read-only review reached its 900-second timeout with exit 124 and no output; it provides no acceptance evidence and was not retried. CI has not yet verified these changes. Full-entry knowledge retrieval remains lossless by design; the phase embedding budget does not apply to an explicitly requested complete tool read. Repeated selection/pairing procedures are restricted to Production Design.
+
+Stale style state remains a generation blocker but now permits agent diagnosis and explicit rewind/replacement. Free style/light conflicts produce a repairable refusal. Current style hashing runs outside the main actor at prompt binding and timeline inspection, with active-project checks after awaiting. Design revisions preserve paired style and lineage bytes, and rollback reports preserve both the original and restoration errors. Downstream lineage explicitly includes the sidecar or its deletion marker while leaving never-styled legacy projects unchanged.

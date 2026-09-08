@@ -8,10 +8,7 @@ enum ProductionStyleContext {
         do {
             style = try ProductionStyleStoreV1.load(dataRoot: dataRoot)
         } catch {
-            if phase == "production_design" {
-                return "The prior production style is stale or damaged. Review its source decisions and explicitly replace or clear style_selection through write_production_design before requesting approval. Do not reuse stale style parameters."
-            }
-            throw error
+            return "Production Design style is stale or unreadable. Read-only diagnosis remains available. Explain the issue and request explicit rewind to production_design before replacing or clearing style_selection. Do not generate using a stale style or silently omit it. " + error.localizedDescription
         }
         guard let style else { return nil }
         let encoder = JSONEncoder()
@@ -25,9 +22,9 @@ enum ProductionStyleContext {
             + style.selection.overrides.compactMap(\.sourceEntryID))
         let selectedEntries = library.entries.filter { selectedIDs.contains($0.id.rawValue) }
         let recipes = selectedEntries.map { $0.guidance.first ?? "" }.joined(separator: "\n")
-        let procedures = selectedEntries.first?.guidance.filter {
+        let procedures = phase == "production_design" ? (selectedEntries.first?.guidance.filter {
             $0.hasPrefix("Selection and synthesis procedure:") || $0.hasPrefix("Pairing procedure:")
-        }.joined(separator: "\n") ?? ""
+        }.joined(separator: "\n") ?? "") : "Selection procedures remain available through get_production_knowledge when an explicit style revision is requested."
         return """
         Project production style for \(phase):
         \(resolved)

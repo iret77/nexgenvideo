@@ -455,3 +455,19 @@ frame (keep the old one as `*-vN.png`), re-record via `record_render`.
 | Audit blocking deviation | Repair the owning artifact when needed; otherwise recompile the unchanged shot and rerender, max 2 attempts. |
 | One frame of a start/end pair is missing at review time | Generate the missing frame first; never half-approve a pair. |
 | `estimate_cost` shows over_budget | Stop and escalate to the user before further `generate_image` calls. |
+
+## Current audit evidence and explicit deviations
+
+Read `get_frame_audit` before inspection for the host's current start/end expectations.
+If `current_expected_available` is false, the saved audit is historical; repair the
+canonical plan before saving a replacement. End counts and camera values come from the
+approved end boundary, never from a prose copy of the start state.
+
+Image observation receipts are transient until `save_frame_audit` succeeds. Inspect the
+current image again if its receipt expired. A still cannot attest motion, editing or
+sound criteria. Report concrete observations for each image criterion. The native Review
+surface lets the user explicitly accept exact displayed deviations with a reason.
+When `findings_accepted` is true, respect that decision and request the Frames gate;
+retain the original audit findings instead of rerendering the accepted frame. Any changed
+image, audit, plan or style must be reviewed again. Timeline motion and sound criteria
+remain unreviewed until the actual cut is reviewed before movie export.

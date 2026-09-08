@@ -17,14 +17,24 @@ struct PipelineExecutionStateInput: Codable, Sendable, Equatable {
     let summary: String
     let entityStateIDs: [String]
     let spatialState: String?
+    let frameBoundary: FrameBoundaryInput?
+
+    init(summary: String, entityStateIDs: [String], spatialState: String?, frameBoundary: FrameBoundaryInput? = nil) {
+        self.summary = summary
+        self.entityStateIDs = entityStateIDs
+        self.spatialState = spatialState
+        self.frameBoundary = frameBoundary
+    }
 
     private enum CodingKeys: String, CodingKey {
         case summary
         case entityStateIDs = "entity_state_ids"
         case spatialState = "spatial_state"
+        case frameBoundary = "frame_boundary"
     }
 
     func validate(path: String) throws {
+        try frameBoundary?.validate()
         try PipelineExecutionInputValidation.require(summary, field: "\(path).summary")
         try PipelineExecutionInputValidation.uniqueNonEmpty(
             entityStateIDs,
@@ -627,6 +637,9 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
         let path = "execution_shot[\(id)]"
         try PipelineExecutionInputValidation.require(id, field: "\(path).id")
         try startState.validate(path: "\(path).start_state")
+        guard startState.frameBoundary == nil else {
+            throw PipelineExecutionShotInputValidationError.invalid("\(path).start_state.frame_boundary: start geometry belongs to the Shot List")
+        }
         try endState.validate(path: "\(path).end_state")
         try PipelineExecutionInputValidation.uniqueCanonical(
             blocking,

@@ -51,6 +51,7 @@ final class ToolExecutor {
 
     private var agentUndoStack: [String] = []
     var feedbackState = FeedbackState()
+    let imageObservations = ImageObservationCache()
 
     func requirePhaseIdle(
         _ editor: EditorViewModel,
@@ -381,7 +382,7 @@ final class ToolExecutor {
     ) async throws -> ToolResult {
         switch tool {
         case .getProductionKnowledge: return try getProductionKnowledge(args)
-        case .getTimeline:   return try getTimeline(editor, args)
+        case .getTimeline:   return try await getTimeline(editor, args)
         case .getMedia:      return try getMedia(editor)
         case .inspectMedia:  return try await inspectMedia(editor, args)
         case .getTranscript: return try await getTranscript(editor, args)

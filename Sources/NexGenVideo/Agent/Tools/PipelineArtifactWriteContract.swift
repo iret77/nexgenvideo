@@ -58,7 +58,12 @@ enum PipelineArtifactWriteContract {
                     "value": string,
                     "reason": string,
                     "sourceEntryID": string,
-                ], required: ["dimension", "value", "reason"])),
+                    "verification": object([
+                        "scope": enumeration(["frame", "shot", "sequence", "project"]),
+                        "evidenceKind": enumeration(["image", "video", "audio", "audiovisual"]),
+                        "criterion": nonEmptyString,
+                    ], required: ["scope", "evidenceKind", "criterion"]),
+                ], required: ["dimension", "value", "reason", "verification"])),
             ], required: ["directorID", "signatureDimensions", "overrides"]),
             "clear_style": ["type": "boolean"],
             "notes": string,
@@ -439,7 +444,7 @@ enum PipelineArtifactWriteContract {
         [
             "id": nonEmptyString,
             "source_mode": enumeration(ExecutionSourceModeV1.allCases.map(\.rawValue)),
-            "start_state": executionState,
+            "start_state": executionStartState,
             "end_state": executionState,
             "blocking": array(executionBlocking),
             "timed_action_beats": array(executionTimedActionBeat),
@@ -459,11 +464,25 @@ enum PipelineArtifactWriteContract {
         ]
     }
 
+    private static var executionStartState: [String: Any] { object(
+        ["summary": nonEmptyString, "entity_state_ids": stringArray, "spatial_state": nonEmptyString],
+        required: ["summary", "entity_state_ids"]
+    ) }
+
     private static var executionState: [String: Any] { object(
         [
             "summary": nonEmptyString,
             "entity_state_ids": stringArray,
             "spatial_state": nonEmptyString,
+            "frame_boundary": object([
+                "characterCount": ["type": "integer", "minimum": 0],
+                "characterPositions": ["type": "string"],
+                "gaze": ["type": "string"],
+                "visibleZones": stringArray,
+                "framing": nonEmptyString,
+                "cameraAngle": nonEmptyString,
+                "cameraHeight": nonEmptyString,
+            ], required: ["characterCount", "characterPositions", "gaze", "visibleZones"]),
         ],
         required: ["summary", "entity_state_ids"]
     ) }

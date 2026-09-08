@@ -164,7 +164,7 @@ enum PromptComposer {
                 payload.composition = shot.composition
                 payload.temporalStructure = shot.temporalStructure
             }
-            apply(productionStyle, to: &payload, plannedCamera: shot != nil, still: false)
+            try apply(productionStyle, to: &payload, plannedCamera: shot != nil, still: false)
             composed = PromptGenerator.buildVideoPrompt(modelID: engineModelID(modelId), payload: payload)
             if let shot,
                let violation = ProductionPromptPolicy.videoPromptViolations(
@@ -186,7 +186,7 @@ enum PromptComposer {
                 directives: directives.all + (shot?.imageDirectives ?? [])
             )
             if let shot { payload.camera = shot.camera; payload.composition = shot.composition }
-            apply(productionStyle, to: &payload, plannedCamera: shot != nil, still: true)
+            try apply(productionStyle, to: &payload, plannedCamera: shot != nil, still: true)
             composed = try PromptGenerator.buildImagePrompt(modelID: engineModelID(modelId), payload: payload)
             if shot != nil,
                let violation = ProductionPromptPolicy.stillPromptViolations(composed).first {
@@ -220,9 +220,18 @@ enum PromptComposer {
     }
 
     private static func apply(_ style: ResolvedProductionStyleV1?, to payload: inout PromptPayload,
-                              plannedCamera: Bool, still: Bool) {
+                              plannedCamera: Bool, still: Bool) throws {
         guard let style else { return }
-        payload.style = [style.value(.character), style.value(.color)].compactMap { $0 }.joined(separator: " ")
+        let resolvedStyle = [style.value(.character), style.value(.color)].compactMap { $0 }.joined(separator: " ")
+        if !plannedCamera {
+            for (requested, resolved, dimension) in [(payload.style, resolvedStyle, "style"), (payload.light, style.value(.lighting) ?? "", "lighting")] {
+                guard requested.isEmpty || resolved.isEmpty || normalize(requested) == normalize(resolved) else {
+                    throw ComposeError.lintBlocked(code: "PROJECT_STYLE_CONFLICT",
+                        message: "The requested " + dimension + " conflicts with Production Design. Explicitly revise and approve that decision before compiling a different look.")
+                }
+            }
+        }
+        if !resolvedStyle.isEmpty { payload.style = resolvedStyle }
         if let light = style.value(.lighting) { payload.light = light }
         if !plannedCamera, let composition = style.value(.composition) { payload.composition = composition }
         if !plannedCamera, !still,

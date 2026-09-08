@@ -2157,7 +2157,7 @@ extension ToolExecutor {
                     "model": frame.runwayModel,
                 ]
                 if let audit {
-                    var auditBody = frameAuditJSON(audit, exists: true)
+                    var auditBody = frameAuditJSON(audit, exists: true, dataRoot: root)
                     auditBody["current_image"] = digest == audit.renderSha256
                         && resolved != nil
                     body["audit"] = auditBody
@@ -2227,7 +2227,8 @@ extension ToolExecutor {
         var expected = try FrameAuditExpectations.make(
             shot: shot, role: role, execution: executionShot,
             brief: try readBriefIfPresent(dataRoot: root),
-            bible: try loadBible(dataRoot: root)
+            bible: try loadBible(dataRoot: root),
+            boundary: try FrameAuditExpectations.boundary(shotID: shotId, role: role, dataRoot: root)
         )
         let style = try ProductionStyleStoreV1.load(dataRoot: root)
         let styleCriteria = style?.criteria.filter { $0.scope == .frame && $0.evidenceKind == .image } ?? []
@@ -2262,9 +2263,17 @@ extension ToolExecutor {
                 observed: observed,
                 note: note)
         }
+        let worst: AuditStatus = checks.values.contains { $0.status == .blocking } ? .blocking
+            : (checks.values.contains { $0.status == .minor } ? .minor : .clean)
+        guard overall == worst else {
+            throw ToolError("The overall verdict must match the most severe concrete check finding. Record the corresponding observed finding before assigning minor or blocking.")
+        }
+        var observation: ImageObservationCache.Entry?
         if style != nil {
-            let receipt = try FrameObservationStoreV1.require(try args.requireString("observation_receipt"),
-                                                             sourceSHA256: sha, dataRoot: root)
+            let entry = try imageObservations.require(try args.requireString("observation_receipt"),
+                                                      project: home, sourceSHA256: sha)
+            observation = entry
+            let receipt = entry.receipt
             for criterion in styleCriteria {
                 guard let check = checks[criterion.auditKey], check.status != .notApplicable,
                       !check.observed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -2304,11 +2313,20 @@ extension ToolExecutor {
             throw ToolError("Frame audit rejected: \(frameAuditViolation(e)). Fix and re-call.")
         }
         do {
-            try saveFrameAudit(audit, dataRoot: root)
+            var paths = [frameAuditPath(dataRoot: root, shotId: shotId, role: role)]
+            if let observation {
+                paths += [".json", ".image"].map { root.appendingPathComponent("frames/observations/" + observation.receipt.id + $0) }
+            }
+            try ArtifactTransaction.perform(paths: paths, dataRoot: root) {
+                if let observation {
+                    _ = try FrameObservationStoreV1.persist(observation.receipt, transmittedImage: observation.bytes, dataRoot: root)
+                }
+                try saveFrameAudit(audit, dataRoot: root)
+            }
         } catch {
             throw ToolError("Couldn't save frame audit: \(error)")
         }
-        return try jsonResult(frameAuditJSON(audit, exists: true))
+        return try jsonResult(frameAuditJSON(audit, exists: true, dataRoot: root))
     }
 
     func getFrameAuditTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
@@ -2323,19 +2341,28 @@ extension ToolExecutor {
             shotId: shotId,
             role: role
         )
-        var body = audit.map { frameAuditJSON($0, exists: true) }
+        var body = audit.map { frameAuditJSON($0, exists: true, dataRoot: root) }
             ?? ["exists": false, "shot_id": shotId, "role": role]
-        if let shot = try readShotlist(dataRoot: root)?.shots.first(where: { $0.id == shotId }) {
+        do {
+            guard let shot = try readShotlist(dataRoot: root)?.shots.first(where: { $0.id == shotId }) else {
+                throw ToolError("The canonical shot is missing. The saved audit is historical only.")
+            }
             var expected = try FrameAuditExpectations.make(shot: shot, role: role,
                 execution: FrameAuditExpectations.executionShot(shotID: shotId, role: role, dataRoot: root),
-                brief: readBriefIfPresent(dataRoot: root), bible: loadBible(dataRoot: root))
+                brief: readBriefIfPresent(dataRoot: root), bible: loadBible(dataRoot: root),
+                boundary: FrameAuditExpectations.boundary(shotID: shotId, role: role, dataRoot: root))
             if let style = try ProductionStyleStoreV1.load(dataRoot: root) {
                 for criterion in style.criteria where criterion.scope == .frame && criterion.evidenceKind == .image {
                     expected[criterion.auditKey] = criterion.expected
                 }
             }
             body["current_expected"] = expected
+            body["current_expected_available"] = true
             body["inspection_instruction"] = "Inspect the actual image against current_expected. The legacy anchor_at_t0 key describes the requested start or end boundary. Supply concrete observations, or explain why a check is not applicable."
+        } catch {
+            body["expected_unavailable"] = error.localizedDescription
+            body["current_expected_available"] = false
+            body["inspection_instruction"] = "This is the saved historical audit. Repair or explicitly rebuild the current shot plan before saving a new audit; do not treat this as current approval evidence."
         }
         return try jsonResult(body)
     }
@@ -2645,7 +2672,7 @@ extension ToolExecutor {
         return projectImage(frame.path)
     }
 
-    private func frameAuditJSON(_ a: FrameAudit, exists: Bool) -> [String: Any] {
+    private func frameAuditJSON(_ a: FrameAudit, exists: Bool, dataRoot: URL) -> [String: Any] {
         var checks: [String: Any] = [:]
         for (key, c) in a.checks {
             checks[key] = [
@@ -2655,12 +2682,25 @@ extension ToolExecutor {
                 "note": c.note,
             ]
         }
+        let accepted: Bool
+        do {
+            guard !FrameAuditAcceptanceStoreV1.unresolvedChecks(a).isEmpty,
+                  let frame = try loadFramesManifest(dataRoot: dataRoot).shot(a.shotId)?.frames.first(where: { $0.role == a.role }),
+                  try ProjectLocalFile.resolve(frame.path, dataRoot: dataRoot) == ProjectLocalFile.resolve(a.renderPath, dataRoot: dataRoot) else {
+                throw ToolError("No current accepted frame findings.")
+            }
+            try FrameAuditAcceptanceStoreV1.requireResolved(audit: a, dataRoot: dataRoot)
+            try FrameAuditExpectations.requireCurrent(a, dataRoot: dataRoot)
+            accepted = true
+        } catch { accepted = false }
         return [
             "exists": exists,
             "shot_id": a.shotId,
             "role": a.role,
             "overall": a.overall.rawValue,
-            "verdict": a.verdict.rawValue,
+            "verdict": accepted ? AuditVerdict.approve.rawValue : a.verdict.rawValue,
+            "findings_accepted": accepted,
+            "original_verdict": a.verdict.rawValue,
             "has_blocking": a.hasBlocking,
             "has_minor": a.hasMinor,
             "auto_rerender_attempt": a.autoRerenderAttempt,

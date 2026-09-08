@@ -241,10 +241,12 @@ extension ToolExecutor {
         }
 
         let relative = "production_design/production_design.yaml"
-        try archiveExisting(relative, dataRoot: root)
         do {
             let selection: ProductionStyleSelectionV1? = try (args["style_selection"] as? [String: Any]).map {
                 try decodeArtifact($0, as: ProductionStyleSelectionV1.self, label: "style selection")
+            }
+            guard selection?.overrides.allSatisfy({ $0.verification != nil }) != false else {
+                throw ToolError("Each style override must declare verification.scope, evidenceKind and a concrete criterion for review.")
             }
             try ProductionStyleStoreV1.write(design: design, selection: selection,
                                              clearStyle: args.bool("clear_style") ?? false, dataRoot: root)

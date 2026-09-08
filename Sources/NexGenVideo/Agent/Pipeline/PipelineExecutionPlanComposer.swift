@@ -49,6 +49,17 @@ enum PipelineExecutionPlanComposer {
         }
         for (shot, input) in zip(shotlist.shots, executionInputs) {
             try input.validate(timedBeatMaximumSeconds: shot.durationS)
+            if shot.sourceMode == .generated, shot.keyframeStrategy == .startEnd {
+                guard let boundary = input.endState.frameBoundary else {
+                    throw ToolError("Shot " + shot.id + " requires end_state.frame_boundary for its end-frame approval.")
+                }
+                try boundary.validate()
+                if shot.productionPlan?.cameraMovement != .static {
+                    guard boundary.framing != nil, boundary.cameraAngle != nil, boundary.cameraHeight != nil else {
+                        throw ToolError("Shot " + shot.id + " requires explicit end-camera framing, angle and height.")
+                    }
+                }
+            }
             try validateReferenceCorrespondence(
                 shotID: shot.id,
                 referenceImageRefs: shot.referenceImageRefs,
