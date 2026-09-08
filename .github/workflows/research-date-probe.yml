@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - .github/workflows/research-date-probe.yml
+      - Sources/NexGenVideo/Generation/Capabilities/ModelCapabilityResearchSchema.swift
 
 permissions:
   contents: read
@@ -38,14 +39,6 @@ jobs:
       - name: Validate the public fixtures across the actual module boundary
         run: |
           mkdir -p "$RUNNER_TEMP/research-probe"
-          python3 - <<'PY'
-          import os
-          from pathlib import Path
-          source = Path('Sources/NexGenVideo/Generation/Capabilities/ModelCapabilityResearchSchema.swift').read_text()
-          source = source.replace('throw ModelCapabilityResearchValidationError.invalidEvidence(field)',
-              'print("invalid evidence branch \\(#line)")\n            throw ModelCapabilityResearchValidationError.invalidEvidence(field)')
-          Path(os.environ['RUNNER_TEMP'], 'research-probe/schema.swift').write_text(source)
-          PY
           cat > "$RUNNER_TEMP/research-probe/main.swift" <<'SWIFT'
           import Foundation
           import NexGenEngine
@@ -57,19 +50,14 @@ jobs:
                   allowedSourceHosts: [host], observedAt: ModelCapabilityResearchDatePolicy.date("2026-08-31")!)
               print("request date=\(request.observedAt)")
               print(String(data: try JSONEncoder().encode(candidate), encoding: .utf8)!)
-              if let evidence = candidate.fields.integers.values.first?.evidence.first {
-                  let title = evidence.sourceTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-                  print("evidence checks", evidence.kind != .defensive, evidence.kind != .empirical,
-                      evidence.confidence.isFinite, (0...1).contains(evidence.confidence),
-                      evidence.observedAt == request.observedAt, title == evidence.sourceTitle,
-                      title.isEmpty, title.count,
-                      title.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains))
-              }
               do {
                   _ = try ModelCapabilityResearchValidator.decodeCandidate(data, for: request)
                   print("validated \(name)")
               } catch { print("validation failed: \(error)"); exit(1) }
           }
+          let sample = "a-1 é🐈"
+          print("alphanumeric bound", String(String.UnicodeScalarView(sample.unicodeScalars.filter(CharacterSet.alphanumerics.contains))))
+          print("alphanumeric explicit", String(String.UnicodeScalarView(sample.unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) })))
           SWIFT
           for optimization in Onone O; do
             swiftc -swift-version 6 -$optimization -enable-testing -emit-module -emit-library -module-name NexGenEngine \
@@ -79,7 +67,7 @@ jobs:
             swiftc -swift-version 6 -$optimization -enable-testing \
               -I "$RUNNER_TEMP/research-probe" -L "$RUNNER_TEMP/research-probe" -lNexGenEngine \
               -Xlinker -rpath -Xlinker "$RUNNER_TEMP/research-probe" \
-              "$RUNNER_TEMP/research-probe/schema.swift" \
+              Sources/NexGenVideo/Generation/Capabilities/ModelCapabilityResearchSchema.swift \
               "$RUNNER_TEMP/research-probe/main.swift" -o "$RUNNER_TEMP/research-probe/probe"
             "$RUNNER_TEMP/research-probe/probe"
           done

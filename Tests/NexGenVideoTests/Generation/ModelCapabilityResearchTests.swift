@@ -13,6 +13,23 @@ struct ModelCapabilityResearchTests {
         }
     }
 
+    @Test("control characters remain invalid in titles, conflicts, and capability strings",
+          arguments: ["\u{0}", "\n", "\t", "\u{7f}", "\u{0085}", "\u{200b}"])
+    func controlCharactersAreRejected(_ control: String) throws {
+        let (request, _) = try decodedFixture("image-gemini-2.5")
+        let data = try fixtureData("image-gemini-2.5", fileExtension: "json")
+        for key in ["source_title", "conflict"] {
+            try expectRejected(data, request: request) { root in
+                evidence(root)?[key] = "Before\(control)after"
+            }
+        }
+        try expectRejected(data, request: request) { root in
+            let strings = fields(root)?["strings"] as? NSMutableDictionary
+            let ratios = strings?[CapabilityFieldIDV1.aspectRatios] as? NSMutableDictionary
+            ratios?["value"] = ["Before\(control)after"]
+        }
+    }
+
     @Test("inherited and defensive profiles offer research; exact current does not")
     func eligibilityUsesResolutionAndFreshness() throws {
         let now = try #require(ModelCapabilityResearchDatePolicy.date("2026-08-31"))
