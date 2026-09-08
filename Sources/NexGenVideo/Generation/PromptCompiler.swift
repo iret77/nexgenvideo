@@ -265,7 +265,7 @@ enum PromptCompiler {
                   binding.productionInputPolicy == capabilities.inputPolicy else {
                 return nil
             }
-            return capabilities.inputPolicy.requiresSourceVideo
+            return capabilities.inputPolicy.preservesSourceComposition
         }
         return !modes.isEmpty && modes.allSatisfy { $0 }
     }

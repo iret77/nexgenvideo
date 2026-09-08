@@ -1605,7 +1605,7 @@ extension ToolExecutor {
         }
         if let style = try ProductionStyleStoreV1.load(dataRoot: root) {
             body["style_frame_checks"] = Dictionary(uniqueKeysWithValues: style.criteria.filter {
-                $0.source.scope == .frame && $0.source.evidenceKind == .image
+                $0.scope == .frame && $0.evidenceKind == .image
             }.map { ($0.auditKey, $0.expected) })
             body["style_review_instruction"] = "Inspect the current image with inspect_media and return its observationReceipt as observation_receipt to save_frame_audit. Report each style_frame_checks key with a concrete observation. Timing, camera movement, sequence, and audio criteria require separate media review; never claim them from a still."
         }
@@ -2227,7 +2227,7 @@ extension ToolExecutor {
             bible: try loadBible(dataRoot: root)
         )
         let style = try ProductionStyleStoreV1.load(dataRoot: root)
-        let styleCriteria = style?.criteria.filter { $0.source.scope == .frame && $0.source.evidenceKind == .image } ?? []
+        let styleCriteria = style?.criteria.filter { $0.scope == .frame && $0.evidenceKind == .image } ?? []
         for criterion in styleCriteria { expected[criterion.auditKey] = criterion.expected }
 
         guard let rawChecks = args["checks"] as? [String: Any] else {

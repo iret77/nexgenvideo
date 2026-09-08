@@ -49,7 +49,7 @@ public enum FrameObservationStoreV1 {
     }
 
     public static func requireStyleAudit(_ audit: FrameAudit, style: ResolvedProductionStyleV1, dataRoot: URL) throws {
-        let frameCriteria = style.criteria.filter { $0.source.scope == .frame && $0.source.evidenceKind == .image }
+        let frameCriteria = style.criteria.filter { $0.scope == .frame && $0.evidenceKind == .image }
         let allowed = Set(frameCriteria.map(\.auditKey) + [auditKey])
         guard audit.overall == .clean,
               audit.checks.keys.filter({ $0.hasPrefix("style.") }).allSatisfy(allowed.contains) else {

@@ -59,6 +59,19 @@ struct ResolvedProductionStyleTests {
         #expect(reveal.source.scope == .sequence)
     }
 
+    @Test("a free-form camera override cannot inherit a static frame-only verification")
+    func overrideEvidenceScope() throws {
+        let style = try ResolvedProductionStyleV1.resolve(.init(
+            directorID: "director-wes-anderson-symmetry-deadpan",
+            overrides: [.init(dimension: .camera, value: "A slow continuous dolly approaches the subject.",
+                              reason: "The approach replaces the frontal static setup.")]
+        ), catalog: EngineProductionKnowledgeResourcesV1.loadCatalog())
+        let camera = try #require(style.criteria.first { $0.source.dimension == .camera })
+        #expect(camera.source.scope == .frame)
+        #expect(camera.scope == .sequence)
+        #expect(camera.evidenceKind == .video)
+    }
+
     @Test("selecting a director never silently adds a cinematographer")
     func noImplicitSignature() throws {
         let catalog = try EngineProductionKnowledgeResourcesV1.loadCatalog()

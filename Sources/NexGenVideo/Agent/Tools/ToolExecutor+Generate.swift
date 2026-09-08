@@ -949,7 +949,7 @@ extension ToolExecutor {
             modality: PromptCompiler.modalityForModel(approvedModelId)
         )
         let preserveComposition = approvedTarget?.binding?
-            .resolvedVideoCapabilities?.inputPolicy.requiresSourceVideo
+            .resolvedVideoCapabilities?.inputPolicy.preservesSourceComposition
         let compositionModeMatches = preserveComposition.map {
             PromptCompiler.rememberedCompositionModeMatches(
                 token: precompiled.token,

@@ -133,7 +133,10 @@ public struct ResolvedProductionStyleV1: Codable, Sendable, Equatable {
                         )
                         return ResolvedProductionStyleCriterionV1(source: criterion,
                             expected: replacement ?? criterion.sourceClause,
-                            overrideReason: override?.reason ?? (replacement == nil ? nil : "Explicit signature dimension"))
+                            overrideReason: override?.reason ?? (replacement == nil ? nil : "Explicit signature dimension"),
+                            scope: replacement == nil ? criterion.scope : .sequence,
+                            evidenceKind: replacement == nil ? criterion.evidenceKind
+                                : (criterion.evidenceKind == .audiovisual || criterion.dimension == .sound ? .audiovisual : .video))
                     })
     }
 

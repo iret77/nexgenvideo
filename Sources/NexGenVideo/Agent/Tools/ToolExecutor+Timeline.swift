@@ -54,6 +54,24 @@ extension ToolExecutor {
             dict["window"] = [window.lowerBound, min(window.upperBound, editor.timeline.totalFrames)]
         }
         dict["currentFrame"] = editor.currentFrame
+        if let home = editor.workingRoot, let root = DataRootResolver.dataRoot(of: home) {
+            do {
+                if let style = try ProductionStyleStoreV1.load(dataRoot: root) {
+                    let gates = try YAMLArtifactStore(dataRoot: root).load(Gates.self, at: PipelineLayout.gatesFile)
+                    dict["productionStyle"] = [
+                        "approved": gates.get("production_design").approved,
+                        "resolved": try JSONSerialization.jsonObject(with: JSONEncoder().encode(style)),
+                        "editingInstruction": "Apply editing and timing to actual clip order and source ranges. Sequence criteria require an observed assembled sequence; individual frame audits do not satisfy them.",
+                        "audioOwnership": editor.declaredPluginName == "musicvideo"
+                            ? "The approved original song owns Musicvideo timing and music. Recipe score suggestions do not authorize replacing or generating that song."
+                            : "Follow the project's approved audio decisions; a style suggestion is not spending approval.",
+                    ]
+                }
+            } catch {
+                dict["productionStyle"] = ["state": "stale_or_unreadable", "reason": error.localizedDescription,
+                    "action": "Repair or explicitly revise Production Design before using its style for production."]
+            }
+        }
         guard let json = Self.jsonString(roundJSONFloatingPointNumbers(dict, toPlaces: 3)) else {
             throw ToolError("Failed to encode timeline")
         }

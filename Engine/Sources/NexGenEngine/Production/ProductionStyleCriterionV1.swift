@@ -21,6 +21,8 @@ public struct ResolvedProductionStyleCriterionV1: Codable, Sendable, Equatable {
     public let source: ProductionStyleCriterionV1
     public let expected: String
     public let overrideReason: String?
+    public let scope: ProductionReviewScopeV1
+    public let evidenceKind: ProductionReviewEvidenceKindV1
 
     public var auditKey: String { "style." + source.id }
 }
