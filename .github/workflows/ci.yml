@@ -154,6 +154,15 @@ jobs:
           echo "::error::swift test hit the environmental crash on all $attempts attempts"
           exit 1
 
+      - name: Upload Lottie export evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lottie-export-evidence
+          path: ${{ runner.temp }}/lottie-export-evidence
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Verify tests did not mutate tracked source
         run: scripts/verify_tracked_source_state.sh
 
