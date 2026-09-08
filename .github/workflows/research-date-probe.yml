@@ -1,0 +1,37 @@
+name: Research date release probe
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/research-date-probe.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: xcode-27
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-xcode-27
+      - name: Check the production date policy with and without optimization
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path('Sources/NexGenVideo/Generation/Capabilities/ModelCapabilityResearchSchema.swift').read_text()
+          policy = source.split('enum ModelCapabilityResearchDatePolicy {', 1)[1].split('enum ModelCapabilityResearchEvidencePolicy', 1)[0]
+          main = '''
+          for value in ["2026-08-31", "2026-09-08", "2024-02-29"] {
+              let date = ModelCapabilityResearchDatePolicy.date(value)!
+              let formatted = ModelCapabilityResearchDatePolicy.string(date)
+              print("input=\\(value) epoch=\\(date.timeIntervalSince1970) output=\\(formatted)")
+              precondition(formatted == value)
+          }
+          '''
+          Path('/tmp/research-date.swift').write_text('import Foundation\nenum ModelCapabilityResearchDatePolicy {' + policy + main)
+          PY
+          swiftc -Onone /tmp/research-date.swift -o /tmp/research-date-debug
+          /tmp/research-date-debug
+          swiftc -O /tmp/research-date.swift -o /tmp/research-date-release
+          /tmp/research-date-release
