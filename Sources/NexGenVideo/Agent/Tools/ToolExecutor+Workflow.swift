@@ -1819,6 +1819,9 @@ extension ToolExecutor {
         guard let status = RenderStatus(rawValue: statusRaw) else {
             throw ToolError("Unknown status '\(statusRaw)'. Expected rendered/pending/failed.")
         }
+        if args.string("expected_take_id") != nil, status != .rendered || phase == "frames" {
+            throw ToolError("Selecting an existing take requires a rendered video result.")
+        }
         guard let shotlist = try readShotlist(dataRoot: root),
               let shot = shotlist.shots.first(where: { $0.id == shotId }) else {
             throw ToolError(
@@ -1913,6 +1916,15 @@ extension ToolExecutor {
                 dataRoot: root
             )
             proof?.entries[shotId] = entryProof
+            if let expectedTakeID = args.string("expected_take_id") {
+                guard phase != "frames", PipelineRenderTakeStore.identity(eventID: completedAsset.id, outputSHA256: entryProof.outputSha256) == expectedTakeID else {
+                    throw ToolError("The selected take's event or output changed. Refresh the take history.")
+                }
+                let take = try PipelineRenderTakeStore.take(id: expectedTakeID, dataRoot: root)
+                guard let review = try TakeReview.load(take: take, dataRoot: root), review.accepted else {
+                    throw ToolError("Review and accept the exact take before selecting it.")
+                }
+            }
             if phase != "frames" {
                 guard let generationRouting = completedAsset.generationInput?.productionRouting else {
                     throw ToolError(
@@ -1993,6 +2005,9 @@ extension ToolExecutor {
                 framesManifest: updatedFrames,
                 replacingShotID: shotId,
                 preparedLastFrame: preparedLastFrame,
+                completedTake: phase == "frames" ? nil : completedAsset.flatMap { asset in
+                    asset.generationInput.map { PipelineRenderTakeStore.Completed(eventID: asset.id, generationInput: $0, reviewedSelection: args.string("expected_take_id") != nil) }
+                },
                 expectedPublicationTransactionID: expectedPublication?.transactionID,
                 dataRoot: root,
                 declaredPack: declaration.packName,
@@ -2088,10 +2103,21 @@ extension ToolExecutor {
                 pending += 1
             }
         }
+        let takeIndex = try PipelineRenderTakeStore.load(dataRoot: root, project: manifest.project, phase: phase)
+        let takes: [[String: Any]] = try takeIndex.takeIDs.map { id in
+            let take = try PipelineRenderTakeStore.take(id: id, dataRoot: root)
+            let review = try TakeReview.load(take: take, dataRoot: root)
+            return ["take_id": id, "shot_id": take.shotID, "planned_generation_id": take.plannedGenerationID,
+                    "prompt_revision_id": take.promptRevisionID, "generation_event_id": take.generationEventID,
+                    "output": take.output.path, "output_sha256": take.output.sha256,
+                    "selected_candidate": takeIndex.selected[take.shotID] == id,
+                    "review_status": review.map { $0.accepted ? "accepted" : "rejected" } ?? "pending", "recorded_at": take.recordedAt]
+        }
         return try jsonResult([
             "project": manifest.project,
             "phase": phase,
             "entries": entries,
+            "takes": takes,
             "summary": [
                 "total": ordered.count,
                 "rendered": rendered,

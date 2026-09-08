@@ -344,6 +344,9 @@ enum NativeGateWriter {
         if context.phase == "frames" {
             try FrameObservationStoreV1.requireProjectStyleFrames(dataRoot: context.dataRoot)
         }
+        if context.phase == "render" {
+            try TakeReview.requireSelected(dataRoot: context.dataRoot, phase: "final")
+        }
         if context.phase == "shotlist" {
             try PipelineExecutionPlanWriter.requireCurrent(dataRoot: context.dataRoot)
             try PipelineExecutionPlanWriter.requireCurrentShotlistBinding(

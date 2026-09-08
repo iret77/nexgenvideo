@@ -1,5 +1,7 @@
 # Phase R1/R2 — Render
 
+Recording a completed video also retains its immutable take identity and exact generation provenance. `get_render_manifest` includes earlier takes and native review status. A retry of the same event does not create a new take; a new generation event does, even when its bytes match. Direct the user to **Review video takes** for actual playback and ordered Identity → Continuity → Timing → Camera → Audio → Style observations. An identity rejection stops the review; a full accepted review is required for final Render approval. Existing reviewed takes can be selected with `record_render(expected_take_id=...)`, which revalidates the current compile and conditioning. Never infer a passed visual or audio review from matching hashes, and never generate another take merely because a review remains pending.
+
 > **Orchestrator instruction (main-session context).** Never spawn this
 > phase as a sub-agent — presenting a structured dialog (`show_dialog`) is a
 > main-session UI capability.

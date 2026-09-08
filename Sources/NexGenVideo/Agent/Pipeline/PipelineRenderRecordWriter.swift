@@ -48,6 +48,7 @@ enum PipelineRenderRecordWriter {
         case renderRoutingProof
         case shotProvenanceProof
         case shotProvenancePublication
+        case takeHistory
         case publication
     }
 
@@ -105,6 +106,7 @@ enum PipelineRenderRecordWriter {
         replacingShotID: String?,
         preparedLastFrame: PreparedLastFrame?,
         reconciledLastFrames: [String: RenderLastFrameProofV1]? = nil,
+        completedTake: PipelineRenderTakeStore.Completed? = nil,
         expectedPublicationTransactionID: String?,
         dataRoot: URL,
         declaredPack: String? = nil,
@@ -250,6 +252,16 @@ enum PipelineRenderRecordWriter {
             prettyPrinted: true
         )
         var relativeData: [(String, Data, FailurePoint)] = []
+        if manifest.phase != "frames", let replacingShotID {
+            let take = try PipelineRenderTakeStore.prepare(completed: completedTake,
+                provenance: shotProvenance[replacingShotID]?.artifact,
+                shotProof: shotProvenance[replacingShotID]?.proof,
+                manifest: manifest, shotID: replacingShotID, dataRoot: dataRoot)
+            for item in take.files {
+                try requireSafeDataRootPath(item.path, dataRoot: dataRoot)
+                relativeData.append((item.path, item.data, .takeHistory))
+            }
+        }
         if let framesManifestData {
             relativeData.append((
                 PipelineLayout.framesManifestFile,
@@ -1653,6 +1665,7 @@ enum PipelineRenderRecordWriter {
             let isCurrentJournal = requiredPaths.isSubset(of: journalPaths)
                 && additionalPaths.allSatisfy({
                     isImmutableShotProvenancePath($0, phase: phase)
+                        || PipelineRenderTakeStore.isRecoveryPath($0, phase: phase)
                 })
             guard journal.schema == RecoveryJournal.schemaVersion,
                   journal.phase == phase,

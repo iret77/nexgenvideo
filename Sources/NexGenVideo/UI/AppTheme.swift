@@ -460,6 +460,8 @@ enum AppTheme {
         static let dragThreshold: CGFloat = 3
         static let previewMinWidth: CGFloat = 400
         static let previewMinHeight: CGFloat = 320
+        static let takeReviewWidth: CGFloat = 640
+        static let takeReviewMaxHeight: CGFloat = 760
         static let finishPreviewMinHeight: CGFloat = 280
         static let finishReviewMinHeight: CGFloat = 200
         static let finishPreviewFraction: CGFloat = 0.68

@@ -64,6 +64,7 @@ struct ReviewPanelView: View {
             VStack(spacing: AppTheme.Spacing.none) {
                 ProductionStyleReviewView()
                 FrameFindingsReviewView()
+                TakeReviewView()
                 content
                     .frame(minHeight: AppTheme.Spacing.none)
                     .clipped()

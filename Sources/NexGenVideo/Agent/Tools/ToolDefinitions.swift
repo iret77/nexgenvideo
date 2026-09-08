@@ -1354,6 +1354,7 @@ enum ToolDefinitions {
                     "shot_id": ["type": "string", "description": "The shot id to record."],
                     "role": ["type": "string", "enum": ["start", "end"], "description": "Frame role for phase=frames (default start). Omit for video phases."],
                     "output": ["type": "string", "description": "Completed project media asset id or project path (omit if not done)."],
+                    "expected_take_id": ["type": "string", "description": "When selecting an existing take, require this exact generation-event/output identity and its accepted native review."],
                     "cost_eur": ["type": "number", "minimum": 0, "description": "Reported EUR cost for production notes (default 0); not used by the hard budget stop."],
                     "status": ["type": "string", "enum": ["rendered", "pending", "failed"], "description": "Render status (default rendered)."],
                 ],

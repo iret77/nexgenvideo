@@ -1,5 +1,7 @@
 # Phase K4 — Storyboard
 
+When Treatment carries a causality plan, supply `causality_bindings` to `write_storyboard`: every step has its `stepID`, existing `beatIDs`, and an adaptation `reason`. Story steps require a beat; inserts and transitions may be unbound with an explanation. Preserve all approved beats. Dropping an introduction, cause or payoff requires explicit Treatment rewind and revision, not an invented Storyboard replacement.
+
 > **Orchestrator instruction (main-session context).** Never spawn this
 > phase as a sub-agent — presenting a structured dialog (`show_dialog`) is a
 > main-session UI capability.

@@ -1,5 +1,7 @@
 # Phase K7 — Shotlist
 
+For a causality-bound Storyboard, every `execution_shots` item names its approved `storyboard_step_ids`. Preserve complete step coverage across the Shot List, including imported sources. The host binds exact Treatment/Storyboard causality bytes to the execution plan and independently rechecks coverage before approval. Mapping an ID does not prove that an image depicts the intended action; actual take and sequence review remain necessary.
+
 > **Orchestrator instruction (main-session context).** Never spawn this
 > phase as a sub-agent — presenting a structured dialog (`show_dialog`) is a
 > main-session UI capability.
