@@ -33,7 +33,7 @@ public struct MusicDurationPolicy: DurationPolicy {
 
 public struct MusicvideoPack: Pack {
     public let name = "musicvideo"
-    public let version = "0.5.4"
+    public let version = "0.5.5"
 
     static let productionProfiles: [ProductionProfile] = [
         StandardProductionProfiles.generativeFilm,
@@ -189,7 +189,7 @@ public struct MusicvideoPack: Pack {
         benefit: "Reads your track and plans shots to the beat.",
         minAppVersion: musicvideoMinAppVersion,
         badgeURL: PackKnowledge.badgeURL(),
-        accentHex: "#FF2D55"
+        accentHex: "#D940A0"
     )
 
     /// Hidden host-to-agent handoff after the ordered startup intake completes.

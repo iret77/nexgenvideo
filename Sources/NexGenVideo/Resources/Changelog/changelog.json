@@ -8,6 +8,7 @@
         {
           "heading": "Fixes",
           "items": [
+            "Music Video pack 0.5.5 aligns project accents with the magenta in its banner artwork.",
             "Selection questions retain their original casing and use readable text sizing without expanded letter spacing.",
             "Analysis navigation uses the same neutral styling as other pipeline destinations. Pack tabs no longer show a colored dot that can be mistaken for an error.",
             "Transcript blocks isolate descendant alignment during layout updates. The original reported UI hang remains under investigation."
