@@ -22,14 +22,29 @@ enum GenerationBudgetGuard {
         input: GenerationPricingInput,
         target: ResolvedGenerationTarget,
         editor: EditorViewModel,
+        approvedPackage: GenerationPackageV1? = nil,
         quoteLoader: QuoteLoader = LiveGenerationPricing.quote
     ) async throws -> GenerationAuthorization {
+        if let approvedPackage {
+            try approvedPackage.validate()
+            guard approvedPackage.payload.target == target, approvedPackage.payload.outputCount == input.outputCount else {
+                throw GenerationBudgetError.blocked("The priced request differs from its generation package.")
+            }
+        }
         guard let workingRoot = editor.workingRoot else {
             if editor.projectURL != nil {
                 throw GenerationBudgetError.blocked(
                     "Budget stop could not access the live project working copy. "
                     + "Restore or reopen the project before generating."
                 )
+            }
+            if let ceiling = approvedPackage?.payload.estimate {
+                let current = try await quoteLoader(target, input)
+                try validate(current)
+                guard current.eurAmount <= ceiling.eurAmount else {
+                    throw GenerationBudgetError.blocked("The current price exceeds the reviewed estimate. Prepare and review the generation again.")
+                }
+                return GenerationAuthorization(transactionId: nil, target: target, estimate: current)
             }
             return GenerationAuthorization(transactionId: nil, target: target, estimate: nil)
         }
@@ -48,6 +63,12 @@ enum GenerationBudgetGuard {
         } catch {
             estimate = nil
             pricingFailure = error.localizedDescription
+        }
+
+        if let ceiling = approvedPackage?.payload.estimate {
+            guard let estimate, estimate.eurAmount <= ceiling.eurAmount else {
+                throw GenerationBudgetError.blocked("The current price is unavailable or exceeds the reviewed estimate. Prepare and review the generation again.")
+            }
         }
 
         guard editor.workingRoot?.standardizedFileURL == workingRoot.standardizedFileURL else {

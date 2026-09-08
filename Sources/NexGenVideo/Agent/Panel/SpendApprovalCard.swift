@@ -13,6 +13,7 @@ struct SpendApprovalCard: View {
     let onApprove: (SpendOption) -> Void
     let onDecline: () -> Void
     let onRefresh: () -> Void
+    let onPrepare: (SpendOption) -> Void
 
     @State private var selectedOptionId: String
     @State private var approvalError: String?
@@ -24,7 +25,8 @@ struct SpendApprovalCard: View {
         isWorking: Bool = false,
         onApprove: @escaping (SpendOption) -> Void,
         onDecline: @escaping () -> Void,
-        onRefresh: @escaping () -> Void = {}
+        onRefresh: @escaping () -> Void = {},
+        onPrepare: @escaping (SpendOption) -> Void = { _ in }
     ) {
         self.approval = approval
         self.error = error
@@ -32,6 +34,7 @@ struct SpendApprovalCard: View {
         self.onApprove = onApprove
         self.onDecline = onDecline
         self.onRefresh = onRefresh
+        self.onPrepare = onPrepare
         _selectedOptionId = State(initialValue: approval.recommendedOptionId)
     }
 
@@ -97,6 +100,9 @@ struct SpendApprovalCard: View {
             requestInitialFocus()
         }
         .onChange(of: availableOptions.map(\.id)) { _, _ in normalizeSelection() }
+        .task(id: selectedOptionId + "|" + (approval.preparationRevision ?? "")) {
+            if approval.requiresGenerationPackage == true, let selectedOption { onPrepare(selectedOption) }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .providerKeysChanged)) { _ in
             onRefresh()
         }
@@ -112,6 +118,18 @@ struct SpendApprovalCard: View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             summary
             if availableOptions.count > 1 { selectionControls }
+            if approval.requiresGenerationPackage == true {
+                if let package = selectedOption?.generationPackage {
+                    GenerationPackageReviewView(package: package)
+                } else if let selectedOption {
+                    Text(error == nil ? "Preparing request…" : "Request preparation required")
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                    if error != nil {
+                        Button("Prepare request again") { onPrepare(selectedOption) }
+                            .buttonStyle(InlineActionButtonStyle()).disabled(isWorking)
+                    }
+                }
+            }
             if !availableOptions.isEmpty {
                 Text("Only connected models compatible with this request are shown.")
                     .font(.system(size: AppTheme.FontSize.xxs))
@@ -237,7 +255,8 @@ struct SpendApprovalCard: View {
             }
             .buttonStyle(.capsule(.prominent, size: .regular))
             .controlSize(.small)
-            .disabled(selectedOption == nil || isWorking)
+            .disabled(selectedOption == nil || isWorking
+                || (approval.requiresGenerationPackage == true && selectedOption?.generationPackage == nil))
             .focused($focusedControl, equals: .approve)
             .accessibilityHint(
                 selectedOption == nil ? "Choose an available provider and model" : ""

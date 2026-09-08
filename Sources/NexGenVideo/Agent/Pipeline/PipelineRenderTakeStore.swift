@@ -132,6 +132,7 @@ enum PipelineRenderTakeStore {
         var files: [(path: String, data: Data)] = []
         var takeID: String?
         if let completed {
+            try requirePackage(input: completed.generationInput, dataRoot: dataRoot)
             guard !completed.eventID.isEmpty, let provenance, let proof = shotProof,
                   let entry = manifest.entries[shotID], entry.status == .rendered, let output = entry.output,
                   completed.generationInput.promptShotId == shotID,
@@ -183,6 +184,15 @@ enum PipelineRenderTakeStore {
         FileDigest.sha256(of: Data((eventID + "\n" + outputSHA256).utf8))
     }
 
+    static func requirePackage(input: GenerationInput, dataRoot: URL) throws {
+        guard let packageID = input.generationPackageID else { return }
+        let package = try GenerationPackageV1.load(id: packageID, home: FrameInventory.projectHome(of: dataRoot))
+        guard package.payload.modality == "video", package.payload.outputCount == 1,
+              package.payload.generationInput == GenerationPackageV1.normalized(input) else {
+            throw ToolError("The take does not match its generation package. Restore the recorded request before selecting or approving it.")
+        }
+    }
+
     private static func plannedIdentity(input: GenerationInput, project: String, shotID: String) -> String {
         FileDigest.sha256(of: Data([project, shotID, input.promptShotFingerprint ?? "",
             input.productionRouting?.requirementSHA256 ?? "frame"].joined(separator: "\n").utf8))
@@ -200,6 +210,7 @@ enum PipelineRenderTakeStore {
         revision.takeRepairPlanID = nil
         revision.compileRecipe = nil; revision.intent = nil
         revision.referenceReceipts = nil
+        revision.generationPackageID = nil
         let routing = input.productionRouting
         revision.productionRouting = nil
         if routing != nil {

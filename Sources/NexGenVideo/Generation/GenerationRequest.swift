@@ -150,6 +150,49 @@ struct GenerationOutcome: Sendable {
 @MainActor
 enum GenerationController {
     @MainActor
+    final class PreparedGeneration {
+        let request: GenerationRequest
+        let submission: PreparedSubmission
+        let target: ResolvedGenerationTarget
+        let compiledPrompt: String
+        let notes: [String]
+        let home: URL?
+        let scope: GenerationProjectMutationScope?
+        let binding: PromptBinding
+        let compilerInputsSHA256: String
+        let destination: GenerationPackageV1.Destination
+        let recipe: GenerationCompileRecipe?
+        let repairPlanID: String?
+        let references: GenerationReferenceSnapshot?
+        let preflight: Preflight?
+        private(set) var reviewedPackage: GenerationPackageV1?
+        private var submitted = false
+
+        init(request: GenerationRequest, submission: PreparedSubmission, target: ResolvedGenerationTarget,
+             compiledPrompt: String, notes: [String], home: URL?, scope: GenerationProjectMutationScope?,
+             binding: PromptBinding, compilerInputsSHA256: String, destination: GenerationPackageV1.Destination, recipe: GenerationCompileRecipe?, repairPlanID: String?,
+             references: GenerationReferenceSnapshot?, preflight: Preflight?) {
+            self.request = request; self.submission = submission; self.target = target
+            self.compiledPrompt = compiledPrompt; self.notes = notes; self.home = home; self.scope = scope
+            self.binding = binding; self.recipe = recipe; self.repairPlanID = repairPlanID
+            self.compilerInputsSHA256 = compilerInputsSHA256
+            self.destination = destination
+            self.references = references; self.preflight = preflight
+        }
+
+        func claimSubmission() throws {
+            guard !submitted else { throw GenerationRequestError.gate("This prepared generation was already submitted. Join its existing job or explicitly prepare a new attempt.") }
+            submitted = true
+        }
+
+        func attachReview(_ package: GenerationPackageV1) throws {
+            guard !submitted, reviewedPackage == nil else { throw GenerationRequestError.gate("This generation already has a review package.") }
+            try package.validate()
+            reviewedPackage = package
+        }
+    }
+
+    @MainActor
     enum PreparedSubmission {
         case video(VideoGenerationSubmission, PreparedProviderParameters)
         case image(ImageGenerationSubmission, PreparedProviderParameters)
@@ -194,6 +237,50 @@ enum GenerationController {
         var onFinished: (@MainActor () -> Void)?
     }
 
+    static func prepareReviewPackage(_ generation: PreparedGeneration, editor: EditorViewModel,
+                                    quoteLoader: GenerationBudgetGuard.QuoteLoader = LiveGenerationPricing.quote) async throws -> GenerationPackageV1 {
+        let estimate = try? await quoteLoader(generation.target,
+            pricingInput(generation.request, prepared: generation.submission, compiledPrompt: generation.compiledPrompt))
+        try generation.scope?.requireCurrent(editor: editor)
+        try await generation.references?.requireUnchanged()
+        guard editor.workingRoot == generation.home else { throw GenerationRequestError.gate("The project changed during request preparation.") }
+        try generation.destination.requireCurrent(editor: editor)
+        guard let package = try makePackage(generation, estimate: estimate) else {
+            throw GenerationRequestError.optionsInvalid("This operation does not support a visual generation package.")
+        }
+        try await package.requireCurrentContext(editor: editor)
+        try generation.attachReview(package)
+        return package
+    }
+
+    private static func makePackage(_ generation: PreparedGeneration, estimate: GenerationMoney?) throws -> GenerationPackageV1? {
+        var input: GenerationInput
+        let parameters: PreparedProviderParameters
+        let modality: String
+        let count: Int
+        switch generation.submission {
+        case .video(let video, let prepared):
+            input = video.genInput; parameters = prepared; modality = "video"; count = 1
+        case .image(let image, let prepared):
+            input = image.genInput; parameters = prepared; modality = "image"; count = image.numImages
+        default: return nil
+        }
+        let references = generation.references?.receipts ?? []
+        input.referenceReceipts = references; input.compileRecipe = generation.recipe; input.takeRepairPlanID = generation.repairPlanID
+        return try GenerationPackageV1(payload: .init(target: generation.target, modality: modality,
+            operation: input.productionRouting?.offeringCapabilities.inputPolicy.sourceOperation?.rawValue ?? "generate_\(modality)",
+            intent: generation.request.intent, prompt: generation.compiledPrompt,
+            promptRevisionID: PipelineRenderTakeStore.promptRevision(input), generationInput: GenerationPackageV1.normalized(input),
+            binding: generation.binding, compilerInputsSHA256: generation.compilerInputsSHA256,
+            recipe: generation.recipe, repairPlanID: generation.repairPlanID,
+            destination: generation.destination, outputCount: count, references: references,
+            referenceRoles: GenerationPackageV1.referenceRoles(parameters: parameters),
+            requestParametersJSON: GenerationPackageV1.requestJSON(parameters: parameters, references: references),
+            routing: input.productionRouting,
+            routeReceipt: .init(target: generation.target, checks: ModelCatalog.shared.routeChecks,
+                capabilitySnapshot: input.productionRouting?.route.capabilitySnapshot), estimate: estimate))
+    }
+
     @discardableResult
     static func submit(
         _ request: GenerationRequest,
@@ -204,12 +291,30 @@ enum GenerationController {
         onFailure: (@MainActor () -> Void)? = nil,
         quoteLoader: GenerationBudgetGuard.QuoteLoader = LiveGenerationPricing.quote
     ) async -> Result<GenerationOutcome, GenerationRequestError> {
-        let requestHome = editor.workingRoot
-        // (a) PREFLIGHT — model exists + options validate (adapter's model.validate lives here).
-        if let message = preflight?() {
-            return .failure(.optionsInvalid(message))
+        switch await prepare(request, editor: editor, preflight: preflight) {
+        case .failure(let error): return .failure(error)
+        case .success(let generation):
+            return await submitPrepared(generation, editor: editor, musicProgress: musicProgress,
+                onSuccess: onSuccess, onFailure: onFailure, quoteLoader: quoteLoader)
         }
+    }
 
+    static func prepare(
+        _ request: GenerationRequest, editor: EditorViewModel, preflight: Preflight? = nil
+    ) async -> Result<PreparedGeneration, GenerationRequestError> {
+        let requestHome = editor.workingRoot
+        if let message = preflight?() { return .failure(.optionsInvalid(message)) }
+        let scope: GenerationProjectMutationScope?
+        let binding: PromptBinding
+        let compilerInputsSHA256: String
+        let destination: GenerationPackageV1.Destination
+        do {
+            destination = try .init(request.placement, editor: editor)
+            scope = try requestHome.map { try GenerationProjectMutationScope(projectHome: $0, editor: editor) }
+            binding = try await PromptCompiler.currentBinding(editor: editor,
+                shotId: request.precompiled?.binding.shotId ?? "none", modality: request.composerModality)
+            compilerInputsSHA256 = try await PromptComposer.inputFingerprint(projectDir: requestHome)
+        } catch { return .failure(.gate(error.localizedDescription)) }
         // (b) COMPILE — engine-composed prompt; a lint ERROR blocks with a clear message. An empty
         // intent skips compilation (nothing to compose); the raw escape and precompiled token are the
         // agent's two ways past the composer, mirroring PromptCompiler.enforceGate. Upscale is
@@ -259,7 +364,6 @@ enum GenerationController {
             default: referenceSnapshot = nil
             }
         } catch { return .failure(.optionsInvalid(error.localizedDescription)) }
-        let authorization: GenerationAuthorization
         do {
             let recipe = request.precompiled.flatMap {
                 PromptCompiler.rememberedRecipe(token: $0.token, text: compiled, modelId: request.modelId)
@@ -271,24 +375,79 @@ enum GenerationController {
                 input.referenceReceipts = referenceSnapshot?.receipts
                 repairPlanID = try await TakeRepairPlan.requireForGeneration(input: input, home: requestHome)
             } else { repairPlanID = nil }
-            guard editor.workingRoot == requestHome else { return .failure(.gate("The active project changed while reviewing this iteration.")) }
-            let priced = try await GenerationBudgetGuard.authorize(
-                input: pricingInput(request, prepared: prepared, compiledPrompt: compiled),
-                target: target,
-                editor: editor,
-                quoteLoader: quoteLoader
-            )
-            authorization = GenerationAuthorization(transactionId: priced.transactionId, target: priced.target, estimate: priced.estimate,
-                projectMutationScope: priced.projectMutationScope, takeRepairPlanID: repairPlanID, compileRecipe: recipe,
-                referenceSnapshot: referenceSnapshot)
-        } catch {
-            return .failure(.budget(error.localizedDescription))
-        }
+            guard editor.workingRoot == requestHome,
+                  try await PromptCompiler.currentBinding(editor: editor, shotId: binding.shotId,
+                    modality: request.composerModality) == binding,
+                  try await PromptComposer.inputFingerprint(projectDir: requestHome) == compilerInputsSHA256 else {
+                return .failure(.gate("The project or approved direction changed during preparation. Prepare the request again."))
+            }
+            try scope?.requireCurrent(editor: editor)
+            try destination.requireCurrent(editor: editor)
+            return .success(PreparedGeneration(request: request, submission: prepared, target: target,
+                compiledPrompt: compiled, notes: notes, home: requestHome, scope: scope, binding: binding,
+                compilerInputsSHA256: compilerInputsSHA256, destination: destination,
+                recipe: recipe, repairPlanID: repairPlanID, references: referenceSnapshot, preflight: preflight))
+        } catch { return .failure(.gate(error.localizedDescription)) }
+    }
 
+    @discardableResult
+    static func submitPrepared(
+        _ generation: PreparedGeneration,
+        editor: EditorViewModel,
+        musicProgress: MusicProgress? = nil,
+        onSuccess: (@MainActor (MediaAsset?) -> Void)? = nil,
+        onFailure: (@MainActor () -> Void)? = nil,
+        quoteLoader: GenerationBudgetGuard.QuoteLoader = LiveGenerationPricing.quote
+    ) async -> Result<GenerationOutcome, GenerationRequestError> {
+        let request = generation.request, prepared = generation.submission
+        let target = generation.target, referenceSnapshot = generation.references
+        let requestHome = generation.home
+        do {
+            try generation.claimSubmission()
+            if let error = generation.preflight?() { return .failure(.optionsInvalid(error)) }
+            guard editor.workingRoot == requestHome else { return .failure(.gate("The prepared request belongs to another project.")) }
+            try generation.scope?.requireCurrent(editor: editor)
+            try generation.destination.requireCurrent(editor: editor)
+            guard try await PromptCompiler.currentBinding(editor: editor, shotId: generation.binding.shotId,
+                modality: request.composerModality) == generation.binding,
+                  try await PromptComposer.inputFingerprint(projectDir: requestHome) == generation.compilerInputsSHA256 else {
+                return .failure(.gate("The approved direction changed. Prepare and review the generation again."))
+            }
+            try await referenceSnapshot?.requireUnchanged()
+            if case .video(let video, _) = prepared {
+                try referenceSnapshot?.requireIdentity(video.references)
+                var input = video.genInput
+                input.compileRecipe = generation.recipe
+                input.referenceReceipts = referenceSnapshot?.receipts
+                guard try await TakeRepairPlan.requireForGeneration(input: input, home: requestHome) == generation.repairPlanID else {
+                    return .failure(.gate("The iteration decision changed. Review the generation again."))
+                }
+            } else if case .image(let image, _) = prepared {
+                try referenceSnapshot?.requireIdentity(image.references)
+            }
+            try generation.scope?.requireCurrent(editor: editor)
+        } catch { return .failure(.gate(error.localizedDescription)) }
+        let authorization: GenerationAuthorization
+        do {
+            let priced = try await GenerationBudgetGuard.authorize(
+                input: pricingInput(request, prepared: prepared, compiledPrompt: generation.compiledPrompt),
+                target: target, editor: editor, approvedPackage: generation.reviewedPackage, quoteLoader: quoteLoader)
+            do {
+                let package = try generation.reviewedPackage ?? makePackage(generation, estimate: priced.estimate)
+                try package?.persist(editor: editor)
+                authorization = GenerationAuthorization(transactionId: priced.transactionId, target: priced.target, estimate: priced.estimate,
+                    projectMutationScope: priced.projectMutationScope, takeRepairPlanID: generation.repairPlanID,
+                    compileRecipe: generation.recipe, referenceSnapshot: referenceSnapshot, generationPackage: package)
+            } catch {
+                try? editor.recordSpendEvent(authorization: priced, kind: .released, note: error.localizedDescription)
+                throw error
+            }
+        } catch { return .failure(.budget(error.localizedDescription)) }
         do {
             try await referenceSnapshot?.requireUnchanged()
             guard editor.workingRoot == requestHome else { throw GenerationRequestError.gate("The active project changed during reference validation.") }
             try authorization.projectMutationScope?.requireCurrent(editor: editor)
+            try generation.destination.requireCurrent(editor: editor)
         }
         catch {
             try? editor.recordSpendEvent(authorization: authorization, kind: .released, note: error.localizedDescription)
@@ -314,7 +473,7 @@ enum GenerationController {
             request, prepared: prepared, editor: editor,
             authorization: authorization,
             musicProgress: musicProgress, onSuccess: onSuccess, onFailure: onFailure)
-        return .success(GenerationOutcome(placeholderId: placeholderId, notes: notes))
+        return .success(GenerationOutcome(placeholderId: placeholderId, notes: generation.notes))
     }
 
     // MARK: - Compile
@@ -405,7 +564,7 @@ enum GenerationController {
 
         switch prepared {
         case .video(let submission, let parameters):
-            let onComplete = replacementOnComplete(request, editor: editor, then: onSuccess)
+            let onComplete = replacementOnComplete(request, editor: editor, destination: authorization.generationPackage?.payload.destination, then: onSuccess)
             let id = submission.submit(
                 service: service, projectURL: projectURL, editor: editor,
                 authorization: authorization, preparedParameters: parameters,
@@ -413,7 +572,7 @@ enum GenerationController {
             place(request, placeholderId: id, editor: editor)
             return id
         case .image(let submission, let parameters):
-            let onComplete = replacementOnComplete(request, editor: editor, then: onSuccess)
+            let onComplete = replacementOnComplete(request, editor: editor, destination: authorization.generationPackage?.payload.destination, then: onSuccess)
             let id = submission.submit(
                 service: service, projectURL: projectURL, editor: editor,
                 authorization: authorization, preparedParameters: parameters,
@@ -438,7 +597,7 @@ enum GenerationController {
                 progress: musicProgress, onSuccess: onSuccess, onFailure: onFailure)
             return ""
         case .upscale(let run):
-            let onComplete = replacementOnComplete(request, editor: editor, then: onSuccess)
+            let onComplete = replacementOnComplete(request, editor: editor, destination: authorization.generationPackage?.payload.destination, then: onSuccess)
             let id = run(
                 service, projectURL, editor,
                 authorization,
@@ -516,6 +675,7 @@ enum GenerationController {
 
     private static func replacementOnComplete(
         _ request: GenerationRequest, editor: EditorViewModel,
+        destination: GenerationPackageV1.Destination? = nil,
         then onSuccess: (@MainActor (MediaAsset?) -> Void)?
     ) -> (@MainActor (MediaAsset) -> Void)? {
         guard case .replaceClip(let clipId, let resetTrim) = request.placement else {
@@ -525,6 +685,15 @@ enum GenerationController {
         let firstOnly = FirstOnlyFlag()
         return { [weak editor] newAsset in
             guard firstOnly.fire() else { return }
+            if let editor, let destination {
+                do { try destination.requireCurrent(editor: editor) }
+                catch {
+                    editor.clearPendingReplacement(clipId: clipId)
+                    editor.mediaPanelToast = MediaPanelToast(message: "The generated media is saved in Media. The clip changed during generation and was not replaced.")
+                    onSuccess?(newAsset)
+                    return
+                }
+            }
             editor?.replaceClipMediaRef(clipId: clipId, newAssetId: newAsset.id, resetTrim: resetTrim)
             editor?.clearPendingReplacement(clipId: clipId)
             onSuccess?(newAsset)

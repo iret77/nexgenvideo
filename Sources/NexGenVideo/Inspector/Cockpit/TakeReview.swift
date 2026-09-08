@@ -103,6 +103,7 @@ struct TakeReview: Codable, Sendable, Equatable {
         for (shotID, entry) in manifest.entries where recordedShots.contains(shotID) && entry.status == .rendered {
             guard let id = index.selected[shotID] else { throw GateBlocked("Select a recorded take for \(shotID) before approving Render.") }
             let take = try PipelineRenderTakeStore.take(id: id, dataRoot: dataRoot)
+            try PipelineRenderTakeStore.requirePackage(input: take.generationInput, dataRoot: dataRoot)
             guard take.output.path == entry.output,
                   try FileDigest.sha256(of: ProjectLocalFile.resolve(take.output.path, dataRoot: home)) == take.output.sha256,
                   let review = try load(take: take, dataRoot: dataRoot), review.accepted else {

@@ -111,6 +111,7 @@ struct GenerationInput: Codable, Sendable, Equatable {
     var takeRepairPlanID: String? = nil
     var compileRecipe: GenerationCompileRecipe? = nil
     var referenceReceipts: [GenerationReferenceReceipt]? = nil
+    var generationPackageID: String? = nil
 }
 
 struct GenerationCompileRecipe: Codable, Sendable, Equatable {

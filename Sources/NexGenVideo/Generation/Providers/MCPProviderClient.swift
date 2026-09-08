@@ -1,5 +1,6 @@
 import Foundation
 import MCP
+import NexGenEngine
 
 /// NGV as an MCP **client** to a provider's own MCP server (OpenArt, Runway, Higgsfield, ACE, …).
 /// This is the `.mcp` transport of the provider layer: the LLM never touches the raw endpoint —
@@ -66,6 +67,7 @@ actor MCPProviderClient {
     private var modernHeaderBindings: [String: [MCP20260728.HeaderBinding]] = [:]
     private var modernDiscoveryExpiresAt: Date?
     private var modernToolsExpireAt: Date?
+    private var toolSchemaChecks: [ProviderToolSchemaCheck] = []
 
     private enum ProtocolMode: Sendable {
         case legacy
@@ -318,6 +320,18 @@ actor MCPProviderClient {
         }
     }
 
+    func discoveryChecks() async -> [ProviderToolSchemaCheck] { toolSchemaChecks }
+
+    private func recordToolSchemaChecks(_ tools: [DiscoveredTool]) throws {
+        let observedAt = ISO8601DateFormatter().string(from: Date())
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        toolSchemaChecks = try tools.map { tool in
+            let data = try encoder.encode(["input": tool.inputSchema, "output": tool.outputSchema ?? .null])
+            return .init(toolName: tool.name, schemaSHA256: FileDigest.sha256(of: data), observedAt: observedAt)
+        }
+    }
+
     private func discoverLegacyTools() async throws -> [DiscoveredTool] {
         let client = try await connectedLegacyClient()
         var discovered: [DiscoveredTool] = []
@@ -361,6 +375,7 @@ actor MCPProviderClient {
         guard cursor == nil else {
             throw ClientError.toolFailed("The provider tool list exceeded the paging limit.")
         }
+        try recordToolSchemaChecks(discovered)
         return discovered
     }
 
@@ -516,6 +531,7 @@ actor MCPProviderClient {
                 "The provider tool list exceeded the paging limit."
             )
         }
+        try recordToolSchemaChecks(discovered)
         return (discovered, bindingsByName, expiresAt)
     }
 
@@ -730,6 +746,7 @@ actor MCPProviderClient {
         protocolModeResolution = nil
         protocolMode = nil
         modernTools = []
+        toolSchemaChecks = []
         modernHeaderBindings = [:]
         modernDiscoveryExpiresAt = nil
         modernToolsExpireAt = nil

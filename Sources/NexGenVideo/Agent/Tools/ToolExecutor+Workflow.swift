@@ -2107,7 +2107,9 @@ extension ToolExecutor {
             }
         }
         let takeIndex = try PipelineRenderTakeStore.load(dataRoot: root, project: manifest.project, phase: phase)
-        let takes: [[String: Any]] = try takeIndex.takeIDs.map { id in
+        let requestedTake = args.string("take_id")
+        if let requestedTake, !takeIndex.takeIDs.contains(requestedTake) { throw ToolError("The requested take is not recorded in this render phase.") }
+        let takes: [[String: Any]] = try takeIndex.takeIDs.filter { requestedTake == nil || $0 == requestedTake }.map { id in
             let take = try PipelineRenderTakeStore.take(id: id, dataRoot: root)
             let review = try TakeReview.load(take: take, dataRoot: root)
             var result: [String: Any] = ["take_id": id, "shot_id": take.shotID, "planned_generation_id": take.plannedGenerationID,
@@ -2115,6 +2117,16 @@ extension ToolExecutor {
                     "output": take.output.path, "output_sha256": take.output.sha256,
                     "selected_candidate": takeIndex.selected[take.shotID] == id,
                     "review_status": review.map { $0.accepted ? "accepted" : "rejected" } ?? "pending", "recorded_at": take.recordedAt]
+            if let packageID = take.generationInput.generationPackageID {
+                result["generation_package_id"] = packageID
+                if requestedTake != nil {
+                    do {
+                        let package = try GenerationPackageV1.load(id: packageID, home: FrameInventory.projectHome(of: root))
+                        try PipelineRenderTakeStore.requirePackage(input: take.generationInput, dataRoot: root)
+                        result["generation_package"] = try JSONSerialization.jsonObject(with: GenerationPackageV1.encode(package))
+                    } catch { result["generation_package_error"] = error.localizedDescription }
+                }
+            }
             if let review {
                 result["review"] = ["reviewer": review.reviewer, "reviewed_at": review.reviewedAt,
                     "output_sha256": review.outputSHA256,

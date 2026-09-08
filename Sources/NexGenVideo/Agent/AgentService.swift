@@ -310,7 +310,7 @@ final class AgentService {
     func restoreDiagnosticTranscript(_ state: HangDiagnosticTranscript) throws {
         guard ProcessInfo.processInfo.environment["NGV_DIAGNOSTIC_REPLAY"] != nil else { return }
         abandonDialog()
-        pendingSpendApproval = nil
+        clearSpendApproval(cancelling: true)
         currentSessionId = state.sessionID
         messages = state.messages
         isStreaming = state.streaming
@@ -1303,6 +1303,12 @@ final class AgentService {
     private var spendApprovalRefresh: (@MainActor () -> SpendApproval)?
 
     @ObservationIgnored
+    private var spendPreparationTask: Task<Void, Never>?
+
+    @ObservationIgnored
+    private var spendPreparationID: UUID?
+
+    @ObservationIgnored
     private var pendingSpendFollowUps: [SpendFollowUp] = []
 
     @ObservationIgnored
@@ -1317,6 +1323,7 @@ final class AgentService {
     private struct PendingSpendOperation {
         let origin: ToolCallOrigin
         let acquirePipelineMutation: @MainActor () throws -> SpendPipelineMutationLease?
+        let prepare: (@MainActor (SpendOption) async throws -> GenerationPackageV1)?
         let execute: @MainActor (SpendOption) async throws -> ToolResult
         let cancel: @MainActor () -> Void
     }
@@ -1362,8 +1369,12 @@ final class AgentService {
         pipelineScope: SpendPipelineScope? = nil,
         refresh: (@MainActor () -> SpendApproval)? = nil,
         cancel: @escaping @MainActor (EditorViewModel) -> Void = { _ in },
+        prepare: (@MainActor (EditorViewModel, SpendOption) async throws -> GenerationPackageV1)? = nil,
         execute: @escaping @MainActor (EditorViewModel, SpendOption) async throws -> ToolResult
     ) throws -> ToolResult {
+        guard (approval.requiresGenerationPackage == true) == (prepare != nil) else {
+            throw ToolError("The spend card and request preparer do not share the same approval contract.")
+        }
         if case .externalMCP = origin {
             throw ToolError(
                 "External MCP sessions cannot own an in-app spend approval. Start the request from an in-app chat."
@@ -1468,6 +1479,12 @@ final class AgentService {
                     id: id
                 )
             },
+            prepare: prepare.map { prepare in
+                { [weak editor] option in
+                    guard let editor else { throw ToolError("The project closed before request preparation.") }
+                    return try await prepare(editor, option)
+                }
+            },
             execute: { [weak editor] option in
                 guard let editor else {
                     throw ToolError("The project closed before the approved operation could start.")
@@ -1493,7 +1510,48 @@ final class AgentService {
             to: refresh()
         )
         guard updated.id == current.id else { return }
+        spendPreparationTask?.cancel()
+        spendPreparationID = nil
         pendingSpendApproval = updated
+    }
+
+    func prepareSpendOption(_ option: SpendOption) {
+        guard let approval = pendingSpendApproval, approval.requiresGenerationPackage == true,
+              approval.options.contains(option), let operation = pendingSpendOperation,
+              let prepare = operation.prepare else { return }
+        let previous = spendPreparationTask
+        previous?.cancel()
+        let requestID = UUID()
+        spendPreparationID = requestID
+        spendApprovalError = nil
+        pendingSpendApproval = approval.replacingOptions(approval.options.map { item in
+            var value = item; value.generationPackage = nil; return value
+        })
+        spendPreparationTask = Task { @MainActor [weak self] in
+            await previous?.value
+            guard let self, !Task.isCancelled, self.spendPreparationID == requestID,
+                  self.pendingSpendApproval?.id == approval.id else { return }
+            do {
+                let lease = try operation.acquirePipelineMutation()
+                defer {
+                    if let lease { lease.coordinator.endMutation(projectRoot: lease.dataRoot, id: lease.id) }
+                }
+                let package = try await prepare(option)
+                try package.validate()
+                guard package.payload.target == option.target else { throw ToolError("The prepared package changed the selected provider or model.") }
+                try Task.checkCancellation()
+                guard self.spendPreparationID == requestID, let current = self.pendingSpendApproval,
+                      current.id == approval.id, current.preparationRevision == approval.preparationRevision else { return }
+                self.pendingSpendApproval = current.replacingOptions(current.options.map { item in
+                    var value = item
+                    value.generationPackage = value.id == option.id ? package : nil
+                    return value
+                })
+            } catch {
+                guard self.spendPreparationID == requestID else { return }
+                self.spendApprovalError = error.localizedDescription
+            }
+        }
     }
 
     func approveSpend(_ option: SpendOption) async {
@@ -1505,6 +1563,10 @@ final class AgentService {
         }
         guard option.isCurrentlyAvailable else {
             spendApprovalError = "This provider or model is no longer available. Choose another valid option."
+            return
+        }
+        if approval.requiresGenerationPackage == true, option.generationPackage == nil {
+            spendApprovalError = "Prepare and review this request before approving generation."
             return
         }
         guard let operation = pendingSpendOperation else {
@@ -1519,6 +1581,8 @@ final class AgentService {
             return
         }
         SpendSelectionPreferences.record(option, for: approval)
+        spendPreparationID = nil
+        spendPreparationTask = nil
         pendingSpendApproval = nil
         spendApprovalRefresh = nil
         pendingSpendOperation = nil
@@ -1657,6 +1721,8 @@ final class AgentService {
     }
 
     private func clearSpendApproval(cancelling: Bool) {
+        spendPreparationTask?.cancel()
+        spendPreparationID = nil
         let operation = pendingSpendOperation
         pendingSpendApproval = nil
         spendApprovalRefresh = nil

@@ -1,4 +1,5 @@
 import Foundation
+import NexGenEngine
 import Testing
 
 @testable import NexGenVideo
@@ -103,6 +104,33 @@ struct GenerationControllerTests {
     }
 
     // MARK: (b) COMPILE
+
+    @Test func aChangedLedgerInvalidatesAReviewedPackageBeforePricingOrDispatch() async throws {
+        let project = try Self.makeProject(ledgerYAML: Self.cleanLockedLedger)
+        defer {
+            ProjectIdentity.existingKey(for: project).map { ProjectWorkingCopy.discard(key: $0) }
+            try? FileManager.default.removeItem(at: project)
+        }
+        let editor = stubEditor(projectURL: project)
+        let generation = try await GenerationController.prepare(
+            videoRequest(intent: "a red car on a wet street", editor: editor), editor: editor).get()
+        let package = try await GenerationController.prepareReviewPackage(generation, editor: editor,
+            quoteLoader: { _, _ in GenerationPackageFixture.money() })
+        let home = try #require(editor.workingRoot)
+        let root = try #require(DataRootResolver.dataRoot(of: home))
+        try Self.cleanLockedLedger.replacingOccurrences(of: "warm amber and teal", with: "cold blue and silver")
+            .write(to: root.appendingPathComponent(PipelineLayout.ledgerFile), atomically: true, encoding: .utf8)
+        await #expect(throws: (any Error).self) { try await package.requireCurrentContext(editor: editor) }
+        var quotes = 0
+        let result = await GenerationController.submitPrepared(generation, editor: editor, quoteLoader: { _, _ in
+            quotes += 1
+            return GenerationPackageFixture.money()
+        })
+        guard case .failure(.gate) = result else { Issue.record("Changed canon must stop before spend"); return }
+        #expect(quotes == 0)
+        #expect(editor.mediaAssets.isEmpty)
+        #expect(editor.generationLog.spendEvents.isEmpty)
+    }
 
     @Test func compileBlocksOnLintError() async throws {
         let project = try Self.makeProject(ledgerYAML: Self.metaInstructionLedger)

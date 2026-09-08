@@ -149,6 +149,7 @@ struct GenerationAuthorization: Sendable {
     let takeRepairPlanID: String?
     let compileRecipe: GenerationCompileRecipe?
     let referenceSnapshot: GenerationReferenceSnapshot?
+    let generationPackage: GenerationPackageV1?
 
     init(
         transactionId: String?,
@@ -157,7 +158,8 @@ struct GenerationAuthorization: Sendable {
         projectMutationScope: GenerationProjectMutationScope? = nil,
         takeRepairPlanID: String? = nil,
         compileRecipe: GenerationCompileRecipe? = nil,
-        referenceSnapshot: GenerationReferenceSnapshot? = nil
+        referenceSnapshot: GenerationReferenceSnapshot? = nil,
+        generationPackage: GenerationPackageV1? = nil
     ) {
         self.transactionId = transactionId
         self.target = target
@@ -166,6 +168,7 @@ struct GenerationAuthorization: Sendable {
         self.takeRepairPlanID = takeRepairPlanID
         self.compileRecipe = compileRecipe
         self.referenceSnapshot = referenceSnapshot
+        self.generationPackage = generationPackage
     }
 }
 

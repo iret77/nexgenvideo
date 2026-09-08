@@ -3,6 +3,26 @@ import ImageIO
 import NexGenEngine
 
 @MainActor
+final class AgentPreparedGeneration {
+    let package: GenerationPackageV1
+    private let run: @MainActor () async throws -> ToolResult
+    private var task: Task<ToolResult, Error>?
+
+    init(package: GenerationPackageV1, run: @escaping @MainActor () async throws -> ToolResult) {
+        self.package = package
+        self.run = run
+    }
+
+    func execute() async throws -> ToolResult {
+        if let task { return try await task.value }
+        let operation = run
+        let task = Task { try await operation() }
+        self.task = task
+        return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+    }
+}
+
+@MainActor
 final class AgentGenerationAwaiter {
     enum Completion {
         case succeeded(MediaAsset?)
@@ -618,12 +638,32 @@ extension ToolExecutor {
         preflight: GenerationController.Preflight? = nil,
         success: @escaping (String) -> String
     ) async throws -> ToolResult {
+        let generation = try await GenerationController.prepare(request, editor: editor, preflight: preflight).get()
+        return try await routePreparedThroughController(generation, editor: editor, success: success)
+    }
+
+    private func prepareController(
+        _ request: GenerationRequest, editor: EditorViewModel,
+        preflight: GenerationController.Preflight? = nil,
+        success: @escaping (String) -> String
+    ) async throws -> AgentPreparedGeneration {
+        let generation = try await GenerationController.prepare(request, editor: editor, preflight: preflight).get()
+        let package = try await GenerationController.prepareReviewPackage(generation, editor: editor)
+        return AgentPreparedGeneration(package: package) {
+            try await self.routePreparedThroughController(generation, editor: editor, success: success)
+        }
+    }
+
+    private func routePreparedThroughController(
+        _ generation: GenerationController.PreparedGeneration, editor: EditorViewModel,
+        success: @escaping (String) -> String
+    ) async throws -> ToolResult {
+        let request = generation.request
         let result = try await AgentGenerationAwaiter.waitForSubmission(
             start: { awaiter in
-                let submission = await GenerationController.submit(
-                    request,
+                let submission = await GenerationController.submitPrepared(
+                    generation,
                     editor: editor,
-                    preflight: preflight,
                     onSuccess: { asset in awaiter.resolve(.succeeded(asset)) },
                     onFailure: { awaiter.resolve(.failed(nil)) }
                 )
@@ -647,8 +687,10 @@ extension ToolExecutor {
             } ?? "The provider did not return a usable result."
             throw ToolError(message)
         case .succeeded(let asset):
+            let packageID = asset?.generationInput?.generationPackageID ?? generation.reviewedPackage?.id
+            let packageNote = packageID.map { "\nGeneration package: \($0)" } ?? ""
             return try await Self.completedGenerationResult(
-                text: success(result.placeholderId),
+                text: success(result.placeholderId) + packageNote,
                 asset: request.modality == .image ? asset : nil
             )
         }
@@ -733,8 +775,28 @@ extension ToolExecutor {
         targetIsCompatible: @escaping @MainActor (ResolvedGenerationTarget) -> Bool = { _ in true },
         diagnosticProviderScope: @escaping @MainActor () -> [GenerationProvider] = { [] },
         cancel: @escaping @MainActor (EditorViewModel) -> Void = { _ in },
-        execute: @escaping @MainActor (EditorViewModel, SpendOption) async throws -> ToolResult
+        prepare: (@MainActor (EditorViewModel, SpendOption) async throws -> AgentPreparedGeneration)? = nil,
+        execute: (@MainActor (EditorViewModel, SpendOption) async throws -> ToolResult)? = nil
     ) async throws -> ToolResult {
+        var prepared: [String: AgentPreparedGeneration] = [:]
+        func prepareSelected(_ editor: EditorViewModel, _ option: SpendOption) async throws -> GenerationPackageV1 {
+            guard let prepare else { throw ToolError("This operation has no generation-package preparer.") }
+            prepared.removeAll()
+            let value = try await prepare(editor, option)
+            guard value.package.payload.target == option.target else { throw ToolError("The prepared package changed the selected provider or model.") }
+            prepared = [option.id: value]
+            return value.package
+        }
+        func executeSelected(_ editor: EditorViewModel, _ option: SpendOption) async throws -> ToolResult {
+            if prepare != nil {
+                guard let value = prepared[option.id], value.package == option.generationPackage else {
+                    throw ToolError("Prepare and review the exact generation package before spending.")
+                }
+                return try await value.execute()
+            }
+            guard let execute else { throw ToolError("The generation operation is unavailable.") }
+            return try await execute(editor, option)
+        }
         func currentOptions() -> [SpendOption] {
             if let exactOptions {
                 return exactOptions().filter { targetIsCompatible($0.target) }
@@ -777,7 +839,9 @@ extension ToolExecutor {
         }
         guard CostGuard.needsApproval(credits: recommended.credits) else {
             do {
-                return try await execute(editor, recommended)
+                var selected = recommended
+                if prepare != nil { selected.generationPackage = try await prepareSelected(editor, selected) }
+                return try await executeSelected(editor, selected)
             } catch {
                 cancel(editor)
                 throw error
@@ -807,7 +871,8 @@ extension ToolExecutor {
                 providerScope: GenerationProvider.allCases.filter {
                     providerScope.contains($0)
                 },
-                selectionScope: selectionScope
+                selectionScope: selectionScope,
+                requiresGenerationPackage: prepare != nil
             )
         }
         return try editor.agentService.requestSpendApproval(
@@ -820,7 +885,8 @@ extension ToolExecutor {
             ),
             refresh: makeApproval,
             cancel: cancel,
-            execute: execute
+            prepare: prepare == nil ? nil : prepareSelected,
+            execute: executeSelected
         )
     }
 
@@ -1113,7 +1179,7 @@ extension ToolExecutor {
                     displayName: candidate.displayName
                 ) == nil
             },
-            execute: { editor, approved in
+            prepare: { editor, approved in
                 let selectedRouting: PipelineProductionRouteSelection?
                 let selectedInputs: ProductionVideoGenerationInputs?
                 if let productionRouting {
@@ -1214,7 +1280,7 @@ extension ToolExecutor {
                             name: name, folderId: folderId,
                             generateAudio: requestedGenerateAudio)
                     }))
-                return try await self.routeThroughController(
+                return try await self.prepareController(
                     request, editor: editor,
                     preflight: {
                         if let err = finalCapabilities.validate(
@@ -1400,7 +1466,7 @@ extension ToolExecutor {
                     displayName: candidate.displayName
                 ) == nil
             },
-            execute: { editor, approved in
+            prepare: { editor, approved in
                 let selectedRouting: PipelineProductionRouteSelection?
                 let selectedInputs: ProductionVideoGenerationInputs?
                 if let productionRouting {
@@ -1519,7 +1585,7 @@ extension ToolExecutor {
                         + "\(finalInputAssets.videoRefs.count)vid/"
                         + "\(finalInputAssets.audioRefs.count)aud"
                     : ""
-                return try await self.routeThroughController(
+                return try await self.prepareController(
                     request, editor: editor,
                     preflight: {
                         if let err = finalCapabilities.validate(
@@ -1634,7 +1700,7 @@ extension ToolExecutor {
             alternatives: { [] },
             exactOptions: exactImageOptions,
             diagnosticProviderScope: { self.activeImageProviderScope() },
-            execute: { editor, approved in
+            prepare: { editor, approved in
                 var verifiedProductionDesignRoot: URL?
                 if let productionDesignSnapshot {
                     guard let approvedDataRoot = productionDesignDataRoot,
@@ -1661,7 +1727,7 @@ extension ToolExecutor {
                     verifiedProductionDesignRoot = currentDataRoot
                 }
 
-                let submit: @MainActor ([MediaAsset]) async throws -> ToolResult = {
+                let submit: @MainActor ([MediaAsset]) async throws -> AgentPreparedGeneration = {
                     generationReferences in
                     let selectedOffering: CatalogImageOfferingCandidate?
                     if isMarble {
@@ -1714,7 +1780,14 @@ extension ToolExecutor {
                         return input
                     }
                     let preflight: GenerationController.Preflight = {
-                        finalModel.validate(
+                        if let productionDesignSnapshot {
+                            guard let root = verifiedProductionDesignRoot,
+                                  let current = try? Self.productionDesignReferenceSnapshot(dataRoot: root),
+                                  current == productionDesignSnapshot else {
+                                return "The Production Design reference set changed. Prepare and review the image request again."
+                            }
+                        }
+                        return finalModel.validate(
                             aspectRatio: finalAspectRatio,
                             resolution: finalResolution,
                             quality: finalQuality,
@@ -1738,7 +1811,7 @@ extension ToolExecutor {
                                     genInput: genInput(compiled), model: finalModel,
                                     reference: reference, name: name, folderId: folderId)
                             }))
-                        return try await self.routeThroughController(
+                        return try await self.prepareController(
                             request, editor: editor, preflight: preflight,
                             success: {
                                 "Marble world generation completed. Asset ID: \($0). Model: \(finalModel.displayName). Result: equirectangular panorama image."
@@ -1757,27 +1830,14 @@ extension ToolExecutor {
                                 referenceAssetIDs: effectiveLibraryRefs.map(\.id),
                                 name: name, folderId: folderId)
                         }))
-                    return try await self.routeThroughController(
+                    return try await self.prepareController(
                         request, editor: editor, preflight: preflight,
                         success: {
                             "Generation completed. Asset ID: \($0). Model: \(finalModel.displayName), aspect: \(finalAspectRatio)"
                         })
                 }
 
-                guard let productionDesignSnapshot else {
-                    return try await submit(refs)
-                }
-                guard let verifiedProductionDesignRoot else {
-                    throw ToolError(
-                        "The Production Design references could not be verified. Review them and generate again."
-                    )
-                }
-                return try await Self.withStagedProductionDesignReferences(
-                    snapshot: productionDesignSnapshot,
-                    projectReferences: projectRefs,
-                    dataRoot: verifiedProductionDesignRoot,
-                    operation: submit
-                )
+                return try await submit(refs)
             }
         )
     }

@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 import NexGenEngine
 
-struct PromptBinding: Sendable, Equatable {
+struct PromptBinding: Codable, Sendable, Equatable {
     let projectKey: String
     let shotId: String
     let shotFingerprint: String
@@ -13,6 +13,7 @@ struct PromptBinding: Sendable, Equatable {
     let referencePlanSHA256: String
     let orderedBindingsSHA256: String
     let styleFingerprint: String
+    let compilerInputsSHA256: String?
 
     init(
         projectKey: String,
@@ -24,7 +25,8 @@ struct PromptBinding: Sendable, Equatable {
         routeSHA256: String = "none",
         referencePlanSHA256: String = "none",
         orderedBindingsSHA256: String = "none",
-        styleFingerprint: String = "none"
+        styleFingerprint: String = "none",
+        compilerInputsSHA256: String? = "none"
     ) {
         self.projectKey = projectKey
         self.shotId = shotId
@@ -36,6 +38,7 @@ struct PromptBinding: Sendable, Equatable {
         self.referencePlanSHA256 = referencePlanSHA256
         self.orderedBindingsSHA256 = orderedBindingsSHA256
         self.styleFingerprint = styleFingerprint
+        self.compilerInputsSHA256 = compilerInputsSHA256
     }
 
     static let free = PromptBinding(
@@ -297,7 +300,7 @@ enum PromptCompiler {
             + "\(binding.shotFingerprint)|\(binding.routeArtifactSHA256)|"
             + "\(binding.requirementSHA256)|\(binding.capabilitiesSHA256)|"
             + "\(binding.routeSHA256)|\(binding.referencePlanSHA256)|"
-            + "\(binding.orderedBindingsSHA256)|\(binding.styleFingerprint)|\(modelId)|\(text)"
+            + "\(binding.orderedBindingsSHA256)|\(binding.styleFingerprint)|\(binding.compilerInputsSHA256 ?? "none")|\(modelId)|\(text)"
         let digest = SHA256.hash(data: Data(material.utf8))
         return digest.prefix(8).map { String(format: "%02x", $0) }.joined()
     }
@@ -342,6 +345,7 @@ enum PromptCompiler {
             let snapshot = try ProductionStyleStoreV1.snapshot(dataRoot: root)
             return FileDigest.sha256(of: Data((snapshot.inputFingerprint + ":" + snapshot.artifactFingerprint).utf8))
         }.value
+        let compilerInputsSHA256 = try await PromptComposer.inputFingerprint(projectDir: editor?.workingRoot)
         guard editor?.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }) == root,
               (editor?.projectId ?? root?.standardizedFileURL.resolvingSymlinksInPath().path ?? "none") == projectKey else {
             throw ToolError("The active project changed while validating its production style. Compile again in the active project.")
@@ -351,7 +355,8 @@ enum PromptCompiler {
                 projectKey: projectKey,
                 shotId: "none",
                 shotFingerprint: "none",
-                styleFingerprint: styleFingerprint
+                styleFingerprint: styleFingerprint,
+                compilerInputsSHA256: compilerInputsSHA256
             )
         }
         guard let root,
@@ -376,14 +381,16 @@ enum PromptCompiler {
                 routeSHA256: routing.route.routeSHA256,
                 referencePlanSHA256: routing.referencePlanSHA256,
                 orderedBindingsSHA256: routing.orderedBindingsSHA256,
-                styleFingerprint: styleFingerprint
+                styleFingerprint: styleFingerprint,
+                compilerInputsSHA256: compilerInputsSHA256
             )
         }
         return PromptBinding(
             projectKey: projectKey,
             shotId: shotId,
             shotFingerprint: try shotFingerprint(shot),
-            styleFingerprint: styleFingerprint
+            styleFingerprint: styleFingerprint,
+            compilerInputsSHA256: compilerInputsSHA256
         )
     }
 

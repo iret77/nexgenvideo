@@ -56,6 +56,17 @@ struct PipelineRenderTakeTests {
         #expect(firstRecord.plannedGenerationID == secondRecord.plannedGenerationID)
         #expect(try PipelineRenderTakeStore.load(dataRoot: root, project: "demo", phase: "final").takeIDs.count == 2)
         #expect(throws: (any Error).self) { try prepare("event-1", input(date: Date(timeIntervalSince1970: 300), transaction: "different")) }
+        let firstURL = root.appendingPathComponent(PipelineRenderTakeStore.takePath(id: firstRecord.id, phase: "final"))
+        let firstBytes = try Data(contentsOf: firstURL)
+        var missingPackage = try #require(JSONSerialization.jsonObject(with: firstBytes) as? [String: Any])
+        var missingInput = try #require(missingPackage["generationInput"] as? [String: Any])
+        missingInput["generationPackageID"] = String(repeating: "a", count: 64)
+        missingPackage["generationInput"] = missingInput
+        try JSONSerialization.data(withJSONObject: missingPackage).write(to: firstURL)
+        let inspectable = try PipelineRenderTakeStore.take(id: firstRecord.id, dataRoot: root)
+        #expect(inspectable.output == firstRecord.output)
+        #expect(throws: (any Error).self) { try PipelineRenderTakeStore.requirePackage(input: inspectable.generationInput, dataRoot: root) }
+        try firstBytes.write(to: firstURL)
         var preview = RenderManifest(project: "demo", phase: "preview")
         record(&preview, shotId: "s001", output: output.path, costEur: 1, phase: "preview")
         let previewProof = RenderShotProvenanceProofV1(project: "demo", phase: "preview", shotID: "s001",

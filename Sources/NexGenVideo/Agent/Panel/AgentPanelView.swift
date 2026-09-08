@@ -728,7 +728,8 @@ struct AgentPanelView: View {
                         Task { await service.approveSpend(option) }
                     },
                     onDecline: { service.declineSpend() },
-                    onRefresh: { service.refreshSpendApproval() }
+                    onRefresh: { service.refreshSpendApproval() },
+                    onPrepare: { service.prepareSpendOption($0) }
                 )
                 .padding(.bottom, AppTheme.Spacing.xs)
             }

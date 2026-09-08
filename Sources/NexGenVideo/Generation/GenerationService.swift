@@ -86,6 +86,7 @@ final class GenerationService {
         authorizedGenInput.takeRepairPlanID = authorization.takeRepairPlanID
         authorizedGenInput.compileRecipe = authorization.compileRecipe
         authorizedGenInput.referenceReceipts = authorization.referenceSnapshot?.receipts
+        authorizedGenInput.generationPackageID = authorization.generationPackage?.id
         let baseName = name ?? String(authorizedGenInput.prompt.prefix(30))
 
         let resolvedFolderId = folderId.flatMap { id in
@@ -130,6 +131,12 @@ final class GenerationService {
                 try authorization.referenceSnapshot?.requireIdentity(references)
                 try await authorization.referenceSnapshot?.requireUnchanged()
                 try authorization.projectMutationScope?.requireCurrent(editor: editor)
+                if let package = authorization.generationPackage {
+                    try package.payload.destination.requireCurrent(editor: editor)
+                    guard let preparedParameters else { throw GenerationRequestError.gate("The reviewed generation has no prepared request parameters.") }
+                    try package.requireRequest(input: authorizedGenInput, target: target, parameters: preparedParameters,
+                        references: authorization.referenceSnapshot?.receipts ?? [])
+                }
                 if assetType == .video {
                     try Self.validateVideoTargetCapabilities(
                         resolvedVideoCapabilities,
@@ -241,7 +248,13 @@ final class GenerationService {
                 }
                 try await authorization.referenceSnapshot?.requireUnchanged()
                 try authorization.referenceSnapshot?.requireIdentity(references)
+                if let package = authorization.generationPackage, let preparedParameters {
+                    try package.requireRequest(input: finalGenInput, target: target, parameters: preparedParameters,
+                        references: authorization.referenceSnapshot?.receipts ?? [])
+                }
+                try await authorization.generationPackage?.requireCurrentContext(editor: editor)
                 try authorization.projectMutationScope?.requireCurrent(editor: editor)
+                try authorization.generationPackage?.payload.destination.requireCurrent(editor: editor)
                 if assetType == .video {
                     try PipelineProductionRouting.validateSubmission(genInput: finalGenInput, target: target, references: references, editor: editor)
                 }

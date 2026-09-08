@@ -1363,11 +1363,12 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .getRenderManifest,
-            description: "A video pass's shot-level render ledger and progress summary. Read-only.\n\nReturns `{project, phase, entries, summary}` where each entry exposes `current_output` plus its generation model and exact output hash; a replaced/missing file or missing generation provenance counts as pending, never rendered. The summary is `{total, rendered, pending, failed, spent_eur}` over provider-rendered shots only. Use `get_frames_manifest` for the role-aware Frames artifact and its exact-file audits; this shot-level ledger cannot represent both start and end roles. `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            description: "A video pass's shot-level render ledger, retained takes and progress summary. Read-only.\n\nEach entry exposes `current_output`, model and exact output hash; missing or replaced bytes count as pending. Takes expose attributed review findings and generation-package identities. Pass `take_id` to return one take with its complete exact generation package or a repairable package error. The summary `{total, rendered, pending, failed, spent_eur}` still covers the whole pass. Use `get_frames_manifest` for separate start/end frame audits. `project_dir` is the pipeline data root; omit for the open project.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,
                     "phase": ["type": "string", "enum": ["frames", "preview", "final"], "description": "The render phase."],
+                    "take_id": ["type": "string", "description": "Optional exact take ID for detailed generation-package inspection."],
                 ],
                 required: ["phase"]
             )

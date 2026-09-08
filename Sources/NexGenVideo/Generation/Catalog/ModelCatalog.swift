@@ -81,6 +81,12 @@ final class ModelCatalog {
     /// refresh never drops a signed-in provider's models, and a sign-out clears exactly that provider's.
     @ObservationIgnored private var discoveredByProvider: [GenerationProvider: [CatalogEntry]] = [:]
     @ObservationIgnored private var completedDiscoveryProviders = Set<GenerationProvider>()
+    @ObservationIgnored private(set) var routeChecks: [GenerationRouteReceipt.Check] = []
+
+    func recordRouteChecks(_ checks: [GenerationRouteReceipt.Check], for provider: GenerationProvider) {
+        routeChecks.removeAll { $0.provider == provider }
+        routeChecks.append(contentsOf: checks.filter { $0.provider == provider })
+    }
 
     init() {}
 

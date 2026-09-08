@@ -260,6 +260,26 @@ enum PromptComposer {
         }.value
     }
 
+    static func inputFingerprint(projectDir: URL?) async throws -> String {
+        guard let projectDir, let root = DataRootResolver.dataRoot(of: projectDir) else { return "none" }
+        return try await Task.detached(priority: .utility) {
+            struct Inputs: Encodable {
+                let artifactHashes: [String: String]
+                let directives: [String]
+                let locked: [String]
+            }
+            var hashes: [String: String] = [:]
+            for path in [PipelineLayout.ledgerFile, PipelineLayout.briefFile] {
+                if FileManager.default.fileExists(atPath: root.appendingPathComponent(path).path) {
+                    hashes[path] = try FileDigest.sha256(of: ProjectLocalFile.resolve(path, dataRoot: root))
+                } else { hashes[path] = "absent" }
+            }
+            let values = loadDirectives(dataRoot: root)
+            return FileDigest.sha256(of: try GenerationPackageV1.encode(Inputs(artifactHashes: hashes,
+                directives: values.all, locked: values.locked)))
+        }.value
+    }
+
     private static func loadDirectives(dataRoot root: URL) -> ProjectDirectives {
         let store = YAMLArtifactStore(dataRoot: root)
         var all: [String] = []

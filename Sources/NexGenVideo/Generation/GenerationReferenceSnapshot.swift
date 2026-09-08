@@ -3,6 +3,7 @@ import NexGenEngine
 
 struct GenerationReferenceReceipt: Codable, Sendable, Equatable {
     let assetID: String
+    let displayName: String?
     let type: String
     let sourceSHA256: String
     let submittedSHA256: String
@@ -11,6 +12,7 @@ struct GenerationReferenceReceipt: Codable, Sendable, Equatable {
 final class GenerationReferenceSnapshot: Sendable {
     struct Source: Sendable {
         let assetID: String
+        let displayName: String?
         let type: String
         let url: URL
     }
@@ -56,7 +58,7 @@ final class GenerationReferenceSnapshot: Sendable {
                     }
                     try FileManager.default.setAttributes([.posixPermissions: 0o400], ofItemAtPath: destination.path)
                     urls.append(destination)
-                    receipts.append(.init(assetID: sources[index].assetID, type: sources[index].type,
+                    receipts.append(.init(assetID: sources[index].assetID, displayName: sources[index].displayName, type: sources[index].type,
                         sourceSHA256: sourceReceipts?[index].sourceSHA256 ?? hash, submittedSHA256: hash))
                 }
                 return GenerationReferenceSnapshot(sources: sources, urls: urls, receipts: receipts, directory: directory)
@@ -97,7 +99,7 @@ final class GenerationReferenceSnapshot: Sendable {
     static func prepare(references: [MediaAsset], trim: TrimmedSource? = nil,
                         preprocess: (@Sendable (Int, MediaAsset) async throws -> URL?)? = nil,
                         preUploadedURLs: [String]? = nil) async throws -> GenerationReferenceSnapshot {
-        let sources = references.map { Source(assetID: $0.id, type: $0.type.rawValue, url: $0.url) }
+        let sources = references.map { Source(assetID: $0.id, displayName: $0.originalFilename ?? $0.name, type: $0.type.rawValue, url: $0.url) }
         if let preUploadedURLs, !preUploadedURLs.isEmpty {
             guard preUploadedURLs == sources.map({ $0.url.path }) else {
                 throw GenerationRequestError.optionsInvalid("Generation approval requires local reference bytes. Import remote references before generating.")
