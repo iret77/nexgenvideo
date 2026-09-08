@@ -43,6 +43,7 @@ struct TakeReviewView: View {
                 }.disabled(busy)
                 if let snapshot {
                     VideoPlayer(player: player).frame(minHeight: AppTheme.ComponentSize.previewMinHeight)
+                    TakeRangeReviewView(snapshot: snapshot, wholeTakePlayer: player, canWrite: canWrite).id(snapshot.take.id)
                     DisclosureGroup("Submitted direction and image references") {
                         ScrollView {
                             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {

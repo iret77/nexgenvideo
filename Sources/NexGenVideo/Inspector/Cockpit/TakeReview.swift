@@ -112,6 +112,36 @@ struct TakeReview: Codable, Sendable, Equatable {
     }
 
     @MainActor
+    static func retainedAsset(snapshot: Snapshot, editor: EditorViewModel) async throws -> MediaAsset {
+        guard editor.workingRoot == snapshot.home else { throw ToolError("The active project changed.") }
+        func existing() throws -> MediaAsset? {
+            guard let asset = editor.mediaAssets.first(where: { $0.id == snapshot.take.generationEventID }) else { return nil }
+            guard asset.url.standardizedFileURL == snapshot.mediaURL.standardizedFileURL,
+                  asset.generationInput == snapshot.take.generationInput else {
+                throw ToolError("The take's library entry no longer matches its recorded source. Restore the original entry before selecting it.")
+            }
+            return asset
+        }
+        if let asset = try existing() { return asset }
+        let asset = MediaAsset(id: snapshot.take.generationEventID, url: snapshot.mediaURL, type: .video,
+            name: "\(snapshot.take.shotID) · \(snapshot.take.phase) take", duration: snapshot.durationSeconds, generationInput: snapshot.take.generationInput)
+        await asset.loadMetadata()
+        guard editor.workingRoot == snapshot.home, let root = DataRootResolver.dataRoot(of: snapshot.home),
+              let key = editor.openWorkingCopyKey,
+              let lease = editor.pipelinePhaseRunCoordinator.beginMutation(projectRoot: root, label: "Restore retained take") else {
+            throw ToolError("The project or pipeline operation changed. Select the take again when Render is idle.")
+        }
+        defer { editor.pipelinePhaseRunCoordinator.endMutation(projectRoot: root, id: lease) }
+        _ = try ProjectPackGate.requireLiveMutation(projectURL: snapshot.home, declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)
+        try PipelinePhaseAccess.requireCurrentPhaseAndIntake("render", dataRoot: root,
+            declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)
+        if let asset = try existing() { return asset }
+        try ProjectWorkingCopy.markDirty(key: key)
+        editor.importMediaAsset(asset)
+        return asset
+    }
+
+    @MainActor
     static func select(take: PipelineRenderTakeV1, home: URL, editor: EditorViewModel) async throws {
         guard editor.workingRoot == home, let root = DataRootResolver.dataRoot(of: home),
               let review = try load(take: take, dataRoot: root), review.accepted else {
@@ -119,23 +149,8 @@ struct TakeReview: Codable, Sendable, Equatable {
         }
         try PipelinePhaseAccess.requireCurrentPhaseAndIntake("render", dataRoot: root,
             declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)
-        if !editor.mediaAssets.contains(where: { $0.id == take.generationEventID }) {
-            let source = try await capture(takeID: take.id, home: home)
-            let asset = MediaAsset(id: take.generationEventID, url: source.mediaURL, type: .video,
-                name: "\(take.shotID) · \(take.phase) take", duration: source.durationSeconds, generationInput: take.generationInput)
-            await asset.loadMetadata()
-            guard editor.workingRoot == home, let key = editor.openWorkingCopyKey,
-                  editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) == nil else {
-                throw ToolError("The project or pipeline operation changed. Select the take again when Render is idle.")
-            }
-            _ = try ProjectPackGate.requireLiveMutation(projectURL: home, declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)
-            try PipelinePhaseAccess.requireCurrentPhaseAndIntake("render", dataRoot: root,
-                declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)
-            if !editor.mediaAssets.contains(where: { $0.id == take.generationEventID }) {
-                try ProjectWorkingCopy.markDirty(key: key)
-                editor.importMediaAsset(asset)
-            }
-        }
+        let source = try await capture(takeID: take.id, home: home)
+        _ = try await retainedAsset(snapshot: source, editor: editor)
         let proof = try JSONDecoder().decode(RenderShotProvenanceProofV1.self,
             from: Data(contentsOf: ProjectLocalFile.requireHash(take.provenance.sha256, at: take.provenance.path, dataRoot: root)))
         let result = await ToolExecutor(editor: editor).execute(name: ToolName.recordRender.rawValue, args: [
