@@ -162,13 +162,15 @@ enum GenerationController {
             case .video(let make):
                 let value = make(compiledPrompt)
                 let parameters = try PreparedProviderParameters(referenceCount: value.references.count, build: value.buildParams)
-                guard case .video = parameters.parameters else { throw GenerationRequestError.optionsInvalid("Expected video parameters.") }
+                guard case .video(let video) = parameters.parameters, video.prompt == compiledPrompt,
+                      value.genInput.prompt == compiledPrompt else { throw GenerationRequestError.optionsInvalid("The video request does not contain the compiled prompt.") }
                 self = .video(value, parameters)
             case .image(let make):
                 let value = make(compiledPrompt)
                 let count = value.preUploadedURLs.flatMap { $0.isEmpty ? nil : $0.count } ?? value.references.count
                 let parameters = try PreparedProviderParameters(referenceCount: count, build: value.buildParams)
-                guard case .image(let image) = parameters.parameters, image.numImages == value.numImages,
+                guard case .image(let image) = parameters.parameters, image.prompt == compiledPrompt,
+                      value.genInput.prompt == compiledPrompt, image.numImages == value.numImages,
                       (1...4).contains(image.numImages) else {
                     throw GenerationRequestError.optionsInvalid("The image output count does not match the prepared request.")
                 }
@@ -225,10 +227,38 @@ enum GenerationController {
         }
 
         let target = request.target ?? GenerationService.dispatchTarget(modelId: request.modelId)
+        guard target.modelId == request.modelId else { return .failure(.optionsInvalid("The selected route and compiled model do not match.")) }
         guard editor.workingRoot == requestHome else { return .failure(.gate("The active project changed during prompt compilation. Prepare the request again.")) }
         let prepared: PreparedSubmission
         do { prepared = try PreparedSubmission(request.submission, compiledPrompt: compiled) }
         catch { return .failure(.optionsInvalid(error.localizedDescription)) }
+        let referenceSnapshot: GenerationReferenceSnapshot?
+        do {
+            switch prepared {
+            case .video(let video, let parameters):
+                guard video.genInput.model == target.modelId else { throw GenerationRequestError.optionsInvalid("The video request changed its approved model.") }
+                if video.genInput.productionRouting != nil,
+                   video.trimmedSourceOverride?.hasTrim == true || video.preprocessRef != nil {
+                    throw GenerationRequestError.optionsInvalid("A routed request must preserve its exact planned input bytes.")
+                }
+                referenceSnapshot = try await GenerationReferenceSnapshot.prepare(references: video.references,
+                    trim: video.trimmedSourceOverride, preprocess: video.preprocessRef)
+                try PipelineProductionRouting.validateProviderEnvelope(genInput: video.genInput, target: target,
+                    params: parameters.parameters, uploadedReferences: parameters.referenceSlots)
+                if let routing = video.genInput.productionRouting, let referenceSnapshot {
+                    guard routing.orderedBindings.count == referenceSnapshot.receipts.count,
+                          zip(routing.orderedBindings, referenceSnapshot.receipts).allSatisfy({ pair in
+                              pair.0.mediaAssetID == pair.1.assetID && pair.0.sha256 == pair.1.sourceSHA256
+                                  && pair.0.sha256 == pair.1.submittedSHA256
+                          }) else { throw GenerationRequestError.optionsInvalid("The prepared reference bytes differ from the approved ReferencePlan.") }
+                }
+            case .image(let image, _):
+                guard image.genInput.model == target.modelId else { throw GenerationRequestError.optionsInvalid("The image request changed its approved model.") }
+                referenceSnapshot = try await GenerationReferenceSnapshot.prepare(references: image.references,
+                    preUploadedURLs: image.preUploadedURLs)
+            default: referenceSnapshot = nil
+            }
+        } catch { return .failure(.optionsInvalid(error.localizedDescription)) }
         let authorization: GenerationAuthorization
         do {
             let recipe = request.precompiled.flatMap {
@@ -238,6 +268,7 @@ enum GenerationController {
             if case .video(let video, _) = prepared {
                 var input = video.genInput
                 input.compileRecipe = recipe
+                input.referenceReceipts = referenceSnapshot?.receipts
                 repairPlanID = try await TakeRepairPlan.requireForGeneration(input: input, home: requestHome)
             } else { repairPlanID = nil }
             guard editor.workingRoot == requestHome else { return .failure(.gate("The active project changed while reviewing this iteration.")) }
@@ -248,9 +279,20 @@ enum GenerationController {
                 quoteLoader: quoteLoader
             )
             authorization = GenerationAuthorization(transactionId: priced.transactionId, target: priced.target, estimate: priced.estimate,
-                projectMutationScope: priced.projectMutationScope, takeRepairPlanID: repairPlanID, compileRecipe: recipe)
+                projectMutationScope: priced.projectMutationScope, takeRepairPlanID: repairPlanID, compileRecipe: recipe,
+                referenceSnapshot: referenceSnapshot)
         } catch {
             return .failure(.budget(error.localizedDescription))
+        }
+
+        do {
+            try await referenceSnapshot?.requireUnchanged()
+            guard editor.workingRoot == requestHome else { throw GenerationRequestError.gate("The active project changed during reference validation.") }
+            try authorization.projectMutationScope?.requireCurrent(editor: editor)
+        }
+        catch {
+            try? editor.recordSpendEvent(authorization: authorization, kind: .released, note: error.localizedDescription)
+            return .failure(.optionsInvalid(error.localizedDescription))
         }
 
         if editor.workingRoot != nil {

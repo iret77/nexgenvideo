@@ -110,6 +110,7 @@ struct GenerationInput: Codable, Sendable, Equatable {
     var productionRouting: ProductionGenerationRoutingProofV1? = nil
     var takeRepairPlanID: String? = nil
     var compileRecipe: GenerationCompileRecipe? = nil
+    var referenceReceipts: [GenerationReferenceReceipt]? = nil
 }
 
 struct GenerationCompileRecipe: Codable, Sendable, Equatable {

@@ -85,6 +85,7 @@ final class GenerationService {
         authorizedGenInput.spendTransactionId = authorization.transactionId
         authorizedGenInput.takeRepairPlanID = authorization.takeRepairPlanID
         authorizedGenInput.compileRecipe = authorization.compileRecipe
+        authorizedGenInput.referenceReceipts = authorization.referenceSnapshot?.receipts
         let baseName = name ?? String(authorizedGenInput.prompt.prefix(30))
 
         let resolvedFolderId = folderId.flatMap { id in
@@ -107,7 +108,7 @@ final class GenerationService {
             placeholders.append(placeholder)
         }
         let primaryId = placeholders[0].id
-        let refURLs = references.map(\.url)
+        let refURLs = authorization.referenceSnapshot?.urls ?? references.map(\.url)
 
         // Resolved ONCE, here, and handed to `runJob` — never re-resolved. Reading the activation a
         // second time after the upload would let the two disagree: a key added while a reference was
@@ -125,6 +126,9 @@ final class GenerationService {
                 self.generationTasks.removeValue(forKey: primaryId)
             }
             do {
+                try authorization.projectMutationScope?.requireCurrent(editor: editor)
+                try authorization.referenceSnapshot?.requireIdentity(references)
+                try await authorization.referenceSnapshot?.requireUnchanged()
                 try authorization.projectMutationScope?.requireCurrent(editor: editor)
                 if assetType == .video {
                     try Self.validateVideoTargetCapabilities(
@@ -151,17 +155,17 @@ final class GenerationService {
                 }
                 let uploaded: [String]
                 if let preUploadedURLs, !preUploadedURLs.isEmpty {
-                    uploaded = preUploadedURLs
+                    uploaded = authorization.referenceSnapshot?.urls.map(\.path) ?? preUploadedURLs
                 } else {
                     var urlsToUpload = refURLs
                     let refTypes = references.map(\.type)
-                    if let trim = trimmedSourceOverride, trim.hasTrim, !urlsToUpload.isEmpty {
+                    if authorization.referenceSnapshot == nil, let trim = trimmedSourceOverride, trim.hasTrim, !urlsToUpload.isEmpty {
                         Log.generation.notice("using trimmed source: frames \(trim.trimStartFrame)+\(trim.sourceFramesConsumed) of \(urlsToUpload[0].lastPathComponent)")
                         let extracted = try await VideoTrimExtractor.extract(trim)
                         urlsToUpload[0] = extracted
                         tempToCleanup.append(extracted)
                     }
-                    if let preprocessRef, !references.isEmpty {
+                    if authorization.referenceSnapshot == nil, let preprocessRef, !references.isEmpty {
                         let snapshot = references
                         let rewrites: [(Int, URL?)] = try await withThrowingTaskGroup(of: (Int, URL?).self) { group in
                             for (i, asset) in snapshot.enumerated() {
@@ -181,6 +185,7 @@ final class GenerationService {
                     // Cache against the MediaAsset only when asset bytes are pristine (not trimmed, not preprocessed)
                     let trimmedFirst = trimmedSourceOverride?.hasTrim == true
                     let cacheKeys: [MediaAsset?] = references.enumerated().map { (i, asset) in
+                        if authorization.referenceSnapshot != nil { return nil }
                         if authorizedGenInput.productionRouting != nil { return nil }
                         if preprocessRef != nil { return nil }
                         if i == 0 && trimmedFirst { return nil }
@@ -234,6 +239,8 @@ final class GenerationService {
                 guard currentRepairPlan == authorization.takeRepairPlanID else {
                     throw ToolError("The iteration decision changed before submission. Review the current request again.")
                 }
+                try await authorization.referenceSnapshot?.requireUnchanged()
+                try authorization.referenceSnapshot?.requireIdentity(references)
                 try authorization.projectMutationScope?.requireCurrent(editor: editor)
                 if assetType == .video {
                     try PipelineProductionRouting.validateSubmission(genInput: finalGenInput, target: target, references: references, editor: editor)

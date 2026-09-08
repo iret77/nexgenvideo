@@ -5,6 +5,20 @@ import Testing
 
 @Suite("Prepared provider parameters")
 struct PreparedProviderParametersTests {
+    @Test func aFactoryCannotReplaceDuplicateOrDropAnApprovedInput() throws {
+        for references in [["https://example.invalid/hidden.png"], []] as [[String]] {
+            #expect(throws: (any Error).self) {
+                try PreparedProviderParameters(referenceCount: 1) { _ in
+                    .image(ImageGenerationParams(prompt: "Portrait", aspectRatio: "1:1", imageURLs: references, numImages: 1))
+                }
+            }
+        }
+        #expect(throws: (any Error).self) {
+            try PreparedProviderParameters(referenceCount: 2) { slots in
+                .image(ImageGenerationParams(prompt: "Portrait", aspectRatio: "1:1", imageURLs: [slots[0], slots[0]], numImages: 1))
+            }
+        }
+    }
     @Test func videoSettingsAreFrozenWhileReferenceLocationsAreBoundInOrder() throws {
         var duration = 5
         var calls = 0

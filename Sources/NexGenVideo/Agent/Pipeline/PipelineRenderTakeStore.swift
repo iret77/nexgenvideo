@@ -199,6 +199,7 @@ enum PipelineRenderTakeStore {
         revision.referenceImageURLs = nil; revision.referenceVideoURLs = nil; revision.referenceAudioURLs = nil
         revision.takeRepairPlanID = nil
         revision.compileRecipe = nil; revision.intent = nil
+        revision.referenceReceipts = nil
         let routing = input.productionRouting
         revision.productionRouting = nil
         if routing != nil {
@@ -209,7 +210,8 @@ enum PipelineRenderTakeStore {
         let value = Revision(input: revision,
             target: [routing?.providerID, routing?.transportID, routing?.endpointID, routing?.modelParam,
                      routing?.offeringCapabilities.inputPolicy.sourceOperation?.rawValue],
-            bindings: routing?.orderedBindings.map { [$0.semanticJobID, $0.inputSlotID, $0.modeID, $0.sha256] } ?? [])
+            bindings: routing?.orderedBindings.map { [$0.semanticJobID, $0.inputSlotID, $0.modeID, $0.sha256] }
+                ?? input.referenceReceipts?.map { [$0.type, $0.submittedSHA256] } ?? [])
         return FileDigest.sha256(of: try canonical(value))
     }
 
