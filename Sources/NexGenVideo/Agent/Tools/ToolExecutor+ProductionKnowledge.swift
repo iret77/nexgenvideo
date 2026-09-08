@@ -25,19 +25,27 @@ extension ToolExecutor {
             """)
         }
         guard operation == "search" else { throw ToolError("Unknown knowledge operation.") }
-        let terms = (args.string("query") ?? "").lowercased().split(whereSeparator: \.isWhitespace)
+        func searchable(_ text: String) -> String {
+            text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+        }
+        let terms = searchable(args.string("query") ?? "").split(whereSeparator: \.isWhitespace)
         let offset = args.int("offset") ?? 0
         guard offset >= 0 else { throw ToolError("Knowledge index offset must be nonnegative.") }
-        var matches: [[String: String]] = []
+        var ranked: [(score: Int, entry: [String: String])] = []
         for library in catalog.libraries {
             for entry in library.entries {
                 let id = "\(library.id.rawValue)/\(entry.id.rawValue)"
-                let searchable = (id + " " + entry.title + " " + entry.applicability.intentTags.joined(separator: " ")).lowercased()
-                if terms.allSatisfy({ searchable.contains($0) }) {
-                    matches.append(["entryID": id, "title": entry.title, "version": library.version.rawValue])
+                let heading = searchable(id + " " + entry.title + " " + entry.applicability.intentTags.joined(separator: " "))
+                let content = searchable(entry.guidance.joined(separator: "\n"))
+                if terms.allSatisfy({ heading.contains($0) || content.contains($0) }) {
+                    let score = terms.filter { heading.contains($0) }.count
+                    ranked.append((score, ["entryID": id, "title": entry.title, "version": library.version.rawValue]))
                 }
             }
         }
+        let matches = ranked.sorted {
+            $0.score == $1.score ? ($0.entry["entryID"] ?? "") < ($1.entry["entryID"] ?? "") : $0.score > $1.score
+        }.map(\.entry)
         let page = Array(matches.dropFirst(min(offset, matches.count)).prefix(25))
         var result: [String: Any] = ["entries": page, "total": matches.count]
         if offset < matches.count, page.count < matches.count - offset {

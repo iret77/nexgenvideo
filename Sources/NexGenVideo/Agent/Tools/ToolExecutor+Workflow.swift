@@ -1603,6 +1603,12 @@ extension ToolExecutor {
             if !refImages.isEmpty { body["reference_images"] = refImages }
             if !plan.warnings.isEmpty { body["reference_warnings"] = plan.warnings }
         }
+        if let style = try ProductionStyleStoreV1.load(dataRoot: root) {
+            body["style_frame_checks"] = Dictionary(uniqueKeysWithValues: style.criteria.filter {
+                $0.source.scope == .frame && $0.source.evidenceKind == .image
+            }.map { ($0.auditKey, $0.expected) })
+            body["style_review_instruction"] = "Inspect the current image with inspect_media and return its observationReceipt as observation_receipt to save_frame_audit. Report each style_frame_checks key with a concrete observation. Timing, camera movement, sequence, and audio criteria require separate media review; never claim them from a still."
+        }
         return try jsonResult(body)
     }
 
@@ -2215,11 +2221,14 @@ extension ToolExecutor {
         // Expected per standard check comes from the shot spec, never the model.
         let shotlist = try readShotlist(dataRoot: root)
         let shot = shotlist?.shots.first { $0.id == shotId }
-        let expected = frameAuditExpected(
+        var expected = frameAuditExpected(
             for: shot,
             brief: try readBriefIfPresent(dataRoot: root),
             bible: try loadBible(dataRoot: root)
         )
+        let style = try ProductionStyleStoreV1.load(dataRoot: root)
+        let styleCriteria = style?.criteria.filter { $0.source.scope == .frame && $0.source.evidenceKind == .image } ?? []
+        for criterion in styleCriteria { expected[criterion.auditKey] = criterion.expected }
 
         guard let rawChecks = args["checks"] as? [String: Any] else {
             throw ToolError("`checks` must be an object mapping each audit key to {status, observed, note}.")
@@ -2240,6 +2249,22 @@ extension ToolExecutor {
                 expected: expected[key] ?? (cd.string("expected") ?? ""),
                 observed: cd.string("observed") ?? "",
                 note: cd.string("note") ?? "")
+        }
+        if style != nil {
+            let receipt = try FrameObservationStoreV1.require(try args.requireString("observation_receipt"),
+                                                             sourceSHA256: sha, dataRoot: root)
+            for criterion in styleCriteria {
+                guard let check = checks[criterion.auditKey], check.status != .notApplicable,
+                      !check.observed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw ToolError("Report an observed result for style criterion: " + criterion.auditKey)
+                }
+            }
+            let allowed = Set(styleCriteria.map(\.auditKey) + [FrameObservationStoreV1.auditKey])
+            guard checks.keys.filter({ $0.hasPrefix("style.") }).allSatisfy(allowed.contains) else {
+                throw ToolError("A frame audit cannot attest temporal, sequence, or audio style criteria.")
+            }
+            checks[FrameObservationStoreV1.auditKey] = AuditCheck(status: .clean, expected: receipt.sourceSHA256,
+                observed: receipt.id, note: receipt.transmittedImageSHA256)
         }
         let missing = standardAuditCheckKeys.filter { checks[$0] == nil }
         guard missing.isEmpty else {

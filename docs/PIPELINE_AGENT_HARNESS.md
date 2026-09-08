@@ -101,9 +101,22 @@ the current phase's capability set is rejected before it can spend money or muta
 - Imported and AI-enhanced shots never enter Frames. Every AI-enhanced shot declares one project-local
   `source_path` in the Shot List; `next_render_shot` resolves that source for the agent, and Render
   approval rejects any missing, changed, or substituted source.
-- A chained generated shot uses its predecessor's extracted last frame as its sole start condition.
-  It declares `keyframe_strategy=none`, `seedance_input_mode=keyframe`, no explicit reference images,
-  and never creates a separate Frames start image. Render currency binds the exact predecessor frame.
+- Conditioning is an explicit, versioned plan decision. Existing pinned plans retain their exact
+  behavior; adopting a new strategy requires an explicitly approved plan and, where necessary, the
+  transactional Recovery-copy pack upgrade. No route silently substitutes one strategy for another.
+- A chained generated shot uses either `frame_continuation` or an explicitly chosen `native_extension`.
+  Frame continuation retains the predecessor's extracted last frame as its sole start condition:
+  `keyframe_strategy=none`, `seedance_input_mode=keyframe`, no explicit reference images, and no
+  separate Frames start image. Its proof binds the exact predecessor video and extracted frame.
+  Native extension instead binds the exact approved predecessor video, direction, boundary state,
+  permitted original references, and a verified executable extension mode. An extracted frame cannot
+  stand in for its video input; the legacy first-frame mechanism is not added implicitly.
+- `reference_anchor`, `two_state_interpolation`, and explicitly selected `first_frame` are distinct
+  conditioning strategies, not substitutes for chaining. A reference anchor occupies a genuine
+  reference slot; interpolation uses the same shot's approved start/end states in their actual input
+  slots. Frames owns the required still approvals; no new phase is introduced. Missing capability,
+  changed input bytes, substituted slots, or unapproved states block before spend and at Render
+  approval. Imported and AI-enhanced source ownership remains unchanged.
 - Every Bible sheet and Scene3D panorama must be staged from a ready generated media asset. The Bible
   gate binds its exact bytes to the host-recorded compiled prompt and generation model; user uploads
   remain valid only as `reference_images`.

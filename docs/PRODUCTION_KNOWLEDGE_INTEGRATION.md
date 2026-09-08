@@ -12,7 +12,7 @@ The owner requires all applicable extracted ai-film-production 3.1.1 knowledge t
 | Camera setups, state/blockout plans and canon-grounded causal changes | #483, #484 | Canonical writers, cross-artifact consumers, change/rewind checks | Pending |
 | Take/review/repair, sequence QA, assembly and finish | #442–#445 | Real media observations, retained takes/ranges, supported repair, final output provenance | Pending |
 | Musicvideo original-song performance, visual arc and coverage | #447, #488–#490 | Track/section/mouth ownership, repeated motifs, observed performance coverage and song-led mix | Pending |
-| Conditioning strategies | #485 | Explicit contract decision; legacy project pins preserved; actual conditioning input checks | Decision pending |
+| Conditioning strategies | #485 | Owner authorized reflecting actual frame continuation versus native video extension; legacy pins preserved; actual conditioning input checks | Contract authorized; implementation pending |
 | Future format packs | #491, format-only parts of #448 | Retained specifications, no new product pack | Excluded |
 
 Existing infrastructure and completed issues remain the baseline. Extraction, runtime access, consumer behavior, and CI acceptance are distinct milestones. No row is complete merely because resources decode or documentation agrees with code.

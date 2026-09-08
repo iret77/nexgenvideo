@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import ImageIO
+import NexGenEngine
 
 struct TimelineWord {
     let index: Int
@@ -320,7 +321,7 @@ extension ToolExecutor {
         }
 
         switch asset.type {
-        case .image: return try await readImage(asset: asset, args: args)
+        case .image: return try await readImage(asset: asset, args: args, editor: editor)
         case .video: return try await readVideo(editor: editor, asset: asset, args: args, mapping: mapping)
         case .audio: return try await readAudio(editor: editor, asset: asset, args: args, mapping: mapping)
         case .lottie: return try await readLottie(asset: asset, args: args)
@@ -351,8 +352,9 @@ extension ToolExecutor {
         ]
     }
 
-    private func readImage(asset: MediaAsset, args: [String: Any]) async throws -> ToolResult {
+    private func readImage(asset: MediaAsset, args: [String: Any], editor: EditorViewModel) async throws -> ToolResult {
         let url = asset.url
+        let before = try await Task.detached(priority: .utility) { try FileDigest.sha256(of: url) }.value
         let encoded = await Task.detached(priority: .userInitiated) {
             ImageEncoder.encode(url: url).map {
                 (base64: $0.data.base64EncodedString(), mime: $0.mime, encodedByteSize: $0.data.count)
@@ -369,6 +371,17 @@ extension ToolExecutor {
         meta["encodedByteSize"] = encoded.encodedByteSize
         if let props = Self.imagePropertiesSummary(at: url) {
             meta["imageProperties"] = props
+        }
+        let after = try await Task.detached(priority: .utility) { try FileDigest.sha256(of: url) }.value
+        guard before == after else {
+            throw ToolError("The image changed during inspection. Inspect it again.")
+        }
+        if let home = editor.workingRoot, let root = DataRootResolver.dataRoot(of: home),
+           let imageBytes = Data(base64Encoded: encoded.base64) {
+            let receipt = try FrameObservationStoreV1.record(sourceSHA256: before, transmittedImage: imageBytes,
+                                                            mediaID: asset.id, dataRoot: root)
+            meta["observationReceipt"] = receipt.id
+            meta["observationNote"] = "This receipt identifies the image supplied in this tool result; it is not a visual verdict."
         }
 
         guard let metaJSON = Self.jsonString(roundJSONFloatingPointNumbers(meta, toPlaces: 3)) else {

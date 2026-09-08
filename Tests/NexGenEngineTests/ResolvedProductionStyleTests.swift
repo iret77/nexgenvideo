@@ -1,8 +1,28 @@
+import Foundation
 import Testing
 @testable import NexGenEngine
 
 @Suite("Resolved production style")
 struct ResolvedProductionStyleTests {
+    @Test("every recipe's original Verify clauses have typed evidence bindings")
+    func completeCriterionCoverage() throws {
+        let catalog = try EngineProductionKnowledgeResourcesV1.loadCatalog()
+        let library = try #require(catalog.library(id: "film-production-blueprints"))
+        for entry in library.entries {
+            let prefix = "Blueprint verification: "
+            let criteria = try entry.guidance.filter { $0.hasPrefix(prefix) }.map {
+                try JSONDecoder().decode(ProductionStyleCriterionV1.self, from: Data($0.dropFirst(prefix.count).utf8))
+            }
+            #expect(!criteria.isEmpty)
+            #expect(criteria.map(\.sourceClause).joined(separator: " ") == entry.verifyCriteria.first)
+            #expect(criteria.allSatisfy { $0.recipeID == entry.id.rawValue })
+            if entry.id.rawValue.hasPrefix("director-") {
+                let resolved = try ResolvedProductionStyleV1.resolve(.init(directorID: entry.id.rawValue), catalog: catalog)
+                #expect(resolved.criteria.map(\.source) == criteria)
+            }
+        }
+    }
+
     @Test("a color signature leaves the director's camera and composition intact")
     func dimensionOverride() throws {
         let catalog = try EngineProductionKnowledgeResourcesV1.loadCatalog()
@@ -18,7 +38,25 @@ struct ResolvedProductionStyleTests {
         #expect(selected.value(.camera) == base.value(.camera))
         #expect(selected.value(.composition) == base.value(.composition))
         #expect(selected.sourceVerifyClauses[director] == base.sourceVerifyClauses[director])
+        let color = try #require(selected.criteria.first { $0.source.recipeID == director && $0.source.dimension == .color })
+        #expect(color.source.sourceClause.contains("pastel"))
+        #expect(color.expected == "Amber intimacy shifts into cold blue isolation.")
+        #expect(color.overrideReason != nil)
+        #expect(selected.criteria.filter { $0.source.dimension != .color } == base.criteria.filter { $0.source.dimension != .color })
+        #expect(selected.criteria.contains { $0.source.recipeID == "dop-vittorio-storaro" && $0.source.scope == .sequence })
         try selected.validate(catalog: catalog)
+    }
+
+    @Test("source criteria retain temporal and sequence scope")
+    func temporalScope() throws {
+        let catalog = try EngineProductionKnowledgeResourcesV1.loadCatalog()
+        let anderson = try ResolvedProductionStyleV1.resolve(.init(directorID: "director-wes-anderson-symmetry-deadpan"), catalog: catalog)
+        let hold = try #require(anderson.criteria.first { $0.source.sourceClause.contains("deadpan hold") })
+        #expect(hold.source.scope == .shot)
+        #expect(hold.source.evidenceKind == .video)
+        let spielberg = try ResolvedProductionStyleV1.resolve(.init(directorID: "director-steven-spielberg-invisible-blockbuster-grammar"), catalog: catalog)
+        let reveal = try #require(spielberg.criteria.first { $0.source.sourceClause.contains("BEFORE") })
+        #expect(reveal.source.scope == .sequence)
     }
 
     @Test("selecting a director never silently adds a cinematographer")

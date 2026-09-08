@@ -2,6 +2,7 @@
 import hashlib
 import json
 from pathlib import Path
+from production_style_verification import bindings
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -74,6 +75,11 @@ def materialize():
         manifest["resources"].append({"kind": "library", "id": library_id, "version": "3.1.1",
                                       "path": relative, "sha256": hashlib.sha256(data).hexdigest()})
     recipes = json.loads((SOURCE / "blueprints.json").read_text())
+    director_sections = {section["id"]: section for section in chapters["director-recipes"]}
+    selection_section = director_sections["director-recipes-056ac0ea6c03"]["contentMarkdown"]
+    recipe_offset = selection_section.index(recipes[0]["completeRecipeMarkdown"])
+    selection_procedure = selection_section[:recipe_offset].rstrip()
+    harmony = director_sections["director-recipes-17cfc8bdffd7"]["contentMarkdown"]
     blueprint_library = dict(library)
     blueprint_library.update({
         "id": "film-production-blueprints",
@@ -83,8 +89,10 @@ def materialize():
             "applicability": {"packIDs": [], "phases": PHASES, "intentTags": ["style", recipe["kind"]], "activeProfileIDs": []},
             "inputs": [], "outputIntent": "Resolve the selected style dimensions with explicit overrides and scoped observation criteria.",
             "guidance": [recipe["completeRecipeMarkdown"],
-                         "Read film-production-director-recipes/director-recipes-056ac0ea6c03 and film-production-director-recipes/director-recipes-17cfc8bdffd7 for selection constraints, aliases, harmony and clashes."]
-                        + ["Blueprint dimension " + key + ": " + value for key, value in recipe["dimensions"].items()],
+                         "Selection and synthesis procedure:\n" + selection_procedure,
+                         "Pairing procedure:\n" + harmony]
+                        + ["Blueprint dimension " + key + ": " + value for key, value in recipe["dimensions"].items()]
+                        + ["Blueprint verification: " + json.dumps(binding, ensure_ascii=False, sort_keys=True) for binding in bindings(recipe)],
             "verifyCriteria": [recipe["verifyText"], recipe["verificationBinding"]],
             "incompatibilities": ["Do not claim sequence criteria from a still or replace the Musicvideo master song with the recipe's score suggestions."],
         } for recipe in recipes],

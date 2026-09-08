@@ -50,6 +50,7 @@ public struct ResolvedProductionStyleV1: Codable, Sendable, Equatable {
     public let selection: ProductionStyleSelectionV1
     public let dimensions: [ResolvedProductionStyleDimensionV1]
     public let sourceVerifyClauses: [String: String]
+    public let criteria: [ResolvedProductionStyleCriterionV1]
 
     public func value(_ dimension: ProductionStyleDimensionV1) -> String? {
         dimensions.first { $0.dimension == dimension }?.value
@@ -73,6 +74,7 @@ public struct ResolvedProductionStyleV1: Codable, Sendable, Equatable {
             return entry
         }
         let base = try entry(selection.directorID, prefix: "director-")
+        var criteria = try verification(of: base)
         var resolved = dimensions(of: base).mapValues { value in
             (value: value, source: base.id.rawValue, reason: Optional<String>.none)
         }
@@ -98,6 +100,7 @@ public struct ResolvedProductionStyleV1: Codable, Sendable, Equatable {
                 resolved[dimension] = (value, signature.id.rawValue, "Explicitly selected signature dimension")
             }
             verify[signature.id.rawValue] = fields["Verify"] ?? ""
+            criteria += try verification(of: signature).filter { selection.signatureDimensions.contains($0.dimension) }
         } else if !selection.signatureDimensions.isEmpty {
             throw invalid("Signature dimensions require a signature.")
         }
@@ -121,7 +124,31 @@ public struct ResolvedProductionStyleV1: Codable, Sendable, Equatable {
                         guard let value = resolved[dimension] else { return nil }
                         return ResolvedProductionStyleDimensionV1(dimension: dimension, value: value.value,
                                                                   sourceEntryID: value.source, reason: value.reason)
-                    }, sourceVerifyClauses: verify)
+                    }, sourceVerifyClauses: verify,
+                    criteria: criteria.map { criterion in
+                        let override = selection.overrides.first { $0.dimension == criterion.dimension }
+                        let replacement = override?.value ?? (
+                            criterion.recipeID == base.id.rawValue && selection.signatureDimensions.contains(criterion.dimension)
+                                ? resolved[criterion.dimension]?.value : nil
+                        )
+                        return ResolvedProductionStyleCriterionV1(source: criterion,
+                            expected: replacement ?? criterion.sourceClause,
+                            overrideReason: override?.reason ?? (replacement == nil ? nil : "Explicit signature dimension"))
+                    })
+    }
+
+    private static func verification(of entry: CreativeKnowledgeEntryV1) throws -> [ProductionStyleCriterionV1] {
+        let prefix = "Blueprint verification: "
+        let criteria = try entry.guidance.filter { $0.hasPrefix(prefix) }.map {
+            try JSONDecoder().decode(ProductionStyleCriterionV1.self, from: Data($0.dropFirst(prefix.count).utf8))
+        }
+        let clauses = (sourceFields(entry)["Verify"] ?? "").split(separator: "?")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) + "?" }
+        guard !criteria.isEmpty, criteria.map(\.sourceClause) == clauses,
+              criteria.allSatisfy({ $0.recipeID == entry.id.rawValue }) else {
+            throw invalid("Blueprint review bindings do not cover the source: \(entry.id.rawValue)")
+        }
+        return criteria
     }
 
     private static func sourceFields(_ entry: CreativeKnowledgeEntryV1) -> [String: String] {
