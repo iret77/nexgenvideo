@@ -79,9 +79,45 @@ enum PipelineArtifactWriteContract {
             "title": string,
             "notes": string,
             "body_markdown": string,
+            "causality_plan": causalitySchema,
         ],
-        required: ["origin", "summary_oneline", "body_markdown"]
+        required: ["origin", "summary_oneline", "body_markdown", "causality_plan"]
     ) }
+
+    static var causalitySchema: [String: Any] { object([
+        "mode": enumeration(["narrative", "hybrid", "performance", "abstract", "documentary", "other"]),
+        "applicationReason": nonEmptyString,
+        "beats": array(object([
+            "id": nonEmptyString, "sceneID": nonEmptyString, "excerpt": nonEmptyString,
+            "elementIDs": stringArray, "causalException": nonEmptyString,
+        ], required: ["id", "sceneID", "excerpt", "elementIDs"]), minimum: 1),
+        "chronology": stringArray,
+        "edges": array(object([
+            "cause": nonEmptyString, "consequence": nonEmptyString,
+            "relation": enumeration(["therefore", "but"]), "reason": nonEmptyString,
+        ], required: ["cause", "consequence", "relation", "reason"])),
+        "elements": array(object([
+            "id": nonEmptyString, "label": nonEmptyString, "introductionBeatID": nonEmptyString,
+            "payoffBeatIDs": stringArray, "noPayoffReason": nonEmptyString,
+        ], required: ["id", "label", "introductionBeatID", "payoffBeatIDs"])),
+        "stateChanges": array(object([
+            "elementID": nonEmptyString, "beatID": nonEmptyString, "causeBeatID": nonEmptyString,
+            "before": nonEmptyString, "after": nonEmptyString, "excerpt": nonEmptyString,
+        ], required: ["elementID", "beatID", "causeBeatID", "before", "after", "excerpt"])),
+        "unresolvedDecisions": array(object([
+            "id": nonEmptyString, "affectedBeatIDs": stringArray,
+            "question": nonEmptyString, "alternatives": stringArray,
+        ], required: ["id", "affectedBeatIDs", "question", "alternatives"])),
+        "changeReview": object([
+            "reviewer": nonEmptyString, "upstreamCause": nonEmptyString,
+            "downstreamConsequence": nonEmptyString, "affectedBeatIDs": stringArray,
+            "checks": array(object([
+                "question": enumeration(StoryCausalityDraftV1.ReviewQuestion.allCases.map(\.rawValue)),
+                "verdict": enumeration(["satisfied", "concern", "notApplicable"]),
+                "explanation": nonEmptyString,
+            ], required: ["question", "verdict", "explanation"])),
+        ], required: ["reviewer", "upstreamCause", "downstreamConsequence", "affectedBeatIDs", "checks"]),
+    ], required: ["mode", "applicationReason", "beats", "chronology", "edges", "elements", "stateChanges", "unresolvedDecisions", "changeReview"]) }
 
     static var storyboardSchema: [String: Any] { object(
         [
@@ -95,6 +131,9 @@ enum PipelineArtifactWriteContract {
             "summary_oneline": string,
             "notes": string,
             "sections": array(storyboardSection),
+            "causality_bindings": array(object([
+                "stepID": nonEmptyString, "beatIDs": stringArray, "reason": nonEmptyString,
+            ], required: ["stepID", "beatIDs", "reason"])),
         ],
         required: ["origin", "summary_oneline", "sections"]
     ) }
@@ -443,6 +482,7 @@ enum PipelineArtifactWriteContract {
     private static var executionShotCommonProperties: [String: [String: Any]] {
         [
             "id": nonEmptyString,
+            "storyboard_step_ids": array(nonEmptyString, minimum: 1),
             "source_mode": enumeration(ExecutionSourceModeV1.allCases.map(\.rawValue)),
             "start_state": executionStartState,
             "end_state": executionState,

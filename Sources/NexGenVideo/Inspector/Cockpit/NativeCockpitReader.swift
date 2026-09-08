@@ -273,7 +273,13 @@ enum NativeCockpitReader {
         // meta re-encoded via its Codable (by-alias CodingKeys), wrapped with body_markdown.
         let metaData = try JSONEncoder().encode(treatment.meta)
         let metaObject = try JSONSerialization.jsonObject(with: metaData)
-        return try serialize(["meta": metaObject, "body_markdown": treatment.bodyMarkdown])
+        var body = treatment.bodyMarkdown
+        do {
+            if let plan = try StoryCausalityStoreV1.history(dataRoot: dataRoot, through: treatment.meta.version) {
+                body += "\n\n" + plan.reviewMarkdown
+            }
+        } catch { body += "\n\nStory causality unavailable: \(error.localizedDescription)" }
+        return try serialize(["meta": metaObject, "body_markdown": body])
     }
 
     /// `read.py` "bible": `mcp_server.bible` → `Bible.model_dump(by_alias=True)` or literal `null`.

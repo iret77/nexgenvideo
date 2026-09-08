@@ -244,7 +244,7 @@ enum PipelineShotlistWriter {
         }
         var executionInputs = storedInputs
         executionInputs[index] = try PipelineExecutionShotInput.imported(
-            from: plan.shots[index]
+            from: plan.shots[index], storyboardStepIDs: storedInputs[index].storyboardStepIDs
         )
         let previousMode = shotlist.shots[index].sourceMode
         shotlist.shots[index].sourceMode = mode

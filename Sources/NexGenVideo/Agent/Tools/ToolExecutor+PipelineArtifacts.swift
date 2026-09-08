@@ -294,7 +294,11 @@ extension ToolExecutor {
         let treatment = Treatment(meta: meta, bodyMarkdown: body)
         let url: URL
         do {
-            url = try TreatmentStore.save(treatment, to: root)
+            guard let payload = args["causality_plan"] as? [String: Any] else {
+                throw ToolError("write_treatment requires causality_plan with exact treatment excerpts and a change review.")
+            }
+            let draft = try JSONDecoder().decode(StoryCausalityDraftV1.self, from: JSONSerialization.data(withJSONObject: payload))
+            url = try StoryCausalityStoreV1.write(treatment: treatment, draft: draft, dataRoot: root)
         } catch {
             throw ToolError("Couldn't write treatment: \(error)")
         }
@@ -312,6 +316,7 @@ extension ToolExecutor {
     ) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         var payload = args
+        let causalityPayload = payload.removeValue(forKey: "causality_bindings")
         payload.removeValue(forKey: "project_dir")
         payload["schema"] = storyboardSchemaVersion
         var meta: [String: Any] = [
@@ -363,7 +368,10 @@ extension ToolExecutor {
         }
         let url: URL
         do {
-            url = try StoryboardStore.save(storyboard, to: root)
+            let bindings = try causalityPayload.map {
+                try JSONDecoder().decode([StoryboardCausalityV1.Binding].self, from: JSONSerialization.data(withJSONObject: $0))
+            }
+            url = try StoryboardCausalityV1.write(storyboard: storyboard, bindings: bindings, dataRoot: root)
         } catch {
             throw ToolError("Couldn't write storyboard: \(error)")
         }

@@ -2274,6 +2274,18 @@ struct WorkflowToolsTests {
             "origin": "agent_proposal",
             "summary_oneline": "A quiet dawn begins the film.",
             "body_markdown": "The empty yard holds until the performer arrives.",
+            "causality_plan": [
+                "mode": "narrative", "applicationReason": "A single establishing beat opens this section.",
+                "beats": [["id": "arrival", "sceneID": "yard", "excerpt": "The empty yard holds until the performer arrives.", "elementIDs": []]],
+                "chronology": ["arrival"], "edges": [], "elements": [], "stateChanges": [], "unresolvedDecisions": [],
+                "changeReview": [
+                    "reviewer": "test director", "upstreamCause": "The approved brief calls for a quiet opening.",
+                    "downstreamConsequence": "The yard establishes the later performance space.", "affectedBeatIDs": ["arrival"],
+                    "checks": StoryCausalityDraftV1.ReviewQuestion.allCases.map {
+                        ["question": $0.rawValue, "verdict": "notApplicable", "explanation": "This initial single-beat section contains no subplot or revision dependency."]
+                    },
+                ],
+            ],
         ])
         let treatment = try TreatmentStore.load(dataRoot: dataRoot)
         #expect(treatment.meta.project == "demo")
@@ -2306,6 +2318,7 @@ struct WorkflowToolsTests {
             "project_dir": dataRoot.path,
             "origin": "agent_proposal",
             "summary_oneline": "The yard wakes.",
+            "causality_bindings": storyboardSteps.map { ["stepID": $0["id"]!, "beatIDs": ["arrival"], "reason": "Coverage of the approved arrival beat."] },
             "sections": [[
                 "id": "intro",
                 "label": "intro",
@@ -2417,7 +2430,8 @@ struct WorkflowToolsTests {
                 "blocking_anchors": [],
             ],
         ]
-        let generatedExecution = generatedExecutionShotInput()
+        var generatedExecution = generatedExecutionShotInput()
+        generatedExecution["storyboard_step_ids"] = storyboardSteps.compactMap { $0["id"] as? String }
         var missingPlanShot = shot
         missingPlanShot.removeValue(forKey: "production_plan")
         let missingPlan = await h.runRaw("write_shotlist", args: [
@@ -2597,10 +2611,12 @@ struct WorkflowToolsTests {
         #expect(latestShotlistVersion(dataRoot: dataRoot) == 1)
 
         importedShot.removeValue(forKey: "production_plan")
+        var importedExecution = importedExecutionShotInput()
+        importedExecution["storyboard_step_ids"] = storyboardSteps.compactMap { $0["id"] as? String }
         _ = try await h.runOK("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [importedShot],
-            "execution_shots": [importedExecutionShotInput()],
+            "execution_shots": [importedExecution],
         ])
         let importedShotlist = try #require(try loadShotlist(dataRoot: dataRoot))
         #expect(importedShotlist.shots.first?.sourceMode == .imported)

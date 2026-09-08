@@ -194,6 +194,9 @@ final class PipelineAgentHarness {
                 prompt = instructions
             }
             guard var prompt else { return nil }
+            if let causality = StoryCausalityContext.prompt(dataRoot: dataRoot, phase: phase) {
+                prompt += "\n\n" + causality
+            }
             if let style = try ProductionStyleContext.prompt(dataRoot: dataRoot, phase: phase) {
                 prompt += "\n\n" + style
             }
@@ -661,7 +664,9 @@ final class PipelineAgentHarness {
     private func genericStylePrompt(dataRoot: URL) throws -> String? {
         let gates = try YAMLArtifactStore(dataRoot: dataRoot).load(Gates.self, at: PipelineLayout.gatesFile)
         let phase = coreGatePhases.first { !gates.get($0).approved } ?? "finish"
-        return try ProductionStyleContext.prompt(dataRoot: dataRoot, phase: phase)
+        let parts = [try ProductionStyleContext.prompt(dataRoot: dataRoot, phase: phase),
+                     StoryCausalityContext.prompt(dataRoot: dataRoot, phase: phase)].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: "\n\n")
     }
 
     func guardAgentDecision(

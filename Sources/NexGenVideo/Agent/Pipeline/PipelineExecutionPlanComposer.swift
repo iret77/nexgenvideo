@@ -41,6 +41,20 @@ enum PipelineExecutionPlanComposer {
         dataRoot: URL,
         declaredPack: String?
     ) throws -> PipelineExecutionPlanDraft {
+        if let causality = try StoryboardCausalityV1.requireCurrent(dataRoot: dataRoot) {
+            let known = Set(causality.bindings.map(\.stepID))
+            for input in executionInputs {
+                guard let steps = input.storyboardStepIDs, !steps.isEmpty,
+                      Set(steps).count == steps.count, Set(steps).isSubset(of: known) else {
+                    throw ToolError("Shot \(input.id) requires storyboard_step_ids from the approved Storyboard.")
+                }
+            }
+            guard Set(executionInputs.flatMap { $0.storyboardStepIDs ?? [] }) == known else {
+                throw ToolError("Shot List omits approved Storyboard steps. Explicitly revise Storyboard before dropping coverage.")
+            }
+        } else if executionInputs.contains(where: { $0.storyboardStepIDs != nil }) {
+            throw ToolError("Storyboard causality must exist before binding Shot List steps.")
+        }
         guard shotlist.shots.count == executionInputs.count,
               zip(shotlist.shots, executionInputs).allSatisfy({ pair in
                   pair.0.id == pair.1.id
@@ -864,6 +878,16 @@ enum PipelineExecutionPlanComposer {
         dataRoot: URL
     ) throws -> [PackArtifactExtensionReferenceV1] {
         var references: [PackArtifactExtensionReferenceV1] = []
+        if try StoryCausalityStoreV1.requireCurrent(dataRoot: dataRoot) != nil {
+            _ = try StoryboardCausalityV1.requireCurrent(dataRoot: dataRoot)
+            for (id, schema, path) in [
+                (StoryCausalityStoreV1.lineageID, "story-causality/v1", StoryCausalityPlanV1.relativePath),
+                ("storyboard-causality.v1", "storyboard-causality/v1", StoryboardCausalityV1.relativePath),
+            ] {
+                references.append(PackArtifactExtensionReferenceV1(id: id, schema: schema, path: path,
+                    sha256: try FileDigest.sha256(of: ProjectLocalFile.resolve(path, dataRoot: dataRoot))))
+            }
+        }
         if try ProductionStyleStoreV1.load(dataRoot: dataRoot) != nil {
             let before = try ProductionStyleStoreV1.snapshot(dataRoot: dataRoot)
             let path = ResolvedProductionStyleV1.relativePath

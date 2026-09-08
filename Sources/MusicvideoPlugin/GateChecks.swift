@@ -2066,6 +2066,7 @@ enum MusicvideoGateChecks {
     /// `treatment`: schema-valid frontmatter (decode enforces version/origin/…), a real one-line
     /// summary, and a non-empty prose body.
     static func requireRealTreatment(dataRoot: URL) throws {
+        _ = try StoryCausalityStoreV1.requireCurrent(dataRoot: dataRoot)
         let versions = TreatmentStore.versions(dataRoot: dataRoot)
         guard let latest = versions.last else {
             throw GateBlocked("Can't approve \"treatment\": no valid treatment yet.")
@@ -2123,6 +2124,7 @@ enum MusicvideoGateChecks {
 
     /// `storyboard`: schema-valid, real sections each with steps, matching the complete measured song.
     static func requireRealStoryboard(dataRoot: URL) throws {
+        _ = try StoryboardCausalityV1.requireCurrent(dataRoot: dataRoot)
         guard let storyboard = try? StoryboardStore.load(dataRoot: dataRoot, version: .current),
               !storyboard.sections.isEmpty else {
             throw GateBlocked("Can't approve \"storyboard\": no valid, non-empty storyboard yet.")

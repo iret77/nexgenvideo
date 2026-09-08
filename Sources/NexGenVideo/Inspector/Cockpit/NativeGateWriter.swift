@@ -335,6 +335,12 @@ enum NativeGateWriter {
         if context.phase == "production_design" {
             _ = try ProductionStyleStoreV1.load(dataRoot: context.dataRoot)
         }
+        if context.phase == "treatment" {
+            _ = try StoryCausalityStoreV1.requireCurrent(dataRoot: context.dataRoot)
+        }
+        if context.phase == "storyboard" {
+            _ = try StoryboardCausalityV1.requireCurrent(dataRoot: context.dataRoot)
+        }
         if context.phase == "frames" {
             try FrameObservationStoreV1.requireProjectStyleFrames(dataRoot: context.dataRoot)
         }

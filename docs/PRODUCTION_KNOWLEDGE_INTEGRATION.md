@@ -29,6 +29,10 @@ Overrides declare verification scope and evidence kind. Static image criteria re
 
 ## Compatibility and verification
 
+Treatment writes now publish a versioned, exact-text-bound causality index and attributed eight-question change review with the canonical Markdown in one rollback transaction. Narrative/hybrid dependency edges, introduction/payoff references, state ladders, draft decisions and downstream revision closure receive structural checks. Treatment approval blocks unresolved canon choices. Native Treatment review and agent artifact retrieval expose the graph and attributed findings; neither claims an automatic dramaturgical quality verdict.
+
+Storyboard mappings bind every step to the exact Treatment plan; story steps cannot invent unbound beats and omissions require upstream revision. Shot execution inputs bind approved Storyboard steps, including after native conversion to imported source. The independent execution-plan validator checks coverage and exact extension references. Generic and Musicvideo starts/resumes receive the same writer contract; existing projects without a causality index remain readable. New source files and regression cases are awaiting CI; this does not complete the broader setup/blockout or canon-consistency requirements in #483/#484.
+
 Preserve stored layouts of public pack-facing V1 value types. Add new versioned artifacts through existing extension carriers and canonical writers. Retain exact pack pins; persistent upgrades remain explicit Recovery-copy operations. Musicvideo phase order and approval boundaries remain unchanged unless the owner explicitly decides otherwise.
 
 Use GitHub Actions for app builds and tests. No paid probe generation, local app execution, release dispatch, or partial product release is part of this integration work.

@@ -361,6 +361,7 @@ struct PipelineReferenceDemandInput: Codable, Sendable, Equatable {
 
 struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
     let id: String
+    let storyboardStepIDs: [String]?
     let sourceMode: ExecutionSourceModeV1
     let startState: PipelineExecutionStateInput
     let endState: PipelineExecutionStateInput
@@ -384,6 +385,7 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
         case id
+        case storyboardStepIDs = "storyboard_step_ids"
         case sourceMode = "source_mode"
         case startState = "start_state"
         case endState = "end_state"
@@ -406,6 +408,7 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
 
     private init(
         id: String,
+        storyboardStepIDs: [String]? = nil,
         sourceMode: ExecutionSourceModeV1,
         startState: PipelineExecutionStateInput,
         endState: PipelineExecutionStateInput,
@@ -426,6 +429,7 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
         rescue: String?
     ) {
         self.id = id
+        self.storyboardStepIDs = storyboardStepIDs
         self.sourceMode = sourceMode
         self.startState = startState
         self.endState = endState
@@ -446,7 +450,7 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
         self.rescue = rescue
     }
 
-    static func imported(from shot: ExecutionShotV1) throws -> Self {
+    static func imported(from shot: ExecutionShotV1, storyboardStepIDs: [String]? = nil) throws -> Self {
         guard shot.sourceMode == .generated || shot.sourceMode == .aiEnhanced else {
             throw PipelineExecutionShotInputValidationError.invalid(
                 "execution_shot[\(shot.id)].source_mode"
@@ -466,6 +470,7 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
         }
         let result = Self(
             id: shot.id,
+            storyboardStepIDs: storyboardStepIDs,
             sourceMode: .imported,
             startState: PipelineExecutionStateInput(
                 summary: shot.startState.summary,
@@ -520,6 +525,7 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
         try Self.rejectUnexpectedKeys(from: decoder, for: sourceMode)
 
         id = try container.decode(String.self, forKey: .id)
+        storyboardStepIDs = try container.decodeIfPresent([String].self, forKey: .storyboardStepIDs)
         startState = try container.decode(PipelineExecutionStateInput.self, forKey: .startState)
         endState = try container.decode(PipelineExecutionStateInput.self, forKey: .endState)
         blocking = try container.decode([PipelineExecutionBlockingInput].self, forKey: .blocking)
@@ -600,6 +606,7 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
+        try container.encodeIfPresent(storyboardStepIDs, forKey: .storyboardStepIDs)
         try container.encode(sourceMode, forKey: .sourceMode)
         try container.encode(startState, forKey: .startState)
         try container.encode(endState, forKey: .endState)
@@ -817,6 +824,7 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
         let dynamic = try decoder.container(keyedBy: PipelineDynamicCodingKey.self)
         let common: Set<String> = [
             CodingKeys.id.rawValue,
+            CodingKeys.storyboardStepIDs.rawValue,
             CodingKeys.sourceMode.rawValue,
             CodingKeys.startState.rawValue,
             CodingKeys.endState.rawValue,

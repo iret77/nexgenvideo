@@ -102,6 +102,11 @@ enum ShowFormatters {
         lines.append("---")
         lines.append("")
         lines.append(t.bodyMarkdown.trimmingCharacters(in: .whitespacesAndNewlines))
+        do {
+            if let plan = try StoryCausalityStoreV1.history(dataRoot: dataRoot, through: t.meta.version) {
+                lines += ["", plan.reviewMarkdown]
+            }
+        } catch { lines += ["", "Story causality unavailable: \(error.localizedDescription)"] }
         if let notes = t.meta.notes, !notes.isEmpty {
             lines.append("")
             lines.append("---")

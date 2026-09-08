@@ -279,6 +279,21 @@ enum PipelineExecutionPlanWriter {
         guard planExtensions == contextExtensions else {
             throw PipelineExecutionPlanError.extensionReferenceMismatch
         }
+        if let mapping = try StoryboardCausalityV1.requireCurrent(dataRoot: dataRoot) {
+            for (id, path) in [(StoryCausalityStoreV1.lineageID, StoryCausalityPlanV1.relativePath),
+                               ("storyboard-causality.v1", StoryboardCausalityV1.relativePath)] {
+                guard contextExtensions[id]?.path == path else { throw PipelineExecutionPlanError.extensionReferenceMismatch }
+            }
+            let inputs = try PipelineExecutionShotInputStore.loadCurrent(dataRoot: dataRoot).executionShots
+            let known = Set(mapping.bindings.map(\.stepID))
+            guard inputs.map(\.id) == plan.shots.map(\.id),
+                  inputs.allSatisfy({ input in
+                      guard let steps = input.storyboardStepIDs else { return false }
+                      return !steps.isEmpty && Set(steps).count == steps.count && Set(steps).isSubset(of: known)
+                  }), Set(inputs.flatMap { $0.storyboardStepIDs ?? [] }) == known else {
+                throw PipelineExecutionPlanError.shotlistReferenceMismatch
+            }
+        }
 
         for reference in context.artifacts {
             do {

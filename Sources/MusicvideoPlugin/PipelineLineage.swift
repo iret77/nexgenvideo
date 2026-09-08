@@ -214,6 +214,9 @@ enum MusicvideoPipelineLineage {
         var selectors = [PipelineLayout.treatmentCurrentFile]
         if let version = TreatmentStore.versions(dataRoot: dataRoot).last {
             selectors.append(PipelineLayout.treatmentVersionFile(version))
+            if FileManager.default.fileExists(atPath: dataRoot.appendingPathComponent(StoryCausalityPlanV1.relativePath).path) {
+                selectors += [StoryCausalityPlanV1.relativePath, StoryCausalityStoreV1.versionPath(version)]
+            }
         }
         return selectors
     }
@@ -223,6 +226,9 @@ enum MusicvideoPipelineLineage {
         let version = StoryboardStore.nextVersion(dataRoot: dataRoot) - 1
         if version > 0 {
             selectors.append(PipelineLayout.storyboardVersionFile(version))
+            if FileManager.default.fileExists(atPath: dataRoot.appendingPathComponent(StoryboardCausalityV1.relativePath).path) {
+                selectors += [StoryboardCausalityV1.relativePath, "storyboard/causality/v\(version).json"]
+            }
         }
         return selectors
     }
