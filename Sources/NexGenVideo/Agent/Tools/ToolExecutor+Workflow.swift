@@ -1837,6 +1837,7 @@ extension ToolExecutor {
         }
         var completedAsset: MediaAsset?
         var updatedFrames: FramesManifest?
+        var frameReferenceArtifacts: [String: Data] = [:]
         if status == .rendered {
             guard let submitted = output, !submitted.isEmpty else {
                 throw ToolError(
@@ -1915,6 +1916,28 @@ extension ToolExecutor {
                 editor: editor,
                 dataRoot: root
             )
+            if phase == "frames" {
+                let role = args.string("role") ?? "start"
+                if PackCatalog.registry(
+                    activePack: declaration.packName
+                ).frameReferencePlanProvider != nil {
+                    let usage = try frameReferenceUsage(
+                        asset: completedAsset,
+                        shot: shot,
+                        role: role,
+                        output: output,
+                        proof: entryProof,
+                        editor: editor,
+                        dataRoot: root
+                    )
+                    frameReferenceArtifacts[
+                        FrameReferenceUsageStoreV1.path(
+                            shotID: shotId,
+                            role: role
+                        )
+                    ] = try FrameReferenceUsageStoreV1.encode(usage)
+                }
+            }
             proof?.entries[shotId] = entryProof
             if let expectedTakeID = args.string("expected_take_id") {
                 guard phase != "frames", PipelineRenderTakeStore.identity(eventID: completedAsset.id, outputSHA256: entryProof.outputSha256) == expectedTakeID else {
@@ -2011,6 +2034,7 @@ extension ToolExecutor {
                 completedTake: phase == "frames" ? nil : completedAsset.flatMap { asset in
                     asset.generationInput.map { PipelineRenderTakeStore.Completed(eventID: asset.id, generationInput: $0, reviewedSelection: args.string("expected_take_id") != nil) }
                 },
+                additionalArtifacts: frameReferenceArtifacts,
                 expectedPublicationTransactionID: expectedPublication?.transactionID,
                 dataRoot: root,
                 declaredPack: declaration.packName,
@@ -3081,7 +3105,9 @@ extension ToolExecutor {
             runwayModel: gi.model,
             approved: false,
             providerPrompt: gi.prompt,
-            multiRefHints: [])
+            multiRefHints: gi.frameReferencePlan.map {
+                PromptComposer.frameReferenceHints($0.bindings)
+            } ?? [])
         let current = existing ?? FramesManifest(
                 project: FrameInventory.projectName(of: dataRoot)
                     ?? shotlist.project,
@@ -3227,7 +3253,27 @@ extension ToolExecutor {
             || gi.referenceImageAssetIds != nil
             || gi.referenceVideoAssetIds != nil
             || gi.referenceAudioAssetIds != nil
-        if hasSemanticVideoSlots {
+        if let framePlan = gi.frameReferencePlan {
+            guard manifest.phase == "frames", framePlan.isExecutable,
+                  framePlan.shotID == shotId else {
+                throw ToolError(
+                    "The generated image has an invalid semantic frame reference plan."
+                )
+            }
+            referenceImages = try framePlan.bindings.map { binding in
+                let url = try ProjectLocalFile.requireHash(
+                    binding.sha256,
+                    at: binding.path,
+                    dataRoot: dataRoot
+                )
+                return RenderInputProof(
+                    path: FrameInventory.relativePath(of: url, to: home),
+                    sha256: binding.sha256
+                )
+            }
+            entry.startFramePath = nil
+            entry.referencePaths = referenceImages.map(\.path)
+        } else if hasSemanticVideoSlots {
             sourceVideo = try inputProofs(
                 gi.sourceVideoAssetId.map { [$0] } ?? [],
                 label: "Source video"
@@ -3312,6 +3358,66 @@ extension ToolExecutor {
             referenceImages: referenceImages,
             referenceVideos: referenceVideos,
             referenceAudio: referenceAudio
+        )
+    }
+
+    private func frameReferenceUsage(
+        asset: MediaAsset,
+        shot: Shot,
+        role: String,
+        output: String,
+        proof: RenderProofEntry,
+        editor: EditorViewModel,
+        dataRoot: URL
+    ) throws -> FrameReferenceUsageV1 {
+        guard let input = asset.generationInput,
+              let plan = input.frameReferencePlan,
+              plan.isExecutable,
+              plan.shotID == shot.id,
+              let packageID = input.generationPackageID,
+              let receipts = input.referenceReceipts else {
+            throw ToolError(
+                "The generated frame has no immutable semantic reference provenance."
+            )
+        }
+        let package = try GenerationPackageV1.load(
+            id: packageID,
+            home: FrameInventory.projectHome(of: dataRoot)
+        )
+        try package.validate()
+        let projectKey = editor.projectId ?? dataRoot.standardizedFileURL
+            .resolvingSymlinksInPath().path
+        guard package.payload.modality == "image",
+              package.payload.target.modelId == input.model,
+              package.payload.binding.projectKey == projectKey,
+              package.payload.binding.shotId == shot.id,
+              package.payload.binding.shotFingerprint
+                == (try PromptCompiler.shotFingerprint(shot)),
+              package.payload.binding.frameReferencePlanSHA256
+                == plan.fingerprint,
+              package.payload.generationInput.frameReferencePlan == plan,
+              package.payload.references == receipts,
+              receipts.count == plan.bindings.count,
+              zip(plan.bindings, receipts).allSatisfy({ pair in
+                  pair.0.sha256 == pair.1.sourceSHA256
+                      && pair.0.sha256 == pair.1.submittedSHA256
+              }),
+              proof.referenceImages.count == plan.bindings.count,
+              zip(plan.bindings, proof.referenceImages).allSatisfy({ pair in
+                  pair.0.sha256 == pair.1.sha256
+              }) else {
+            throw ToolError(
+                "The generated frame's package does not match its semantic reference plan."
+            )
+        }
+        return FrameReferenceUsageV1(
+            shotID: shot.id,
+            role: role,
+            outputPath: output,
+            outputSHA256: proof.outputSha256,
+            modelID: input.model,
+            generationPackageID: packageID,
+            plan: plan
         )
     }
 

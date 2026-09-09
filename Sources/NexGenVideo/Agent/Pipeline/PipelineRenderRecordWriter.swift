@@ -48,6 +48,7 @@ enum PipelineRenderRecordWriter {
         case renderRoutingProof
         case shotProvenanceProof
         case shotProvenancePublication
+        case additionalArtifact
         case takeHistory
         case publication
     }
@@ -107,6 +108,7 @@ enum PipelineRenderRecordWriter {
         preparedLastFrame: PreparedLastFrame?,
         reconciledLastFrames: [String: RenderLastFrameProofV1]? = nil,
         completedTake: PipelineRenderTakeStore.Completed? = nil,
+        additionalArtifacts: [String: Data] = [:],
         expectedPublicationTransactionID: String?,
         dataRoot: URL,
         declaredPack: String? = nil,
@@ -261,6 +263,12 @@ enum PipelineRenderRecordWriter {
                 try requireSafeDataRootPath(item.path, dataRoot: dataRoot)
                 relativeData.append((item.path, item.data, .takeHistory))
             }
+        }
+        for (path, data) in additionalArtifacts.sorted(by: {
+            $0.key < $1.key
+        }) {
+            try requireSafeDataRootPath(path, dataRoot: dataRoot)
+            relativeData.append((path, data, .additionalArtifact))
         }
         if let framesManifestData {
             relativeData.append((

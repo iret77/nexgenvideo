@@ -727,6 +727,7 @@ extension ToolExecutor {
         _ args: [String: Any],
         prompt: String,
         modality: PromptComposer.Modality,
+        modelId: String,
         editor: EditorViewModel
     ) async throws -> (
         precompiled: (text: String, token: String, binding: PromptBinding)?,
@@ -749,14 +750,26 @@ extension ToolExecutor {
             }
             return (nil, false)
         }
-        let binding = try await PromptCompiler.currentBinding(
+        let currentBinding = try await PromptCompiler.currentBinding(
             editor: editor,
             shotId: shotId,
-            modality: modality
+            modality: modality,
+            modelId: modelId
         )
+        guard let token = args.string("compileToken"),
+              let binding = PromptCompiler.rememberedBinding(
+                  token: token,
+                  text: prompt,
+                  modelId: modelId
+              ),
+              currentBinding.matchesCurrentState(of: binding) else {
+            throw ToolError(
+                "The compiled prompt is stale or invalid. Compile the current shot again."
+            )
+        }
         return ((
             text: prompt,
-            token: args.string("compileToken") ?? "",
+            token: token,
             binding: binding
         ), false)
     }
@@ -1026,7 +1039,8 @@ extension ToolExecutor {
         let currentBinding = try await PromptCompiler.currentBinding(
             editor: editor,
             shotId: precompiled.binding.shotId,
-            modality: PromptCompiler.modalityForModel(approvedModelId)
+            modality: PromptCompiler.modalityForModel(approvedModelId),
+            modelId: approvedModelId
         )
         let preserveComposition = approvedTarget?.binding?
             .resolvedVideoCapabilities?.inputPolicy.preservesSourceComposition
@@ -1039,7 +1053,7 @@ extension ToolExecutor {
             )
         } ?? true
         guard approvedModelId != originalModelId
-                || currentBinding != precompiled.binding
+                || !currentBinding.matchesCurrentState(of: precompiled.binding)
                 || !compositionModeMatches else {
             return precompiled
         }
@@ -1081,6 +1095,7 @@ extension ToolExecutor {
             args,
             prompt: prompt,
             modality: .video,
+            modelId: model.id,
             editor: editor
         )
 
@@ -1351,6 +1366,7 @@ extension ToolExecutor {
             args,
             prompt: prompt,
             modality: .video,
+            modelId: model.id,
             editor: editor
         )
 
@@ -1640,9 +1656,21 @@ extension ToolExecutor {
             args,
             prompt: prompt,
             modality: .image,
+            modelId: model.id,
             editor: editor
         )
-        let refIds = args.stringArray("referenceMediaRefs")
+        let shotId = precompiled?.binding.shotId ?? "none"
+        let initialFramePlan = try PromptCompiler.currentFrameReferencePlan(
+            editor: editor,
+            shotId: shotId,
+            modelId: model.id
+        )
+        let frameReferenceDataRoot = editor.workingRoot.flatMap {
+            DataRootResolver.dataRoot(of: $0)
+        }
+        let refIds = initialFramePlan == nil
+            ? args.stringArray("referenceMediaRefs")
+            : []
         let libraryRefs: [MediaAsset] = try refIds.map { id in
             let a = try asset(id, editor: editor, label: "Reference image")
             guard a.type == .image else {
@@ -1650,7 +1678,9 @@ extension ToolExecutor {
             }
             return a
         }
-        let requestedProjectPaths = args.stringArray("referenceProjectPaths")
+        let requestedProjectPaths = initialFramePlan == nil
+            ? args.stringArray("referenceProjectPaths")
+            : []
         let productionDesignSnapshot: ProductionDesignReferenceSnapshot?
         let productionDesignDataRoot: URL?
         if let workingRoot = editor.workingRoot,
@@ -1672,7 +1702,15 @@ extension ToolExecutor {
         let projectPaths = productionDesignSnapshot?.paths ?? requestedProjectPaths
         let projectRefs = try projectImageReferences(projectPaths, editor: editor)
         let effectiveLibraryRefs = productionDesignSnapshot == nil ? libraryRefs : []
-        let refs = effectiveLibraryRefs + projectRefs
+        let refs = try initialFramePlan.map { plan in
+            guard let frameReferenceDataRoot else {
+                throw ToolError("Frame references require an open pipeline project.")
+            }
+            return try Self.frameReferenceAssets(
+                plan,
+                dataRoot: frameReferenceDataRoot
+            )
+        } ?? (effectiveLibraryRefs + projectRefs)
         let currentValidation = model.validate(
             aspectRatio: aspectRatio,
             resolution: resolution,
@@ -1742,7 +1780,28 @@ extension ToolExecutor {
                 }
 
                 let submit: @MainActor ([MediaAsset]) async throws -> AgentPreparedGeneration = {
-                    generationReferences in
+                    submittedReferences in
+                    guard let approvedModel = ImageModelConfig.allModels.first(where: {
+                        $0.id == approved.target.modelId
+                    }) else {
+                        throw ToolError(
+                            "The approved image model is no longer in the live catalog. Review the refreshed provider and model choices."
+                        )
+                    }
+                    let framePlan = try PromptCompiler.currentFrameReferencePlan(
+                        editor: editor,
+                        shotId: shotId,
+                        modelId: approvedModel.id
+                    )
+                    let generationReferences = try framePlan.map { plan in
+                        guard let frameReferenceDataRoot else {
+                            throw ToolError("Frame references require an open pipeline project.")
+                        }
+                        return try Self.frameReferenceAssets(
+                            plan,
+                            dataRoot: frameReferenceDataRoot
+                        )
+                    } ?? submittedReferences
                     let selectedOffering: CatalogImageOfferingCandidate?
                     if isMarble {
                         selectedOffering = nil
@@ -1762,7 +1821,7 @@ extension ToolExecutor {
                             )
                         }
                     }
-                    let selectedModel = selectedOffering?.model ?? model
+                    let selectedModel = selectedOffering?.model ?? approvedModel
                     let selectedModelID = selectedModel.id
                     let selectedAspectRatio = selectedOffering?.aspectRatio ?? aspectRatio
                     let selectedResolution = selectedOffering?.resolution ?? resolution
@@ -1773,6 +1832,14 @@ extension ToolExecutor {
                         approvedModelId: selectedModel.id,
                         editor: editor
                     )
+                    if let framePlan {
+                        guard approvedPrompt?.binding.frameReferencePlanSHA256
+                                == framePlan.fingerprint else {
+                            throw ToolError(
+                                "The frame reference plan changed while generation approval was open. Compile and review the shot again."
+                            )
+                        }
+                    }
                     let folderId = try self.resolveFolderId(
                         args, editor: editor, fallbackReferences: generationReferences
                     )
@@ -1791,6 +1858,7 @@ extension ToolExecutor {
                         input.promptShotId = approvedPrompt?.binding.shotId
                         input.promptProjectKey = approvedPrompt?.binding.projectKey
                         input.promptShotFingerprint = approvedPrompt?.binding.shotFingerprint
+                        input.frameReferencePlan = framePlan
                         return input
                     }
                     let preflight: GenerationController.Preflight = {
@@ -1841,7 +1909,7 @@ extension ToolExecutor {
                             ImageGenerationSubmission.make(
                                 genInput: genInput(compiled), model: finalModel,
                                 references: generationReferences,
-                                referenceAssetIDs: effectiveLibraryRefs.map(\.id),
+                                referenceAssetIDs: generationReferences.map(\.id),
                                 name: name, folderId: folderId)
                         }))
                     return try await self.prepareController(
@@ -1854,6 +1922,36 @@ extension ToolExecutor {
                 return try await submit(refs)
             }
         )
+    }
+
+    @MainActor
+    private static func frameReferenceAssets(
+        _ plan: FrameReferencePlanV1,
+        dataRoot: URL
+    ) throws -> [MediaAsset] {
+        guard plan.isExecutable else {
+            throw ToolError("The frame reference plan is not executable.")
+        }
+        return try plan.bindings.enumerated().map { index, binding in
+            let url = try ProjectLocalFile.requireHash(
+                binding.sha256,
+                at: binding.path,
+                dataRoot: dataRoot
+            )
+            guard ClipType(fileExtension: url.pathExtension.lowercased()) == .image,
+                  projectImageValidationFailure(url) == nil else {
+                throw ToolError(
+                    "Frame reference '\(binding.path)' must be a readable project image."
+                )
+            }
+            return MediaAsset(
+                id: "frame-reference:\(index):\(binding.sha256)",
+                url: url,
+                type: .image,
+                name: url.deletingPathExtension().lastPathComponent,
+                originalFilename: url.lastPathComponent
+            )
+        }
     }
 
     nonisolated static func productionDesignReferencePaths(
@@ -2366,6 +2464,7 @@ extension ToolExecutor {
             args,
             prompt: prompt,
             modality: .audio,
+            modelId: model.id,
             editor: editor
         )
 

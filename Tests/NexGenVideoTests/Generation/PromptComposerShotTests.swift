@@ -471,4 +471,61 @@ struct PromptComposerShotTests {
         #expect(!prompt.contains("synchronized lateral dolly"))
         #expect(!prompt.contains("single long crane move"))
     }
+
+    @Test("host composer compiles the exact typed reference order")
+    func compilerUsesTypedReferencePlan() async throws {
+        let shot = try Self.shot(height: .eyeLevel, framing: .ms)
+        let context = PromptComposer.VideoContext(
+            modeID: "reference-to-video",
+            dialect: VideoPromptDialectV1(
+                id: "seedance-2.5",
+                version: 1,
+                family: .seedance,
+                evidence: "fixture"
+            ),
+            references: [
+                VideoPromptReferenceV1(
+                    planIndex: 0,
+                    modalityIndex: 1,
+                    modality: .image,
+                    role: .character,
+                    semanticJobID: "character.identity",
+                    assetID: "bea-profile",
+                    entityID: "bea",
+                    viewID: "profile"
+                ),
+                VideoPromptReferenceV1(
+                    planIndex: 1,
+                    modalityIndex: 2,
+                    modality: .image,
+                    role: .character,
+                    semanticJobID: "character.identity",
+                    assetID: "bea-front",
+                    entityID: "bea",
+                    viewID: "front"
+                ),
+            ],
+            startState: "Bea faces left.",
+            endState: "Bea faces camera.",
+            blocking: ["bea: center frame"],
+            timedActionBeats: [],
+            continuityLocks: ["coat remains fastened"],
+            transitionIntent: nil
+        )
+
+        let prompt = try await PromptComposer.compose(
+            intent: "Bea turns toward camera.",
+            modality: .video,
+            modelId: "bytedance/seedance-2.5/reference-to-video",
+            projectDir: nil,
+            shot: PromptComposer.ShotProjection(shot),
+            videoContext: context
+        ).text
+
+        #expect(prompt.contains("@Image1 defines <bea / profile>"))
+        #expect(prompt.contains("@Image2 defines <bea / front>"))
+        #expect(!prompt.contains("@Image3"))
+        #expect(prompt.contains("FIRST FRAME: Bea faces left"))
+        #expect(prompt.contains("ENDING STATE: Bea faces camera"))
+    }
 }

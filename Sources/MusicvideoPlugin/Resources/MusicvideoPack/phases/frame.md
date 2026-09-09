@@ -203,18 +203,20 @@ model, and exact `shotId`; the injected core profile and compiler own
 the resulting prompt. Then pass its `compiledPrompt` unchanged as `generate_image.prompt` and
 its `compileToken` as `generate_image.compileToken` and its `shotId` as
 `generate_image.shotId`, together with
-`aspectRatio`, `resolution="2K"`, and the ordered
-`referenceMediaRefs`. It returns only after the exact asset is complete,
+`aspectRatio` and `resolution="2K"`. The host resolves the selected
+offering's exact reference limit, constructs the ordered semantic reference
+plan, and attaches those exact bytes. Do not import or pass Bible references
+manually. It returns only after the exact asset is complete,
 or returns the provider failure.
 
 After the image is in, proceed to the F2.5 audit.
 
 #### F2.10 — Reference images via the bible
 
-Build the multi-ref pool from the bible by a deterministic priority,
-then `import_media(source={path: <abs path>})` each chosen sheet/anchor
-PNG to get a mediaRef, and pass the mediaRefs in priority order via
-`generate_image(..., referenceMediaRefs=[...])`.
+The host builds the multi-ref pool directly from the approved Bible, Shot
+List, and available identity-anchor frames. Each character, location, prop,
+explicit shot reference, and declared lighting anchor is a required semantic
+job. Alternate views are optional.
 
 Prioritization order (deterministic):
 
@@ -225,10 +227,10 @@ Prioritization order (deterministic):
 3. Remaining sheets/refs by relevance.
 4. Props last.
 
-Cap at the model's `maxReferenceImages` (confirm via `list_models`;
-typically 9). If you must drop refs because of the cap, tell the user —
-usually it means the shot references too many bible anchors and should be
-split. Never silently pass fewer refs without saying so.
+The host may omit optional alternate views at the model's
+`maxReferenceImages`. If all required jobs do not fit, generation stops before
+spend approval. Select a compatible model or revise the shot; never remove a
+required identity or lighting job to fit.
 
 If the shot needs reference identity but the model does not support
 reference images, choose a catalog-proven supporting model before the call.

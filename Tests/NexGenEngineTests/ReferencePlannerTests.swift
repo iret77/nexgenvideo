@@ -73,7 +73,7 @@ struct ReferencePlannerTests {
         #expect(plan.dropped.isEmpty)
     }
 
-    @Test("explicit shot references participate in the deterministic plan")
+    @Test("required semantic jobs are never discarded to fit the offering cap")
     func explicitReferencesArePlanned() throws {
         let dir = try Self.fixtureDir([
             "explicit/board.png",
@@ -105,8 +105,11 @@ struct ReferencePlannerTests {
             maxRefs: 1
         )
 
-        #expect(plan.refs.map(\.path) == ["explicit/board.png"])
-        #expect(plan.dropped.map(\.path) == ["b/front.png"])
+        #expect(plan.refs.map(\.path) == ["explicit/board.png", "b/front.png"])
+        #expect(plan.dropped.isEmpty)
+        #expect(plan.deficits.contains {
+            $0.requirementID == "offering:image-reference-capacity"
+        })
     }
 
     static func briefWith(_ model: FrameImageModel) throws -> Brief {
@@ -123,7 +126,7 @@ struct ReferencePlannerTests {
             generated: "t", generator: "g", shots: [shot])
     }
 
-    @Test("REF_BUDGET_EXCEEDED fires when the model cap drops a shot's refs")
+    @Test("optional alternate views may be dropped without violating the semantic budget")
     func refBudgetCheck() throws {
         let sheets = ["front": "b/front.png", "side": "b/side.png",
                       "back": "b/back.png", "expression_smile": "b/smile.png"]
@@ -137,8 +140,7 @@ struct ReferencePlannerTests {
         let ctx = AuditContext(shotlist: try Self.shotlist(shot),
                                brief: try Self.briefWith(.runwayGen4Image),   // cap 3 → 4 sheets → 1 dropped
                                bible: bible, extra: ["data_root": dir.path])
-        let findings = try MusicvideoChecks.referenceBudgetCheck(ctx)
-        #expect(findings.contains { $0.code == "REF_BUDGET_EXCEEDED" && $0.shotId == "s001" })
+        #expect(try MusicvideoChecks.referenceBudgetCheck(ctx).isEmpty)
     }
 
     @Test("no finding when refs fit under the cap")
@@ -153,5 +155,75 @@ struct ReferencePlannerTests {
         let ctx = AuditContext(shotlist: try Self.shotlist(shot),
                                brief: try Self.briefWith(.googleGemini3Pro), bible: bible, extra: ["data_root": dir.path])
         #expect(try MusicvideoChecks.referenceBudgetCheck(ctx).isEmpty)
+    }
+
+    @Test("multiple identities location prop and lighting all remain required")
+    func semanticCoverageIsRequired() throws {
+        let files = [
+            "characters/ari.png", "characters/bea.png", "locations/studio.png",
+            "props/mic.png", "look/light.png",
+        ]
+        let dir = try Self.fixtureDir(files)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let ari = try Character(
+            id: "ari", name: "Ari", visualPrompt: "p",
+            sheets: ["front": "characters/ari.png"]
+        )
+        let bea = try Character(
+            id: "bea", name: "Bea", visualPrompt: "p",
+            sheets: ["front": "characters/bea.png"]
+        )
+        let location = try Location(
+            id: "studio", name: "Studio", visualPrompt: "p",
+            sheets: ["wide": "locations/studio.png"]
+        )
+        let prop = try Prop(
+            id: "mic", name: "Mic", visualPrompt: "p",
+            sheets: ["front": "props/mic.png"]
+        )
+        let bible = try Bible(
+            project: "p", generated: "t", generator: "g",
+            characters: [ari, bea], props: [prop], locations: [location],
+            look: LookGuide(style: "film", lightingAnchor: "look/light.png")
+        )
+        let plan = ReferencePlanner.planShotRefs(
+            projectDir: dir,
+            bible: bible,
+            characterRefs: ["ari", "bea"],
+            locationRef: "studio",
+            propRefs: ["mic"],
+            characterViews: [:],
+            locationView: nil,
+            propViews: [:],
+            maxRefs: 4
+        )
+
+        #expect(plan.refs.count == 5)
+        #expect(plan.refs.allSatisfy { $0.isRequired })
+        #expect(Set(plan.refs.flatMap(\.requirementIDs)) == Set([
+            "character:ari", "character:bea", "location:studio", "prop:mic",
+            "lighting:look",
+        ]))
+        #expect(plan.deficits.contains {
+            $0.requirementID == "offering:image-reference-capacity"
+        })
+
+        let ctx = AuditContext(
+            shotlist: try Self.shotlist(try Shot(
+                id: "s001", section: "verse", timeStart: 0, timeEnd: 4,
+                durationS: 4, type: .performance, description: "d",
+                visualPrompt: "p", mood: "m", characterRefs: ["ari", "bea"],
+                locationRef: "studio", propRefs: ["mic"],
+                keyframeStrategy: .start
+            )),
+            brief: try Self.briefWith(.runwayGen4Image),
+            bible: bible,
+            extra: ["data_root": dir.path]
+        )
+        #expect(try MusicvideoChecks.referenceBudgetCheck(ctx).contains {
+            $0.level == .error
+                && $0.code == "REF_BUDGET_EXCEEDED"
+                && $0.shotId == "s001"
+        })
     }
 }

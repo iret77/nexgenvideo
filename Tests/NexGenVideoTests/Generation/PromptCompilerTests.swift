@@ -16,7 +16,13 @@ struct PromptCompilerTests {
         // Composition is the engine's job; the gate's job is that the returned token validates the
         // returned text for the model. The composed text is longer than the raw intent.
         #expect(!compiled.text.isEmpty)
-        #expect(PromptCompiler.validate(token: compiled.token, text: compiled.text, modelId: "fal-ai/veo3"))
+        #expect(PromptCompiler.validate(
+            token: compiled.token,
+            text: compiled.text,
+            modelId: "fal-ai/veo3",
+            binding: compiled.binding
+        ))
+        #expect(compiled.binding.promptIRSHA256.count == 64)
     }
 
     @Test func emptyIntentThrows() async {
@@ -39,8 +45,18 @@ struct PromptCompilerTests {
         let compiled = try await PromptCompiler.compile(
             intent: "a red car on a wet street at night", modelId: "fal-ai/veo3", modality: .video, editor: nil)
         // Different model → invalid; different text → invalid.
-        #expect(!PromptCompiler.validate(token: compiled.token, text: compiled.text, modelId: "runway/gen4.5"))
-        #expect(!PromptCompiler.validate(token: compiled.token, text: compiled.text + "!", modelId: "fal-ai/veo3"))
+        #expect(!PromptCompiler.validate(
+            token: compiled.token,
+            text: compiled.text,
+            modelId: "runway/gen4.5",
+            binding: compiled.binding
+        ))
+        #expect(!PromptCompiler.validate(
+            token: compiled.token,
+            text: compiled.text + "!",
+            modelId: "fal-ai/veo3",
+            binding: compiled.binding
+        ))
     }
 
     @Test func rememberedIntentCanBeRecompiledForAUserSelectedModel() async throws {
@@ -60,7 +76,8 @@ struct PromptCompilerTests {
         #expect(PromptCompiler.validate(
             token: adapted.token,
             text: adapted.text,
-            modelId: "google/gemini-3-pro-image"
+            modelId: "google/gemini-3-pro-image",
+            binding: adapted.binding
         ))
         #expect(!PromptCompiler.validate(
             token: original.token,
@@ -72,7 +89,7 @@ struct PromptCompilerTests {
     @Test func rememberedPromptTracksTheExactOfferingCompositionMode() async throws {
         let original = try await PromptCompiler.compile(
             intent: "apply a flat cel-shaded western treatment",
-            modelId: "shared-video",
+            modelId: "runway/gen4.5",
             modality: .video,
             editor: nil,
             preserveCompositionOverride: false
@@ -80,27 +97,27 @@ struct PromptCompilerTests {
         #expect(PromptCompiler.rememberedCompositionModeMatches(
             token: original.token,
             text: original.text,
-            modelId: "shared-video",
+            modelId: "runway/gen4.5",
             preserveComposition: false
         ))
         #expect(!PromptCompiler.rememberedCompositionModeMatches(
             token: original.token,
             text: original.text,
-            modelId: "shared-video",
+            modelId: "runway/gen4.5",
             preserveComposition: true
         ))
 
         let adapted = try await PromptCompiler.recompile(
             token: original.token,
             text: original.text,
-            for: "shared-video",
+            for: "runway/gen4.5",
             editor: nil,
             preserveCompositionOverride: true
         )
         #expect(PromptCompiler.rememberedCompositionModeMatches(
             token: adapted.token,
             text: adapted.text,
-            modelId: "shared-video",
+            modelId: "runway/gen4.5",
             preserveComposition: true
         ))
     }
@@ -146,6 +163,61 @@ struct PromptCompilerTests {
                 binding: changed
             ))
         }
+    }
+
+    @Test func tokenIsBoundToPromptDialectVersion() {
+        let first = PromptBinding(
+            projectKey: "/project-a/pipeline",
+            shotId: "s001",
+            shotFingerprint: "plan-a",
+            promptDialectID: "seedance-2.5",
+            promptDialectVersion: 1
+        )
+        let changed = PromptBinding(
+            projectKey: "/project-a/pipeline",
+            shotId: "s001",
+            shotFingerprint: "plan-a",
+            promptDialectID: "seedance-2.5",
+            promptDialectVersion: 2
+        )
+        let token = PromptCompiler.token(
+            for: "compiled",
+            modelId: "bytedance/seedance-2.5/reference-to-video",
+            binding: first
+        )
+
+        #expect(!PromptCompiler.validate(
+            token: token,
+            text: "compiled",
+            modelId: "bytedance/seedance-2.5/reference-to-video",
+            binding: changed
+        ))
+    }
+
+    @Test func tokenIsBoundToSerializedPromptIR() {
+        let first = PromptBinding(
+            projectKey: "/project-a/pipeline",
+            shotId: "s001",
+            shotFingerprint: "plan-a",
+            promptDialectID: "seedance-2.5",
+            promptDialectVersion: 1,
+            promptIRSHA256: String(repeating: "a", count: 64)
+        )
+        let changed = first.withPromptIRSHA256(
+            String(repeating: "b", count: 64)
+        )
+        let token = PromptCompiler.token(
+            for: "compiled",
+            modelId: "bytedance/seedance-2.5/reference-to-video",
+            binding: first
+        )
+
+        #expect(!PromptCompiler.validate(
+            token: token,
+            text: "compiled",
+            modelId: "bytedance/seedance-2.5/reference-to-video",
+            binding: changed
+        ))
     }
 
     @Test func shotBoundImageCompilationRejectsNonGeneratedSourcesBeforeBinding() async throws {

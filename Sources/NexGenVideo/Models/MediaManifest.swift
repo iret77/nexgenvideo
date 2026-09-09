@@ -112,6 +112,7 @@ struct GenerationInput: Codable, Sendable, Equatable {
     var compileRecipe: GenerationCompileRecipe? = nil
     var referenceReceipts: [GenerationReferenceReceipt]? = nil
     var generationPackageID: String? = nil
+    var frameReferencePlan: FrameReferencePlanV1? = nil
 }
 
 struct GenerationCompileRecipe: Codable, Sendable, Equatable {

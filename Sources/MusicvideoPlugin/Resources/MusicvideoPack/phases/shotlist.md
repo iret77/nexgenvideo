@@ -482,39 +482,19 @@ empirically a trigger for the output filter.
 | Setting-architecture lists do not belong in the prompt when `location_ref` is set. | The location reference carries the setting. Escape: `ref_setting_ok:`. |
 | Story proper nouns that are NOT visible in the image (place names, brands, titles) do not belong in the prompt. | Pushes render budget into invisible tokens. Escape: `ref_names_ok:`. |
 
-### Rule 5 — Reference mode: `@ImageN` tags instead of names in the `visual_prompt`
+### Rule 5 — Reference roles come from the host plan
 
-When you write bible character **names** into the `visual_prompt`, the
-builder has to guess which uploaded reference is which actor. On
-multi-character shots that goes wrong. Write the deterministic reference
-tags directly into the prompt instead.
+Write named actors and concrete action in `visual_prompt`. Never invent
+`@ImageN`, `@VideoN`, or `@AudioN` tags and never assume a fixed upload order.
+The host resolves the selected offering's real limits, produces one ordered
+`ReferencePlanV2`, and compiles its typed entity/view/job bindings into the
+exact provider dialect. Start frame, end frame, source video, identity,
+location, prop, lighting, motion, voice, and timing are distinct jobs.
 
-**Reference order** (the host resolves `referenceImageMediaRefs` in this
-order; refer to them as `@Image1`, `@Image2`, …):
-
-1. `character_refs[0]` → `@Image1`
-2. `character_refs[1]` → `@Image2`
-3. … further character_refs (1-based)
-4. `location_ref` → `@Image{N+1}` (if present)
-5. `prop_refs[0]` → `@Image{...}` (if present)
-6. … further prop_refs
-
-Cap: 9 images (typical model limit — confirm via `list_models`
-`maxReferenceImages`).
-
-**How the agent writes the `visual_prompt`:**
-
-> **instead of** "Claude Mouse waves while AI Cat watches from the
-> porch."
->
-> **write** "@Image2 waves while @Image1 watches from the porch."
-
-For a 1-character shot, `@Image1` is sufficient (or the pronoun, when
-it is clear who is meant — as long as no name appears).
-
-**Advantages:** the builder has to guess nothing — the binding is
-explicit; no identity duplication (rule 4); multi-character shots get an
-unambiguous actor mapping.
+The compiler rejects missing dialects, mixed modes, stale bindings, and an
+unbound required reference before spend. Optional references omitted by the
+plan are also omitted from prompt syntax. Character names in the Shot List
+remain stable semantic IDs; they are not provider slot numbers.
 
 **Sanity codes** (reference-mode-only):
 
@@ -524,15 +504,13 @@ unambiguous actor mapping.
   setting-architecture enumeration.
 - `REFERENCE_MODE_STORY_PROPER_NOUNS` (info) — title-case multi-word
   proper noun (heuristic, high false-positive risk, hence info).
-- `REFERENCE_MODE_USES_NAMES_NOT_TAGS` (warn) — bible character names in
-  the visual_prompt without `@ImageN` tags. Escape: `ref_tags_ok:`.
+- Do not emit a `REFERENCE_MODE_USES_NAMES_NOT_TAGS` finding. Provider tags
+  are host-owned compiler output and do not belong in the Shot List.
 
 Consequence for treatment + storyboard: literary world description in
 `Treatment` and `Storyboard.notes` is OK and desired — it does not go
-into the provider prompt. The **translation** into the
-`Shot.visual_prompt` actively strips identity descriptions and replaces
-character names with `@ImageN` tags. That is the place where the project
-agent must enforce discipline.
+into the provider prompt. The host compiler combines the named action with
+the current typed plan and emits provider syntax after routing is fixed.
 
 ### Rule 6 — Literal spec language: no metaphors, no ad-hoc figures, no title cards, no off-frame persons
 

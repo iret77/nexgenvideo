@@ -320,8 +320,20 @@ enum GenerationController {
         do {
             destination = try .init(request.placement, editor: editor)
             scope = try requestHome.map { try GenerationProjectMutationScope(projectHome: $0, editor: editor) }
-            binding = try await PromptCompiler.currentBinding(editor: editor,
-                shotId: request.precompiled?.binding.shotId ?? "none", modality: request.composerModality)
+            let currentBinding = try await PromptCompiler.currentBinding(editor: editor,
+                shotId: request.precompiled?.binding.shotId ?? "none",
+                modality: request.composerModality,
+                modelId: request.modelId)
+            if let compiledBinding = request.precompiled?.binding {
+                guard currentBinding.matchesCurrentState(of: compiledBinding) else {
+                    throw GenerationRequestError.gate(
+                        "The compiled prompt no longer matches the current project direction."
+                    )
+                }
+                binding = compiledBinding
+            } else {
+                binding = currentBinding
+            }
             compilerInputsSHA256 = try await PromptComposer.inputFingerprint(projectDir: requestHome)
         } catch { return .failure(.gate(error.localizedDescription)) }
         // (b) COMPILE — engine-composed prompt; a lint ERROR blocks with a clear message. An empty
@@ -370,6 +382,19 @@ enum GenerationController {
                 guard image.genInput.model == target.modelId else { throw GenerationRequestError.optionsInvalid("The image request changed its approved model.") }
                 referenceSnapshot = try await GenerationReferenceSnapshot.prepare(references: image.references,
                     preUploadedURLs: image.preUploadedURLs)
+                if let plan = image.genInput.frameReferencePlan {
+                    guard plan.isExecutable,
+                          let referenceSnapshot,
+                          plan.bindings.count == referenceSnapshot.receipts.count,
+                          zip(plan.bindings, referenceSnapshot.receipts).allSatisfy({ pair in
+                              pair.0.sha256 == pair.1.sourceSHA256
+                                  && pair.0.sha256 == pair.1.submittedSHA256
+                          }) else {
+                        throw GenerationRequestError.optionsInvalid(
+                            "The prepared image references differ from the semantic frame plan."
+                        )
+                    }
+                }
             default: referenceSnapshot = nil
             }
         } catch { return .failure(.optionsInvalid(error.localizedDescription)) }
@@ -386,7 +411,8 @@ enum GenerationController {
             } else { repairPlanID = nil }
             guard editor.workingRoot == requestHome,
                   try await PromptCompiler.currentBinding(editor: editor, shotId: binding.shotId,
-                    modality: request.composerModality) == binding,
+                    modality: request.composerModality, modelId: request.modelId)
+                    .matchesCurrentState(of: binding),
                   try await PromptComposer.inputFingerprint(projectDir: requestHome) == compilerInputsSHA256 else {
                 return .failure(.gate("The project or approved direction changed during preparation. Prepare the request again."))
             }
@@ -421,7 +447,8 @@ enum GenerationController {
             try generation.scope?.requireCurrent(editor: editor)
             try generation.destination.requireCurrent(editor: editor)
             guard try await PromptCompiler.currentBinding(editor: editor, shotId: generation.binding.shotId,
-                modality: request.composerModality) == generation.binding,
+                modality: request.composerModality, modelId: request.modelId)
+                .matchesCurrentState(of: generation.binding),
                   try await PromptComposer.inputFingerprint(projectDir: requestHome) == generation.compilerInputsSHA256 else {
                 return .failure(.gate("The approved direction changed. Prepare and review the generation again."))
             }

@@ -766,7 +766,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .generateImage,
-            description: "Generates an AI image and returns only after the provider result is imported, including the completed image for inspection, or returns the provider failure. Costs real money and is not undoable. PROMPT GATE: prompt, compileToken, and shotId must be passed unchanged from compile_prompt. A shot-bound token cannot be reused for another shot or project. Raw prompts work only for shotId=none through the explicit pro escape hatch.",
+            description: "Generates an AI image and returns only after the provider result is imported, including the completed image for inspection, or returns the provider failure. Costs real money and is not undoable. PROMPT GATE: prompt, compileToken, and shotId must be passed unchanged from compile_prompt. A shot-bound token cannot be reused for another shot or project. For a format-pack Frames shot, the host derives and submits the complete ordered semantic reference plan for the selected model; omit referenceMediaRefs and referenceProjectPaths. Raw prompts work only for shotId=none through the explicit pro escape hatch.",
             inputSchema: objectSchema(
                 properties: [
                     "compileToken": ["type": "string", "description": "Token from compile_prompt proving 'prompt' is the compiled prompt. Required unless rawPrompt=true."],
@@ -778,8 +778,8 @@ enum ToolDefinitions {
                     "aspectRatio": ["type": "string", "description": "Aspect ratio (e.g. '16:9', '9:16')"],
                     "resolution": ["type": "string", "description": "Resolution (e.g. '2K', '4K')"],
                     "quality": ["type": "string", "description": "Image quality (e.g. 'low', 'medium', 'high'). Only supported by some models — see list_models."],
-                    "referenceMediaRefs": ["type": "array", "items": ["type": "string"], "description": "Media asset IDs to use as reference images"],
-                    "referenceProjectPaths": ["type": "array", "items": ["type": "string"], "description": "Project-local image paths under pipeline/ to use as references, for example production_design/refs/claude.png. Production Design automatically attaches its complete staged refs set; omit this field there."],
+                    "referenceMediaRefs": ["type": "array", "items": ["type": "string"], "description": "Media asset IDs to use as reference images for free generation. Omit for format-pack Frames shots; the host supplies their semantic plan."],
+                    "referenceProjectPaths": ["type": "array", "items": ["type": "string"], "description": "Project-local image paths under pipeline/ for free or design-sheet generation. Production Design and format-pack Frames shots attach their host-owned sets automatically; omit this field there."],
                     "folderId": ["type": "string", "description": "Optional. Folder id (from list_folders or create_folder) to place the result in. Omit for the project root."],
                 ],
                 required: ["prompt", "shotId"]

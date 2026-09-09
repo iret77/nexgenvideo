@@ -14,6 +14,23 @@ enum PromptComposer {
     struct Composition: Sendable {
         let text: String
         let notes: [String]
+        let sourceIRSHA256: String?
+    }
+
+    struct VideoContext: Sendable {
+        let modeID: String
+        let dialect: VideoPromptDialectV1
+        let references: [VideoPromptReferenceV1]
+        let startState: String
+        let endState: String
+        let blocking: [String]
+        let timedActionBeats: [TimedActionBeatV1]
+        let continuityLocks: [String]
+        let transitionIntent: String?
+    }
+
+    struct ImageContext: Sendable {
+        let references: [FrameReferenceBindingV1]
     }
 
     enum ComposeError: LocalizedError {
@@ -112,7 +129,9 @@ enum PromptComposer {
         lighting: String = "",
         style: String = "",
         shot: ShotProjection? = nil,
-        preserveComposition: Bool = false
+        preserveComposition: Bool = false,
+        videoContext: VideoContext? = nil,
+        imageContext: ImageContext? = nil
     ) async throws -> Composition {
         let trimmed = normalize(intent)
         guard !trimmed.isEmpty else { throw ComposeError.emptyIntent }
@@ -138,6 +157,7 @@ enum PromptComposer {
         }
 
         let composed: String
+        var sourceIRSHA256: String?
         var notes: [String] = []
         let productionStyle = try projectDir.flatMap { project -> ResolvedProductionStyleV1? in
             guard modality.usesVisualStyle else { return nil }
@@ -158,6 +178,7 @@ enum PromptComposer {
         }
         switch modality {
         case .video:
+            let videoContext = try videoContext ?? freeVideoContext(modelId: modelId)
             let acceptsFreeContext = shot == nil
             var payload = PromptPayload(
                 subject: shot?.videoSubject ?? trimmed,
@@ -175,7 +196,24 @@ enum PromptComposer {
                 payload.temporalStructure = shot.temporalStructure
             }
             try apply(productionStyle, to: &payload, plannedCamera: shot != nil, still: false)
-            composed = PromptGenerator.buildVideoPrompt(modelID: engineModelID(modelId), payload: payload)
+            let ir = VideoPromptIRV1(
+                payload: payload,
+                modeID: videoContext.modeID,
+                references: videoContext.references,
+                startState: videoContext.startState,
+                endState: videoContext.endState,
+                blocking: videoContext.blocking,
+                timedActionBeats: videoContext.timedActionBeats,
+                continuityLocks: videoContext.continuityLocks,
+                transitionIntent: videoContext.transitionIntent
+            )
+            sourceIRSHA256 = FileDigest.sha256(
+                of: try VideoPromptCanonicalCodecV1.encode(ir)
+            )
+            composed = try PromptGenerator.buildVideoPrompt(
+                ir: ir,
+                dialect: videoContext.dialect
+            )
             if let shot,
                let violation = ProductionPromptPolicy.videoPromptViolations(
                    composed,
@@ -186,6 +224,7 @@ enum PromptComposer {
             }
             notes.append(contentsOf: try lint(composed, lockedDirectives: directives.locked))
         case .image:
+            sourceIRSHA256 = nil
             let acceptsFreeContext = shot == nil
             var payload = PromptPayload(
                 subject: trimmed,
@@ -193,6 +232,9 @@ enum PromptComposer {
                 style: acceptsFreeContext ? normalize(style) : "",
                 light: acceptsFreeContext ? normalize(lighting) : "",
                 aspectRatio: aspectRatio,
+                multiRefHints: imageContext.map {
+                    frameReferenceHints($0.references)
+                } ?? [],
                 directives: directives.all + (shot?.imageDirectives ?? [])
             )
             if let shot { payload.camera = shot.camera; payload.composition = shot.composition }
@@ -204,6 +246,7 @@ enum PromptComposer {
             }
             notes.append(contentsOf: try lint(composed, lockedDirectives: directives.locked))
         case .audio, .music:
+            sourceIRSHA256 = nil
             // The ledger has no audio-typed directives, so audio keeps the caller's compiled intent.
             composed = composeAudio(intent: trimmed, directives: directives)
             let mergedCount = directives.locked.filter { !trimmed.localizedCaseInsensitiveContains($0) }.count
@@ -225,7 +268,28 @@ enum PromptComposer {
         guard composed.count <= cap else {
             throw ComposeError.tooLong(count: composed.count, cap: cap, modelId: modelId)
         }
-        return Composition(text: composed, notes: notes)
+        return Composition(
+            text: composed,
+            notes: notes,
+            sourceIRSHA256: sourceIRSHA256
+        )
+    }
+
+    static func frameReferenceHints(
+        _ references: [FrameReferenceBindingV1]
+    ) -> [String] {
+        references.map { reference in
+            let identity = reference.entityID.isEmpty
+                ? reference.role
+                : "<\(reference.entityID)>"
+            let view = reference.viewID.isEmpty
+                ? ""
+                : ", view \(reference.viewID)"
+            let purpose = reference.purpose.isEmpty
+                ? ""
+                : "; \(reference.purpose)"
+            return "defines \(reference.role) \(identity)\(view)\(purpose)"
+        }
     }
 
     private static func apply(_ style: ResolvedProductionStyleV1?, to payload: inout PromptPayload,
@@ -399,5 +463,23 @@ enum PromptComposer {
     private static func engineModelID(_ modelId: String) -> String {
         guard let slash = modelId.firstIndex(of: "/") else { return modelId }
         return modelId.replacingCharacters(in: slash...slash, with: ":")
+    }
+
+    private static func freeVideoContext(modelId: String) throws -> VideoContext {
+        let modeID = PromptCompiler.inferredFreeVideoModeID(modelId)
+        return VideoContext(
+            modeID: modeID,
+            dialect: try PromptDialectRegistry.requireVideoDialect(
+                modelID: modelId,
+                modeID: modeID
+            ),
+            references: [],
+            startState: "",
+            endState: "",
+            blocking: [],
+            timedActionBeats: [],
+            continuityLocks: [],
+            transitionIntent: nil
+        )
     }
 }

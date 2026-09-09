@@ -128,6 +128,8 @@ struct PipelineRenderRecordWriterTests {
             ]
         )
 
+        let semanticProofPath = "frames/reference-usage/s001-start.v1.json"
+        let semanticProof = Data("semantic-reference-proof".utf8)
         let publication = try PipelineRenderRecordWriter.publish(
             manifest: manifest,
             proof: nil,
@@ -135,6 +137,7 @@ struct PipelineRenderRecordWriterTests {
             framesManifest: frames,
             replacingShotID: "s001",
             preparedLastFrame: nil,
+            additionalArtifacts: [semanticProofPath: semanticProof],
             expectedPublicationTransactionID: nil,
             dataRoot: fixture.dataRoot
         )
@@ -142,6 +145,9 @@ struct PipelineRenderRecordWriterTests {
         #expect(publication.renderProof == nil)
         #expect(publication.renderRoutingProof == nil)
         #expect(publication.framesManifest?.path == PipelineLayout.framesManifestFile)
+        #expect(try Data(
+            contentsOf: PipelineLayout.url(semanticProofPath, in: fixture.dataRoot)
+        ) == semanticProof)
         #expect(
             try PipelineRenderRecordWriter.requireCurrentPublicationIfPresent(
                 dataRoot: fixture.dataRoot,

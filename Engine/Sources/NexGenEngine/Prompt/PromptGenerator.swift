@@ -1,10 +1,6 @@
 import Foundation
 
-/// Provider dispatchers. Port of `build_image_prompt` / `build_video_prompt`
-/// from `builder.py`. Selects the right builder by the `<provider>:<model>`
-/// namespace, with the same fallbacks (gpt-image-2 for image, seedance-2 for
-/// video). `throws` because the sheet-view dispatcher can raise on an unknown
-/// character/ensemble view.
+/// Provider dispatchers for image compatibility and explicit video PromptIR dialects.
 public enum PromptGenerator {
     /// Split on the first `:` — mirrors Python `model_id.split(":", 1)`.
     private static func providerAndModel(_ modelID: String) -> (provider: String, model: String) {
@@ -36,8 +32,6 @@ public enum PromptGenerator {
         return try ImageBuilders.gptImage2(payload, sheetKind: sheetKind)
     }
 
-    /// Port of `build_video_prompt`. All video models currently map to the
-    /// Seedance format.
     public static func buildVideoPrompt(
         modelID: String,
         payload: PromptPayload,
@@ -53,5 +47,12 @@ public enum PromptGenerator {
             isPacingArm: isPacingArm,
             referenceTags: referenceTags
         )
+    }
+
+    public static func buildVideoPrompt(
+        ir: VideoPromptIRV1,
+        dialect: VideoPromptDialectV1
+    ) throws -> String {
+        try VideoPromptDialectCompilerV1.compile(ir, dialect: dialect)
     }
 }

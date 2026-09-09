@@ -162,7 +162,12 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
     func requireCurrentContext(editor: EditorViewModel) async throws {
         let modality: PromptComposer.Modality = payload.modality == "image" ? .image : .video
         let home = editor.workingRoot
-        guard try await PromptCompiler.currentBinding(editor: editor, shotId: payload.binding.shotId, modality: modality) == payload.binding,
+        guard try await PromptCompiler.currentBinding(
+            editor: editor,
+            shotId: payload.binding.shotId,
+            modality: modality,
+            modelId: payload.target.modelId
+        ).matchesCurrentState(of: payload.binding),
               try await PromptComposer.inputFingerprint(projectDir: home) == payload.compilerInputsSHA256,
               editor.workingRoot == home else {
             throw GenerationRequestError.gate("The project direction changed after generation review. Prepare and review the request again.")

@@ -117,6 +117,8 @@ public final class EngineRegistry: @unchecked Sendable {
     /// Pack-neutral declarations that bind an active format to host-owned production knowledge.
     public private(set) var productionKnowledgeConsumers: [ProductionKnowledgeConsumerRegistrationV1] = []
 
+    public private(set) var frameReferencePlanProvider: (any FrameReferencePlanProviding)?
+
     /// A phase runner is an opaque callable the engine invokes to run a named
     /// pipeline phase (e.g. `"analysis"`). Precise signatures firm up as more
     /// phases land; kept minimal here for the one phase M8 registers. Port of
@@ -312,6 +314,12 @@ public final class EngineRegistry: @unchecked Sendable {
     /// Register the pack's reference-plan surface (see `ReferencePlanProviding`).
     public func registerReferencePlanProvider(_ provider: any ReferencePlanProviding) {
         self.referencePlanProvider = provider
+    }
+
+    public func registerFrameReferencePlanProvider(
+        _ provider: any FrameReferencePlanProviding
+    ) {
+        frameReferencePlanProvider = provider
     }
 
     /// Domain reference data (e.g. music genre/mood pattern library).

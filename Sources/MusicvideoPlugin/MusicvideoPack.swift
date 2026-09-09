@@ -321,7 +321,9 @@ public struct MusicvideoPack: Pack {
         }
         // Agent-callable pattern query surface (suggest/get) — the live path to the pattern library.
         registry.registerPatternProvider(MusicvideoPatternProvider())
-        registry.registerReferencePlanProvider(MusicvideoReferencePlanProvider())
+        let referencePlanner = MusicvideoReferencePlanProvider()
+        registry.registerReferencePlanProvider(referencePlanner)
+        registry.registerFrameReferencePlanProvider(referencePlanner)
         registry.registerProjectDirs(["audio", "lyrics", "analysis"])
         registry.registerSanityCheck("tempo", MusicvideoChecks.tempoCheck)
         registry.registerSanityCheck("pacing", MusicvideoChecks.pacingCheck)

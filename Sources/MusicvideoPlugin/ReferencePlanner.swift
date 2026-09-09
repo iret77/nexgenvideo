@@ -1,12 +1,7 @@
 import Foundation
 import NexGenEngine
 
-/// Deterministic reference-image planner — port of `render/references/__init__.py`
-/// `plan_shot_refs`. Expands a shot's bible refs (+ requested views) into concrete
-/// image slots, scores them by view priority, and drops the lowest-priority ones
-/// past the image model's `max_reference_images`. Pure and file-existence-filtered:
-/// only refs whose files exist under the project dir are counted (matching the
-/// Python), so a missing file silently drops out rather than producing a false hit.
+/// Deterministic semantic reference-image planner.
 enum ReferencePlanner {
     struct RefSource: Equatable {
         let path: String        // relative to the project dir
@@ -15,11 +10,14 @@ enum ReferencePlanner {
         let view: String
         let purpose: String
         let score: Double
+        let requirementIDs: [String]
+        let isRequired: Bool
     }
     struct PlannedRefs: Equatable {
         let refs: [RefSource]       // accepted, highest-priority first
         let dropped: [RefSource]    // over budget
         let warnings: [String]
+        let deficits: [FrameReferenceDeficitV1]
     }
 
     /// View-priority score (higher is kept first). Port of `_score_view`.
@@ -52,7 +50,8 @@ enum ReferencePlanner {
             let r = rel.trimmingCharacters(in: .whitespaces)
             guard !r.isEmpty, exists(projectDir, r) else { continue }
             out.append(RefSource(path: r, entityId: entityId, entityKind: kind, view: viewKey,
-                                 purpose: viewPurpose[viewKey] ?? "", score: scoreView(viewKey, requested: requestedView)))
+                                 purpose: viewPurpose[viewKey] ?? "", score: scoreView(viewKey, requested: requestedView),
+                                 requirementIDs: ["\(kind):\(entityId)"], isRequired: false))
         }
         // Upload originals — deprioritized to a 0.15 floor when the entity already
         // has sheets (redundant), else the normal "" score since they're the only anchor.
@@ -61,13 +60,15 @@ enum ReferencePlanner {
             let r = rel.trimmingCharacters(in: .whitespaces)
             guard !r.isEmpty, exists(projectDir, r) else { continue }
             let score = hasSheet ? 0.15 : scoreView("", requested: requestedView)
-            out.append(RefSource(path: r, entityId: entityId, entityKind: kind, view: "", purpose: "", score: score))
+            out.append(RefSource(path: r, entityId: entityId, entityKind: kind, view: "", purpose: "", score: score,
+                                 requirementIDs: ["\(kind):\(entityId)"], isRequired: false))
         }
         let fp = floorplan.trimmingCharacters(in: .whitespaces)
         if !fp.isEmpty, exists(projectDir, fp) {
             out.append(RefSource(path: fp, entityId: entityId, entityKind: kind, view: "floorplan",
                                  purpose: "top-down geometric ground-truth for the location",
-                                 score: scoreView("floorplan", requested: requestedView)))
+                                 score: scoreView("floorplan", requested: requestedView),
+                                 requirementIDs: ["\(kind):\(entityId)"], isRequired: false))
         }
         return out
     }
@@ -89,7 +90,6 @@ enum ReferencePlanner {
         }
     }
 
-    /// Port of `plan_shot_refs`. `maxRefs <= 0` drops everything (mirrors the Python).
     static func planShotRefs(
         projectDir: URL, bible: Bible,
         characterRefs: [String], locationRef: String?, propRefs: [String],
@@ -97,60 +97,124 @@ enum ReferencePlanner {
         referenceImageRefs: [String] = [],
         maxRefs: Int, includeLightingAnchor: Bool = true
     ) -> PlannedRefs {
-        var pool: [RefSource] = []
+        var required: [RefSource] = []
+        var optional: [RefSource] = []
+        var deficits: [FrameReferenceDeficitV1] = []
+
+        func requireOne(_ candidates: [RefSource], id: String, detail: String) {
+            let ranked = sorted(candidates)
+            guard let first = ranked.first else {
+                deficits.append(FrameReferenceDeficitV1(requirementID: id, detail: detail))
+                return
+            }
+            required.append(mark(first, required: true, requirementIDs: [id]))
+            optional.append(contentsOf: ranked.dropFirst().map {
+                mark($0, required: false, requirementIDs: [id])
+            })
+        }
+
         for path in referenceImageRefs {
             let ref = path.trimmingCharacters(in: .whitespaces)
-            guard !ref.isEmpty, exists(projectDir, ref) else { continue }
-            pool.append(RefSource(
+            let requirement = "explicit:\(ref)"
+            guard !ref.isEmpty, exists(projectDir, ref) else {
+                deficits.append(FrameReferenceDeficitV1(
+                    requirementID: requirement,
+                    detail: "The shot-specific reference '\(ref)' is missing."
+                ))
+                continue
+            }
+            required.append(RefSource(
                 path: ref,
                 entityId: "explicit",
                 entityKind: "explicit",
                 view: "",
                 purpose: "shot-specific reference",
-                score: 1.1
+                score: 1.1,
+                requirementIDs: [requirement],
+                isRequired: true
             ))
         }
         for cid in characterRefs {
-            guard let ent = bible.lookupId(cid) else { continue }
+            let requirement = "character:\(cid)"
+            guard let ent = bible.lookupId(cid) else {
+                deficits.append(FrameReferenceDeficitV1(
+                    requirementID: requirement,
+                    detail: "Character '\(cid)' is not present in the approved Bible."
+                ))
+                continue
+            }
             switch ent {
-            case .character, .ensemble: pool += entityRefs(ent, projectDir: projectDir, requestedView: characterViews[cid])
-            default: continue
+            case .character, .ensemble:
+                requireOne(
+                    entityRefs(ent, projectDir: projectDir, requestedView: characterViews[cid]),
+                    id: requirement,
+                    detail: "Character '\(cid)' has no available canonical image for the required view."
+                )
+            default:
+                deficits.append(FrameReferenceDeficitV1(
+                    requirementID: requirement,
+                    detail: "Bible entity '\(cid)' is not a character or ensemble."
+                ))
             }
         }
-        if let locationRef, let ent = bible.lookupId(locationRef), case .location = ent {
-            pool += entityRefs(ent, projectDir: projectDir, requestedView: locationView)
+        if let locationRef {
+            let requirement = "location:\(locationRef)"
+            if let ent = bible.lookupId(locationRef), case .location = ent {
+                requireOne(
+                    entityRefs(ent, projectDir: projectDir, requestedView: locationView),
+                    id: requirement,
+                    detail: "Location '\(locationRef)' has no available canonical image for the required view."
+                )
+            } else {
+                deficits.append(FrameReferenceDeficitV1(
+                    requirementID: requirement,
+                    detail: "Location '\(locationRef)' is not present in the approved Bible."
+                ))
+            }
         }
         for pid in propRefs {
-            guard let ent = bible.lookupId(pid), case .prop = ent else { continue }
-            pool += entityRefs(ent, projectDir: projectDir, requestedView: propViews[pid])
+            let requirement = "prop:\(pid)"
+            if let ent = bible.lookupId(pid), case .prop = ent {
+                requireOne(
+                    entityRefs(ent, projectDir: projectDir, requestedView: propViews[pid]),
+                    id: requirement,
+                    detail: "Prop '\(pid)' has no available canonical image for the required view."
+                )
+            } else {
+                deficits.append(FrameReferenceDeficitV1(
+                    requirementID: requirement,
+                    detail: "Prop '\(pid)' is not present in the approved Bible."
+                ))
+            }
         }
         if includeLightingAnchor {
             let anchor = bible.look.lightingAnchor.trimmingCharacters(in: .whitespaces)
-            if !anchor.isEmpty, exists(projectDir, anchor) {
-                pool.append(RefSource(path: anchor, entityId: "look", entityKind: "style", view: "lighting_anchor",
-                                      purpose: "global lighting & color-grade anchor", score: scoreView("lighting_anchor", requested: nil)))
+            if !anchor.isEmpty {
+                if exists(projectDir, anchor) {
+                    required.append(RefSource(
+                        path: anchor,
+                        entityId: "look",
+                        entityKind: "style",
+                        view: "lighting_anchor",
+                        purpose: "global lighting & color-grade anchor",
+                        score: scoreView("lighting_anchor", requested: nil),
+                        requirementIDs: ["lighting:look"],
+                        isRequired: true
+                    ))
+                } else {
+                    deficits.append(FrameReferenceDeficitV1(
+                        requirementID: "lighting:look",
+                        detail: "The approved lighting anchor '\(anchor)' is missing."
+                    ))
+                }
             }
         }
-        // Highest score first; ties broken deterministically. The Python key is
-        // (-score, kind, id, view) and relies on a stable sort; Swift's sort isn't
-        // stable, so `path` is appended as a final unique tiebreak (only same-entity
-        // multi-uploads collide on the first four, and they report identically).
-        pool.sort {
-            if $0.score != $1.score { return $0.score > $1.score }
-            if $0.entityKind != $1.entityKind { return $0.entityKind < $1.entityKind }
-            if $0.entityId != $1.entityId { return $0.entityId < $1.entityId }
-            if $0.view != $1.view { return $0.view < $1.view }
-            return $0.path < $1.path
-        }
-        var seenPaths: Set<String> = []
-        pool = pool.filter { seenPaths.insert($0.path).inserted }
-        let accepted = maxRefs > 0 ? Array(pool.prefix(maxRefs)) : []
-        let dropped = maxRefs > 0 ? Array(pool.dropFirst(maxRefs)) : pool
-        var warnings: [String] = []
-        if !dropped.isEmpty {
-            warnings.append("capability limit \(maxRefs): \(dropped.count) ref(s) dropped — \(droppedList(dropped))")
-        }
-        return PlannedRefs(refs: accepted, dropped: dropped, warnings: warnings)
+        return finalize(
+            required: required,
+            optional: optional,
+            maxRefs: maxRefs,
+            deficits: deficits
+        )
     }
 
     /// Like `planShotRefs`, but additionally stacks identity-anchor frames (the frame rendered for the
@@ -177,40 +241,130 @@ enum ReferencePlanner {
             maxRefs: maxRefs, includeLightingAnchor: includeLightingAnchor)
 
         let anchorMap = IdentityAnchor.pickIdentityAnchors(shotlist)
-        let inherited = IdentityAnchor.inheritedAnchorShots(anchorMap, shotId: shot.id)
+        let inherited = anchorMap.forShot(shot.id).filter { $0.anchorShotId != shot.id }
         guard !inherited.isEmpty, let manifest = framesManifest else { return base }
 
         let anchorBase = framesBase ?? projectDir
         var anchorRefs: [RefSource] = []
-        for anchorShotId in inherited {
+        for inheritedRef in inherited {
+            let anchorShotId = inheritedRef.anchorShotId
             guard let rel = anchorFramePath(manifest, shotId: anchorShotId), exists(anchorBase, rel) else { continue }
             anchorRefs.append(RefSource(
-                path: rel, entityId: "anchor:\(anchorShotId)", entityKind: "identity_anchor",
+                path: rel, entityId: inheritedRef.characterId, entityKind: "identity_anchor",
                 view: "anchor_frame", purpose: "identity anchor from earlier shot \(anchorShotId)",
-                score: 1.05))  // higher than any requested-match, because identity beats view
+                score: 1.05, requirementIDs: ["character:\(inheritedRef.characterId)"],
+                isRequired: true))
         }
         if anchorRefs.isEmpty { return base }
 
-        // Anchor refs in front, everything else behind; re-sort and re-cut at the cap.
-        var pool = anchorRefs + base.refs + base.dropped
-        pool.sort {
+        let replaced = Set(anchorRefs.flatMap(\.requirementIDs))
+        let baseRequired = base.refs.filter { $0.isRequired }
+        let demoted = baseRequired.filter {
+            $0.requirementIDs.contains(where: replaced.contains)
+        }.map {
+            mark($0, required: false, requirementIDs: $0.requirementIDs)
+        }
+        return finalize(
+            required: anchorRefs + baseRequired.filter {
+                !$0.requirementIDs.contains(where: replaced.contains)
+            },
+            optional: demoted + base.refs.filter { !$0.isRequired } + base.dropped,
+            maxRefs: maxRefs,
+            deficits: base.deficits.filter {
+                !replaced.contains($0.requirementID)
+            }
+        )
+    }
+
+    private static func finalize(
+        required: [RefSource],
+        optional: [RefSource],
+        maxRefs: Int,
+        deficits: [FrameReferenceDeficitV1]
+    ) -> PlannedRefs {
+        let required = mergeRequired(required)
+        let optional = unique(sorted(optional)).filter { candidate in
+            !required.contains(where: { $0.path == candidate.path })
+        }
+        var deficits = deficits
+        if required.count > maxRefs {
+            deficits.append(FrameReferenceDeficitV1(
+                requirementID: "offering:image-reference-capacity",
+                detail: "The shot needs \(required.count) required image references, but the selected offering accepts \(maxRefs)."
+            ))
+        }
+        let remaining = max(0, maxRefs - required.count)
+        let accepted = required + Array(optional.prefix(remaining))
+        let dropped = Array(optional.dropFirst(remaining))
+        var warnings: [String] = []
+        if !dropped.isEmpty {
+            warnings.append("capability limit \(maxRefs): \(dropped.count) optional ref(s) omitted — \(droppedList(dropped))")
+        }
+        if let capacity = deficits.first(where: { $0.requirementID == "offering:image-reference-capacity" }) {
+            warnings.append(capacity.detail)
+        }
+        return PlannedRefs(
+            refs: accepted,
+            dropped: dropped,
+            warnings: warnings,
+            deficits: deficits
+        )
+    }
+
+    private static func sorted(_ refs: [RefSource]) -> [RefSource] {
+        refs.sorted {
             if $0.score != $1.score { return $0.score > $1.score }
             if $0.entityKind != $1.entityKind { return $0.entityKind < $1.entityKind }
             if $0.entityId != $1.entityId { return $0.entityId < $1.entityId }
             if $0.view != $1.view { return $0.view < $1.view }
             return $0.path < $1.path
         }
-        var seenPaths: Set<String> = []
-        pool = pool.filter { seenPaths.insert($0.path).inserted }
-        let accepted = maxRefs > 0 ? Array(pool.prefix(maxRefs)) : []
-        let dropped = maxRefs > 0 ? Array(pool.dropFirst(maxRefs)) : pool
-        var warnings = base.warnings
-        if base.refs.count + anchorRefs.count > maxRefs {
-            warnings.append(
-                "identity-anchor stack fills refs — \(anchorRefs.count) anchor(s), "
-                + "\(dropped.count) originally planned ref(s) dropped.")
+    }
+
+    private static func unique(_ refs: [RefSource]) -> [RefSource] {
+        var seen: Set<String> = []
+        return refs.filter { seen.insert($0.path).inserted }
+    }
+
+    private static func mergeRequired(_ refs: [RefSource]) -> [RefSource] {
+        var ordered: [RefSource] = []
+        for ref in refs {
+            if let index = ordered.firstIndex(where: { $0.path == ref.path }) {
+                let current = ordered[index]
+                ordered[index] = RefSource(
+                    path: current.path,
+                    entityId: current.entityId,
+                    entityKind: current.entityKind,
+                    view: current.view,
+                    purpose: current.purpose,
+                    score: max(current.score, ref.score),
+                    requirementIDs: Array(
+                        Set(current.requirementIDs + ref.requirementIDs)
+                    ).sorted(),
+                    isRequired: true
+                )
+            } else {
+                ordered.append(ref)
+            }
         }
-        return PlannedRefs(refs: accepted, dropped: dropped, warnings: warnings)
+        return ordered
+    }
+
+    private static func mark(
+        _ ref: RefSource,
+        required: Bool,
+        requirementIDs: [String]
+    ) -> RefSource {
+        RefSource(
+            path: ref.path,
+            entityId: ref.entityId,
+            entityKind: ref.entityKind,
+            view: ref.view,
+            purpose: ref.purpose,
+            score: ref.score,
+            requirementIDs: requirementIDs,
+            isRequired: required
+        )
     }
 
     /// The anchor keyframe path for a shot from the frames manifest — the `start`-role frame (the
@@ -247,11 +401,6 @@ enum ImageModelCaps {
 }
 
 extension MusicvideoChecks {
-    /// REF_BUDGET_EXCEEDED — port of `sanity/checks/references.py`. Runs the reference
-    /// planner per keyframe shot and warns when refs get dropped over the image model's
-    /// reference cap (so the render silently loses identity anchors). Needs the project
-    /// dir (via `ctx.extra["data_root"]`) for the planner's file-existence filter; with
-    /// no data root it degrades to no findings rather than guessing.
     public static let referenceBudgetCheck: SanityCheck = { ctx in
         guard let bible = ctx.bible, let brief = ctx.brief, let root = ctx.extra?["data_root"] else { return [] }
         let projectDir = URL(fileURLWithPath: root)
@@ -259,16 +408,26 @@ extension MusicvideoChecks {
         var out: [Finding] = []
         for shot in ctx.shotlist.shots {
             guard shot.keyframeStrategy == .start || shot.keyframeStrategy == .startEnd else { continue }
-            guard !shot.characterRefs.isEmpty || shot.locationRef != nil || !shot.propRefs.isEmpty else { continue }
+            guard !shot.characterRefs.isEmpty
+                    || shot.locationRef != nil
+                    || !shot.propRefs.isEmpty
+                    || !shot.referenceImageRefs.isEmpty
+                    || !bible.look.lightingAnchor.isEmpty else { continue }
             let plan = ReferencePlanner.planShotRefs(
                 projectDir: projectDir, bible: bible,
                 characterRefs: shot.characterRefs, locationRef: shot.locationRef, propRefs: shot.propRefs,
                 characterViews: shot.characterViews, locationView: shot.locationView, propViews: shot.propViews,
+                referenceImageRefs: shot.referenceImageRefs,
                 maxRefs: maxRefs)
-            if !plan.dropped.isEmpty {
-                out.append(Finding(level: .warn, code: "REF_BUDGET_EXCEEDED", shotId: shot.id,
-                    message: "\(plan.dropped.count) ref(s) dropped (limit \(maxRefs)); dropped: "
-                        + ReferencePlanner.droppedList(plan.dropped)))
+            for deficit in plan.deficits {
+                out.append(Finding(
+                    level: .error,
+                    code: deficit.requirementID == "offering:image-reference-capacity"
+                        ? "REF_BUDGET_EXCEEDED"
+                        : "REQUIRED_REFERENCE_MISSING",
+                    shotId: shot.id,
+                    message: deficit.detail
+                ))
             }
         }
         return out

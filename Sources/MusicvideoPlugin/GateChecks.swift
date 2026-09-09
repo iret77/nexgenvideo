@@ -2412,7 +2412,23 @@ enum MusicvideoGateChecks {
                     .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     throw GateBlocked(
                         "Can't approve \"frames\": \(shot.id)-\(role) has no "
-                            + "recorded generation model."
+                        + "recorded generation model."
+                    )
+                }
+                do {
+                    try FrameReferenceUsageStoreV1.requireCurrent(
+                        shotID: shot.id,
+                        role: role,
+                        framePath: frame.path,
+                        modelID: frame.runwayModel,
+                        provider: MusicvideoReferencePlanProvider(),
+                        dataRoot: dataRoot
+                    )
+                } catch let blocked as GateBlocked {
+                    throw blocked
+                } catch {
+                    throw GateBlocked(
+                        "Can't approve \"frames\": \(shot.id)-\(role)'s semantic reference proof is missing or stale (\(error))."
                     )
                 }
                 guard let frameURL = existingProjectFile(frame.path, dataRoot: dataRoot) else {

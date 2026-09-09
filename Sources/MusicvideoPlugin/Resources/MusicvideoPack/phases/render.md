@@ -143,9 +143,10 @@ from the reference path; the authoring spec is in
 - `REFERENCE_MODE_STORY_PROPER_NOUNS` (info) — title-case multi-word
   proper nouns not from the bible. Heuristic, hence info. Escape:
   `ref_names_ok:`.
-- `REFERENCE_MODE_USES_NAMES_NOT_TAGS` (warn) — bible char names in the
-  prompt WITHOUT `@ImageN` tags. Write tags instead of names ("@Image2
-  waves while @Image1 watches"). Escape: `ref_tags_ok:`.
+
+Provider reference tags are not authored or repaired here. The host compiles
+them from the current ordered `ReferencePlanV2`; a stale role, unsupported
+dialect, or mixed mode blocks before the provider call.
 
 On `warn` findings: call `rewind(target_phase="<owning phase>")`,
 repair through that phase's canonical writer, re-approve its gate, then
