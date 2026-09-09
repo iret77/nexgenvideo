@@ -13,7 +13,8 @@ struct GenerationReferenceSnapshotTests {
         try Data("first reference".utf8).write(to: first)
         try Data("second reference".utf8).write(to: second)
         let snapshot = try await GenerationReferenceSnapshot.capture(sources: [
-            .init(assetID: "first", type: "image", url: first), .init(assetID: "second", type: "image", url: second)
+            .init(assetID: "first", displayName: "First", type: "image", url: first),
+            .init(assetID: "second", displayName: "Second", type: "image", url: second),
         ])
         try await snapshot.requireUnchanged()
         #expect(snapshot.receipts.map(\.assetID) == ["first", "second"])
@@ -30,7 +31,9 @@ struct GenerationReferenceSnapshotTests {
         let source = root.appendingPathComponent("original.mp4"), derived = root.appendingPathComponent("trimmed.mp4")
         try Data("full source".utf8).write(to: source)
         try Data("reviewed source range".utf8).write(to: derived)
-        let original = try await GenerationReferenceSnapshot.capture(sources: [.init(assetID: "video", type: "video", url: source)])
+        let original = try await GenerationReferenceSnapshot.capture(sources: [
+            .init(assetID: "video", displayName: "Video", type: "video", url: source),
+        ])
         let trimmed = try await GenerationReferenceSnapshot.capture(sources: original.sources,
             submittedURLs: [derived], sourceReceipts: original.receipts)
         #expect(trimmed.receipts[0].sourceSHA256 == original.receipts[0].sourceSHA256)
@@ -42,7 +45,9 @@ struct GenerationReferenceSnapshotTests {
         let link = root.appendingPathComponent("link.mp4")
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: source)
         await #expect(throws: (any Error).self) {
-            try await GenerationReferenceSnapshot.capture(sources: [.init(assetID: "link", type: "video", url: link)])
+            try await GenerationReferenceSnapshot.capture(sources: [
+                .init(assetID: "link", displayName: "Link", type: "video", url: link),
+            ])
         }
     }
 

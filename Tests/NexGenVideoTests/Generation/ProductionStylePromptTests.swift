@@ -58,7 +58,10 @@ struct ProductionStylePromptTests {
         }
         let root = try #require(DataRootResolver.dataRoot(of: home))
         try Data("changed upstream brief".utf8).write(to: root.appendingPathComponent(PipelineLayout.briefFile))
-        let context = try #require(ProductionStyleContext.prompt(dataRoot: root, phase: "render"))
+        let context = try #require(try ProductionStyleContext.prompt(
+            dataRoot: root,
+            phase: "render"
+        ))
         #expect(context.contains("Read-only diagnosis remains available"))
         #expect(context.contains("explicit rewind"))
         await #expect(throws: (any Error).self) {

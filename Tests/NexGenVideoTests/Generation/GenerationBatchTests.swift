@@ -190,7 +190,11 @@ struct GenerationBatchTests {
         editor.mediaAssets.append(asset)
         let authorization = GenerationBatchAuthorization(batchID: batch.id, itemID: item.id)
         try await GenerationBatchOutput.record(asset: asset, authorization: authorization, editor: editor)
-        let receipt = try #require(GenerationBatchOutput.load(authorization: authorization, assetID: entry.id, home: home))
+        let receipt = try #require(try GenerationBatchOutput.load(
+            authorization: authorization,
+            assetID: entry.id,
+            home: home
+        ))
         try await GenerationBatchOutput.record(asset: asset, authorization: authorization, editor: editor)
         _ = try GenerationBatchStore.update(submitted, editor: editor) {
             try $0.stop(itemID: item.id, state: .blocked, detail: "Connection interrupted after download")
@@ -245,7 +249,16 @@ struct GenerationBatchTests {
             placement: .mediaLibrary(folderId: nil), origin: .panel, target: target, submission: .image { prompt in
                 ImageGenerationSubmission(genInput: .init(prompt: prompt, model: target.modelId, duration: 0, aspectRatio: "1:1"),
                     references: [reference], name: "View", numImages: 1, folderId: nil,
-                    buildParams: { .image(.init(prompt: prompt, aspectRatio: "1:1", imageURLs: $0, numImages: 1)) })
+                    buildParams: {
+                        .image(.init(
+                            prompt: prompt,
+                            aspectRatio: "1:1",
+                            resolution: nil,
+                            quality: nil,
+                            imageURLs: $0,
+                            numImages: 1
+                        ))
+                    })
             })
         let generation = try await GenerationController.prepare(request, editor: editor).get()
         let package = try await GenerationController.prepareReviewPackage(generation, editor: editor,

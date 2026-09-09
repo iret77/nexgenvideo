@@ -728,5 +728,22 @@ struct PackPipelineManifestTests {
         #expect(!resolved.order.contains("finish"))
         #expect(resolved.hardSteps.steps(for: "project_init").map(\.kind) == [.song, .lyrics])
         #expect(resolved.hardSteps.steps(for: "analysis").isEmpty)
+        for phase in PipelineAgentContract.musicvideoPhases {
+            let declaration = try #require(resolved.phase(phase))
+            #expect(
+                declaration.phaseBoundCapabilities
+                    == (PipelineAgentContract.executableTools[phase] ?? [])
+            )
+            #expect(
+                declaration.supportingCapabilities
+                    == (PipelineAgentContract.currentPhaseCapabilities[phase] ?? [])
+            )
+        }
+        #expect(
+            Set(resolved.manifest.postPipelineCapabilities.compactMap {
+                ToolName(rawValue: $0)
+            })
+                == PipelineAgentContract.postPipelineUtilityCapabilities
+        )
     }
 }

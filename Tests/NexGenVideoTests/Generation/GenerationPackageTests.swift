@@ -16,7 +16,16 @@ enum GenerationPackageFixture {
             placement: .mediaLibrary(folderId: nil), origin: .panel, target: target, submission: .image { prompt in
                 ImageGenerationSubmission(genInput: .init(prompt: prompt, model: model, duration: 0, aspectRatio: "1:1"),
                     references: [], name: "Fixture", numImages: 1, folderId: nil,
-                    buildParams: { slots in .image(.init(prompt: prompt, aspectRatio: "1:1", imageURLs: slots, numImages: 1)) })
+                    buildParams: { slots in
+                        .image(.init(
+                            prompt: prompt,
+                            aspectRatio: "1:1",
+                            resolution: nil,
+                            quality: nil,
+                            imageURLs: slots,
+                            numImages: 1
+                        ))
+                    })
             })
         let generation = try await GenerationController.prepare(request, editor: editor).get()
         let package = try await GenerationController.prepareReviewPackage(generation, editor: editor, quoteLoader: { _, _ in money() })

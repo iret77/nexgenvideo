@@ -53,6 +53,50 @@ struct PipelineAgentContractTests {
         #expect(failures.isEmpty, "Pipeline contract failures: \(failures)")
     }
 
+    @Test("pack instructions are checked against the pack's declared capabilities")
+    func declaredCapabilitiesOwnInstructionRequirements() throws {
+        let pack = MusicvideoPack()
+        PackCatalog.register(pack)
+        let manifest = try #require(HardStepManifest.load(pack: pack))
+        let documents = Dictionary(uniqueKeysWithValues:
+            PipelineAgentContract.musicvideoPhases.map { phase in
+                let name = PipelineAgentContract.phaseDocumentName(phase)
+                let document = (try? PackKnowledge.phaseDoc(name: name)) ?? ""
+                return (
+                    name,
+                    document.replacingOccurrences(of: "prepare_generation_batch", with: "")
+                )
+            }
+        )
+        let legacySupporting = PipelineAgentContract.currentPhaseCapabilities.mapValues {
+            $0.subtracting([.prepareGenerationBatch])
+        }
+
+        let legacyFailures = PipelineAgentContract.failures(
+            registry: PackCatalog.registry(activePack: pack.name),
+            manifest: manifest,
+            phaseBoundCapabilities: PipelineAgentContract.executableTools,
+            supportingCapabilities: legacySupporting,
+            phaseDocument: { documents[$0] }
+        )
+        #expect(
+            !legacyFailures.contains {
+                $0.contains("required tool prepare_generation_batch")
+            }
+        )
+
+        let currentFailures = PipelineAgentContract.failures(
+            registry: PackCatalog.registry(activePack: pack.name),
+            manifest: manifest,
+            phaseDocument: { documents[$0] }
+        )
+        #expect(
+            currentFailures.contains {
+                $0.contains("required tool prepare_generation_batch")
+            }
+        )
+    }
+
     @Test("pipeline phase coverage is exact")
     func exactCoverage() {
         #expect(
