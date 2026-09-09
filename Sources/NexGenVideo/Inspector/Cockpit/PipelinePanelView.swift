@@ -21,6 +21,7 @@ enum PipelineSurfaceRouting {
     enum Destination: Equatable {
         case tab(CockpitTab)
         case pack(String)
+        case storyboard
         case chat
     }
 
@@ -46,10 +47,25 @@ enum PipelineSurfaceRouting {
             )
         }
         return switch entry.surface {
-        case "review": Route(icon: "eye", label: "Review", taskClass: entry.taskClass, destination: .tab(.review))
+        case "review": reviewRoute(for: phase, taskClass: entry.taskClass)
         case "prose": Route(icon: "text.cursor", label: "Story", taskClass: entry.taskClass, destination: .tab(.story))
         case "choice": Route(icon: "slider.horizontal.3", label: "In chat", taskClass: entry.taskClass, destination: .chat)
         default: Route(icon: "questionmark", label: entry.surface, taskClass: entry.taskClass, destination: .chat)
+        }
+    }
+
+    private static func reviewRoute(for phase: String, taskClass: String) -> Route {
+        switch phase {
+        case "storyboard":
+            Route(icon: "eye", label: "Review", taskClass: taskClass, destination: .storyboard)
+        case "bible":
+            Route(icon: "eye", label: "Review", taskClass: taskClass, destination: .tab(.bible))
+        case "shotlist":
+            Route(icon: "eye", label: "Review", taskClass: taskClass, destination: .tab(.shotlist))
+        case "sanity", "frames", "render":
+            Route(icon: "eye", label: "Review", taskClass: taskClass, destination: .tab(.review))
+        default:
+            Route(icon: "slider.horizontal.3", label: "In chat", taskClass: taskClass, destination: .chat)
         }
     }
 }
@@ -84,6 +100,7 @@ struct PipelinePanelView: View {
     @State private var mutationReadiness = NativeGateApprovalReadiness.blocked(
         "The pipeline state is unavailable."
     )
+    @State private var storyboardReviewRequested = false
     /// A user-safe error plus an agent-only diagnostic for click-time races or write failures.
     @State private var gateError: GateErrorState?
 
@@ -115,6 +132,10 @@ struct PipelinePanelView: View {
         }
         .onChange(of: runningPhase) { _, _ in
             refreshApprovalReadiness()
+        }
+        .sheet(isPresented: $storyboardReviewRequested) {
+            PipelineStoryboardReviewSheet()
+                .environment(editor)
         }
     }
 
@@ -584,6 +605,8 @@ struct PipelinePanelView: View {
                     editor.cockpitPackSurfaceID = nil
                 case .pack(let id):
                     editor.cockpitPackSurfaceID = id
+                case .storyboard:
+                    storyboardReviewRequested = true
                 case .chat:
                     break
                 }

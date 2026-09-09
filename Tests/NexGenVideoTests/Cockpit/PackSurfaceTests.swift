@@ -287,6 +287,25 @@ struct PackSurfaceTests {
             )?.destination == .chat
         )
 
+        let reviewContract = try JSONDecoder().decode(
+            ContractData.self,
+            from: Data(#"{"phases":{"production_design":{"surface":"review","task_class":"review"},"storyboard":{"surface":"review","task_class":"review"},"bible":{"surface":"review","task_class":"review"},"shotlist":{"surface":"review","task_class":"review"},"sanity":{"surface":"review","task_class":"review"},"frames":{"surface":"review","task_class":"review"}}}"#.utf8)
+        )
+        #expect(PipelineSurfaceRouting.route(for: "storyboard", contract: reviewContract,
+            availablePackSurfaces: [])?.destination == .storyboard)
+        #expect(PipelineSurfaceRouting.route(for: "bible", contract: reviewContract,
+            availablePackSurfaces: [])?.destination == .tab(.bible))
+        #expect(PipelineSurfaceRouting.route(for: "shotlist", contract: reviewContract,
+            availablePackSurfaces: [])?.destination == .tab(.shotlist))
+        #expect(PipelineSurfaceRouting.route(for: "sanity", contract: reviewContract,
+            availablePackSurfaces: [])?.destination == .tab(.review))
+        #expect(PipelineSurfaceRouting.route(for: "frames", contract: reviewContract,
+            availablePackSurfaces: [])?.destination == .tab(.review))
+        let unavailable = try #require(PipelineSurfaceRouting.route(for: "production_design",
+            contract: reviewContract, availablePackSurfaces: []))
+        #expect(unavailable.destination == .chat)
+        #expect(unavailable.label == "In chat")
+
         let legacy = try JSONDecoder().decode(ContractData.self, from: Data(#"{"phases":{}}"#.utf8))
         #expect(legacy.cockpitSurfaces.isEmpty)
     }

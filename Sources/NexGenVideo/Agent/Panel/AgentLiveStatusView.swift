@@ -32,6 +32,7 @@ struct AgentLiveStatus: Equatable {
 }
 
 struct AgentLiveStatusView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let status: AgentLiveStatus
     let onCancel: () -> Void
 
@@ -49,6 +50,7 @@ struct AgentLiveStatusView: View {
                 HStack(spacing: AppTheme.Spacing.smMd) {
                     statusIcon
                         .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.sm)
+                        .accessibilityHidden(true)
                     Text(status.title)
                         .interfaceFont(
                             size: AppTheme.Typography.ui,
@@ -96,16 +98,18 @@ struct AgentLiveStatusView: View {
     @ViewBuilder
     private var statusIcon: some View {
         switch status.state {
-        case .working:
-            ProgressView()
-                .controlSize(.mini)
-        case .streaming:
-            Image(systemName: "ellipsis")
-                .interfaceFont(
-                    size: AppTheme.Typography.ui,
-                    weight: AppTheme.FontWeight.semibold
-                )
-                .foregroundStyle(AppTheme.Text.tertiaryColor)
+        case .working, .streaming:
+            if reduceMotion {
+                Image(systemName: "circle.dotted.circle")
+                    .interfaceFont(
+                        size: AppTheme.Typography.ui,
+                        weight: AppTheme.FontWeight.semibold
+                    )
+                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+            } else {
+                ProgressView()
+                    .controlSize(.mini)
+            }
         case .waiting:
             Image(systemName: "clock.fill")
                 .interfaceFont(size: AppTheme.Typography.ui)
