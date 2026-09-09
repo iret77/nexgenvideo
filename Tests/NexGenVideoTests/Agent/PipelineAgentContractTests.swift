@@ -123,6 +123,7 @@ struct PipelineAgentContractTests {
         #expect(PipelineAgentContract.postPipelineUtilityCapabilities == Set([
             .compilePrompt,
             .generateImage,
+            .prepareGenerationBatch,
             .importMedia,
         ]))
         #expect(!PipelineAgentContract.allowsPostPipelineUtilityTool(.generateVideo))

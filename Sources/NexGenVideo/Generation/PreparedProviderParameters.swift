@@ -8,8 +8,13 @@ struct PreparedProviderParameters: Sendable {
     init(referenceCount: Int, build: ([String]) -> BackendGenerationParams) throws {
         guard referenceCount >= 0 else { throw GenerationRequestError.optionsInvalid("The reference count is invalid.") }
         let namespace = UUID().uuidString
-        slots = (0..<referenceCount).map { "ngv-reference-slot://\(namespace)/\($0)" }
-        parameters = build(slots)
+        let slots = (0..<referenceCount).map { "ngv-reference-slot://\(namespace)/\($0)" }
+        try self.init(parameters: build(slots), referenceSlots: slots)
+    }
+
+    init(parameters: BackendGenerationParams, referenceSlots: [String]) throws {
+        self.parameters = parameters
+        slots = referenceSlots
         let used: [String]
         switch parameters {
         case .video(let video):
@@ -18,7 +23,8 @@ struct PreparedProviderParameters: Sendable {
         case .image(let image): used = image.imageURLs
         default: throw GenerationRequestError.optionsInvalid("The prepared request has the wrong media type.")
         }
-        guard used.count == slots.count, Set(used) == Set(slots) else {
+        guard used.count == slots.count, Set(used) == Set(slots), Set(slots).count == slots.count,
+              slots.allSatisfy({ !$0.isEmpty }) else {
             throw GenerationRequestError.optionsInvalid("The request must use each prepared reference exactly once; embedded or omitted references require a new request.")
         }
     }

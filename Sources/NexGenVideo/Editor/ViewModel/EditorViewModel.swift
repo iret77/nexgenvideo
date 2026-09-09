@@ -381,6 +381,7 @@ final class EditorViewModel {
     func keepRecoveredWork() {
         recoveredUnsavedWork = false
         onPipelineChanged?()
+        generationBatchCoordinator.resume(editor: self)
     }
 
     /// Throw away the recovered working copy and start from the last saved project state.
@@ -681,6 +682,7 @@ final class EditorViewModel {
     let pipelineAgentHarness = PipelineAgentHarness()
     let pipelinePhaseExecution = PipelinePhaseExecutionState()
     let pipelinePhaseRunCoordinator = PipelinePhaseRunCoordinator()
+    let generationBatchCoordinator = GenerationBatchCoordinator()
 
     /// Agent is now a tab of the left sidebar, not a separate column. Kept as a computed proxy so the
     /// many "reveal the agent" call sites (agent replies, media routing, menu, tour) keep working:

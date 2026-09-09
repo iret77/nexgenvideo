@@ -75,6 +75,7 @@ struct AgentPanelView: View {
                 onCancel: { service.cancelRunningSpend() }
             )
             composerDock
+            GenerationBatchProgressView(editor: editor)
         }
         .onAppear {
             refreshDiscoveredPlugins()
@@ -133,6 +134,7 @@ struct AgentPanelView: View {
             hasDialog: service.pendingDialog != nil,
             hasGateApproval: service.pendingGateApproval != nil,
             hasSpendApproval: service.pendingSpendApproval != nil
+                || editor.generationBatchCoordinator.pending != nil
                 || service.currentSpendRun != nil
         )
     }
@@ -141,7 +143,7 @@ struct AgentPanelView: View {
         let snapshot = editor.pipelinePhaseExecution.snapshot
         let activityVisible = runningTranscriptActivity != nil
         return AgentSurfaceState.resolve(.init(
-            hasSpendApproval: service.pendingSpendApproval != nil,
+            hasSpendApproval: service.pendingSpendApproval != nil || editor.generationBatchCoordinator.pending != nil,
             hasGateApproval: service.pendingGateApproval != nil,
             hasDialog: service.pendingDialog != nil,
             hasSpendRun: service.currentSpendRun != nil,
@@ -719,7 +721,9 @@ struct AgentPanelView: View {
     private var composerDock: some View {
         switch surfaceState.dockOwner {
         case .spendApproval:
-            if let approval = service.pendingSpendApproval {
+            if editor.generationBatchCoordinator.pending != nil {
+                GenerationBatchCard(editor: editor)
+            } else if let approval = service.pendingSpendApproval {
                 SpendApprovalCard(
                     approval: approval,
                     error: service.spendApprovalError,

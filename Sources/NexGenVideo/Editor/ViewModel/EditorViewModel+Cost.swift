@@ -127,6 +127,7 @@ extension EditorViewModel {
         authorization: GenerationAuthorization,
         kind: GenerationSpendEvent.Kind,
         providerRequestId: String? = nil,
+        providerRequestResumable: Bool? = nil,
         money: GenerationMoney? = nil,
         note: String? = nil
     ) throws {
@@ -142,6 +143,7 @@ extension EditorViewModel {
             transport: authorization.target.transport,
             endpoint: authorization.target.endpoint,
             providerRequestId: providerRequestId,
+            providerRequestResumable: providerRequestResumable,
             money: money,
             note: note
         ))

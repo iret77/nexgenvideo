@@ -166,6 +166,7 @@ enum GenerationController {
         let references: GenerationReferenceSnapshot?
         let preflight: Preflight?
         private(set) var reviewedPackage: GenerationPackageV1?
+        private(set) var batchItem: GenerationBatchAuthorization?
         private var submitted = false
 
         init(request: GenerationRequest, submission: PreparedSubmission, target: ResolvedGenerationTarget,
@@ -189,6 +190,14 @@ enum GenerationController {
             guard !submitted, reviewedPackage == nil else { throw GenerationRequestError.gate("This generation already has a review package.") }
             try package.validate()
             reviewedPackage = package
+        }
+
+        func attachBatch(_ item: GenerationBatchAuthorization, editor: EditorViewModel) throws {
+            guard !submitted, batchItem == nil, let reviewedPackage else {
+                throw GenerationRequestError.gate("Only an unsubmitted reviewed request can join an approved batch.")
+            }
+            try item.requireQueued(package: reviewedPackage, editor: editor)
+            batchItem = item
         }
     }
 
@@ -404,6 +413,9 @@ enum GenerationController {
         let requestHome = generation.home
         do {
             try generation.claimSubmission()
+            if let item = generation.batchItem, let package = generation.reviewedPackage {
+                try item.requireQueued(package: package, editor: editor)
+            }
             if let error = generation.preflight?() { return .failure(.optionsInvalid(error)) }
             guard editor.workingRoot == requestHome else { return .failure(.gate("The prepared request belongs to another project.")) }
             try generation.scope?.requireCurrent(editor: editor)
@@ -437,7 +449,8 @@ enum GenerationController {
                 try package?.persist(editor: editor)
                 authorization = GenerationAuthorization(transactionId: priced.transactionId, target: priced.target, estimate: priced.estimate,
                     projectMutationScope: priced.projectMutationScope, takeRepairPlanID: generation.repairPlanID,
-                    compileRecipe: generation.recipe, referenceSnapshot: referenceSnapshot, generationPackage: package)
+                    compileRecipe: generation.recipe, referenceSnapshot: referenceSnapshot, generationPackage: package,
+                    batchItem: generation.batchItem)
             } catch {
                 try? editor.recordSpendEvent(authorization: priced, kind: .released, note: error.localizedDescription)
                 throw error

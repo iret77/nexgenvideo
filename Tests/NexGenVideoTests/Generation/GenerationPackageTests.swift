@@ -52,6 +52,8 @@ struct GenerationPackageTests {
         var input = submission.genInput
         input.referenceReceipts = []; input.compileRecipe = generation.recipe
         try package.requireRequest(input: input, target: generation.target, parameters: parameters, references: [])
+        let restored = try package.restoreParameters()
+        try package.requireRequest(input: input, target: generation.target, parameters: restored, references: [])
         input.prompt = "A silently replaced prompt."
         #expect(throws: (any Error).self) { try package.requireRequest(input: input, target: generation.target, parameters: parameters, references: []) }
         var json = try #require(JSONSerialization.jsonObject(with: GenerationPackageV1.encode(package)) as? [String: Any])

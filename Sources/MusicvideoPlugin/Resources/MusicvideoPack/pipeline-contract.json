@@ -10,6 +10,7 @@
   "postPipelineCapabilities": [
     "compile_prompt",
     "generate_image",
+    "prepare_generation_batch",
     "import_media"
   ],
   "phases": [
@@ -84,6 +85,7 @@
         "supporting": [
           "compile_prompt",
           "generate_image",
+          "prepare_generation_batch",
           "import_media",
           "upscale_media",
           "copy_project_file",
@@ -145,6 +147,7 @@
         "supporting": [
           "compile_prompt",
           "generate_image",
+          "prepare_generation_batch",
           "import_media",
           "upscale_media",
           "copy_project_file",
@@ -211,6 +214,7 @@
         "supporting": [
           "compile_prompt",
           "generate_image",
+          "prepare_generation_batch",
           "import_media",
           "upscale_media",
           "crop_to_aspect",
@@ -241,6 +245,7 @@
           "compile_prompt",
           "generate_video",
           "generate_image",
+          "prepare_generation_batch",
           "generate_audio",
           "import_media",
           "upscale_media",

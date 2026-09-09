@@ -187,6 +187,12 @@ enum AgentInstructions {
           never pass it for a real shot. Shot-bound tokens cannot be reused across projects, shots, \
           or plan revisions. rawPrompt is a pro escape hatch the user must enable in \
           Settings.
+        - For several independent images or videos, compile every request first and use \
+          prepare_generation_batch with one stable requestID. Include each purpose and the exact \
+          generate_image/generate_video arguments. The native manifest owns one approval; wait for \
+          its host result. Read get_generation_batches afterward and use only complete outputs. \
+          Never repeat a listed generation separately or represent partial results as a complete phase. \
+          A chained shot whose predecessor output is still missing belongs in a later batch.
         - Generation tools return only after the provider settles and the completed asset is \
           usable, or they return the provider failure. Image results include the generated image \
           for inspection. Don't poll or silently retry; report a failure and ask how to proceed.

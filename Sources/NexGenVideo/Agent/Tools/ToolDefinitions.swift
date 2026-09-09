@@ -26,6 +26,8 @@ enum ToolName: String, CaseIterable, Sendable {
     case compilePrompt = "compile_prompt"
     case generateVideo = "generate_video"
     case generateImage = "generate_image"
+    case prepareGenerationBatch = "prepare_generation_batch"
+    case getGenerationBatches = "get_generation_batches"
     case generateAudio = "generate_audio"
     case upscaleMedia = "upscale_media"
     case importMedia = "import_media"
@@ -92,7 +94,7 @@ enum ToolName: String, CaseIterable, Sendable {
     var isDurableWrite: Bool {
         switch self {
         // Approving gate tools defer their write to the user's later click.
-        case .generateVideo, .generateImage, .generateAudio, .upscaleMedia, .importMedia,
+        case .generateVideo, .generateImage, .prepareGenerationBatch, .generateAudio, .upscaleMedia, .importMedia,
              .initProject, .rewind, .runPhase, .recordRender, .recordAffect, .saveFrameAudit,
              .setLedgerAttribute, .lockLedgerAttribute, .removeLedgerAttribute,
              .attachSong, .copyProjectFile, .extractScene3dPovs, .writeBrief,
@@ -137,7 +139,7 @@ enum ToolName: String, CaseIterable, Sendable {
 
     var usesCurrentPipelinePhase: Bool {
         switch self {
-        case .compilePrompt, .generateVideo, .generateImage, .generateAudio,
+        case .compilePrompt, .generateVideo, .generateImage, .prepareGenerationBatch, .generateAudio,
              .upscaleMedia, .importMedia, .runProviderTool, .copyProjectFile,
              .cropToAspect, .setLedgerAttribute, .lockLedgerAttribute,
              .removeLedgerAttribute:
@@ -185,7 +187,25 @@ struct AgentTool: @unchecked Sendable {
 }
 
 enum ToolDefinitions {
-    static let all: [AgentTool] = [
+    static let all: [AgentTool] = base + [
+        AgentTool(name: .prepareGenerationBatch,
+            description: "Prepare multiple image/video requests for one native Approve X generations decision. Does not generate or approve spending. Each request must carry its unchanged compile_prompt output. Use one stable UUID requestID for reconnect retries; changed requests need a new UUID. Only already available references can be included. The host stores exact packages and executes approved items without per-item dialogs. Read get_generation_batches for progress; never submit the same items separately.",
+            inputSchema: objectSchema(properties: [
+                "requestID": ["type": "string"],
+                "items": ["type": "array", "minItems": 1, "maxItems": 50, "items": ["anyOf": [ToolName.generateImage, .generateVideo].map { tool in
+                    objectSchema(properties: [
+                        "tool": ["type": "string", "enum": [tool.rawValue]],
+                        "purpose": ["type": "string", "minLength": 1],
+                        "request": base.first(where: { $0.name == tool })!.inputSchema,
+                    ], required: ["tool", "purpose", "request"])
+                }]],
+            ], required: ["requestID", "items"])),
+        AgentTool(name: .getGenerationBatches,
+            description: "Read the project's durable approved generation batches and current item states. Includes the pending native manifest when present. This never submits, retries or approves any generation.",
+            inputSchema: objectSchema(properties: ["batchID": ["type": "string", "description": "Optional. Read this exact manifest and journal; omit for compact progress across batches."]]))
+    ]
+
+    private static let base: [AgentTool] = [
         AgentTool(
             name: .getProductionKnowledge,
             description: "Find or read complete, versioned production knowledge for the current task. Search returns entry IDs; read returns one complete entry with provenance. Retrieve the selected procedure and its governing exceptions before applying it. Source platform claims are dated evidence, examples are not project canon, and source workflows cannot change the active pack's phase contract. Available in generic projects and format projects.",

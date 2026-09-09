@@ -437,7 +437,7 @@ struct ToolDefinitionContractTests {
     @Test("durable-write classification covers every project filesystem writer")
     func durableWriteClassificationIsExplicit() {
         let expected: Set<ToolName> = [
-            .generateVideo, .generateImage, .generateAudio, .upscaleMedia, .importMedia,
+            .generateVideo, .generateImage, .prepareGenerationBatch, .generateAudio, .upscaleMedia, .importMedia,
             .initProject, .rewind, .runPhase, .recordRender, .recordAffect, .saveFrameAudit,
             .setLedgerAttribute, .lockLedgerAttribute, .removeLedgerAttribute,
             .attachSong, .copyProjectFile, .extractScene3dPovs,

@@ -292,6 +292,8 @@ final class GenerationService {
                 )
                 onFailure?()
             }
+            do { try authorization.batchItem?.settle(editor: editor) }
+            catch { Log.generation.error("could not settle generation batch: \(error.localizedDescription)") }
         }
         generationTasks[primaryId] = task
 
@@ -303,6 +305,88 @@ final class GenerationService {
         guard let task = generationTasks[placeholderId] else { return false }
         task.cancel()
         return true
+    }
+
+    func waitForGeneration(placeholderId: String) async {
+        await generationTasks[placeholderId]?.value
+    }
+
+    func resumeBatchJob(_ item: GenerationBatchAuthorization, editor: EditorViewModel) async throws {
+        guard let home = editor.workingRoot else { throw GenerationRequestError.storage("The batch project is closed.") }
+        let scope = try GenerationProjectMutationScope(projectHome: home, editor: editor)
+        let saved = try GenerationBatchStore.load(id: item.batchID, home: home)
+        guard let execution = saved.journal.executions.first(where: { $0.itemID == item.itemID }),
+              let specification = saved.batch.payload.items.first(where: { $0.id == item.itemID }),
+              let requestID = execution.providerRequestID, execution.providerRequestResumable,
+              let primaryID = execution.placeholders.first?.id else {
+            throw GenerationRequestError.gate("This interrupted request has no resumable provider receipt. It will not be submitted again.")
+        }
+        if let existing = generationTasks[primaryID] { await existing.value; return }
+        let target = specification.package.payload.target
+        guard target.transport == .api, [.fal, .runway, .marble].contains(target.provider) else {
+            throw GenerationRequestError.gate("This provider request cannot yet resume status retrieval.")
+        }
+        guard let key = ProviderKeychain.load(target.provider) else {
+            throw GenerationRequestError.gate("Restore the approved provider's key before resuming its job.")
+        }
+        var placeholders: [MediaAsset] = []
+        for entry in execution.placeholders {
+            if let existing = editor.mediaAssets.first(where: { $0.id == entry.id }) {
+                guard existing.generationInput?.spendTransactionId == execution.transactionID,
+                      existing.generationInput?.generationPackageID == specification.package.id else {
+                    throw GenerationRequestError.gate("A saved batch destination now belongs to another asset.")
+                }
+                placeholders.append(existing)
+            } else {
+                guard case .project(let path) = entry.source else { throw GenerationRequestError.storage("The batch output is not project-local.") }
+                let url = home.appendingPathComponent(path)
+                guard url.resolvingSymlinksInPath() == home.resolvingSymlinksInPath().appendingPathComponent(path) else {
+                    throw GenerationRequestError.storage("The batch output cannot traverse a symbolic link.")
+                }
+                let asset = MediaAsset(entry: entry, resolvedURL: url)
+                asset.generationStatus = .generating
+                editor.mediaAssets.append(asset)
+                placeholders.append(asset)
+            }
+        }
+        _ = try GenerationBatchStore.update(saved, editor: editor) { try $0.resumeRecordedJob(itemID: item.itemID) }
+        let task = Task { @MainActor [weak self, weak editor] in
+            guard let self, let editor else { return }
+            defer { self.generationTasks.removeValue(forKey: primaryID) }
+            do {
+                let urls: [String]
+                switch target.provider {
+                case .fal:
+                    let data = try await FalClient(apiKey: key).result(endpoint: target.endpoint, requestId: requestID)
+                    let shape: CatalogEntry.ResponseShape = specification.package.payload.modality == "image" ? .images : .video
+                    urls = FalOutput.urls(from: data, shape: shape)
+                case .runway: urls = try await RunwayClient(apiKey: key).output(taskId: requestID)
+                case .marble: urls = MarbleOutput.urls(from: try await MarbleClient(apiKey: key).result(operationId: requestID))
+                default: throw GenerationRequestError.gate("The saved provider route has no status adapter.")
+                }
+                try scope.requireCurrent(editor: editor)
+                await self.finalizeSuccess(job: .init(_id: requestID, status: .succeeded, resultUrls: urls,
+                    errorMessage: nil, costCredits: nil, completedAt: nil), placeholders: placeholders,
+                    editor: editor, mutationScope: scope, onComplete: nil, onFailure: nil)
+                if let transaction = execution.transactionID,
+                   !editor.generationLog.spendEvents.contains(where: { $0.transactionId == transaction && $0.kind == .charged }) {
+                    let reserved = editor.generationLog.spendEvents.first { $0.transactionId == transaction && $0.kind == .reserved }?.money
+                    let recoveredAuthorization = GenerationAuthorization(transactionId: transaction, target: target,
+                        estimate: reserved, projectMutationScope: scope, generationPackage: specification.package, batchItem: item)
+                    if target.provider == .fal {
+                        if let billed = try? await ProviderMoneyClient.shared.falCharge(requestId: requestID, endpoint: target.endpoint, apiKey: key) {
+                            self.markCharged(authorization: recoveredAuthorization, money: billed, editor: editor)
+                        }
+                    } else { self.markCharged(authorization: recoveredAuthorization, editor: editor) }
+                }
+            } catch {
+                self.failJob(placeholders, error.localizedDescription, nil)
+            }
+            do { try item.settle(editor: editor) }
+            catch { Log.generation.error("could not settle resumed batch: \(error.localizedDescription)") }
+        }
+        generationTasks[primaryID] = task
+        await task.value
     }
 
     private static func cleanupTempFiles(_ urls: [URL]) {
@@ -709,6 +793,11 @@ final class GenerationService {
         onFailure: (@MainActor () -> Void)?
     ) async {
         let runId = String(UUID().uuidString.prefix(8))
+        do { try authorization.batchItem?.consume(authorization: authorization, editor: editor) }
+        catch {
+            return failBeforeSubmission(placeholders, error.localizedDescription,
+                authorization: authorization, editor: editor, onFailure: onFailure)
+        }
         Log.generation.notice(
             "run \(runId) start model=\(genInput.model) provider=\(target.provider.rawValue) "
                 + "transport=\(target.transport.rawValue) endpoint=\(target.endpoint) "
@@ -884,6 +973,7 @@ final class GenerationService {
     private func markSubmitted(
         authorization: GenerationAuthorization,
         providerRequestId: String,
+        resumable: Bool = false,
         editor: EditorViewModel
     ) {
         do {
@@ -891,8 +981,13 @@ final class GenerationService {
                 authorization: authorization,
                 kind: .submitted,
                 providerRequestId: providerRequestId,
+                providerRequestResumable: resumable,
                 money: authorization.estimate
             )
+            if let transactionID = authorization.transactionId {
+                try authorization.batchItem?.recordProviderRequest(transactionID: transactionID,
+                    requestID: providerRequestId, resumable: resumable, editor: editor)
+            }
         } catch {
             Log.generation.error(
                 "could not record provider request \(providerRequestId): \(error.localizedDescription)"
@@ -945,6 +1040,7 @@ final class GenerationService {
             markSubmitted(
                 authorization: authorization,
                 providerRequestId: submittedId,
+                resumable: true,
                 editor: editor
             )
             let outputData = try await client.result(endpoint: endpoint, requestId: submittedId)
@@ -1259,6 +1355,7 @@ final class GenerationService {
             markSubmitted(
                 authorization: authorization,
                 providerRequestId: taskId,
+                resumable: true,
                 editor: editor
             )
             let urls = try await client.output(taskId: taskId)
@@ -1842,6 +1939,7 @@ final class GenerationService {
             markSubmitted(
                 authorization: authorization,
                 providerRequestId: submittedId,
+                resumable: true,
                 editor: editor
             )
             let outputData = try await client.result(operationId: submittedId)

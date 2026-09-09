@@ -241,3 +241,12 @@ aggregate phase approval in `show_dialog`; the gate card is that decision.
   `loaded=false` or no image model in `models`): fall back to the user supplying
   `production_design/lighting_anchor.png` themselves, or skip the anchor
   (color script + notes are enough).
+
+## Independent generation batches
+
+When several requests can execute independently, compile each one and call `prepare_generation_batch`
+with a stable requestID, a purpose for each item and its exact generation-tool arguments. All required
+approved references must already exist; dependent views or chained shots wait for their predecessors.
+The host presents one native batch approval and owns execution. Wait for its completion result, then
+read `get_generation_batches`. Inspect completed assets before staging or writing the phase artifact.
+A failed or blocked item is not a complete output and must never be silently rerun as an individual call.

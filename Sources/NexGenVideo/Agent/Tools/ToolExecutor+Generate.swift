@@ -5,11 +5,14 @@ import NexGenEngine
 @MainActor
 final class AgentPreparedGeneration {
     let package: GenerationPackageV1
+    let generation: GenerationController.PreparedGeneration?
     private let run: @MainActor () async throws -> ToolResult
     private var task: Task<ToolResult, Error>?
 
-    init(package: GenerationPackageV1, run: @escaping @MainActor () async throws -> ToolResult) {
+    init(package: GenerationPackageV1, generation: GenerationController.PreparedGeneration? = nil,
+         run: @escaping @MainActor () async throws -> ToolResult) {
         self.package = package
+        self.generation = generation
         self.run = run
     }
 
@@ -649,7 +652,7 @@ extension ToolExecutor {
     ) async throws -> AgentPreparedGeneration {
         let generation = try await GenerationController.prepare(request, editor: editor, preflight: preflight).get()
         let package = try await GenerationController.prepareReviewPackage(generation, editor: editor)
-        return AgentPreparedGeneration(package: package) {
+        return AgentPreparedGeneration(package: package, generation: generation) {
             try await self.routePreparedThroughController(generation, editor: editor, success: success)
         }
     }
@@ -761,7 +764,7 @@ extension ToolExecutor {
     // MARK: - Cost-Guard (M7) — the user's final word on paid agent renders
 
     @MainActor
-    private func withSpendApproval(
+    func withSpendApproval(
         _ editor: EditorViewModel, currentModelId: String, currentModelName: String,
         credits: Int?, actionLabel: String,
         selectionScope: SpendSelectionScope,
@@ -836,6 +839,17 @@ extension ToolExecutor {
                 noCompatibleModelReason
                     ?? "No enabled model is available through an active provider for this request. Choose a runnable model from list_models."
             )
+        }
+        if let batch = GenerationBatchPreparation.current {
+            guard let prepare else { throw ToolError("This operation cannot be included in a visual generation batch.") }
+            let value = try await prepare(editor, recommended)
+            guard value.package.payload.target == recommended.target,
+                  let references = value.generation?.references else {
+                throw ToolError("The batch item has no exact prepared inputs.")
+            }
+            try await GenerationPackageInputs.persist(package: value.package, snapshot: references, editor: editor)
+            batch.packages.append(value.package)
+            return .ok("Prepared generation package: \(value.package.id). No generation was submitted.")
         }
         guard CostGuard.needsApproval(credits: recommended.credits) else {
             do {

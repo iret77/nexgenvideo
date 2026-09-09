@@ -747,6 +747,9 @@ final class VideoProject: NSDocument {
             editorViewModel.seedGenerationLogFromAssets()
         }
         editorViewModel.searchIndex.projectOpened()
+        if !editorViewModel.recoveredUnsavedWork {
+            editorViewModel.generationBatchCoordinator.resume(editor: editorViewModel)
+        }
         editorViewModel.updateTelemetryContext()
         Telemetry.breadcrumb(
             "Project opened",

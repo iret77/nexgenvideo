@@ -50,6 +50,7 @@ enum PipelineAgentContract {
         "production_design": [
             .compilePrompt,
             .generateImage,
+            .prepareGenerationBatch,
             .importMedia,
             .upscaleMedia,
             .copyProjectFile,
@@ -60,6 +61,7 @@ enum PipelineAgentContract {
         "bible": [
             .compilePrompt,
             .generateImage,
+            .prepareGenerationBatch,
             .importMedia,
             .upscaleMedia,
             .copyProjectFile,
@@ -73,6 +75,7 @@ enum PipelineAgentContract {
         "frames": [
             .compilePrompt,
             .generateImage,
+            .prepareGenerationBatch,
             .importMedia,
             .upscaleMedia,
             .cropToAspect,
@@ -84,6 +87,7 @@ enum PipelineAgentContract {
             .compilePrompt,
             .generateVideo,
             .generateImage,
+            .prepareGenerationBatch,
             .generateAudio,
             .importMedia,
             .upscaleMedia,
@@ -95,6 +99,7 @@ enum PipelineAgentContract {
         .compilePrompt,
         .generateVideo,
         .generateImage,
+        .prepareGenerationBatch,
         .generateAudio,
         .upscaleMedia,
         .importMedia,
@@ -109,6 +114,7 @@ enum PipelineAgentContract {
     static let postPipelineUtilityCapabilities: Set<ToolName> = [
         .compilePrompt,
         .generateImage,
+        .prepareGenerationBatch,
         .importMedia,
     ]
 
@@ -116,11 +122,13 @@ enum PipelineAgentContract {
         "production_design": [
             .compilePrompt,
             .generateImage,
+            .prepareGenerationBatch,
             .copyProjectFile,
         ],
         "bible": [
             .compilePrompt,
             .generateImage,
+            .prepareGenerationBatch,
             .importMedia,
             .copyProjectFile,
             .extractScene3dPovs,
@@ -128,6 +136,7 @@ enum PipelineAgentContract {
         "frames": [
             .compilePrompt,
             .generateImage,
+            .prepareGenerationBatch,
             .getFramesManifest,
             .nextRenderShot,
             .recordRender,
@@ -137,6 +146,7 @@ enum PipelineAgentContract {
             .compilePrompt,
             .generateVideo,
             .getFramesManifest,
+            .prepareGenerationBatch,
             .nextRenderShot,
             .recordRender,
             .assembleTimeline,

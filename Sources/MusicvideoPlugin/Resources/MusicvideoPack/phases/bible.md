@@ -444,3 +444,12 @@ granular, while the gate card owns the phase decision.
 - **A generated sheet does not pass user review:** stay in the approval
   loop — regenerate, optionally with a hint folded into the prompt;
   never push an unapproved sheet forward.
+
+## Independent generation batches
+
+When several requests can execute independently, compile each one and call `prepare_generation_batch`
+with a stable requestID, a purpose for each item and its exact generation-tool arguments. All required
+approved references must already exist; dependent views or chained shots wait for their predecessors.
+The host presents one native batch approval and owns execution. Wait for its completion result, then
+read `get_generation_batches`. Inspect completed assets before staging or writing the phase artifact.
+A failed or blocked item is not a complete output and must never be silently rerun as an individual call.

@@ -415,6 +415,10 @@ final class ToolExecutor {
         case .generateImage:
             await CatalogDiscovery.ensureCurrent()
             return try await generate(editor, args, type: .image, origin: origin)
+        case .prepareGenerationBatch:
+            return try await prepareGenerationBatch(editor, args, origin: origin)
+        case .getGenerationBatches:
+            return try getGenerationBatches(editor, args)
         case .generateAudio:
             await CatalogDiscovery.ensureCurrent()
             return try await generateAudio(editor, args, origin: origin)

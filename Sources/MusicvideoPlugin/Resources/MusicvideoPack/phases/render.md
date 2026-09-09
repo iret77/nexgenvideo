@@ -455,3 +455,12 @@ budget guard exclude the shot.
 
 **Reporting:** see step 11 — list the still-only shots at the end so the
 user knows which stills to animate.
+
+## Independent generation batches
+
+When several requests can execute independently, compile each one and call `prepare_generation_batch`
+with a stable requestID, a purpose for each item and its exact generation-tool arguments. All required
+approved references must already exist; dependent views or chained shots wait for their predecessors.
+The host presents one native batch approval and owns execution. Wait for its completion result, then
+read `get_generation_batches`. Inspect completed assets before staging or writing the phase artifact.
+A failed or blocked item is not a complete output and must never be silently rerun as an individual call.

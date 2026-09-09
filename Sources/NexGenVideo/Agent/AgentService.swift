@@ -324,6 +324,7 @@ final class AgentService {
     ) throws {
         guard pendingDialog == nil,
               pendingSpendApproval == nil,
+              editor?.generationBatchCoordinator.pending == nil,
               pendingSpendOperation == nil,
               pendingGateApproval == nil,
               nativeGateMutationID == nil else {
@@ -1270,6 +1271,7 @@ final class AgentService {
     var isComposerBlocked: Bool {
         pendingDialog != nil
             || pendingSpendApproval != nil
+            || editor?.generationBatchCoordinator.pending != nil
             || currentSpendFollowUp != nil
             || pendingGateApproval != nil
             || currentGateFollowUp != nil
@@ -1307,6 +1309,32 @@ final class AgentService {
 
     @ObservationIgnored
     private var spendPreparationID: UUID?
+
+    @ObservationIgnored
+    private var generationBatchOrigins: [String: (origin: ToolCallOrigin, marker: String)] = [:]
+
+    func presentGenerationBatch(_ batch: GenerationBatch, origin: ToolCallOrigin, editor: EditorViewModel) throws -> ToolResult {
+        if case .externalMCP = origin { throw ToolError("Start batch approval from an in-app chat.") }
+        guard !isComposerBlocked, editor.generationBatchCoordinator.pending == nil else {
+            throw ToolError("Finish the current native decision before reviewing a generation batch.")
+        }
+        let marker = "Generation batch \(batch.id) is waiting for native approval and completion."
+        generationBatchOrigins[batch.id] = (origin, marker)
+        editor.generationBatchCoordinator.pending = batch
+        suspendToolCalls(from: origin)
+        return .suspended(marker)
+    }
+
+    func replaceGenerationBatchPresentation(oldID: String, newID: String) {
+        if let origin = generationBatchOrigins.removeValue(forKey: oldID) { generationBatchOrigins[newID] = origin }
+    }
+
+    func completeGenerationBatch(_ batchID: String, message: String) {
+        guard let stored = generationBatchOrigins.removeValue(forKey: batchID) else { return }
+        let result = ToolResult.ok(message)
+        replacePendingSpendToolResult(result, origin: stored.origin, marker: stored.marker)
+        enqueueSpendFollowUp(message, origin: stored.origin, result: result)
+    }
 
     @ObservationIgnored
     private var pendingSpendFollowUps: [SpendFollowUp] = []
@@ -1389,7 +1417,8 @@ final class AgentService {
         guard pendingGateApproval == nil else {
             throw ToolError("A gate approval is already waiting for the user.")
         }
-        guard pendingSpendOperation == nil, pendingSpendApproval == nil else {
+        guard pendingSpendOperation == nil, pendingSpendApproval == nil,
+              editor.generationBatchCoordinator.pending == nil else {
             throw ToolError("A spend approval is already waiting for the user.")
         }
         guard runningSpendTask == nil else {
@@ -1780,13 +1809,14 @@ final class AgentService {
 
     private func replacePendingSpendToolResult(
         _ result: ToolResult,
-        origin: ToolCallOrigin
+        origin: ToolCallOrigin,
+        marker: String = AgentService.spendSuspensionText
     ) {
         guard let sessionID = origin.chatSessionID else { return }
         if sessionID == currentSessionId {
-            guard Self.replacePendingSpendToolResult(result, in: &messages) else { return }
+            guard Self.replacePendingSpendToolResult(result, in: &messages, marker: marker) else { return }
             _claudeRuntime?.replaceToolResult(
-                containingText: Self.spendSuspensionText,
+                containingText: marker,
                 with: result
             )
             syncMessagesIntoCurrentSession()
@@ -1796,7 +1826,8 @@ final class AgentService {
         guard let sessionIndex = sessions.firstIndex(where: { $0.id == sessionID }),
               Self.replacePendingSpendToolResult(
                   result,
-                  in: &sessions[sessionIndex].messages
+                  in: &sessions[sessionIndex].messages,
+                  marker: marker
               ) else { return }
         sessions[sessionIndex].updatedAt = Date()
         onSessionsChanged?()
@@ -1804,7 +1835,8 @@ final class AgentService {
 
     private static func replacePendingSpendToolResult(
         _ result: ToolResult,
-        in messages: inout [AgentMessage]
+        in messages: inout [AgentMessage],
+        marker: String = AgentService.spendSuspensionText
     ) -> Bool {
         for messageIndex in messages.indices.reversed() {
             for blockIndex in messages[messageIndex].blocks.indices.reversed() {
@@ -1812,7 +1844,7 @@ final class AgentService {
                     messages[messageIndex].blocks[blockIndex],
                     content.contains(where: {
                         guard case .text(let text) = $0 else { return false }
-                        return text == Self.spendSuspensionText
+                        return text == marker
                     })
                 else { continue }
                 messages[messageIndex].blocks[blockIndex] = .toolResult(
@@ -1996,6 +2028,7 @@ final class AgentService {
         guard pendingDialog == nil,
               pendingSpendApproval == nil,
               pendingSpendOperation == nil,
+              editor?.generationBatchCoordinator.pending == nil,
               nativeGateMutationID == nil else {
             throw ToolError(
                 "The composer already has a host-owned decision. Do not replace or duplicate it; stop and wait for the user."
@@ -2411,11 +2444,16 @@ final class AgentService {
             let owner = pendingSpendOperation?.origin.chatSessionID
             if owner == id || (owner == nil && isCurrent) { return .actionRequired }
         }
+        if let batch = editor?.generationBatchCoordinator.pending {
+            let owner = generationBatchOrigins[batch.id]?.origin.chatSessionID
+            if owner == id || (owner == nil && isCurrent) { return .actionRequired }
+        }
         if let approval = pendingGateApproval,
            approval.sessionId == id || (approval.sessionId == nil && isCurrent) {
             return .actionRequired
         }
         if (isCurrent && isStreaming)
+            || generationBatchOrigins.values.contains(where: { $0.origin.chatSessionID == id })
             || runningSpendStatus?.chatSessionID == id
             || (isCurrent && runningSpendStatus?.chatSessionID == nil
                 && runningSpendStatus != nil) {
