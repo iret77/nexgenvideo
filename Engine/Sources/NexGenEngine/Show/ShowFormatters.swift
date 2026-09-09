@@ -4,10 +4,6 @@ import Foundation
 /// an approval gate. Port of `nexgen_engine/show/formatters.py`.
 enum ShowFormatters {
 
-    /// Regex-consistent with the dispatcher's still-only discipline: a bare
-    /// substring match would flag `xstill_only_approved`. Port of `_STILL_ONLY_RE`.
-    private static let stillOnlyPattern = #"\bstill_only_approved\s*:"#
-
     static func shorten(_ text: String, _ length: Int = 80) -> String {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\n", with: " ")
         return t.count <= length ? t : String(t.prefix(length - 1)) + "…"
@@ -102,6 +98,11 @@ enum ShowFormatters {
         lines.append("---")
         lines.append("")
         lines.append(t.bodyMarkdown.trimmingCharacters(in: .whitespacesAndNewlines))
+        do {
+            if let plan = try StoryCausalityStoreV1.history(dataRoot: dataRoot, through: t.meta.version) {
+                lines += ["", plan.reviewMarkdown]
+            }
+        } catch { lines += ["", "Story causality unavailable: \(error.localizedDescription)"] }
         if let notes = t.meta.notes, !notes.isEmpty {
             lines.append("")
             lines.append("---")
@@ -207,6 +208,21 @@ enum ShowFormatters {
         guard let sl = (try? loadShotlist(dataRoot: dataRoot)) ?? nil else {
             return "_No shotlist/current.yaml exists._"
         }
+        let executionPlanURL = dataRoot.appendingPathComponent(
+            PipelineLayout.executionPlanFile
+        )
+        let deliveryModes: [String: ShotDeliveryModeV1] = {
+            guard let data = try? Data(contentsOf: executionPlanURL),
+                  let plan = try? ExecutionPlanCanonicalCodec.decodePlan(data) else {
+                return [:]
+            }
+            return Dictionary(uniqueKeysWithValues: plan.shots.compactMap {
+                guard let mode = ShotDeliveryModeResolverV1.resolve($0) else {
+                    return nil
+                }
+                return ($0.id, mode)
+            })
+        }()
         var lines: [String] = []
         lines.append("## Shotlist · \(sl.project) · current · mode=\(sl.mode.rawValue)")
         lines.append("")
@@ -278,12 +294,11 @@ enum ShowFormatters {
                 }
                 if shot.redo { flags.append("⟳ redo") }
                 if shot.chainWithPreviousEnd { flags.append("⛓ chain") }
+                if deliveryModes[shot.id] == .timelineAnimatedStill {
+                    flags.append("🖼 animated still")
+                }
                 if let plan = shot.productionPlan {
                     flags.append("renderability: \(plan.renderability.rawValue)")
-                }
-                let notesStr = shot.notes ?? ""
-                if notesStr.range(of: stillOnlyPattern, options: [.regularExpression, .caseInsensitive]) != nil {
-                    flags.append("🖼 still-only (NLE)")
                 }
                 let flagStr = flags.isEmpty ? "" : " · " + flags.joined(separator: " · ")
                 lines.append(

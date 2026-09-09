@@ -24,6 +24,7 @@ struct VideoGenerationSubmission {
         projectURL: URL?,
         editor: EditorViewModel,
         authorization: GenerationAuthorization,
+        preparedParameters: PreparedProviderParameters? = nil,
         onComplete: (@MainActor (MediaAsset) -> Void)? = nil,
         onFailure: (@MainActor () -> Void)? = nil
     ) -> String {
@@ -36,6 +37,7 @@ struct VideoGenerationSubmission {
             name: name,
             folderId: folderId,
             buildParams: buildParams,
+            preparedParameters: preparedParameters,
             snapshotRefs: snapshotRefs,
             preprocessRef: preprocessRef,
             resolvedVideoCapabilities: resolvedVideoCapabilities,

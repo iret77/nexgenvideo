@@ -62,6 +62,10 @@ struct ReviewPanelView: View {
             content
         } else {
             VStack(spacing: AppTheme.Spacing.none) {
+                ProductionStyleReviewView()
+                FrameFindingsReviewView()
+                TakeReviewView()
+                SequenceReviewView()
                 content
                     .frame(minHeight: AppTheme.Spacing.none)
                     .clipped()

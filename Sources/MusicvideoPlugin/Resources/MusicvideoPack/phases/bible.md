@@ -15,10 +15,10 @@ only the references the storyboard actually needs. Per entity
 identity anchors (reference images and/or generated multi-view sheets),
 the world-zone inventory per location, and the global look definition.
 
-The bible sheets are produced with the host's own generation: each sheet
-is a `generate_image` call whose prompt the agent composes from the bible
-entity + brief style. The hard reasoning (which view, which anchor
-chain) is yours; the pixels come from the host.
+Each demanded Bible view is satisfied by an exact user-confirmed Canon image
+or by the host's own generation. Generate only a view that no confirmed image
+already satisfies. The hard reasoning (which view and which anchor chain) is
+yours; the host records the source class and exact bytes.
 
 ## Inputs
 
@@ -35,8 +35,9 @@ chain) is yours; the pixels come from the host.
 ## Outputs & gate
 
 - `bible/bible.yaml` — written only through `write_bible`.
-- Generated sheet PNGs under `bible/<id>/<view>.png`, copied user
-  anchors under `bible/refs/<id>/<name>.png`, optional Scene3D
+- Generated or explicitly confirmed sheet images under
+  `bible/<id>/<view>.png`, copied supporting user anchors under
+  `bible/refs/<id>/<name>.png`, optional Scene3D
   panorama anchors under `bible/<id>/scene3d/`.
 - Gate request: call `approve_gate(project_dir, "bible")` directly. It
   surfaces the approval to the user and writes only after
@@ -58,8 +59,9 @@ sheets (`generate_image` calls cost real money):
     missing sheets, regenerate a single entity, or rebuild from
     scratch?"
     - `continue_to_gate` → call `approve_gate` directly.
-    - `generate_missing` → only the sheets that are missing per the
-      storyboard demand. Do NOT overwrite existing sheet files.
+    - `generate_missing` → first adopt matching confirmed views, then
+      generate only demand that remains missing. Do NOT overwrite existing
+      sheet files.
     - `single_entity` → user picks entity + view, regenerate only that.
     - `rebuild` → keep the old sheet files and run a fresh flow through
       `write_bible`; the host archives the previous manifest before
@@ -89,7 +91,6 @@ sheet:
 | `Location.view_purpose` | dict[str, str] — description per view | |
 | `Location.zones` | list of zones `{id, description, status, bible_assets, established_by_shot}` — world-zone inventory (clean/dirty/undefined/safe) | |
 | `Location.proportion_anchor_shot` | ID of an approved shot used as scale anchor | may be `None` pre-shotlist |
-| `*.hard_recognition_trait` | recommended for Characters/Ensembles | one concrete recognition feature |
 
 **Anchor requirement** (schema-enforced): every character / ensemble /
 location needs ≥1 entry in `reference_images` OR ≥1 in `sheets`.
@@ -112,13 +113,10 @@ location needs ≥1 entry in `reference_images` OR ≥1 in `sheets`.
    the field may still be `None`; it is updated at the first frame
    approve.
 
-**hard_recognition_trait** — per character/ensemble one concrete, hard
-recognition feature: silver earring on the left, wrist tattoo,
-characteristic glasses, yellow cap. The frame builder appends it to
-every identity-lock prompt; it demonstrably reduces identity drift
-across multi-shot sequences. Ask the user explicitly per character; if
-you generate it yourself from the visual_prompt, clearly mark it as
-"suggestion, please confirm / refine".
+Do not ask for a single “recognition trait”. Canonical approved character
+images are the visual identity source, selected by required view and visible
+identity task. Old projects may contain `hard_recognition_trait`; treat it as
+legacy descriptive metadata and never claim that it secures identity.
 
 ### 3. Demand analysis — the storyboard demand is the truth (story-first)
 
@@ -127,8 +125,9 @@ views must be generated, based on `setting_hint` +
 `location_view_request` across all steps. Per location slug list the
 demanded views — that is your generation plan for `Location.sheets`.
 
-You **generate only what the storyboard needs**. No speculative sheets
-("might be needed"). No missing sheets that a step references. If the
+You **resolve only what the storyboard needs**. Reuse an exact confirmed Canon
+view when available and generate only the remaining gaps. No speculative
+sheets ("might be needed"). No missing sheets that a step references. If the
 storyboard appears contradictory (12 views per location), call
 `rewind(target_phase="storyboard")` and correct it through the
 Storyboard writer before returning. Never patch an approved Storyboard
@@ -185,23 +184,33 @@ reference on every sheet generation.
 ### 6. Import review for identity anchors
 
 `list_project_files(subdir: "import/characters/<id>")` for every entity.
-- If user refs exist: show them inline via `Read`. `show_dialog`
-  "Which image is the identity anchor for <id>?" — copy the selected
-  ones with `copy_project_file(from: "import/characters/<id>/<name>",
-  to: "bible/refs/<id>/<name>.png")` and add them to `reference_images`.
+- These paths came from the host-owned prepared-character/location intake and
+  carry exact user-confirmation receipts. Inspect them. When one already is a
+  demanded canonical view, copy it with
+  `copy_project_file(from: "import/characters/<id>/<name>",
+  to: "bible/<id>/<view>.png")` and put it in `sheets`; the copy preserves the
+  confirmation receipt. Other selected images remain supporting
+  `reference_images` under `bible/refs/`.
 - If there are no user refs: skip — the `sheets` must provide the
   anchor.
 
-### 7. Sheet generation per demand — "dirty → canonical"
+### 7. Resolve each demanded view
 
-**Core principle:** `import/` is the dirty user source (multiple
-uploads, possibly inconsistent: different time of day, different
-outfit, different angle). `bible/` holds the **canonical
-consolidation**: one sheet set per entity that condenses the variance
-of the uploads into a single binding depiction. Sheets are **newly
-generated** images, never mirrors of the uploads.
+`import/` can contain multiple confirmed images with different views or real
+wardrobe/location states. `bible/` names the selected canonical view set. A
+confirmed source can be copied byte-for-byte into that set. Differences that
+represent a real identity variant must use the versioned variant/inheritance
+contract; inconsistent candidates are never silently blended.
 
-#### The generation mechanic (per required view)
+For every demanded view, use this order:
+
+1. Reuse a current existing Bible view with valid provenance.
+2. Adopt a matching user-confirmed prepared image with
+   `copy_project_file`; the tool reports
+   `confirmed_identity_provenance=true`.
+3. Generate the view only when neither source exists.
+
+#### The generation mechanic (only for a missing required view)
 
 One compiled `generate_image` call per required view. You compose the
 intent; the host compiles and generates it, then stages the result at the
@@ -257,21 +266,25 @@ primary anchor:
 For locations and ensembles analogously: wide first → detail/alt-angle
 with the wide as primary anchor.
 
-#### With multiple uploads → enforce variant B
+#### Multiple uploads and real variants
 
-If `import/characters/<id>/` contains ≥ 2 images, they are almost
-always slightly inconsistent (different outfits, lighting situations,
-hairstyles). In that case:
+Inspect multiple confirmed uploads before assigning them. Different angles of
+the same appearance become views of one entity. A real outfit or persistent
+state change becomes a separate Bible entity and an `identity_variants` entry
+in `write_bible`:
 
-- **Variant B as the default** (everything is generated; uploads serve
-  exclusively as generation anchors via `referenceMediaRefs`, not as
-  bible refs).
-- `show_dialog` with the explicit hint: "Found 2+ uploads for
-  `<id>` — they are probably not 100% consistent. Variant B (everything
-  generated, canonically consolidated) is the default. Only choose
-  variant A if all uploads already show the character **identically**."
-- With only 1 upload: variant A remains a valid choice; the default
-  depends on `brief.visual_medium`.
+- `base_entity_id` names the existing entity.
+- `variant_entity_id` names the derived entity used by Storyboard and Shot List.
+- `changed_attributes` lists every actual change. Every other attribute must
+  remain byte-for-byte equal to the base entity.
+- `inherited_identity_paths` names the base Canon images whose identity the
+  variant inherits; the derived entity still owns its own proven sheets.
+
+The host versions and validates this inheritance artifact, rejects undeclared
+attribute drift, missing base anchors, cycles, or a variant without distinct
+canonical sheets, and includes it in downstream lineage. Do not collapse two
+real outfits into one blended depiction and do not ask for an arbitrary single
+recognition trait.
 
 #### Style imports as sheet anchors for locations (NOT as bible refs)
 
@@ -406,11 +419,13 @@ granular, while the gate card owns the phase decision.
 - `visual_prompt` non-empty for every entity.
 - Sheet generation runs exclusively through the host's `nexgen`
   `compile_prompt` → `generate_image` path. Stage each ready sheet with
-  `copy_project_file(media=...)`; a sheet without current host-recorded
-  prompt/model/hash provenance cannot pass the Bible gate. Reference
-  anchors are media assets — import the on-disk PNG via `import_media`
-  first, then pass the mediaRef in `referenceMediaRefs`. Never guess
-  provider/key availability; check via
+  `copy_project_file(media=...)`. A demanded sheet needs either current
+  host-recorded prompt/model/hash provenance or an exact host-recorded user
+  confirmation carried forward by `copy_project_file(from=...)`; a library
+  import by itself is not confirmation. Generation reference anchors are
+  media assets — import the on-disk PNG via `import_media` first, then pass
+  the mediaRef in `referenceMediaRefs`. Never guess provider/key availability;
+  check via
   `list_models` (`loaded=true` + the model present in `models`).
 - Scene3D (`marble/marble-1.1` panorama) is **optional** — the flat
   per-view sheets are the baseline. When you do use it, cut the views
@@ -444,3 +459,12 @@ granular, while the gate card owns the phase decision.
 - **A generated sheet does not pass user review:** stay in the approval
   loop — regenerate, optionally with a hint folded into the prompt;
   never push an unapproved sheet forward.
+
+## Independent generation batches
+
+When several requests can execute independently, compile each one and call `prepare_generation_batch`
+with a stable requestID, a purpose for each item and its exact generation-tool arguments. All required
+approved references must already exist; dependent views or chained shots wait for their predecessors.
+The host presents one native batch approval and owns execution. Wait for its completion result, then
+read `get_generation_batches`. Inspect completed assets before staging or writing the phase artifact.
+A failed or blocked item is not a complete output and must never be silently rerun as an individual call.

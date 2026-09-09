@@ -1,10 +1,10 @@
 {
   "schemaVersion": "creative-library.v1",
   "id": "continuity-and-coverage",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "applicability": {
     "packIDs": [],
-    "phases": ["production_design", "storyboard", "bible", "shotlist", "review", "assembly"],
+    "phases": ["production_design", "storyboard", "bible", "shotlist", "review", "assembly", "render"],
     "intentTags": ["continuity", "coverage", "dialogue", "spatial-clarity"],
     "activeProfileIDs": []
   },
@@ -22,7 +22,7 @@
     {
       "id": "axis-and-eyeline-lock",
       "title": "Axis and eyeline lock",
-      "applicability": {"packIDs": [], "phases": ["storyboard", "shotlist", "review"], "intentTags": ["dialogue", "spatial-clarity"], "activeProfileIDs": []},
+      "applicability": {"packIDs": [], "phases": ["storyboard", "shotlist", "review", "render"], "intentTags": ["dialogue", "spatial-clarity"], "activeProfileIDs": []},
       "inputs": [{"role": "blocking_map", "purpose": "Subject positions, look directions, and the established line of action.", "required": true}],
       "outputIntent": "Preserve readable look direction and screen direction across cuts.",
       "guidance": ["Name the axis from world geometry and bind each setup to one side.", "If the axis changes, show the crossing or re-establish geography before the next reverse."],
@@ -32,7 +32,7 @@
     {
       "id": "continuity-state-ledger",
       "title": "Continuity state ledger",
-      "applicability": {"packIDs": [], "phases": ["bible", "shotlist", "review"], "intentTags": ["continuity"], "activeProfileIDs": []},
+      "applicability": {"packIDs": [], "phases": ["bible", "shotlist", "review", "render"], "intentTags": ["continuity"], "activeProfileIDs": []},
       "inputs": [{"role": "ordered_shots", "purpose": "Shots in story order with their approved project references.", "required": true}],
       "outputIntent": "Track state changes independently from generation order.",
       "guidance": ["Record identity state, wardrobe, props, weather, time, light direction, screen direction, and recent emotional context per shot.", "Represent a persistent change with a new approved state asset rather than an adjective."],
@@ -42,7 +42,7 @@
     {
       "id": "match-action-coverage",
       "title": "Match-action coverage",
-      "applicability": {"packIDs": [], "phases": ["storyboard", "shotlist", "assembly"], "intentTags": ["continuity", "editing"], "activeProfileIDs": []},
+      "applicability": {"packIDs": [], "phases": ["storyboard", "shotlist", "assembly", "render"], "intentTags": ["continuity", "editing"], "activeProfileIDs": []},
       "inputs": [{"role": "transition_action", "purpose": "The approved motion or gaze that crosses the edit.", "required": true}],
       "outputIntent": "Bind adjacent shots through a shared action state or attention cue.",
       "guidance": ["Declare the outgoing and incoming state around the cut.", "Use inserts or reactions when exact continuous motion is less reliable than the story beat."],

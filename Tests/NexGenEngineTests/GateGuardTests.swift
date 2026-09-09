@@ -8,6 +8,18 @@ import Testing
 /// stops the agent from advancing a phase whose real artifact (measured beats/downbeats) is missing.
 @Suite("Hard gates")
 struct GateGuardTests {
+    private struct ExecutionPlanPublication: Codable {
+        let schema: String
+        let contextSHA256: String
+        let planSHA256: String
+
+        private enum CodingKeys: String, CodingKey {
+            case schema
+            case contextSHA256 = "context_sha256"
+            case planSHA256 = "plan_sha256"
+        }
+    }
+
     private func tempRoot() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("gate-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root.appendingPathComponent("audio"), withIntermediateDirectories: true)
@@ -407,6 +419,216 @@ struct GateGuardTests {
         )
     }
 
+    @discardableResult
+    private func saveShotlistWithExecutionPlan(
+        _ shotlist: Shotlist,
+        to dataRoot: URL,
+        version: Int? = nil,
+        stillShotIDs: Set<String> = []
+    ) throws -> URL {
+        let shotlistURL = try saveShotlist(
+            shotlist,
+            to: dataRoot,
+            version: version
+        )
+        var media: [ProjectMediaReferenceV1] = []
+        var sourceAssetIDs: [String: String] = [:]
+        for shot in shotlist.shots {
+            guard let sourcePath = shot.sourcePath else { continue }
+            let sourceURL = try ProjectLocalFile.resolve(
+                sourcePath,
+                dataRoot: dataRoot
+            )
+            let sourceAssetID = "source-\(shot.id)"
+            sourceAssetIDs[shot.id] = sourceAssetID
+            media.append(
+                ProjectMediaReferenceV1(
+                    id: sourceAssetID,
+                    role: "core.project-media",
+                    path: sourcePath,
+                    sha256: try FileDigest.sha256(of: sourceURL)
+                )
+            )
+        }
+        let context = ProjectCreativeContextV1(
+            projectID: shotlist.project,
+            artifacts: [],
+            media: media
+        )
+        let contextData = try ExecutionPlanCanonicalCodec.encode(context)
+        let executionShots = shotlist.shots.map { shot in
+            let sourceMode: ExecutionSourceModeV1
+            switch shot.sourceMode {
+            case .generated:
+                sourceMode = .generated
+            case .imported:
+                sourceMode = .imported
+            case .aiEnhanced:
+                sourceMode = .aiEnhanced
+            }
+            let requirement: GenerationRequirementV1?
+            if sourceMode == .imported {
+                requirement = nil
+            } else if stillShotIDs.contains(shot.id) {
+                requirement = GenerationRequirementV1(
+                    modalityID: "image",
+                    modeIDs: [
+                        ShotDeliveryModeResolverV1.timelineAnimatedStillModeID,
+                    ],
+                    visibleEntityCount: 0,
+                    requiresOutputAudio: false
+                )
+            } else {
+                requirement = GenerationRequirementV1(
+                    modalityID: "video",
+                    modeIDs: ["video_generation"],
+                    visibleEntityCount: 0,
+                    sourceVideoAssetID: sourceMode == .aiEnhanced
+                        ? sourceAssetIDs[shot.id] : nil,
+                    duration: RequestedDurationV1(
+                        preferredSeconds: shot.durationS
+                    ),
+                    requiresOutputAudio: false
+                )
+            }
+            return ExecutionShotV1(
+                id: shot.id,
+                sourceMode: sourceMode,
+                sourceAssetID: sourceAssetIDs[shot.id],
+                startState: ExecutionStateV1(summary: "Opening state for \(shot.id)."),
+                endState: ExecutionStateV1(summary: "Closing state for \(shot.id)."),
+                primaryAction: shot.productionPlan?.primaryAction ?? shot.description,
+                camera: ExecutionCameraPlanV1(
+                    movementID: shot.productionPlan?.cameraMovement.rawValue ?? "static"
+                ),
+                continuityLocks: shot.productionPlan?.continuityLocks ?? [],
+                renderability: .green,
+                acceptance: [
+                    ExecutionAcceptanceCriterionV1(
+                        id: "accept-\(shot.id)",
+                        requirement: "The output matches the approved shot.",
+                        severity: "required"
+                    ),
+                ],
+                generationRequirement: requirement
+            )
+        }
+        let plan = ExecutionPlanV1(
+            id: "test-execution-plan",
+            projectID: shotlist.project,
+            creativeContext: CanonicalArtifactReferenceV1(
+                id: ExecutionPlanV1.creativeContextArtifactID,
+                role: ExecutionPlanV1.creativeContextArtifactRole,
+                path: PipelineLayout.creativeContextFile,
+                sha256: FileDigest.sha256(of: contextData)
+            ),
+            shots: executionShots
+        )
+        try ExecutionPlanValidator.validate(plan, against: context)
+        let planData = try ExecutionPlanCanonicalCodec.encode(plan)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let publicationData = try encoder.encode(
+            ExecutionPlanPublication(
+                schema: "execution-plan-publication/v1",
+                contextSHA256: FileDigest.sha256(of: contextData),
+                planSHA256: FileDigest.sha256(of: planData)
+            )
+        )
+        for (data, path) in [
+            (contextData, PipelineLayout.creativeContextFile),
+            (planData, PipelineLayout.executionPlanFile),
+            (publicationData, ExecutionPlanV1.publicationArtifactPath),
+        ] {
+            let url = dataRoot.appendingPathComponent(path)
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try data.write(to: url, options: .atomic)
+        }
+        return shotlistURL
+    }
+
+    private func requireRealRenderWithAssembly(dataRoot: URL) throws {
+        let shotlist = try #require(try loadShotlist(dataRoot: dataRoot))
+        let planData = try Data(
+            contentsOf: dataRoot.appendingPathComponent(
+                PipelineLayout.executionPlanFile
+            )
+        )
+        let plan = try ExecutionPlanCanonicalCodec.decodePlan(planData)
+        let contextData = try Data(
+            contentsOf: dataRoot.appendingPathComponent(
+                PipelineLayout.creativeContextFile
+            )
+        )
+        let context = try ExecutionPlanCanonicalCodec.decodeContext(contextData)
+        let executionShots = Dictionary(uniqueKeysWithValues:
+            plan.shots.map { ($0.id, $0) }
+        )
+        let media = Dictionary(uniqueKeysWithValues:
+            context.media.map { ($0.id, $0) }
+        )
+        let modes = Dictionary(uniqueKeysWithValues: plan.shots.compactMap {
+            shot -> (String, ShotDeliveryModeV1)? in
+            ShotDeliveryModeResolverV1.resolve(shot).map { (shot.id, $0) }
+        })
+        let manifest = try loadRenderManifest(dataRoot: dataRoot, phase: "final")
+        let proof = try loadRenderProofManifest(dataRoot: dataRoot, phase: "final")
+        var cursor = 0
+        let placements = try shotlist.shots.compactMap {
+            shot -> TimelineAssemblyProofV1.Placement? in
+            let output: String
+            let outputSHA256: String
+            if shot.sourceMode == .imported {
+                guard let sourceAssetID = executionShots[shot.id]?.sourceAssetID,
+                      let source = media[sourceAssetID] else { return nil }
+                output = source.path
+                outputSHA256 = source.sha256
+            } else {
+                guard let entry = manifest.entries[shot.id],
+                      let renderedOutput = entry.output,
+                      let renderedSHA256 = proof.entries[shot.id]?.outputSha256 else {
+                    return nil
+                }
+                output = renderedOutput
+                outputSHA256 = renderedSHA256
+            }
+            let durationFrames = max(1, Int((shot.durationS * 30).rounded()))
+            defer { cursor += durationFrames }
+            let isStill = modes[shot.id] == .timelineAnimatedStill
+            return TimelineAssemblyProofV1.Placement(
+                shotID: shot.id,
+                clipID: "clip-\(shot.id)",
+                sourcePath: output,
+                sourceSHA256: outputSHA256,
+                sourceKind: isStill ? .stillImage : .video,
+                startFrame: cursor,
+                durationFrames: durationFrames,
+                motion: isStill
+                    ? .init(kind: .kenBurnsZoom, startScale: 1, endScale: 1.08)
+                    : nil
+            )
+        }
+        let assembly = TimelineAssemblyProofV1(
+            project: shotlist.project,
+            phase: "final",
+            timelineFPS: 30,
+            videoTrackID: "assembly-video",
+            audioTrackID: nil,
+            generatedAt: "2026-09-08T00:00:00Z",
+            placements: placements
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        try encoder.encode(assembly).write(
+            to: dataRoot.appendingPathComponent("assembly.json"),
+            options: .atomic
+        )
+        try MusicvideoGateChecks.requireRealRender(dataRoot: dataRoot)
+    }
+
     private func brief() throws -> Brief {
         try Brief(
             project: "demo",
@@ -422,6 +644,55 @@ struct GateGuardTests {
             tone: [.quiet],
             figures: .none,
             lyricsIntegration: .metaphorical
+        )
+    }
+
+    private func writeFrameReferenceUsage(
+        root: URL,
+        shotID: String,
+        role: String,
+        outputPath: String,
+        outputSHA256: String,
+        modelID: String
+    ) throws {
+        let store = YAMLArtifactStore(dataRoot: root)
+        if (try? loadBible(dataRoot: root)) == nil {
+            try store.save(
+                try Bible(
+                    project: "demo",
+                    generated: "2026-07-26T00:00:00Z",
+                    generator: "test"
+                ),
+                to: PipelineLayout.bibleFile
+            )
+        }
+        let maxReferenceImages = 14
+        let plan = try #require(
+            MusicvideoReferencePlanProvider().planFrameReferences(
+                dataRoot: root,
+                shotID: shotID,
+                maxReferenceImages: maxReferenceImages
+            )
+        )
+        let usage = FrameReferenceUsageV1(
+            shotID: shotID,
+            role: role,
+            outputPath: outputPath,
+            outputSHA256: outputSHA256,
+            modelID: modelID,
+            generationPackageID: String(repeating: "a", count: 64),
+            plan: plan
+        )
+        let url = root.appendingPathComponent(
+            FrameReferenceUsageStoreV1.path(shotID: shotID, role: role)
+        )
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try FrameReferenceUsageStoreV1.encode(usage).write(
+            to: url,
+            options: .atomic
         )
     }
 
@@ -1385,22 +1656,22 @@ struct GateGuardTests {
         )
         try MusicvideoGateChecks.requireRealBible(dataRoot: root)
 
-        _ = try saveShotlist(try shotlist(), to: root)
+        _ = try saveShotlistWithExecutionPlan(try shotlist(), to: root)
         try MusicvideoGateChecks.requireRealShotlist(dataRoot: root)
 
-        _ = try saveShotlist(
+        _ = try saveShotlistWithExecutionPlan(
             try shotlist(generator: "shotlist-agent@write_shotlist"),
             to: root
         )
         try MusicvideoGateChecks.requireRealShotlist(dataRoot: root)
 
-        _ = try saveShotlist(
+        _ = try saveShotlistWithExecutionPlan(
             try shotlist(generator: "shotlist-agent@write_shotlist/v3"),
             to: root
         )
         try MusicvideoGateChecks.requireRealShotlist(dataRoot: root)
 
-        _ = try saveShotlist(
+        _ = try saveShotlistWithExecutionPlan(
             try shotlist(generator: Shotlist.agentWriterGenerator),
             to: root
         )
@@ -1415,7 +1686,7 @@ struct GateGuardTests {
             renderability: .green,
             continuityLocks: []
         )
-        _ = try saveShotlist(
+        _ = try saveShotlistWithExecutionPlan(
             try shotlist(
                 keyframeStrategy: .none,
                 sourceMode: .imported,
@@ -1428,7 +1699,7 @@ struct GateGuardTests {
             try MusicvideoGateChecks.requireRealShotlist(dataRoot: root)
         }
 
-        _ = try saveShotlist(
+        _ = try saveShotlistWithExecutionPlan(
             try shotlist(
                 productionPlan: plan,
                 generator: Shotlist.agentWriterGenerator
@@ -1553,6 +1824,107 @@ struct GateGuardTests {
         }
     }
 
+    @Test("bible gate accepts an explicitly confirmed existing Canon view")
+    func bibleAcceptsConfirmedCanonView() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try writePlanningStyle(root)
+        try StoryboardStore.save(
+            try Storyboard(
+                meta: try StoryboardMeta(
+                    project: "demo",
+                    version: 1,
+                    generated: "2026-07-26T00:00:00Z",
+                    summaryOneline: "The yard establishes the film."
+                ),
+                sections: [
+                    try Section(
+                        id: "intro",
+                        label: "intro",
+                        timeStart: 0,
+                        timeEnd: 12,
+                        energy: "low",
+                        function: "aufbau",
+                        steps: try storyboardSteps()
+                    ),
+                ]
+            ),
+            to: root
+        )
+        let path = "import/locations/yard/wide.png"
+        let image = root.appendingPathComponent(path)
+        try FileManager.default.createDirectory(
+            at: image.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("confirmed-canon".utf8).write(to: image)
+        try ConfirmedIdentityAssetStoreV1.recordIntake(
+            role: .character,
+            identityName: "Schoolyard",
+            identitySlug: "yard",
+            paths: [path],
+            dataRoot: root,
+            confirmedAt: "2026-07-26T00:00:00Z"
+        )
+        try YAMLArtifactStore(dataRoot: root).save(
+            try Bible(
+                project: "demo",
+                generated: "2026-07-26T00:00:00Z",
+                generator: "test",
+                look: LookGuide(style: "restrained hand-drawn animation"),
+                locations: [
+                    try Location(
+                        id: "yard",
+                        name: "Schoolyard",
+                        visualPrompt: "A quiet schoolyard at blue hour.",
+                        sheets: ["wide": path]
+                    ),
+                ]
+            ),
+            to: PipelineLayout.bibleFile
+        )
+
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealBible(dataRoot: root)
+        }
+        try ConfirmedIdentityAssetStoreV1.recordIntake(
+            role: .location,
+            identityName: "Different location",
+            identitySlug: "other-yard",
+            paths: [path],
+            dataRoot: root,
+            confirmedAt: "2026-07-26T00:00:00Z"
+        )
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealBible(dataRoot: root)
+        }
+        try ConfirmedIdentityAssetStoreV1.recordIntake(
+            role: .location,
+            identityName: "Schoolyard",
+            identitySlug: "other-yard",
+            paths: [path],
+            dataRoot: root,
+            confirmedAt: "2026-07-26T00:00:00Z"
+        )
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealBible(dataRoot: root)
+        }
+        try ConfirmedIdentityAssetStoreV1.recordIntake(
+            role: .location,
+            identityName: "Schoolyard",
+            identitySlug: "yard",
+            paths: [path],
+            dataRoot: root,
+            confirmedAt: "2026-07-26T00:00:00Z"
+        )
+        try MusicvideoGateChecks.requireRealBible(dataRoot: root)
+
+        try Data("changed-after-confirmation".utf8).write(to: image)
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealBible(dataRoot: root)
+        }
+    }
+
     @Test("frames gate requires every role, compiled prompt, complete current audit, and exact hash")
     func framesRequirement() throws {
         let root = try tempRoot()
@@ -1564,15 +1936,16 @@ struct GateGuardTests {
             continuityLocks: ["red scarf stays tied at the left shoulder"]
         )
         let current = try shotlist(productionPlan: plan)
-        _ = try saveShotlist(current, to: root)
+        _ = try saveShotlistWithExecutionPlan(current, to: root)
         let image = root.appendingPathComponent("media/s001-start.png")
         try FileManager.default.createDirectory(
             at: image.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
         try Data("frame-v1".utf8).write(to: image)
-        let prompt = try #require(current.shots.first)
-            .stillProductionPromptRequirements
+        let currentShot = try #require(current.shots.first)
+        let prompt = ([currentShot.visualPrompt]
+            + currentShot.stillProductionPromptRequirements)
             .joined(separator: ". ")
         func frames(_ providerPrompt: String) -> FramesManifest {
             FramesManifest(
@@ -1613,6 +1986,14 @@ struct GateGuardTests {
             ),
             dataRoot: root
         )
+        try writeFrameReferenceUsage(
+            root: root,
+            shotID: "s001",
+            role: "start",
+            outputPath: "media/s001-start.png",
+            outputSHA256: digest,
+            modelID: "image-model"
+        )
         try MusicvideoGateChecks.requireRealFrames(dataRoot: root)
 
         try saveFramesManifest(
@@ -1640,7 +2021,7 @@ struct GateGuardTests {
     func renderRequirement() throws {
         let root = try tempRoot()
         defer { try? FileManager.default.removeItem(at: root) }
-        _ = try saveShotlist(
+        _ = try saveShotlistWithExecutionPlan(
             try shotlist(keyframeStrategy: .none),
             to: root
         )
@@ -1673,11 +2054,110 @@ struct GateGuardTests {
         )
         try saveRenderManifest(manifest, dataRoot: root)
         try saveRenderProofManifest(proof, dataRoot: root)
-        try MusicvideoGateChecks.requireRealRender(dataRoot: root)
+        try requireRealRenderWithAssembly(dataRoot: root)
 
         try Data("replacement".utf8).write(to: video)
         #expect(throws: GateBlocked.self) {
-            try MusicvideoGateChecks.requireRealRender(dataRoot: root)
+            try requireRealRenderWithAssembly(dataRoot: root)
+        }
+    }
+
+    @Test("render gate accepts an audited animated still without a video output")
+    func animatedStillRenderRequirement() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let current = try shotlist()
+        _ = try saveShotlistWithExecutionPlan(
+            current,
+            to: root,
+            stillShotIDs: ["s001"]
+        )
+        let image = root.appendingPathComponent("media/s001-start.png")
+        try FileManager.default.createDirectory(
+            at: image.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("still-image".utf8).write(to: image)
+        let currentShot = try #require(current.shots.first)
+        let prompt = ([currentShot.visualPrompt]
+            + currentShot.stillProductionPromptRequirements)
+            .joined(separator: ". ")
+        try saveFramesManifest(
+            FramesManifest(
+                project: "demo",
+                generated: "2026-09-08T00:00:00Z",
+                shots: [
+                    ShotFrames(
+                        shotId: "s001",
+                        keyframeStrategy: "start",
+                        frames: [
+                            FrameEntry(
+                                role: "start",
+                                path: "media/s001-start.png",
+                                runwayModel: "image-model",
+                                providerPrompt: prompt
+                            ),
+                        ]
+                    ),
+                ]
+            ),
+            dataRoot: root
+        )
+        let outputSHA256 = try FileDigest.sha256(of: image)
+        let checks = Dictionary(uniqueKeysWithValues: standardAuditCheckKeys.map {
+            ($0, AuditCheck(status: .clean))
+        })
+        try saveFrameAudit(
+            try FrameAudit(
+                shotId: "s001",
+                renderPath: "media/s001-start.png",
+                renderSha256: outputSHA256,
+                generated: "2026-09-08T00:00:00Z",
+                auditor: "test",
+                checks: checks,
+                overall: .clean
+            ),
+            dataRoot: root
+        )
+        try writeFrameReferenceUsage(
+            root: root,
+            shotID: "s001",
+            role: "start",
+            outputPath: "media/s001-start.png",
+            outputSHA256: outputSHA256,
+            modelID: "image-model"
+        )
+        var manifest = RenderManifest(project: "demo", phase: "final")
+        record(
+            &manifest,
+            shotId: "s001",
+            output: "media/s001-start.png",
+            costEur: 0,
+            phase: "final"
+        )
+        try saveRenderManifest(manifest, dataRoot: root)
+        try saveRenderProofManifest(
+            RenderProofManifest(
+                project: "demo",
+                phase: "final",
+                entries: [
+                    "s001": RenderProofEntry(
+                        shotId: "s001",
+                        output: "media/s001-start.png",
+                        outputSha256: outputSHA256,
+                        providerPrompt: prompt,
+                        generationModel: "image-model"
+                    ),
+                ]
+            ),
+            dataRoot: root
+        )
+
+        try requireRealRenderWithAssembly(dataRoot: root)
+
+        try Data("replaced-still".utf8).write(to: image)
+        #expect(throws: GateBlocked.self) {
+            try requireRealRenderWithAssembly(dataRoot: root)
         }
     }
 
@@ -1696,7 +2176,7 @@ struct GateGuardTests {
             keyframeStrategy: .none,
             productionPlan: plan
         )
-        _ = try saveShotlist(current, to: root)
+        _ = try saveShotlistWithExecutionPlan(current, to: root)
         let video = root.appendingPathComponent("media/s001.mp4")
         try FileManager.default.createDirectory(
             at: video.deletingLastPathComponent(),
@@ -1731,21 +2211,21 @@ struct GateGuardTests {
             )
         }
         try saveRenderProofManifest(try proof(prompt), dataRoot: root)
-        try MusicvideoGateChecks.requireRealRender(dataRoot: root)
+        try requireRealRenderWithAssembly(dataRoot: root)
 
         try saveRenderProofManifest(
             try proof("A compiled prompt for another shot."),
             dataRoot: root
         )
         #expect(throws: GateBlocked.self) {
-            try MusicvideoGateChecks.requireRealRender(dataRoot: root)
+            try requireRealRenderWithAssembly(dataRoot: root)
         }
         try saveRenderProofManifest(
             try proof(prompt + ". The view pans right."),
             dataRoot: root
         )
         #expect(throws: GateBlocked.self) {
-            try MusicvideoGateChecks.requireRealRender(dataRoot: root)
+            try requireRealRenderWithAssembly(dataRoot: root)
         }
     }
 
@@ -1753,7 +2233,7 @@ struct GateGuardTests {
     func renderConditioningRequirement() throws {
         let root = try tempRoot()
         defer { try? FileManager.default.removeItem(at: root) }
-        _ = try saveShotlist(try shotlist(), to: root)
+        _ = try saveShotlistWithExecutionPlan(try shotlist(), to: root)
         let media = root.appendingPathComponent("media")
         try FileManager.default.createDirectory(
             at: media,
@@ -1813,11 +2293,11 @@ struct GateGuardTests {
             ),
             dataRoot: root
         )
-        try MusicvideoGateChecks.requireRealRender(dataRoot: root)
+        try requireRealRenderWithAssembly(dataRoot: root)
 
         try Data("frame-v2".utf8).write(to: frame)
         #expect(throws: GateBlocked.self) {
-            try MusicvideoGateChecks.requireRealRender(dataRoot: root)
+            try requireRealRenderWithAssembly(dataRoot: root)
         }
     }
 
@@ -1858,7 +2338,7 @@ struct GateGuardTests {
             seedanceInputMode: .keyframe,
             chainWithPreviousEnd: true
         )
-        _ = try saveShotlist(
+        _ = try saveShotlistWithExecutionPlan(
             try Shotlist(
                 schema_: shotlistSchemaVersion,
                 mode: .section,
@@ -1936,13 +2416,13 @@ struct GateGuardTests {
             dataRoot: root
         )
 
-        try MusicvideoGateChecks.requireRealRender(dataRoot: root)
+        try requireRealRenderWithAssembly(dataRoot: root)
 
         try Data("predecessor-frame-v2".utf8).write(
             to: predecessorFrame
         )
         #expect(throws: GateBlocked.self) {
-            try MusicvideoGateChecks.requireRealRender(dataRoot: root)
+            try requireRealRenderWithAssembly(dataRoot: root)
         }
     }
 
@@ -1997,7 +2477,7 @@ struct GateGuardTests {
             keyframeStrategy: .none,
             seedanceInputMode: .reference
         )
-        _ = try saveShotlist(
+        _ = try saveShotlistWithExecutionPlan(
             try Shotlist(
                 schema_: shotlistSchemaVersion,
                 mode: .section,
@@ -2049,11 +2529,11 @@ struct GateGuardTests {
                 sha256: try FileDigest.sha256(of: reference)
             ),
         ])
-        try MusicvideoGateChecks.requireRealRender(dataRoot: root)
+        try requireRealRenderWithAssembly(dataRoot: root)
 
         try saveProof(referenceImages: [])
         #expect(throws: GateBlocked.self) {
-            try MusicvideoGateChecks.requireRealRender(dataRoot: root)
+            try requireRealRenderWithAssembly(dataRoot: root)
         }
     }
 
@@ -2093,7 +2573,7 @@ struct GateGuardTests {
             keyframeStrategy: .none,
             sourcePath: "media/source.mp4"
         )
-        _ = try saveShotlist(
+        _ = try saveShotlistWithExecutionPlan(
             try Shotlist(
                 schema_: shotlistSchemaVersion,
                 mode: .section,
@@ -2140,14 +2620,14 @@ struct GateGuardTests {
             sourcePath: "media/source.mp4",
             sourceURL: source
         )
-        try MusicvideoGateChecks.requireRealRender(dataRoot: root)
+        try requireRealRenderWithAssembly(dataRoot: root)
 
         try saveProof(
             sourcePath: "media/substitute.mp4",
             sourceURL: substitute
         )
         #expect(throws: GateBlocked.self) {
-            try MusicvideoGateChecks.requireRealRender(dataRoot: root)
+            try requireRealRenderWithAssembly(dataRoot: root)
         }
     }
 
@@ -2199,7 +2679,7 @@ struct GateGuardTests {
             seedanceInputMode: .reference,
             referenceImageRefs: ["media/reference.png"]
         )
-        _ = try saveShotlist(
+        _ = try saveShotlistWithExecutionPlan(
             try Shotlist(
                 schema_: shotlistSchemaVersion,
                 mode: .section,
@@ -2333,9 +2813,16 @@ struct GateGuardTests {
             description: "An imported performance clip.",
             visualPrompt: "The imported performance.",
             mood: "restrained",
-            keyframeStrategy: .none
+            keyframeStrategy: .none,
+            sourcePath: "media/imported.mp4"
         )
-        _ = try saveShotlist(
+        let importedURL = root.appendingPathComponent("media/imported.mp4")
+        try FileManager.default.createDirectory(
+            at: importedURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("imported-video".utf8).write(to: importedURL)
+        _ = try saveShotlistWithExecutionPlan(
             try Shotlist(
                 schema_: shotlistSchemaVersion,
                 mode: .section,
@@ -2373,7 +2860,12 @@ struct GateGuardTests {
         )
         #expect(render.entries.isEmpty)
         #expect(proof.entries.isEmpty)
-        try MusicvideoGateChecks.requireRealRender(dataRoot: root)
+        try requireRealRenderWithAssembly(dataRoot: root)
+
+        try Data("changed-imported-video".utf8).write(to: importedURL)
+        #expect(throws: GateBlocked.self) {
+            try requireRealRenderWithAssembly(dataRoot: root)
+        }
     }
 
     @Test("checkApprovable passes with no requirement and rethrows a blocked one")

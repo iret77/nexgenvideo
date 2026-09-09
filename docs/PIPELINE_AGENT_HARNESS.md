@@ -29,10 +29,10 @@ Packaged phase prose is guidance inside this state machine, never the state mach
 | Treatment | `write_treatment` | versioned treatment plus `treatment/current.md` |
 | Storyboard | `write_storyboard` | versioned storyboard plus `storyboard/current.yaml` |
 | Bible | `write_bible` | `bible/bible.yaml`, generated-asset proof, and referenced files |
-| Shot List | `PipelineShotlistWriter` via `write_shotlist` or native source-mode edit | latest versioned shot list with source-mode-owned production plans |
+| Shot List | `PipelineShotlistWriter` via `write_shotlist` or native source-mode edit | latest versioned shot list, canonical execution plan, and source-mode-owned production plans |
 | Sanity | `run_sanity` | `sanity/report.json` |
 | Frames | `run_phase`, `record_render`, `save_frame_audit` | role-aware Frames manifest, exact images, exact audits |
-| Render | `run_phase`, `record_render` | final render manifest, render-proof sidecar, exact videos |
+| Render | `run_phase`, `record_render`, `assemble_timeline` | final render manifest, render-proof sidecar, exact provider videos or accepted animated stills, and exact timeline assembly proof |
 
 Only these canonical artifact writers may capture fresh phase lineage. Agent and native Shot List
 edits converge on `PipelineShotlistWriter`; neither entry surface may persist or validate a Shot List
@@ -90,27 +90,73 @@ the current phase's capability set is rejected before it can spend money or muta
   canonical agent writer while preserving that explicit legacy tolerance. Prompt
   compilation projects the approved action, camera move, continuity locks, and match-action cue;
   render iteration returns that exact plan and its rescue cut.
+- A required spatial blockout binds stable location-local camera setups, metric layouts, entity
+  shapes, State Ladder IDs, camera paths, internal shot ranges, cut kinds, and shot-owned timed
+  reference roles. Native graybox export and imported QuickTime blockouts pass through the same
+  canonical Shot List writer. The blockout proof binds those exact canonical bytes, the ordered
+  setup/shape/state identities, and the exported clip hash; a changed plan, assignment, or clip
+  blocks approval before generation.
 - Analysis binds to the exact track hash. Frames bind each required role to its exact image hash,
   compiled provider prompt, generation model, and current vision audit. Render binds each
-  non-imported final shot to its exact video hash, compiled provider prompt, generation model, and the
-  exact current conditioning inputs required by the Shot List: source video, start/end frames, or the
-  deterministic reference-image plan.
+  non-imported final shot to its exact executable delivery, compiled provider prompt, generation
+  model, and the exact current conditioning inputs required by the Shot List. A provider-video
+  delivery binds its video hash and source video, start/end frames, or deterministic reference-image
+  plan. An animated-still delivery binds the exact accepted Frames image, adds no Render generation
+  cost, and binds its deterministic timeline motion and placement.
 - Model-dependent Sanity checks resolve the selected provider/model ID through the active pack's
   versioned capability catalog. Missing, unreadable, schema-mismatched, or unknown capability data
   fails closed; provider aliases for the same concrete model share one capability definition.
 - Imported and AI-enhanced shots never enter Frames. Every AI-enhanced shot declares one project-local
   `source_path` in the Shot List; `next_render_shot` resolves that source for the agent, and Render
   approval rejects any missing, changed, or substituted source.
-- A chained generated shot uses its predecessor's extracted last frame as its sole start condition.
-  It declares `keyframe_strategy=none`, `seedance_input_mode=keyframe`, no explicit reference images,
-  and never creates a separate Frames start image. Render currency binds the exact predecessor frame.
-- Every Bible sheet and Scene3D panorama must be staged from a ready generated media asset. The Bible
-  gate binds its exact bytes to the host-recorded compiled prompt and generation model; user uploads
-  remain valid only as `reference_images`.
+- Conditioning is an explicit, versioned plan decision. Existing pinned plans retain their exact
+  behavior; adopting a new strategy requires an explicitly approved plan and, where necessary, the
+  transactional Recovery-copy pack upgrade. No route silently substitutes one strategy for another.
+- A chained generated shot uses either `frame_continuation` or an explicitly chosen `native_extension`.
+  Frame continuation retains the predecessor's extracted last frame as its sole start condition:
+  `keyframe_strategy=none`, `seedance_input_mode=keyframe`, no explicit reference images, and no
+  separate Frames start image. Its proof binds the exact predecessor video and extracted frame.
+  Native extension instead binds the exact approved predecessor video, direction, boundary state,
+  permitted original references, and a verified executable extension mode. An extracted frame cannot
+  stand in for its video input; the legacy first-frame mechanism is not added implicitly.
+- `reference_anchor`, `two_state_interpolation`, and explicitly selected `first_frame` are distinct
+  conditioning strategies, not substitutes for chaining. A reference anchor occupies a genuine
+  reference slot; interpolation uses the same shot's approved start/end states in their actual input
+  slots. Frames owns the required still approvals; no new phase is introduced. Missing capability,
+  changed input bytes, substituted slots, or unapproved states block before spend and at Render
+  approval. Imported and AI-enhanced source ownership remains unchanged.
+- Every Bible sheet and Scene3D panorama binds exact current bytes to one of two host-recorded
+  provenance classes: a completed generation with compiled prompt/model, or an identity image the
+  user explicitly confirmed in the host-owned prepared-character/location intake. A confirmed image
+  may be adopted as the demanded canonical view without generation; an arbitrary library import may
+  not. Only a demanded view lacking either proof is generated.
+- A real outfit or persistent identity-state change is a distinct Bible entity plus the versioned
+  `bible/identity-variants.v1.json` inheritance artifact. Its changed attributes are exhaustive;
+  every undeclared attribute remains byte-identical to the base entity, inherited paths must be
+  actual base Canon images, and the derived entity owns distinct proven sheets. Storyboard and Shot
+  List select the derived entity id, so the normal reference planner consumes its Canon directly.
 - `source_mode=imported` is deliberately outside provider rendering. Therefore empty Frames/Render
   manifests are valid only when the current shot list requires no provider-generated assets.
-- Timeline assembly is optional editing work after renders exist. It neither completes nor re-seals the
-  Render artifact and cannot change the Render gate.
+- Timeline assembly completes the Render artifact and covers provider outputs plus every imported
+  Shot List source. `assemble_timeline` writes the exact clip, source,
+  placement, duration, and motion proof; the Render gate rejects missing, stale, substituted, or
+  incomplete assembly. Provider videos retain their source motion. Animated stills receive the
+  deterministic host-owned motion declared by their execution plan.
+- End-frame audits bind explicit visible character count, positions, gaze, zones and distinct camera
+  fields in the canonical execution inputs. Moving cameras require end framing, angle and height;
+  static cameras retain their declared constraints unless explicit end values override them. Start
+  geometry remains owned by the Shot List. Historical audits stay readable without granting current
+  approval when execution inputs are stale.
+- Read-only image inspection never changes phase artifacts. Bounded transient observations become
+  durable exact-byte evidence only when their canonical audit is saved. Minor/blocking findings
+  require repair or native user acceptance of the exact audit, image and style with a reason. This
+  acceptance is available only in the current Frames phase, preserves original findings, and expires
+  when its bound evidence changes. Agent routing must respect a still-current explicit acceptance.
+- Style criteria declare the media evidence they require. Stills cannot attest timing, cut relations,
+  motion or audio. An approved production style requires native human review of the actual timeline
+  before movie export, with observations or explicit deviations for each criterion. The receipt
+  binds the cut and exact source/style bytes and is rechecked before and after encoding. It does not
+  re-seal the Render phase, and does not gate project backup or XML interchange.
 
 ## Release evidence
 

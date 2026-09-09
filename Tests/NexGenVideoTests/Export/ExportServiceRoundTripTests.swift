@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import NexGenEngine
 import Testing
 @testable import NexGenVideo
 
@@ -60,6 +61,28 @@ struct ExportServiceRoundTripTests {
 
         let videoTracks = try await asset.loadTracks(withMediaType: .video)
         #expect(!videoTracks.isEmpty, "exported file has no video tracks")
+
+        let spec = DeliverySpecV1(
+            id: "test.master.h264.720p",
+            targetKind: .master,
+            container: "mp4",
+            videoCodec: "avc1",
+            width: 1280,
+            height: 720,
+            fpsNumerator: 30,
+            colorSpace: "rec709-sdr",
+            hdr: false,
+            audioLayout: "none",
+            captionMode: "none",
+            disclosureMode: "project-record"
+        )
+        let qc = try await PipelineDeliveryStore.probeOutput(
+            outputURL: outURL,
+            spec: spec,
+            expectedDurationFrames: 30
+        )
+        #expect(qc.passed)
+        #expect(qc.videoCodec == "avc1")
     }
 
     /// Regression for the AVFoundation crash where a transform keyframe at clip-offset 0

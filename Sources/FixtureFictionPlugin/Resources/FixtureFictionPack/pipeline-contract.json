@@ -1,0 +1,290 @@
+{
+  "schema": "pipeline-contract/v1",
+  "contractID": "fixture-fiction.pipeline.v1",
+  "packID": "fixture-fiction",
+  "resourceRoot": "FixtureFictionPack",
+  "hardStepsManifestID": "hardsteps/1.0",
+  "display": {
+    "title": "Fiction Fixture"
+  },
+  "phases": [
+    {
+      "id": "project_init",
+      "executionIndex": 0,
+      "dependencies": [],
+      "roles": [
+        "intake",
+        "canonical_writer",
+        "review_gate"
+      ],
+      "selectors": {
+        "artifact": "host.generic_json_extension",
+        "writer": "host.generic_json_extension",
+        "gate": "host.generic_json_extension",
+        "lineage": "host.generic_json_extension"
+      },
+      "capabilities": {
+        "phaseBound": [
+          "write_phase_extension"
+        ],
+        "supporting": []
+      },
+      "instructions": "phases/project-init.md",
+      "display": {
+        "label": "Project Init"
+      },
+      "extensionArtifact": {
+        "relativePath": "extensions/fixture-fiction/project-init.v1.json",
+        "schemaResource": "schemas/project-init.schema.json"
+      }
+    },
+    {
+      "id": "screenplay",
+      "executionIndex": 1,
+      "dependencies": [
+        "project_init"
+      ],
+      "roles": [
+        "canonical_writer",
+        "review_gate"
+      ],
+      "selectors": {
+        "artifact": "host.generic_json_extension",
+        "writer": "host.generic_json_extension",
+        "gate": "host.generic_json_extension",
+        "lineage": "host.generic_json_extension"
+      },
+      "capabilities": {
+        "phaseBound": [
+          "write_phase_extension"
+        ],
+        "supporting": []
+      },
+      "instructions": "phases/screenplay.md",
+      "display": {
+        "label": "Screenplay"
+      },
+      "extensionArtifact": {
+        "relativePath": "extensions/fixture-fiction/screenplay.v1.json",
+        "schemaResource": "schemas/screenplay.schema.json"
+      }
+    },
+    {
+      "id": "scene_plan",
+      "executionIndex": 2,
+      "dependencies": [
+        "screenplay"
+      ],
+      "roles": [
+        "canonical_writer",
+        "review_gate"
+      ],
+      "selectors": {
+        "artifact": "host.generic_json_extension",
+        "writer": "host.generic_json_extension",
+        "gate": "host.generic_json_extension",
+        "lineage": "host.generic_json_extension"
+      },
+      "capabilities": {
+        "phaseBound": [
+          "write_phase_extension"
+        ],
+        "supporting": []
+      },
+      "instructions": "phases/scene-plan.md",
+      "display": {
+        "label": "Scene Plan"
+      },
+      "extensionArtifact": {
+        "relativePath": "extensions/fixture-fiction/scene-plan.v1.json",
+        "schemaResource": "schemas/scene-plan.schema.json"
+      }
+    },
+    {
+      "id": "production_design",
+      "executionIndex": 3,
+      "dependencies": [
+        "scene_plan"
+      ],
+      "roles": [
+        "canonical_writer",
+        "review_gate"
+      ],
+      "selectors": {
+        "artifact": "host.generic_json_extension",
+        "writer": "host.generic_json_extension",
+        "gate": "host.generic_json_extension",
+        "lineage": "host.generic_json_extension"
+      },
+      "capabilities": {
+        "phaseBound": [
+          "write_phase_extension"
+        ],
+        "supporting": []
+      },
+      "instructions": "phases/production-design.md",
+      "display": {
+        "label": "Production Design"
+      },
+      "extensionArtifact": {
+        "relativePath": "extensions/fixture-fiction/production-design.v1.json",
+        "schemaResource": "schemas/production-design.schema.json"
+      }
+    },
+    {
+      "id": "bible",
+      "executionIndex": 4,
+      "dependencies": [
+        "production_design"
+      ],
+      "roles": [
+        "canonical_writer",
+        "review_gate"
+      ],
+      "selectors": {
+        "artifact": "host.generic_json_extension",
+        "writer": "host.generic_json_extension",
+        "gate": "host.generic_json_extension",
+        "lineage": "host.generic_json_extension"
+      },
+      "capabilities": {
+        "phaseBound": [
+          "write_phase_extension"
+        ],
+        "supporting": []
+      },
+      "instructions": "phases/bible.md",
+      "display": {
+        "label": "Bible"
+      },
+      "extensionArtifact": {
+        "relativePath": "extensions/fixture-fiction/bible.v1.json",
+        "schemaResource": "schemas/bible.schema.json"
+      }
+    },
+    {
+      "id": "shotlist",
+      "executionIndex": 5,
+      "dependencies": [
+        "bible"
+      ],
+      "roles": [
+        "canonical_writer",
+        "review_gate"
+      ],
+      "selectors": {
+        "artifact": "host.generic_json_extension",
+        "writer": "host.generic_json_extension",
+        "gate": "host.generic_json_extension",
+        "lineage": "host.generic_json_extension"
+      },
+      "capabilities": {
+        "phaseBound": [
+          "write_phase_extension"
+        ],
+        "supporting": []
+      },
+      "instructions": "phases/shotlist.md",
+      "display": {
+        "label": "Shotlist"
+      },
+      "extensionArtifact": {
+        "relativePath": "extensions/fixture-fiction/shotlist.v1.json",
+        "schemaResource": "schemas/shotlist.schema.json"
+      }
+    },
+    {
+      "id": "sanity",
+      "executionIndex": 6,
+      "dependencies": [
+        "shotlist"
+      ],
+      "roles": [
+        "canonical_writer",
+        "review_gate"
+      ],
+      "selectors": {
+        "artifact": "host.generic_json_extension",
+        "writer": "host.generic_json_extension",
+        "gate": "host.generic_json_extension",
+        "lineage": "host.generic_json_extension"
+      },
+      "capabilities": {
+        "phaseBound": [
+          "write_phase_extension"
+        ],
+        "supporting": []
+      },
+      "instructions": "phases/sanity.md",
+      "display": {
+        "label": "Sanity"
+      },
+      "extensionArtifact": {
+        "relativePath": "extensions/fixture-fiction/sanity.v1.json",
+        "schemaResource": "schemas/sanity.schema.json"
+      }
+    },
+    {
+      "id": "frames",
+      "executionIndex": 7,
+      "dependencies": [
+        "sanity"
+      ],
+      "roles": [
+        "canonical_writer",
+        "review_gate"
+      ],
+      "selectors": {
+        "artifact": "host.generic_json_extension",
+        "writer": "host.generic_json_extension",
+        "gate": "host.generic_json_extension",
+        "lineage": "host.generic_json_extension"
+      },
+      "capabilities": {
+        "phaseBound": [
+          "write_phase_extension"
+        ],
+        "supporting": []
+      },
+      "instructions": "phases/frames.md",
+      "display": {
+        "label": "Frames"
+      },
+      "extensionArtifact": {
+        "relativePath": "extensions/fixture-fiction/frames.v1.json",
+        "schemaResource": "schemas/frames.schema.json"
+      }
+    },
+    {
+      "id": "render",
+      "executionIndex": 8,
+      "dependencies": [
+        "frames"
+      ],
+      "roles": [
+        "canonical_writer",
+        "review_gate"
+      ],
+      "selectors": {
+        "artifact": "host.generic_json_extension",
+        "writer": "host.generic_json_extension",
+        "gate": "host.generic_json_extension",
+        "lineage": "host.generic_json_extension"
+      },
+      "capabilities": {
+        "phaseBound": [
+          "write_phase_extension"
+        ],
+        "supporting": []
+      },
+      "instructions": "phases/render.md",
+      "display": {
+        "label": "Render"
+      },
+      "extensionArtifact": {
+        "relativePath": "extensions/fixture-fiction/render.v1.json",
+        "schemaResource": "schemas/render.schema.json"
+      }
+    }
+  ]
+}

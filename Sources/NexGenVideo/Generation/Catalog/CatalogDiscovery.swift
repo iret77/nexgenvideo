@@ -5,6 +5,11 @@ import NexGenEngine
 protocol MCPCatalogClient: MCPToolCalling {
     func discoverTools() async throws -> [MCPProviderClient.DiscoveredTool]
     func disconnect() async
+    func discoveryChecks() async -> [ProviderToolSchemaCheck]
+}
+
+extension MCPCatalogClient {
+    func discoveryChecks() async -> [ProviderToolSchemaCheck] { [] }
 }
 
 extension MCPProviderClient: MCPCatalogClient {}
@@ -30,6 +35,14 @@ enum CatalogDiscovery {
         let modelListingIsComplete: Bool
         let detailEnrichmentIsComplete: Bool
         let modelDiagnostics: [MCPModelDiscovery.ModelDiagnostic]
+        let schemaChecks: [ProviderToolSchemaCheck]
+
+        init(entries: [CatalogEntry], modelListingIsComplete: Bool, detailEnrichmentIsComplete: Bool,
+             modelDiagnostics: [MCPModelDiscovery.ModelDiagnostic], schemaChecks: [ProviderToolSchemaCheck] = []) {
+            self.entries = entries; self.modelListingIsComplete = modelListingIsComplete
+            self.detailEnrichmentIsComplete = detailEnrichmentIsComplete; self.modelDiagnostics = modelDiagnostics
+            self.schemaChecks = schemaChecks
+        }
     }
 
     enum MCPListingPublicationDecision: Equatable, Sendable {
@@ -81,6 +94,8 @@ enum CatalogDiscovery {
         let directResult: DirectImageDiscovery.Result
         let mcpModelListingIsComplete: Bool
         let mcpDetailEnrichmentIsComplete: Bool
+        let mcpSchemaChecks: [ProviderToolSchemaCheck]
+        let directObservedAt: String?
 
         init(
             provider: GenerationProvider,
@@ -89,7 +104,9 @@ enum CatalogDiscovery {
             entries: [CatalogEntry],
             directResult: DirectImageDiscovery.Result = .inactive,
             mcpModelListingIsComplete: Bool = true,
-            mcpDetailEnrichmentIsComplete: Bool = true
+            mcpDetailEnrichmentIsComplete: Bool = true,
+            mcpSchemaChecks: [ProviderToolSchemaCheck] = [],
+            directObservedAt: String? = nil
         ) {
             self.provider = provider
             self.mcpConfigured = mcpConfigured
@@ -98,6 +115,8 @@ enum CatalogDiscovery {
             self.directResult = directResult
             self.mcpModelListingIsComplete = mcpModelListingIsComplete
             self.mcpDetailEnrichmentIsComplete = mcpDetailEnrichmentIsComplete
+            self.mcpSchemaChecks = mcpSchemaChecks
+            self.directObservedAt = directObservedAt
         }
     }
 
@@ -227,14 +246,20 @@ enum CatalogDiscovery {
                 if mcpConfigured {
                     mcpResult = await discoverResult(provider)
                 }
+                let directResult = await DirectImageDiscovery.discover(provider)
+                let directObservedAt: String?
+                if case .success = directResult { directObservedAt = ISO8601DateFormatter().string(from: Date()) }
+                else { directObservedAt = nil }
                 return ProviderResult(
                     provider: provider,
                     mcpConfigured: mcpConfigured,
                     oauthConnected: ProviderOAuthStore.isConnected(provider),
                     entries: mcpResult.entries,
-                    directResult: await DirectImageDiscovery.discover(provider),
+                    directResult: directResult,
                     mcpModelListingIsComplete: mcpResult.modelListingIsComplete,
-                    mcpDetailEnrichmentIsComplete: mcpResult.detailEnrichmentIsComplete
+                    mcpDetailEnrichmentIsComplete: mcpResult.detailEnrichmentIsComplete,
+                    mcpSchemaChecks: mcpResult.schemaChecks,
+                    directObservedAt: directObservedAt
                 )
             },
             consume: { result in
@@ -278,6 +303,8 @@ enum CatalogDiscovery {
                     publishedEntries = []
                 } else {
                     ModelCatalog.shared.applyDiscovered(publishedEntries, for: provider)
+                    ModelCatalog.shared.recordRouteChecks(GenerationRouteReceipt.checks(entries: publishedEntries,
+                        provider: provider, schemas: result.mcpSchemaChecks, directObservedAt: result.directObservedAt), for: provider)
                 }
                 let visibleCount = publishedEntries.isEmpty
                     ? ModelCatalog.shared.discoveredModelCount(for: provider)
@@ -485,6 +512,7 @@ enum CatalogDiscovery {
                     provider: provider
                 )
             }
+            let schemaChecks = await client.discoveryChecks()
             await client.disconnect()
             for diagnostic in modelDiagnostics {
                 let modelID = diagnostic.modelID ?? "unknown"
@@ -496,7 +524,8 @@ enum CatalogDiscovery {
                 entries: entries,
                 modelListingIsComplete: modelListingIsComplete,
                 detailEnrichmentIsComplete: detailEnrichmentIsComplete,
-                modelDiagnostics: modelDiagnostics
+                modelDiagnostics: modelDiagnostics,
+                schemaChecks: schemaChecks
             )
         } catch {
             await client.disconnect()

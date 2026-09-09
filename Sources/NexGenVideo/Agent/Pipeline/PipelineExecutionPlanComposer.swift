@@ -41,6 +41,20 @@ enum PipelineExecutionPlanComposer {
         dataRoot: URL,
         declaredPack: String?
     ) throws -> PipelineExecutionPlanDraft {
+        if let causality = try StoryboardCausalityV1.requireCurrent(dataRoot: dataRoot) {
+            let known = Set(causality.bindings.map(\.stepID))
+            for input in executionInputs {
+                guard let steps = input.storyboardStepIDs, !steps.isEmpty,
+                      Set(steps).count == steps.count, Set(steps).isSubset(of: known) else {
+                    throw ToolError("Shot \(input.id) requires storyboard_step_ids from the approved Storyboard.")
+                }
+            }
+            guard Set(executionInputs.flatMap { $0.storyboardStepIDs ?? [] }) == known else {
+                throw ToolError("Shot List omits approved Storyboard steps. Explicitly revise Storyboard before dropping coverage.")
+            }
+        } else if executionInputs.contains(where: { $0.storyboardStepIDs != nil }) {
+            throw ToolError("Storyboard causality must exist before binding Shot List steps.")
+        }
         guard shotlist.shots.count == executionInputs.count,
               zip(shotlist.shots, executionInputs).allSatisfy({ pair in
                   pair.0.id == pair.1.id
@@ -49,6 +63,17 @@ enum PipelineExecutionPlanComposer {
         }
         for (shot, input) in zip(shotlist.shots, executionInputs) {
             try input.validate(timedBeatMaximumSeconds: shot.durationS)
+            if shot.sourceMode == .generated, shot.keyframeStrategy == .startEnd {
+                guard let boundary = input.endState.frameBoundary else {
+                    throw ToolError("Shot " + shot.id + " requires end_state.frame_boundary for its end-frame approval.")
+                }
+                try boundary.validate()
+                if shot.productionPlan?.cameraMovement != .static {
+                    guard boundary.framing != nil, boundary.cameraAngle != nil, boundary.cameraHeight != nil else {
+                        throw ToolError("Shot " + shot.id + " requires explicit end-camera framing, angle and height.")
+                    }
+                }
+            }
             try validateReferenceCorrespondence(
                 shotID: shot.id,
                 referenceImageRefs: shot.referenceImageRefs,
@@ -333,14 +358,46 @@ enum PipelineExecutionPlanComposer {
     ) throws -> GenerationRequirementV1? {
         guard input.sourceMode != .imported else { return nil }
         guard let supplied = input.generationRequirement,
-              let coreInputs = input.coreInputs,
-              supplied.modalityID == .video else {
+              let coreInputs = input.coreInputs else {
             throw PipelineExecutionPlanComposerError.unsupportedRequirement(shot.id)
         }
-        let requiresFirstFrame = shot.chainWithPreviousEnd
-            || shot.keyframeStrategy == .start
-            || shot.keyframeStrategy == .startEnd
-        let requiresLastFrame = shot.keyframeStrategy == .startEnd
+        let isAnimatedStill = supplied.modalityID == .image
+            && supplied.modeIDs
+                == [ShotDeliveryModeResolverV1.timelineAnimatedStillModeID]
+        guard supplied.modalityID == .video || isAnimatedStill else {
+            throw PipelineExecutionPlanComposerError.unsupportedRequirement(shot.id)
+        }
+        if isAnimatedStill {
+            guard shot.sourceMode == .generated,
+                  shot.keyframeStrategy == .start,
+                  !shot.chainWithPreviousEnd,
+                  !supplied.requiresOutputAudio,
+                  coreInputs.sourceVideoModeID == nil,
+                  coreInputs.firstFrameModeID == nil,
+                  coreInputs.lastFrameModeID == nil,
+                  coreInputs.predecessorLastFrameModeID == nil else {
+                throw PipelineExecutionPlanComposerError.invalidCoreInputs(shot.id)
+            }
+        }
+        let requiresFirstFrame: Bool
+        let requiresLastFrame: Bool
+        if let conditioning = input.conditioning {
+            requiresFirstFrame = !isAnimatedStill && [
+                ConditioningStrategyKindV1.twoStateInterpolation,
+                .frameContinuation,
+                .firstFrame,
+            ].contains(conditioning.strategy)
+            requiresLastFrame = !isAnimatedStill
+                && conditioning.strategy == .twoStateInterpolation
+        } else {
+            requiresFirstFrame = !isAnimatedStill && (
+                shot.chainWithPreviousEnd
+                    || shot.keyframeStrategy == .start
+                    || shot.keyframeStrategy == .startEnd
+            )
+            requiresLastFrame = !isAnimatedStill
+                && shot.keyframeStrategy == .startEnd
+        }
         let expectedFirst = shot.chainWithPreviousEnd
             ? coreInputs.predecessorLastFrameModeID != nil
                 && coreInputs.firstFrameModeID == nil
@@ -684,6 +741,8 @@ enum PipelineExecutionPlanComposer {
             PipelineLayout.treatmentCurrentFile,
             PipelineLayout.storyboardCurrentFile,
             PipelineLayout.bibleFile,
+            PipelineLayout.confirmedIdentityAssetsFile,
+            PipelineLayout.bibleIdentityVariantsFile,
             PipelineLayout.assetProofFile(scope: "bible"),
         ]
         if let analysisURL = AudioProjectLayout.expectedAnalysisArtifactURL(
@@ -852,11 +911,64 @@ enum PipelineExecutionPlanComposer {
         declaredPack: String?,
         dataRoot: URL
     ) throws -> [PackArtifactExtensionReferenceV1] {
+        var references: [PackArtifactExtensionReferenceV1] = []
+        if let plan = try PipelineConditioningStrategyStore.loadCurrent(dataRoot: dataRoot) {
+            let path = ConditioningStrategyPlanV1.relativePath
+            let data = try Data(contentsOf: ProjectLocalFile.resolve(path, dataRoot: dataRoot))
+            references.append(PackArtifactExtensionReferenceV1(
+                id: PipelineConditioningStrategyStore.extensionID,
+                schema: plan.schema,
+                path: path,
+                sha256: FileDigest.sha256(of: data)
+            ))
+        }
+        let spatialPlanURL = PipelineLayout.url(CameraSetupPlanV1.relativePath, in: dataRoot)
+        if FileManager.default.fileExists(atPath: spatialPlanURL.path) {
+            references.append(contentsOf: try PipelineSpatialProductionWriter.requireCurrent(
+                dataRoot: dataRoot
+            ))
+        }
+        let musicPlanURL = PipelineLayout.url(
+            MusicPerformanceBindingV1.relativePath,
+            in: dataRoot
+        )
+        if declaredPack == "musicvideo",
+           FileManager.default.fileExists(atPath: musicPlanURL.path) {
+            references.append(contentsOf: try PipelineMusicvideoProductionWriter.requireCurrent(
+                dataRoot: dataRoot
+            ))
+        }
+        if try StoryCausalityStoreV1.requireCurrent(dataRoot: dataRoot) != nil {
+            _ = try StoryboardCausalityV1.requireCurrent(dataRoot: dataRoot)
+            for (id, schema, path) in [
+                (StoryCausalityStoreV1.lineageID, "story-causality/v1", StoryCausalityPlanV1.relativePath),
+                ("storyboard-causality.v1", "storyboard-causality/v1", StoryboardCausalityV1.relativePath),
+            ] {
+                references.append(PackArtifactExtensionReferenceV1(id: id, schema: schema, path: path,
+                    sha256: try FileDigest.sha256(of: ProjectLocalFile.resolve(path, dataRoot: dataRoot))))
+            }
+        }
+        if try ProductionStyleStoreV1.load(dataRoot: dataRoot) != nil {
+            let before = try ProductionStyleStoreV1.snapshot(dataRoot: dataRoot)
+            let path = ResolvedProductionStyleV1.relativePath
+            let data = try Data(contentsOf: ProjectLocalFile.resolve(path, dataRoot: dataRoot))
+            guard FileDigest.sha256(of: data) == before.artifactFingerprint,
+                  before == (try ProductionStyleStoreV1.snapshot(dataRoot: dataRoot)) else {
+                throw PipelineExecutionPlanComposerError.invalidReference("Production style changed while reading.")
+            }
+            references.append(PackArtifactExtensionReferenceV1(
+                id: ProductionStyleStoreV1.lineageID,
+                schema: ResolvedProductionStyleV1.schemaVersion,
+                path: path,
+                sha256: FileDigest.sha256(of: data)
+            ))
+            _ = try ProductionStyleStoreV1.load(dataRoot: dataRoot)
+        }
         guard let contract = try PhaseContractRuntime.contract(activePack: declaredPack),
               let shotlistIndex = contract.order.firstIndex(of: "shotlist") else {
-            return []
+            return references
         }
-        return try contract.order[..<shotlistIndex].compactMap { phaseID in
+        references += try contract.order[..<shotlistIndex].compactMap { phaseID in
             guard let extensionArtifact = contract.phase(phaseID)?
                 .declaration.extensionArtifact else {
                 return nil
@@ -903,6 +1015,7 @@ enum PipelineExecutionPlanComposer {
             )
             return reference
         }
+        return references
     }
 
     private static func appendProjectMedia(

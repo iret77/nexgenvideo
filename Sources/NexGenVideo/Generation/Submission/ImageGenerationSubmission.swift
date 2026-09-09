@@ -36,6 +36,7 @@ struct ImageGenerationSubmission {
         projectURL: URL?,
         editor: EditorViewModel,
         authorization: GenerationAuthorization,
+        preparedParameters: PreparedProviderParameters? = nil,
         onComplete: (@MainActor (MediaAsset) -> Void)? = nil,
         onFailure: (@MainActor () -> Void)? = nil
     ) -> String {
@@ -49,6 +50,7 @@ struct ImageGenerationSubmission {
             numImages: numImages,
             folderId: folderId,
             buildParams: buildParams,
+            preparedParameters: preparedParameters,
             fileExtension: "jpg",
             projectURL: projectURL,
             editor: editor,

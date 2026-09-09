@@ -1,10 +1,10 @@
 {
   "schemaVersion": "creative-library.v1",
   "id": "stylized-3d-animation",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "applicability": {
     "packIDs": [],
-    "phases": ["production_design", "bible", "storyboard", "review"],
+    "phases": ["production_design", "bible", "storyboard", "frames", "review"],
     "intentTags": ["stylized-3d", "animation", "shape-language"],
     "activeProfileIDs": []
   },
@@ -14,7 +14,7 @@
       "title": "Shape-language system",
       "applicability": {
         "packIDs": [],
-        "phases": ["production_design", "bible", "review"],
+        "phases": ["production_design", "bible", "frames", "review"],
         "intentTags": ["stylized-3d", "character-design", "environment-design"],
         "activeProfileIDs": []
       },
@@ -35,7 +35,7 @@
       "title": "Controlled material simplification",
       "applicability": {
         "packIDs": [],
-        "phases": ["production_design", "bible", "review"],
+        "phases": ["production_design", "bible", "frames", "review"],
         "intentTags": ["stylized-3d", "materials", "readability"],
         "activeProfileIDs": []
       },
@@ -56,7 +56,7 @@
       "title": "Emotive color and light",
       "applicability": {
         "packIDs": [],
-        "phases": ["production_design", "storyboard", "review"],
+        "phases": ["production_design", "storyboard", "frames", "review"],
         "intentTags": ["stylized-3d", "color", "lighting"],
         "activeProfileIDs": []
       },

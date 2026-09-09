@@ -713,11 +713,21 @@ extension ToolExecutor {
             destinationURL: to,
             dataRoot: root
         )
+        let confirmedIdentityProvenance = if let fromRel {
+            try ConfirmedIdentityAssetStoreV1.adopt(
+                from: fromRel,
+                to: toRel,
+                dataRoot: root
+            )
+        } else {
+            false
+        }
         return try jsonResult([
             "from": fromRel.map { $0 as Any } ?? NSNull(),
             "media": mediaID.map { $0 as Any } ?? NSNull(),
             "to": toRel,
             "generated_provenance": proofRecorded,
+            "confirmed_identity_provenance": confirmedIdentityProvenance,
         ])
     }
 
@@ -1275,13 +1285,33 @@ extension ToolExecutor {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = try args.requireString("phase")
         let declaration = try mutationPackDeclaration(editor, dataRoot: root)
+        guard let shotlist = try readShotlist(dataRoot: root) else {
+            throw ToolError("No shotlist yet. Plan and approve the shots before rendering.")
+        }
+        let deliveryModes: [String: ShotDeliveryModeV1]
+        do {
+            deliveryModes = try renderDeliveryModes(
+                phase: phase,
+                shotlist: shotlist,
+                dataRoot: root
+            )
+        } catch PipelineExecutionPlanError.referencedFileInvalid(let path) {
+            if let sourceShot = shotlist.shots.first(where: {
+                $0.sourceMode == .aiEnhanced && $0.sourcePath == path
+            }) {
+                throw ToolError(
+                    "Shot '\(sourceShot.id)' has no current project-local source video at '\(path)'. "
+                        + "Restore the declared source or rewind the Shot List."
+                )
+            }
+            throw ToolError(
+                "The current execution plan references a missing or stale file at '\(path)'."
+            )
+        }
         try PipelineRenderRecordWriter.requireCurrentPublicationIfPresent(
             dataRoot: root,
             phase: phase
         )
-        guard let shotlist = try readShotlist(dataRoot: root) else {
-            throw ToolError("No shotlist yet. Plan and approve the shots before rendering.")
-        }
         let renderManifest = phase == "frames"
             ? nil
             : try readRenderManifest(dataRoot: root, phase: phase)
@@ -1326,11 +1356,12 @@ extension ToolExecutor {
             let ordered = shotlist.shots
                 .filter { $0.sourceMode != .imported }
             let pending = ordered.first {
-                !isCurrentVideoRender(
+                !isCurrentRender(
                     renderManifest.entries[$0.id],
                     proof: renderProof?.entries[$0.id],
                     routingProof: renderRoutingProof?.entries[$0.id],
                     shot: $0,
+                    deliveryMode: deliveryModes[$0.id] ?? .providerVideo,
                     dataRoot: root
                 )
             }
@@ -1341,8 +1372,11 @@ extension ToolExecutor {
             return try jsonResult(["phase": phase, "shot_id": NSNull(), "done": true])
         }
         let shotId = shot.id
+        let deliveryMode = deliveryModes[shotId]
         let productionRouting: PipelineProductionRouteSelection?
-        if phase != "frames", shot.sourceMode != .imported {
+        if phase != "frames",
+           shot.sourceMode != .imported,
+           deliveryMode != .timelineAnimatedStill {
             await CatalogDiscovery.ensureCurrent()
             do {
                 try await PipelineProductionInputsWriter.refresh(
@@ -1427,6 +1461,29 @@ extension ToolExecutor {
             "camera": shot.cameraSetup.map { $0.promptProse() as Any } ?? NSNull(),
             "chain_with_previous_end": shot.chainWithPreviousEnd,
         ]
+        if let deliveryMode {
+            body["delivery_mode"] = deliveryMode.rawValue
+            body["video_generation_required"] = deliveryMode == .providerVideo
+        }
+        if deliveryMode == .timelineAnimatedStill {
+            let still = try currentStillDeliveryFrame(
+                shotID: shotId,
+                dataRoot: root
+            )
+            guard let asset = await resolveRenderedAsset(
+                still.path,
+                editor: editor,
+                dataRoot: root
+            ) else {
+                throw ToolError(
+                    "The accepted still for shot '\(shotId)' is no longer registered as project media."
+                )
+            }
+            body["output_media_ref"] = asset.id
+            body["output_path"] = still.path
+            body["output_sha256"] = still.sha256
+            body["record_action"] = "Call record_render with this exact output_media_ref. Do not call a video-generation tool."
+        }
         if let productionRouting {
             body["generation_model"] = productionRouting.modelID
             body["production_route"] = [
@@ -1603,7 +1660,132 @@ extension ToolExecutor {
             if !refImages.isEmpty { body["reference_images"] = refImages }
             if !plan.warnings.isEmpty { body["reference_warnings"] = plan.warnings }
         }
+        if let style = try ProductionStyleStoreV1.load(dataRoot: root) {
+            body["style_frame_checks"] = Dictionary(uniqueKeysWithValues: style.criteria.filter {
+                $0.scope == .frame && $0.evidenceKind == .image
+            }.map { ($0.auditKey, $0.expected) })
+            body["style_review_instruction"] = "Inspect the current image with inspect_media and return its observationReceipt as observation_receipt to save_frame_audit. Report each style_frame_checks key with a concrete observation. Timing, camera movement, sequence, and audio criteria require separate media review; never claim them from a still."
+        }
         return try jsonResult(body)
+    }
+
+    private struct CurrentStillDeliveryFrame {
+        let path: String
+        let sha256: String
+        let providerPrompt: String
+        let generationModel: String
+    }
+
+    private func renderDeliveryModes(
+        phase: String,
+        shotlist: Shotlist,
+        dataRoot: URL
+    ) throws -> [String: ShotDeliveryModeV1] {
+        guard phase != "frames" else { return [:] }
+        let planURL = PipelineLayout.url(
+            PipelineLayout.executionPlanFile,
+            in: dataRoot
+        )
+        if FileManager.default.fileExists(atPath: planURL.path) {
+            return try PipelineShotDelivery.modes(dataRoot: dataRoot)
+        }
+        return Dictionary(uniqueKeysWithValues: shotlist.shots.compactMap {
+            $0.sourceMode == .imported ? nil : ($0.id, .providerVideo)
+        })
+    }
+
+    private func currentStillDeliveryFrame(
+        shotID: String,
+        dataRoot: URL
+    ) throws -> CurrentStillDeliveryFrame {
+        _ = try PipelineRenderRecordWriter.requireCurrentPublicationIfPresent(
+            dataRoot: dataRoot,
+            phase: "frames"
+        )
+        let frames = try loadFramesManifest(dataRoot: dataRoot)
+        guard let frame = frames.shot(shotID)?.frames.first(where: {
+            $0.role == "start"
+        }) else {
+            throw ToolError(
+                "Shot '\(shotID)' has no generated start image for still delivery."
+            )
+        }
+        let url = try ProjectLocalFile.resolve(frame.path, dataRoot: dataRoot)
+        guard ProjectMediaExtensions.images.contains(
+            url.pathExtension.lowercased()
+        ) else {
+            throw ToolError("Shot '\(shotID)' still delivery is not an image.")
+        }
+        let sha256 = try FileDigest.sha256(of: url)
+        guard let audit = try loadFrameAudit(
+            dataRoot: dataRoot,
+            shotId: shotID,
+            role: "start"
+        ),
+              audit.renderPath == frame.path,
+              audit.renderSha256 == sha256 else {
+            throw ToolError(
+                "Inspect and audit the current start image for shot '\(shotID)' before still delivery."
+            )
+        }
+        try FrameAuditExpectations.requireCurrent(audit, dataRoot: dataRoot)
+        if let style = try ProductionStyleStoreV1.load(dataRoot: dataRoot) {
+            try FrameObservationStoreV1.requireStyleAudit(
+                audit,
+                style: style,
+                dataRoot: dataRoot
+            )
+        } else {
+            try FrameAuditAcceptanceStoreV1.requireResolved(
+                audit: audit,
+                dataRoot: dataRoot
+            )
+        }
+        return CurrentStillDeliveryFrame(
+            path: frame.path,
+            sha256: sha256,
+            providerPrompt: frame.providerPrompt,
+            generationModel: frame.runwayModel
+        )
+    }
+
+    private func isCurrentRender(
+        _ entry: RenderEntry?,
+        proof: RenderProofEntry?,
+        routingProof: PipelineRenderRoutingProofEntryV1?,
+        shot: Shot,
+        deliveryMode: ShotDeliveryModeV1,
+        dataRoot: URL
+    ) -> Bool {
+        switch deliveryMode {
+        case .providerVideo:
+            return isCurrentVideoRender(
+                entry,
+                proof: proof,
+                routingProof: routingProof,
+                shot: shot,
+                dataRoot: dataRoot
+            )
+        case .timelineAnimatedStill:
+            guard routingProof == nil,
+                  let entry,
+                  let proof,
+                  entry.status == .rendered,
+                  entry.shotId == shot.id,
+                  proof.shotId == shot.id,
+                  entry.output == proof.output,
+                  let still = try? currentStillDeliveryFrame(
+                    shotID: shot.id,
+                    dataRoot: dataRoot
+                  ),
+                  proof.output == still.path,
+                  proof.outputSha256 == still.sha256,
+                  proof.providerPrompt == still.providerPrompt,
+                  proof.generationModel == still.generationModel else {
+                return false
+            }
+            return true
+        }
     }
 
     private func isCurrentVideoRender(
@@ -1826,8 +2008,28 @@ extension ToolExecutor {
                     + "provider render manifest. Place its source footage on the timeline."
             )
         }
+        let deliveryModes = try renderDeliveryModes(
+            phase: phase,
+            shotlist: shotlist,
+            dataRoot: root
+        )
+        let deliveryMode = deliveryModes[shotId]
+        if args.string("expected_take_id") != nil,
+           status != .rendered
+            || phase == "frames"
+            || deliveryMode == .timelineAnimatedStill {
+            throw ToolError(
+                "Selecting an existing take requires a rendered video result."
+            )
+        }
+        if deliveryMode == .timelineAnimatedStill, costEur != 0 {
+            throw ToolError(
+                "Still delivery reuses its accepted Frames output and has no additional render cost."
+            )
+        }
         var completedAsset: MediaAsset?
         var updatedFrames: FramesManifest?
+        var frameReferenceArtifacts: [String: Data] = [:]
         if status == .rendered {
             guard let submitted = output, !submitted.isEmpty else {
                 throw ToolError(
@@ -1863,7 +2065,10 @@ extension ToolExecutor {
                     "Rendered output must be a regular file in the open project."
                 )
             }
-            let expectedType: ClipType = phase == "frames" ? .image : .video
+            let expectedType: ClipType = phase == "frames"
+                || deliveryMode == .timelineAnimatedStill
+                ? .image
+                : .video
             guard asset.type == expectedType else {
                 throw ToolError(
                     "\(phase) output must be \(expectedType.rawValue) media, "
@@ -1875,6 +2080,18 @@ extension ToolExecutor {
                 of: assetURL,
                 to: projectHome
             )
+            if deliveryMode == .timelineAnimatedStill {
+                let still = try currentStillDeliveryFrame(
+                    shotID: shotId,
+                    dataRoot: root
+                )
+                guard output == still.path,
+                      try FileDigest.sha256(of: assetURL) == still.sha256 else {
+                    throw ToolError(
+                        "Still delivery must record the exact accepted start image for shot '\(shotId)'."
+                    )
+                }
+            }
             if phase == "frames" {
                 updatedFrames = try updatedFramesManifest(
                     shot: shot,
@@ -1904,10 +2121,47 @@ extension ToolExecutor {
                 asset: completedAsset,
                 shot: shot,
                 editor: editor,
+                useStillRequirements: phase == "frames"
+                    || deliveryMode == .timelineAnimatedStill,
                 dataRoot: root
             )
+            if phase == "frames" {
+                let role = args.string("role") ?? "start"
+                if PackCatalog.registry(
+                    activePack: declaration.packName
+                ).frameReferencePlanProvider != nil {
+                    let usage = try frameReferenceUsage(
+                        asset: completedAsset,
+                        shot: shot,
+                        role: role,
+                        output: output,
+                        proof: entryProof,
+                        editor: editor,
+                        dataRoot: root
+                    )
+                    frameReferenceArtifacts[
+                        FrameReferenceUsageStoreV1.path(
+                            shotID: shotId,
+                            role: role
+                        )
+                    ] = try FrameReferenceUsageStoreV1.encode(usage)
+                }
+            }
             proof?.entries[shotId] = entryProof
-            if phase != "frames" {
+            if let expectedTakeID = args.string("expected_take_id") {
+                guard phase != "frames", PipelineRenderTakeStore.identity(eventID: completedAsset.id, outputSHA256: entryProof.outputSha256) == expectedTakeID else {
+                    throw ToolError("The selected take's event or output changed. Refresh the take history.")
+                }
+                let take = try PipelineRenderTakeStore.take(id: expectedTakeID, dataRoot: root)
+                guard take.phase == phase, take.shotID == shotId else {
+                    throw ToolError("That take belongs to \(take.phase)/\(take.shotID). Select a take recorded for this phase and shot.")
+                }
+                guard let review = try TakeReview.load(take: take, dataRoot: root), review.accepted else {
+                    throw ToolError("Review and accept the exact take before selecting it.")
+                }
+            }
+            if phase != "frames",
+               deliveryMode != .timelineAnimatedStill {
                 guard let generationRouting = completedAsset.generationInput?.productionRouting else {
                     throw ToolError(
                         "The rendered video has no exact production-routing provenance."
@@ -1939,6 +2193,8 @@ extension ToolExecutor {
                     outputSHA256: entryProof.outputSha256,
                     generation: generationRouting
                 )
+            } else if deliveryMode == .timelineAnimatedStill {
+                routingProof?.entries.removeValue(forKey: shotId)
             }
         } else {
             proof?.entries.removeValue(forKey: shotId)
@@ -1987,6 +2243,16 @@ extension ToolExecutor {
                 framesManifest: updatedFrames,
                 replacingShotID: shotId,
                 preparedLastFrame: preparedLastFrame,
+                completedTake: phase == "frames"
+                    || deliveryMode == .timelineAnimatedStill
+                    ? nil
+                    : completedAsset.flatMap { asset in
+                    asset.generationInput.map { PipelineRenderTakeStore.Completed(eventID: asset.id, generationInput: $0, reviewedSelection: args.string("expected_take_id") != nil) }
+                },
+                additionalArtifacts: frameReferenceArtifacts,
+                stillShotIDs: Set(deliveryModes.compactMap {
+                    $0.value == .timelineAnimatedStill ? $0.key : nil
+                }),
                 expectedPublicationTransactionID: expectedPublication?.transactionID,
                 dataRoot: root,
                 declaredPack: declaration.packName,
@@ -2003,9 +2269,9 @@ extension ToolExecutor {
             "shot_id": shotId,
             "status": entry?.status.rawValue ?? statusRaw,
             "output": entry?.output.map { $0 as Any } ?? NSNull(),
-            "cost_eur": entry?.costEur ?? costEur,
+            "reported_cost_eur": entry?.costEur ?? costEur,
             "updated_at": entry?.updatedAt.map { $0 as Any } ?? NSNull(),
-            "spent_eur": spent(manifest),
+            "reported_phase_cost_eur": spent(manifest),
         ])
     }
 
@@ -2028,17 +2294,25 @@ extension ToolExecutor {
         let routingProof = phase == "frames"
             ? nil
             : try readRenderRoutingProof(dataRoot: root, phase: phase)
+        let deliveryModes = try shotlist.map {
+            try renderDeliveryModes(
+                phase: phase,
+                shotlist: $0,
+                dataRoot: root
+            )
+        } ?? [:]
         var entries: [String: Any] = [:]
         for (sid, e) in manifest.entries {
             let entryProof = proof?.entries[sid]
             let currentOutput = phase == "frames"
                 ? e.status == .rendered
                 : shotlist?.shots.first(where: { $0.id == sid }).map {
-                    isCurrentVideoRender(
+                    isCurrentRender(
                         e,
                         proof: entryProof,
                         routingProof: routingProof?.entries[sid],
                         shot: $0,
+                        deliveryMode: deliveryModes[sid] ?? .providerVideo,
                         dataRoot: root
                     )
                 } ?? false
@@ -2048,7 +2322,7 @@ extension ToolExecutor {
                 "status": e.status.rawValue,
                 "output": e.output.map { $0 as Any } ?? NSNull(),
                 "current_output": currentOutput,
-                "cost_eur": e.costEur,
+                "reported_cost_eur": e.costEur,
                 "updated_at": e.updatedAt.map { $0 as Any } ?? NSNull(),
                 "generation_model": entryProof
                     .map { $0.generationModel as Any } ?? NSNull(),
@@ -2066,11 +2340,12 @@ extension ToolExecutor {
                 : shotlist?.shots.first(where: {
                     $0.id == shotID
                 }).map {
-                    isCurrentVideoRender(
+                    isCurrentRender(
                         entry,
                         proof: proof?.entries[shotID],
                         routingProof: routingProof?.entries[shotID],
                         shot: $0,
+                        deliveryMode: deliveryModes[shotID] ?? .providerVideo,
                         dataRoot: root
                     )
                 } ?? false
@@ -2082,16 +2357,69 @@ extension ToolExecutor {
                 pending += 1
             }
         }
+        let takeIndex = try PipelineRenderTakeStore.load(dataRoot: root, project: manifest.project, phase: phase)
+        let requestedTake = args.string("take_id")
+        if let requestedTake, !takeIndex.takeIDs.contains(requestedTake) { throw ToolError("The requested take is not recorded in this render phase.") }
+        let takes: [[String: Any]] = try takeIndex.takeIDs.filter { requestedTake == nil || $0 == requestedTake }.map { id in
+            let take = try PipelineRenderTakeStore.take(id: id, dataRoot: root)
+            let review = try TakeReview.load(take: take, dataRoot: root)
+            var result: [String: Any] = ["take_id": id, "shot_id": take.shotID, "planned_generation_id": take.plannedGenerationID,
+                    "prompt_revision_id": take.promptRevisionID, "generation_event_id": take.generationEventID,
+                    "output": take.output.path, "output_sha256": take.output.sha256,
+                    "selected_candidate": takeIndex.selected[take.shotID] == id,
+                    "review_status": review.map { $0.accepted ? "accepted" : "rejected" } ?? "pending", "recorded_at": take.recordedAt]
+            if let packageID = take.generationInput.generationPackageID {
+                result["generation_package_id"] = packageID
+                if requestedTake != nil {
+                    do {
+                        let package = try GenerationPackageV1.load(id: packageID, home: FrameInventory.projectHome(of: root))
+                        try PipelineRenderTakeStore.requirePackage(input: take.generationInput, dataRoot: root)
+                        result["generation_package"] = try JSONSerialization.jsonObject(with: GenerationPackageV1.canonicalData(package))
+                    } catch { result["generation_package_error"] = error.localizedDescription }
+                }
+            }
+            if let review {
+                result["review"] = ["reviewer": review.reviewer, "reviewed_at": review.reviewedAt,
+                    "output_sha256": review.outputSHA256,
+                    "duration_value": review.durationValue, "duration_timescale": review.durationTimescale,
+                    "findings": review.findings.map { finding in
+                        ["pass": finding.pass.rawValue, "verdict": finding.verdict.rawValue,
+                         "observation": finding.observation, "start_seconds": finding.startSeconds,
+                         "end_seconds": finding.endSeconds] as [String: Any]
+                    }] as [String: Any]
+            }
+            return result
+        }
+        var iterationDecisions: [String: Any] = [:]
+        var iterationDecisionErrors: [String: String] = [:]
+        for shotID in Set(takes.compactMap { $0["shot_id"] as? String }) {
+            do {
+                guard let current = try TakeRepairPlan.current(shotID: shotID, dataRoot: root) else { continue }
+                iterationDecisions[shotID] = ["id": current.id, "take_id": current.plan.takeID,
+                    "operation": current.plan.operation.rawValue, "reason": current.plan.reason,
+                    "decided_by": current.plan.decidedBy,
+                    "rolls_per_prompt": current.plan.policy.rollsPerPrompt,
+                    "failures_before_rewrite": current.plan.policy.failuresBeforeRewrite,
+                    "clean_failures_before_model_limit": current.plan.policy.cleanFailuresBeforeModelLimit,
+                    "channels_before_model_limit": current.plan.policy.channelsBeforeModelLimit,
+                    "iterations_before_simplification": current.plan.policy.iterationsBeforeSimplification] as [String: Any]
+            } catch {
+                iterationDecisionErrors[shotID] = error.localizedDescription
+            }
+        }
         return try jsonResult([
             "project": manifest.project,
             "phase": phase,
             "entries": entries,
+            "takes": takes,
+            "iteration_decisions": iterationDecisions,
+            "iteration_decision_errors": iterationDecisionErrors,
             "summary": [
                 "total": ordered.count,
                 "rendered": rendered,
                 "pending": pending,
                 "failed": failed,
-                "spent_eur": spent(manifest),
+                "reported_phase_cost_eur": spent(manifest),
             ],
         ])
     }
@@ -2151,7 +2479,7 @@ extension ToolExecutor {
                     "model": frame.runwayModel,
                 ]
                 if let audit {
-                    var auditBody = frameAuditJSON(audit, exists: true)
+                    var auditBody = frameAuditJSON(audit, exists: true, dataRoot: root)
                     auditBody["current_image"] = digest == audit.renderSha256
                         && resolved != nil
                     body["audit"] = auditBody
@@ -2214,12 +2542,19 @@ extension ToolExecutor {
 
         // Expected per standard check comes from the shot spec, never the model.
         let shotlist = try readShotlist(dataRoot: root)
-        let shot = shotlist?.shots.first { $0.id == shotId }
-        let expected = frameAuditExpected(
-            for: shot,
+        guard let shot = shotlist?.shots.first(where: { $0.id == shotId }) else {
+            throw ToolError("No canonical shot exists for this frame audit: " + shotId)
+        }
+        let executionShot = try FrameAuditExpectations.executionShot(shotID: shotId, role: role, dataRoot: root)
+        var expected = try FrameAuditExpectations.make(
+            shot: shot, role: role, execution: executionShot,
             brief: try readBriefIfPresent(dataRoot: root),
-            bible: try loadBible(dataRoot: root)
+            bible: try loadBible(dataRoot: root),
+            boundary: try FrameAuditExpectations.boundary(shotID: shotId, role: role, dataRoot: root)
         )
+        let style = try ProductionStyleStoreV1.load(dataRoot: root)
+        let styleCriteria = style?.criteria.filter { $0.scope == .frame && $0.evidenceKind == .image } ?? []
+        for criterion in styleCriteria { expected[criterion.auditKey] = criterion.expected }
 
         guard let rawChecks = args["checks"] as? [String: Any] else {
             throw ToolError("`checks` must be an object mapping each audit key to {status, observed, note}.")
@@ -2235,11 +2570,44 @@ extension ToolExecutor {
             guard let status = AuditStatus(rawValue: statusRaw), status != .pending else {
                 throw ToolError("check '\(key)' has invalid status '\(statusRaw)'. Expected clean/minor/blocking/n/a.")
             }
+            let observed = cd.string("observed") ?? ""
+            let note = cd.string("note") ?? ""
+            if status == .notApplicable {
+                guard !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw ToolError("check '\(key)' needs a reason why it is not applicable.")
+                }
+            } else if observed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                throw ToolError("check '\(key)' needs a concrete image observation before assigning a verdict.")
+            }
             checks[key] = AuditCheck(
                 status: status,
                 expected: expected[key] ?? (cd.string("expected") ?? ""),
-                observed: cd.string("observed") ?? "",
-                note: cd.string("note") ?? "")
+                observed: observed,
+                note: note)
+        }
+        let worst: AuditStatus = checks.values.contains { $0.status == .blocking } ? .blocking
+            : (checks.values.contains { $0.status == .minor } ? .minor : .clean)
+        guard overall == worst else {
+            throw ToolError("The overall verdict must match the most severe concrete check finding. Record the corresponding observed finding before assigning minor or blocking.")
+        }
+        var observation: ImageObservationCache.Entry?
+        if style != nil {
+            let entry = try imageObservations.require(try args.requireString("observation_receipt"),
+                                                      project: home, sourceSHA256: sha)
+            observation = entry
+            let receipt = entry.receipt
+            for criterion in styleCriteria {
+                guard let check = checks[criterion.auditKey], check.status != .notApplicable,
+                      !check.observed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw ToolError("Report an observed result for style criterion: " + criterion.auditKey)
+                }
+            }
+            let allowed = Set(styleCriteria.map(\.auditKey) + [FrameObservationStoreV1.auditKey])
+            guard checks.keys.filter({ $0.hasPrefix("style.") }).allSatisfy(allowed.contains) else {
+                throw ToolError("A frame audit cannot attest temporal, sequence, or audio style criteria.")
+            }
+            checks[FrameObservationStoreV1.auditKey] = AuditCheck(status: .clean, expected: receipt.sourceSHA256,
+                observed: receipt.id, note: receipt.transmittedImageSHA256)
         }
         let missing = standardAuditCheckKeys.filter { checks[$0] == nil }
         guard missing.isEmpty else {
@@ -2267,25 +2635,58 @@ extension ToolExecutor {
             throw ToolError("Frame audit rejected: \(frameAuditViolation(e)). Fix and re-call.")
         }
         do {
-            try saveFrameAudit(audit, dataRoot: root)
+            var paths = [frameAuditPath(dataRoot: root, shotId: shotId, role: role)]
+            if let observation {
+                paths += [".json", ".image"].map { root.appendingPathComponent("frames/observations/" + observation.receipt.id + $0) }
+            }
+            try ArtifactTransaction.perform(paths: paths, dataRoot: root) {
+                if let observation {
+                    _ = try FrameObservationStoreV1.persist(observation.receipt, transmittedImage: observation.bytes, dataRoot: root)
+                }
+                try saveFrameAudit(audit, dataRoot: root)
+            }
         } catch {
             throw ToolError("Couldn't save frame audit: \(error)")
         }
-        return try jsonResult(frameAuditJSON(audit, exists: true))
+        return try jsonResult(frameAuditJSON(audit, exists: true, dataRoot: root))
     }
 
     func getFrameAuditTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let shotId = try args.requireString("shot_id")
         let role = args.string("role") ?? "start"
-        guard let audit = try readFrameAudit(
+        guard role == "start" || role == "end" else {
+            throw ToolError("Unknown frame audit role. Expected start or end.")
+        }
+        let audit = try readFrameAudit(
             dataRoot: root,
             shotId: shotId,
             role: role
-        ) else {
-            return try jsonResult(["exists": false, "shot_id": shotId, "role": role])
+        )
+        var body = audit.map { frameAuditJSON($0, exists: true, dataRoot: root) }
+            ?? ["exists": false, "shot_id": shotId, "role": role]
+        do {
+            guard let shot = try readShotlist(dataRoot: root)?.shots.first(where: { $0.id == shotId }) else {
+                throw ToolError("The canonical shot is missing. The saved audit is historical only.")
+            }
+            var expected = try FrameAuditExpectations.make(shot: shot, role: role,
+                execution: FrameAuditExpectations.executionShot(shotID: shotId, role: role, dataRoot: root),
+                brief: readBriefIfPresent(dataRoot: root), bible: loadBible(dataRoot: root),
+                boundary: FrameAuditExpectations.boundary(shotID: shotId, role: role, dataRoot: root))
+            if let style = try ProductionStyleStoreV1.load(dataRoot: root) {
+                for criterion in style.criteria where criterion.scope == .frame && criterion.evidenceKind == .image {
+                    expected[criterion.auditKey] = criterion.expected
+                }
+            }
+            body["current_expected"] = expected
+            body["current_expected_available"] = true
+            body["inspection_instruction"] = "Inspect the actual image against current_expected. The legacy anchor_at_t0 key describes the requested start or end boundary. Supply concrete observations, or explain why a check is not applicable."
+        } catch {
+            body["expected_unavailable"] = error.localizedDescription
+            body["current_expected_available"] = false
+            body["inspection_instruction"] = "This is the saved historical audit. Repair or explicitly rebuild the current shot plan before saving a new audit; do not treat this as current approval evidence."
         }
-        return try jsonResult(frameAuditJSON(audit, exists: true))
+        return try jsonResult(body)
     }
 
     /// #199: deterministic render-larger-then-crop. Resolves the source frame (explicit path or the
@@ -2593,40 +2994,7 @@ extension ToolExecutor {
         return projectImage(frame.path)
     }
 
-    /// Machine-derived `expected` per standard audit key, from the shot spec. Port of the Python
-    /// audit-skeleton derivation (`frames/audit.py::skeleton`). Empty shot ⇒ empty expecteds.
-    private func frameAuditExpected(for shot: Shot?, brief: Brief?, bible: Bible?) -> [String: String] {
-        guard let shot else { return [:] }
-        let productionPlan = shot.productionPlan
-        let blocking = shot.characterBlocking
-        let blockingExpected = blocking
-            .map {
-                "\($0.characterRef)@\($0.position) (\($0.pose), gaze=\($0.gaze), "
-                    + "anchor=\(productionPlan?.setAnchor(for: $0.characterRef) ?? ""), "
-                    + "relation=\($0.relationToSet))"
-            }
-            .joined(separator: "; ")
-        let gazeExpected = blocking
-            .map { "\($0.characterRef): \($0.gaze)" }
-            .joined(separator: "; ")
-        var forbidden: [String] = []
-        if !(brief?.allowTextOverlays ?? false) { forbidden.append("no text overlays / title cards") }
-        forbidden.append("no characters beyond declared character_refs")
-        return [
-            "character_count": "\(ProductionDiscipline.visibleCharacterCount(shot, bible: bible))",
-            "framing": shot.framing?.rawValue ?? "",
-            "camera_angle": shot.cameraSetup?.angle.rawValue ?? "",
-            "camera_height": shot.cameraSetup?.height.rawValue ?? "",
-            "character_position": blockingExpected,
-            "gaze": gazeExpected,
-            "forbidden_elements": forbidden.joined(separator: "; "),
-            "visible_zones": shot.visibleZones.joined(separator: ", "),
-            "anchor_at_t0": "exact t=0 state: subject in start pose, no objects from later in the shot already visible",
-            "proportion_anchor_match": "match figure-to-set scale of proportion_anchor_shot if set",
-        ]
-    }
-
-    private func frameAuditJSON(_ a: FrameAudit, exists: Bool) -> [String: Any] {
+    private func frameAuditJSON(_ a: FrameAudit, exists: Bool, dataRoot: URL) -> [String: Any] {
         var checks: [String: Any] = [:]
         for (key, c) in a.checks {
             checks[key] = [
@@ -2636,12 +3004,25 @@ extension ToolExecutor {
                 "note": c.note,
             ]
         }
+        let accepted: Bool
+        do {
+            guard !FrameAuditAcceptanceStoreV1.unresolvedChecks(a).isEmpty,
+                  let frame = try loadFramesManifest(dataRoot: dataRoot).shot(a.shotId)?.frames.first(where: { $0.role == a.role }),
+                  try ProjectLocalFile.resolve(frame.path, dataRoot: dataRoot) == ProjectLocalFile.resolve(a.renderPath, dataRoot: dataRoot) else {
+                throw ToolError("No current accepted frame findings.")
+            }
+            try FrameAuditAcceptanceStoreV1.requireResolved(audit: a, dataRoot: dataRoot)
+            try FrameAuditExpectations.requireCurrent(a, dataRoot: dataRoot)
+            accepted = true
+        } catch { accepted = false }
         return [
             "exists": exists,
             "shot_id": a.shotId,
             "role": a.role,
             "overall": a.overall.rawValue,
-            "verdict": a.verdict.rawValue,
+            "verdict": accepted ? AuditVerdict.approve.rawValue : a.verdict.rawValue,
+            "findings_accepted": accepted,
+            "original_verdict": a.verdict.rawValue,
             "has_blocking": a.hasBlocking,
             "has_minor": a.hasMinor,
             "auto_rerender_attempt": a.autoRerenderAttempt,
@@ -2668,18 +3049,15 @@ extension ToolExecutor {
         }
     }
 
-    // MARK: - Beat-synced assembly
+    // MARK: - Canonical assembly
 
-    /// Lay the phase's rendered shots onto a dedicated assembly video track, each cut snapped to a
-    /// beat (a downbeat at a section boundary, a regular beat otherwise), and put the song on an
-    /// audio track at frame 0 as the sync anchor. Re-runnable: rebuilds the assembly track in place
-    /// rather than duplicating. The beat math is the engine's pure `BeatAssembly.plan`; this handler
-    /// resolves each shot's rendered file, drives the timeline, and reports what landed and what was
-    /// skipped.
+    /// Apply exact reviewed sources through the core assembly contract. The active pack resolves
+    /// timing policy; Musicvideo retains beat sync and the song anchor through its legacy adapter.
     func assembleTimelineTool(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = args.string("phase") ?? "final"
         let declaration = try mutationPackDeclaration(editor, dataRoot: root)
+        let reviewedRangeIDs = try assemblyReviewedRangeIDs(args)
 
         // Hard gate (terminal backstop): no assembly on an unapproved plan. Every phase up to and
         // including shotlist — which, for musicvideo, includes the analysis gate that itself requires
@@ -2695,34 +3073,103 @@ extension ToolExecutor {
             throw ToolError(blocked.message)
         }
 
-        guard let grid = BeatAssembly.loadBeatGrid(dataRoot: root), !grid.beats.isEmpty else {
+        let grid = BeatAssembly.loadBeatGrid(dataRoot: root)
+        if declaration.packName == "musicvideo", grid?.beats.isEmpty != false {
             throw ToolError("Run analysis first: no beat analysis found (expected analysis/<song>.json with beats). Run run_phase(\"analysis\").")
         }
         guard let shotlist = try readShotlist(dataRoot: root) else {
             throw ToolError("No shotlist yet. Plan the shots before assembling.")
         }
         let manifest = try readRenderManifest(dataRoot: root, phase: phase)
+        let execution: (ExecutionPlanV1, ProjectCreativeContextV1)?
+        let executionPlanURL = PipelineLayout.url(
+            PipelineLayout.executionPlanFile,
+            in: root
+        )
+        if FileManager.default.fileExists(atPath: executionPlanURL.path) {
+            do {
+                execution = try PipelineExecutionPlanWriter.load(dataRoot: root)
+            } catch {
+                throw ToolError(
+                    "The current execution plan cannot be assembled: "
+                        + error.localizedDescription
+                )
+            }
+        } else {
+            execution = nil
+        }
+        let executionShots: [String: ExecutionShotV1]
+        let executionMedia: [String: ProjectMediaReferenceV1]
+        if let execution {
+            executionShots = Dictionary(uniqueKeysWithValues:
+                execution.0.shots.map { ($0.id, $0) }
+            )
+            executionMedia = Dictionary(uniqueKeysWithValues:
+                execution.1.media.map { ($0.id, $0) }
+            )
+        } else {
+            executionShots = [:]
+            executionMedia = [:]
+        }
+        let deliveryModes = try renderDeliveryModes(
+            phase: phase,
+            shotlist: shotlist,
+            dataRoot: root
+        )
 
         let fps = editor.timeline.fps
-        let tolerance = grid.bpm > 0 ? (60.0 / grid.bpm) / 2.0 : 0.25
+        let tolerance = grid.map { $0.bpm > 0 ? (60.0 / $0.bpm) / 2.0 : 0.25 } ?? 0
 
         // Filter to shots with a placeable rendered output; carry section flags from the full shotlist.
         let shots = shotlist.shots
         var planInputs: [BeatAssembly.ShotInput] = []
         var assetForShot: [String: MediaAsset] = [:]
+        var sourcePathForShot: [String: String] = [:]
         var skipped: [(id: String, reason: String)] = []
         for (i, shot) in shots.enumerated() {
             let startsSection = i == 0
                 || shot.section != shots[i - 1].section
-                || BeatAssembly.nearSectionBoundary(shot.timeStart, sectionStarts: grid.sectionStarts, tolerance: tolerance)
+                || grid.map { BeatAssembly.nearSectionBoundary(shot.timeStart, sectionStarts: $0.sectionStarts, tolerance: tolerance) } == true
             let endsSection = i == shots.count - 1
                 || shots[i + 1].section != shot.section
-                || BeatAssembly.nearSectionBoundary(shot.timeEnd, sectionStarts: grid.sectionStarts, tolerance: tolerance)
+                || grid.map { BeatAssembly.nearSectionBoundary(shot.timeEnd, sectionStarts: $0.sectionStarts, tolerance: tolerance) } == true
 
-            guard let entry = manifest.entries[shot.id], entry.status == .rendered,
-                  let output = entry.output, !output.isEmpty else {
-                skipped.append((shot.id, "not rendered yet"))
-                continue
+            let output: String
+            if let rangeID = reviewedRangeIDs[shot.id] {
+                let range = try ReviewedTakeRange.load(id: rangeID, dataRoot: root)
+                output = range.source.path
+            } else if shot.sourceMode == .imported {
+                guard let executionShot = executionShots[shot.id],
+                      executionShot.sourceMode == .imported,
+                      let sourceAssetID = executionShot.sourceAssetID,
+                      let source = executionMedia[sourceAssetID],
+                      source.role == "core.project-media",
+                      shot.sourcePath == source.path else {
+                    throw ToolError(
+                        "Imported shot '\(shot.id)' has no exact current execution-plan source binding."
+                    )
+                }
+                do {
+                    _ = try ProjectLocalFile.requireHash(
+                        source.sha256,
+                        at: source.path,
+                        dataRoot: root
+                    )
+                } catch {
+                    throw ToolError(
+                        "Imported shot '\(shot.id)' no longer matches its approved source bytes."
+                    )
+                }
+                output = source.path
+            } else {
+                guard let entry = manifest.entries[shot.id],
+                      entry.status == .rendered,
+                      let renderedOutput = entry.output,
+                      !renderedOutput.isEmpty else {
+                    skipped.append((shot.id, "not rendered yet"))
+                    continue
+                }
+                output = renderedOutput
             }
             guard let asset = try await requiredRenderedAsset(
                 output,
@@ -2733,20 +3180,152 @@ extension ToolExecutor {
                 continue
             }
             assetForShot[shot.id] = asset
+            sourcePathForShot[shot.id] = output
             planInputs.append(.init(
                 id: shot.id, timeStart: shot.timeStart, timeEnd: shot.timeEnd,
                 startsSection: startsSection, endsSection: endsSection
             ))
         }
+        guard skipped.isEmpty else {
+            let missing = skipped.map { "\($0.id): \($0.reason)" }.joined(separator: ", ")
+            throw ToolError("Assembly requires every selected shot source. Resolve these before the timeline changes: \(missing).")
+        }
         guard !planInputs.isEmpty else {
-            throw ToolError("No rendered shots yet for phase \"\(phase)\". Render shots and record_render them first, then assemble.")
+            throw ToolError(
+                "No rendered shots or current imported shot sources are available "
+                    + "for phase \"\(phase)\"."
+            )
         }
 
-        let placements = BeatAssembly.plan(beats: grid.beats, downbeats: grid.downbeats, fps: fps, shots: planInputs)
-        let song = try await resolveSongAsset(dataRoot: root, editor: editor)
+        let placements: [BeatAssembly.Placement]
+        if let grid {
+            placements = BeatAssembly.plan(beats: grid.beats, downbeats: grid.downbeats, fps: fps, shots: planInputs)
+        } else {
+            placements = planInputs.map {
+                let start = BeatAssembly.frame(seconds: $0.timeStart, fps: fps)
+                let end = BeatAssembly.frame(seconds: $0.timeEnd, fps: fps)
+                return BeatAssembly.Placement(
+                    shotId: $0.id,
+                    startFrame: start,
+                    durationFrames: max(1, end - start),
+                    cutSeconds: $0.timeStart,
+                    onDownbeat: false,
+                    atSectionBoundary: $0.startsSection
+                )
+            }
+        }
+        let song = declaration.packName == "musicvideo"
+            ? try await resolveSongAsset(dataRoot: root, editor: editor)
+            : nil
         var sidecar = try loadAssemblySidecar(dataRoot: root)
+        if sidecar.videoTrackId == nil { sidecar.videoTrackId = "ngv-assembly-video-v1" }
+        if song != nil, sidecar.audioTrackId == nil { sidecar.audioTrackId = "ngv-assembly-audio-v1" }
+        let selectedMedia = try assemblySelectedMedia(
+            shotlist: shotlist,
+            placements: placements,
+            assetForShot: assetForShot,
+            deliveryModes: deliveryModes,
+            reviewedRangeIDs: reviewedRangeIDs,
+            phase: phase,
+            project: shotlist.project,
+            fps: fps,
+            dataRoot: root
+        )
+        try PipelineAssemblyStore.requireCurrentSources(selectedMedia, dataRoot: root)
+        let priorRegionFingerprint = try PipelineAssemblyStore.regionFingerprint(
+            timeline: editor.timeline,
+            videoTrackID: sidecar.videoTrackId,
+            audioTrackID: sidecar.audioTrackId
+        )
+        let policy = AssemblyPolicyV1(
+            id: declaration.packName == "musicvideo"
+                ? "musicvideo.beat-synced-assembly"
+                : "core.freeform-assembly",
+            version: declaration.binding?.version ?? "1.0.0",
+            timing: declaration.packName == "musicvideo" ? .musicSync : .freeform,
+            timelineFPS: fps,
+            requiredDurationFrames: declaration.packName == "musicvideo"
+                ? grid.map { BeatAssembly.frame(seconds: $0.durationS, fps: fps) }
+                : nil,
+            anchorAudioAtFrameZero: declaration.packName == "musicvideo",
+            snapToleranceFrames: BeatAssembly.frame(seconds: tolerance, fps: fps)
+        )
+        let policyData = try PipelineAssemblyStore.canonical(policy)
+        let previousAssembly = try PipelineAssemblyStore.load(dataRoot: root)
+        var plannedPlacements: [AssemblyPlacementV1] = []
+        for index in placements.indices {
+            let selected = selectedMedia[index]
+            let placement = placements[index]
+            plannedPlacements.append(AssemblyPlacementV1(
+                shotID: selected.shotID,
+                trackID: sidecar.videoTrackId ?? "ngv-assembly-video-v1",
+                timelineStartFrame: placement.startFrame,
+                sourceStartFrame: selected.sourceStartFrame,
+                sourceEndFrame: selected.sourceEndFrame
+            ))
+        }
+        let plan = AssemblyPlanV1(
+            projectID: shotlist.project,
+            phase: phase,
+            selectedMedia: selectedMedia,
+            placements: plannedPlacements,
+            existingRegionFingerprint: previousAssembly?.plan.existingRegionFingerprint
+                ?? priorRegionFingerprint,
+            policyPath: PipelineAssemblyStore.policyPath,
+            policySHA256: FileDigest.sha256(of: policyData)
+        )
+        let planData = try PipelineAssemblyStore.canonical(plan)
+        if let previousAssembly {
+            let currentRegion = try PipelineAssemblyStore.regionFingerprint(
+                timeline: editor.timeline,
+                videoTrackID: sidecar.videoTrackId,
+                audioTrackID: sidecar.audioTrackId
+            )
+            if currentRegion != previousAssembly.manifest.appliedRegionFingerprint {
+                let action = args.string("drift_action").flatMap {
+                    PipelineAssemblyStore.DriftAction(rawValue: $0)
+                }
+                if action == .adopt {
+                    let finished = try PipelineDeliveryStore.adoptCurrentTimeline(
+                        editor: editor,
+                        requireSequenceReview: false
+                    )
+                    return try jsonResult([
+                        "status": "adopted_for_finish",
+                        "timeline_sha256": finished.manifest.timelineSHA256,
+                        "finish_plan": FinishPlanV1.relativePath,
+                        "finished_timeline": FinishedTimelineManifestV1.relativePath,
+                        "assembly_manifest": NSNull(),
+                    ])
+                }
+                if action != .rebuild {
+                    throw ToolError("The previously assembled timeline region changed. Choose drift_action \"adopt\" to finish the current cut or \"rebuild\" to replace it from the canonical plan.")
+                }
+            }
+            let sameInputs = previousAssembly.policy == policy
+                && previousAssembly.plan.projectID == plan.projectID
+                && previousAssembly.plan.phase == plan.phase
+                && previousAssembly.plan.selectedMedia == plan.selectedMedia
+                && previousAssembly.plan.placements == plan.placements
+                && previousAssembly.plan.policyPath == plan.policyPath
+                && previousAssembly.plan.policySHA256 == plan.policySHA256
+            if sameInputs,
+               currentRegion == previousAssembly.manifest.appliedRegionFingerprint {
+                return try assemblyResult(
+                    manifest: previousAssembly.manifest,
+                    timeline: editor.timeline,
+                    bpm: grid?.bpm,
+                    songPresent: song != nil,
+                    songPlaced: false,
+                    songAlreadyPresent: song != nil
+                )
+            }
+        }
+        try AssemblyValidatorV1.validate(plan: plan, policy: policy)
 
         var placedCount = 0
+        var placementProofs: [TimelineAssemblyProofV1.Placement] = []
+        var appliedPlacements: [AssemblyAppliedPlacementV1] = []
         var songPlacedNow = false
         var songAlreadyPresent = false
         try editor.withTimelineSwap(actionName: "Assemble Timeline (Agent)") {
@@ -2763,11 +3342,105 @@ extension ToolExecutor {
             }
             for placement in placements {
                 guard let asset = assetForShot[placement.shotId],
+                      let selected = selectedMedia.first(where: { $0.shotID == placement.shotId }),
+                      let planned = plan.placements.first(where: { $0.shotID == placement.shotId }),
                       let vi = editor.timeline.tracks.firstIndex(where: { $0.id == videoTrackId }) else { continue }
-                _ = editor.placeClip(
+                let appliedDuration = selected.sourceEndFrame - selected.sourceStartFrame
+                let clipIDs = editor.placeClip(
                     asset: asset, trackIndex: vi, startFrame: placement.startFrame,
-                    durationFrames: placement.durationFrames, addLinkedAudio: false
+                    durationFrames: appliedDuration, addLinkedAudio: false,
+                    trimStartFrame: selected.sourceStartFrame,
+                    trimEndFrame: {
+                        let sourceFrames = max(selected.sourceEndFrame, BeatAssembly.frame(seconds: asset.duration, fps: fps))
+                        return max(0, sourceFrames - selected.sourceEndFrame)
+                    }()
                 )
+                guard let clipID = clipIDs.first,
+                      let clipIndex = editor.timeline.tracks[vi].clips.firstIndex(where: {
+                        $0.id == clipID
+                      }),
+                      let output = sourcePathForShot[placement.shotId] else {
+                    throw ToolError(
+                        "The assembled clip for shot '\(placement.shotId)' could not be identified."
+                    )
+                }
+                let sourceSHA256 = try FileDigest.sha256(of: asset.url)
+                let isStill = deliveryModes[placement.shotId]
+                    == .timelineAnimatedStill
+                let motion: TimelineAssemblyProofV1.Placement.Motion?
+                if isStill {
+                    guard appliedDuration > 1 else {
+                        throw ToolError(
+                            "Animated still shot '\(placement.shotId)' needs at least two timeline frames."
+                        )
+                    }
+                    var clip = editor.timeline.tracks[vi].clips[clipIndex]
+                    let startSize = AnimPair(
+                        a: clip.transform.width,
+                        b: clip.transform.height
+                    )
+                    let endScale = 1.08
+                    let endSize = AnimPair(
+                        a: startSize.a * endScale,
+                        b: startSize.b * endScale
+                    )
+                    let startTopLeft = clip.transform.topLeft
+                    let endTopLeft = AnimPair(
+                        a: 0.5 - endSize.a / 2,
+                        b: 0.5 - endSize.b / 2
+                    )
+                    let lastFrame = max(1, appliedDuration - 1)
+                    clip.scaleTrack = KeyframeTrack(keyframes: [
+                        Keyframe(
+                            frame: 0,
+                            value: startSize,
+                            interpolationOut: .linear
+                        ),
+                        Keyframe(
+                            frame: lastFrame,
+                            value: endSize,
+                            interpolationOut: .linear
+                        ),
+                    ])
+                    clip.positionTrack = KeyframeTrack(keyframes: [
+                        Keyframe(
+                            frame: 0,
+                            value: AnimPair(
+                                a: startTopLeft.x,
+                                b: startTopLeft.y
+                            ),
+                            interpolationOut: .linear
+                        ),
+                        Keyframe(
+                            frame: lastFrame,
+                            value: endTopLeft,
+                            interpolationOut: .linear
+                        ),
+                    ])
+                    editor.timeline.tracks[vi].clips[clipIndex] = clip
+                    motion = TimelineAssemblyProofV1.Placement.Motion(
+                        kind: .kenBurnsZoom,
+                        startScale: 1,
+                        endScale: endScale
+                    )
+                } else {
+                    motion = nil
+                }
+                placementProofs.append(TimelineAssemblyProofV1.Placement(
+                    shotID: placement.shotId,
+                    clipID: clipID,
+                    sourcePath: output,
+                    sourceSHA256: sourceSHA256,
+                    sourceKind: isStill ? .stillImage : .video,
+                    startFrame: placement.startFrame,
+                    durationFrames: appliedDuration,
+                    motion: motion
+                ))
+                appliedPlacements.append(.init(
+                    selected: selected,
+                    placement: planned,
+                    clipIDs: clipIDs
+                ))
                 placedCount += 1
             }
 
@@ -2796,7 +3469,7 @@ extension ToolExecutor {
                     let audioTrackId = ensureAssemblyTrack(editor, existingId: sidecar.audioTrackId, type: .audio)
                     sidecar.audioTrackId = audioTrackId
                     if let ai = editor.timeline.tracks.firstIndex(where: { $0.id == audioTrackId }) {
-                        let songFrames = max(1, BeatAssembly.frame(seconds: grid.durationS, fps: fps))
+                        let songFrames = max(1, BeatAssembly.frame(seconds: grid?.durationS ?? song.duration, fps: fps))
                         _ = editor.placeClip(
                             asset: song, trackIndex: ai, startFrame: 0,
                             durationFrames: songFrames, addLinkedAudio: false
@@ -2810,7 +3483,73 @@ extension ToolExecutor {
                 declaredPack: declaration.packName,
                 declaredBinding: declaration.binding
             )
-            try saveAssemblySidecar(sidecar, dataRoot: root)
+            guard let videoTrackID = sidecar.videoTrackId else {
+                throw ToolError("The assembly video track is unavailable.")
+            }
+            var audioPlacements: [PipelineMusicvideoAssemblyWriter.AudioPlacement] = []
+            for track in editor.timeline.tracks where track.type == .audio && !track.muted {
+                for clip in track.clips {
+                    guard clip.rawVolumeAt(frame: clip.startFrame) > 0,
+                          let asset = editor.mediaAssets.first(where: {
+                            $0.id == clip.mediaRef
+                          }) else {
+                        continue
+                    }
+                    audioPlacements.append(.init(
+                        mediaID: clip.mediaRef,
+                        clipID: clip.id,
+                        url: asset.url,
+                        isAudioOnlyAsset: asset.type == .audio,
+                        startFrame: clip.startFrame,
+                        durationFrames: clip.durationFrames
+                    ))
+                }
+            }
+            try saveAssemblySidecar(
+                sidecar,
+                proof: TimelineAssemblyProofV1(
+                    project: shotlist.project,
+                    phase: phase,
+                    timelineFPS: fps,
+                    videoTrackID: videoTrackID,
+                    audioTrackID: sidecar.audioTrackId,
+                    generatedAt: currentTimestamp(),
+                    placements: placementProofs
+                ),
+                audioPlacements: audioPlacements,
+                songMediaID: song?.id,
+                dataRoot: root,
+                declaredPack: declaration.packName,
+                declaredBinding: declaration.binding
+            )
+            let appliedRegion = try PipelineAssemblyStore.regionFingerprint(
+                timeline: editor.timeline,
+                videoTrackID: sidecar.videoTrackId,
+                audioTrackID: sidecar.audioTrackId
+            )
+            guard let appliedRegion else {
+                throw ToolError("The assembled timeline region could not be fingerprinted.")
+            }
+            let manifest = AssemblyManifestV1(
+                projectID: shotlist.project,
+                phase: phase,
+                planSHA256: FileDigest.sha256(of: planData),
+                policyID: policy.id,
+                policyVersion: policy.version,
+                policySHA256: plan.policySHA256,
+                priorRegionFingerprint: plan.existingRegionFingerprint,
+                appliedRegionFingerprint: appliedRegion,
+                timelineFingerprint: try PipelineAssemblyStore.fingerprint(timeline: editor.timeline),
+                idempotencyKey: PipelineAssemblyStore.idempotencyKey(planData: planData),
+                placements: appliedPlacements
+            )
+            try PipelineAssemblyStore.persist(
+                policy: policy,
+                plan: plan,
+                planData: planData,
+                manifest: manifest,
+                dataRoot: root
+            )
         }
 
         let videoTrackIndex = sidecar.videoTrackId.flatMap { id in
@@ -2830,13 +3569,16 @@ extension ToolExecutor {
             ] as [String: Any]
         }
 
-        let placementRows: [[String: Any]] = placements.map {
+        let placementRows: [[String: Any]] = placements.map { placement in
             [
-                "shot_id": $0.shotId,
-                "start_frame": $0.startFrame,
-                "duration_frames": $0.durationFrames,
-                "on_downbeat": $0.onDownbeat,
-                "at_section_boundary": $0.atSectionBoundary,
+                "shot_id": placement.shotId,
+                "start_frame": placement.startFrame,
+                "duration_frames": placement.durationFrames,
+                "on_downbeat": placement.onDownbeat,
+                "at_section_boundary": placement.atSectionBoundary,
+                "clip_id": placementProofs.first(where: {
+                    $0.shotID == placement.shotId
+                }).map { $0.clipID as Any } ?? NSNull(),
             ]
         }
         let skippedRows: [[String: String]] = skipped.map { ["shot_id": $0.id, "reason": $0.reason] }
@@ -2844,7 +3586,7 @@ extension ToolExecutor {
         return try jsonResult([
             "phase": phase,
             "fps": fps,
-            "bpm": grid.bpm,
+            "bpm": grid?.bpm ?? 0,
             "shots_placed": placedCount,
             "total_frames": totalFrames,
             "video_track_index": videoTrackIndex.map { $0 as Any } ?? NSNull(),
@@ -2864,6 +3606,7 @@ extension ToolExecutor {
         let index = type == .audio
             ? editor.insertTrack(at: editor.timeline.tracks.count, type: .audio)
             : editor.insertTrack(at: 0, type: .video)
+        if let existingId { editor.timeline.tracks[index].id = existingId }
         return editor.timeline.tracks[index].id
     }
 
@@ -2951,7 +3694,9 @@ extension ToolExecutor {
             runwayModel: gi.model,
             approved: false,
             providerPrompt: gi.prompt,
-            multiRefHints: [])
+            multiRefHints: gi.frameReferencePlan.map {
+                PromptComposer.frameReferenceHints($0.bindings)
+            } ?? [])
         let current = existing ?? FramesManifest(
                 project: FrameInventory.projectName(of: dataRoot)
                     ?? shotlist.project,
@@ -2981,6 +3726,7 @@ extension ToolExecutor {
     private func stampRenderInputs(
         _ manifest: inout RenderManifest, shotId: String, output: String,
         asset: MediaAsset, shot: Shot, editor: EditorViewModel,
+        useStillRequirements: Bool = false,
         dataRoot: URL
     ) throws -> RenderProofEntry {
         guard var entry = manifest.entries[shotId],
@@ -3006,21 +3752,18 @@ extension ToolExecutor {
                     + "shot production plan. Generate it again before recording it."
             )
         }
-        let providerPrompt = gi.prompt.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        )
-        let generationModel = gi.model.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        )
-        guard !providerPrompt.isEmpty, !generationModel.isEmpty else {
+        let providerPrompt = gi.prompt
+        let generationModel = gi.model
+        guard !providerPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !generationModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ToolError(
                 "The rendered video has no compiled provider prompt or generation model."
             )
         }
-        let requirements = manifest.phase == "frames"
+        let requirements = useStillRequirements
             ? shot.stillProductionPromptRequirements
             : shot.videoProductionPromptRequirements
-        let policyViolations = manifest.phase == "frames"
+        let policyViolations = useStillRequirements
             ? ProductionPromptPolicy.stillPromptViolations(providerPrompt)
             : ProductionPromptPolicy.videoPromptViolations(
                 providerPrompt,
@@ -3100,7 +3843,27 @@ extension ToolExecutor {
             || gi.referenceImageAssetIds != nil
             || gi.referenceVideoAssetIds != nil
             || gi.referenceAudioAssetIds != nil
-        if hasSemanticVideoSlots {
+        if let framePlan = gi.frameReferencePlan {
+            guard useStillRequirements, framePlan.isExecutable,
+                  framePlan.shotID == shotId else {
+                throw ToolError(
+                    "The generated image has an invalid semantic frame reference plan."
+                )
+            }
+            referenceImages = try framePlan.bindings.map { binding in
+                let url = try ProjectLocalFile.requireHash(
+                    binding.sha256,
+                    at: binding.path,
+                    dataRoot: dataRoot
+                )
+                return RenderInputProof(
+                    path: FrameInventory.relativePath(of: url, to: home),
+                    sha256: binding.sha256
+                )
+            }
+            entry.startFramePath = nil
+            entry.referencePaths = referenceImages.map(\.path)
+        } else if hasSemanticVideoSlots {
             sourceVideo = try inputProofs(
                 gi.sourceVideoAssetId.map { [$0] } ?? [],
                 label: "Source video"
@@ -3188,6 +3951,66 @@ extension ToolExecutor {
         )
     }
 
+    private func frameReferenceUsage(
+        asset: MediaAsset,
+        shot: Shot,
+        role: String,
+        output: String,
+        proof: RenderProofEntry,
+        editor: EditorViewModel,
+        dataRoot: URL
+    ) throws -> FrameReferenceUsageV1 {
+        guard let input = asset.generationInput,
+              let plan = input.frameReferencePlan,
+              plan.isExecutable,
+              plan.shotID == shot.id,
+              let packageID = input.generationPackageID,
+              let receipts = input.referenceReceipts else {
+            throw ToolError(
+                "The generated frame has no immutable semantic reference provenance."
+            )
+        }
+        let package = try GenerationPackageV1.load(
+            id: packageID,
+            home: FrameInventory.projectHome(of: dataRoot)
+        )
+        try package.validate()
+        let projectKey = editor.projectId ?? dataRoot.standardizedFileURL
+            .resolvingSymlinksInPath().path
+        guard package.payload.modality == "image",
+              package.payload.target.modelId == input.model,
+              package.payload.binding.projectKey == projectKey,
+              package.payload.binding.shotId == shot.id,
+              package.payload.binding.shotFingerprint
+                == (try PromptCompiler.shotFingerprint(shot)),
+              package.payload.binding.frameReferencePlanSHA256
+                == plan.fingerprint,
+              package.payload.generationInput.frameReferencePlan == plan,
+              package.payload.references == receipts,
+              receipts.count == plan.bindings.count,
+              zip(plan.bindings, receipts).allSatisfy({ pair in
+                  pair.0.sha256 == pair.1.sourceSHA256
+                      && pair.0.sha256 == pair.1.submittedSHA256
+              }),
+              proof.referenceImages.count == plan.bindings.count,
+              zip(plan.bindings, proof.referenceImages).allSatisfy({ pair in
+                  pair.0.sha256 == pair.1.sha256
+              }) else {
+            throw ToolError(
+                "The generated frame's package does not match its semantic reference plan."
+            )
+        }
+        return FrameReferenceUsageV1(
+            shotID: shot.id,
+            role: role,
+            outputPath: output,
+            outputSHA256: proof.outputSha256,
+            modelID: input.model,
+            generationPackageID: packageID,
+            plan: plan
+        )
+    }
+
     private func prepareRequiredChainLastFrame(
         shotId: String,
         output: String,
@@ -3211,33 +4034,45 @@ extension ToolExecutor {
                 "The chained last frame cannot be bound to the exact rendered source."
             )
         }
-        let temporaryURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ngv-last-frame-\(UUID().uuidString).png")
-        defer { try? FileManager.default.removeItem(at: temporaryURL) }
-        do {
-            try await LastFrameExtractor.extractLastFrame(
-                video: asset.url,
-                dest: temporaryURL
-            )
-        } catch {
-            throw ToolError(
-                "The successor requires this clip's last frame, but extraction failed: "
-                    + error.localizedDescription
-            )
-        }
         let data: Data
-        do {
-            data = try Data(contentsOf: temporaryURL)
-        } catch {
-            throw ToolError(
-                "The extracted last frame could not be read: \(error.localizedDescription)"
-            )
+        let extractor: String
+        let destination: URL
+        if asset.type == .image {
+            do {
+                data = try Data(contentsOf: asset.url)
+            } catch {
+                throw ToolError(
+                    "The chained still image could not be read: \(error.localizedDescription)"
+                )
+            }
+            extractor = RenderLastFrameProofV1.stillImagePassthroughID
+            destination = asset.url.deletingPathExtension()
+                .appendingPathExtension(
+                    "last_frame.\(asset.url.pathExtension.lowercased())"
+                )
+        } else {
+            let temporaryURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("ngv-last-frame-\(UUID().uuidString).png")
+            defer { try? FileManager.default.removeItem(at: temporaryURL) }
+            do {
+                try await LastFrameExtractor.extractLastFrame(
+                    video: asset.url,
+                    dest: temporaryURL
+                )
+                data = try Data(contentsOf: temporaryURL)
+            } catch {
+                throw ToolError(
+                    "The successor requires this clip's last frame, but extraction failed: "
+                        + error.localizedDescription
+                )
+            }
+            extractor = RenderLastFrameProofV1.extractorID
+            destination = asset.url.deletingPathExtension()
+                .appendingPathExtension("last_frame.png")
         }
         guard !data.isEmpty else {
             throw ToolError("The required chained last frame is empty.")
         }
-        let destination = asset.url.deletingPathExtension()
-            .appendingPathExtension("last_frame.png")
         let home = FrameInventory.projectHome(of: dataRoot)
         let relative = FrameInventory.relativePath(of: destination, to: home)
         let frameProof = RenderLastFrameProofV1(
@@ -3247,6 +4082,7 @@ extension ToolExecutor {
             sha256: FileDigest.sha256(of: data),
             sourceOutput: output,
             sourceOutputSHA256: proof.outputSha256,
+            extractor: extractor,
             extractedAt: currentTimestamp()
         )
         return PipelineRenderRecordWriter.PreparedLastFrame(
@@ -3398,6 +4234,220 @@ extension ToolExecutor {
         var audioTrackId: String? = nil
     }
 
+    private func assemblyReviewedRangeIDs(_ args: [String: Any]) throws -> [String: String] {
+        guard let raw = args["reviewed_ranges"] else { return [:] }
+        guard let rows = raw as? [[String: Any]] else {
+            throw ToolError("reviewed_ranges must contain shot_id and review_id entries.")
+        }
+        var result: [String: String] = [:]
+        for row in rows {
+            guard Set(row.keys).isSubset(of: ["shot_id", "review_id"]),
+                  let shotID = row["shot_id"] as? String,
+                  let reviewID = row["review_id"] as? String,
+                  !shotID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  reviewID.count == 64,
+                  reviewID.utf8.allSatisfy({
+                      (48...57).contains($0) || (97...102).contains($0)
+                  }),
+                  result.updateValue(reviewID, forKey: shotID) == nil else {
+                throw ToolError("Each reviewed_ranges shot_id must be unique and bind a valid immutable review id.")
+            }
+        }
+        return result
+    }
+
+    private func assemblySelectedMedia(
+        shotlist: Shotlist,
+        placements: [BeatAssembly.Placement],
+        assetForShot: [String: MediaAsset],
+        deliveryModes: [String: ShotDeliveryModeV1],
+        reviewedRangeIDs: [String: String],
+        phase: String,
+        project: String,
+        fps: Int,
+        dataRoot: URL
+    ) throws -> [SelectedShotMediaV1] {
+        let shots = Dictionary(uniqueKeysWithValues: shotlist.shots.map { ($0.id, $0) })
+        let takeIndex = try PipelineRenderTakeStore.load(
+            dataRoot: dataRoot,
+            project: project,
+            phase: phase
+        )
+        return try placements.map { placement in
+            guard let shot = shots[placement.shotId],
+                  let asset = assetForShot[placement.shotId] else {
+                throw ToolError("The assembly plan references an unresolved shot source.")
+            }
+            let sourceURL = asset.url.standardizedFileURL.resolvingSymlinksInPath()
+            let values = try sourceURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+            guard values.isRegularFile == true, let byteCount = values.fileSize, byteCount > 0 else {
+                throw ToolError("Assembly source '\(placement.shotId)' is not a readable regular file.")
+            }
+            let sourcePath = sourcePathForAssembly(url: sourceURL, dataRoot: dataRoot)
+            let sourceSHA256 = try FileDigest.sha256(of: sourceURL)
+            if let rangeID = reviewedRangeIDs[placement.shotId] {
+                let range = try ReviewedTakeRange.load(id: rangeID, dataRoot: dataRoot)
+                let take = try PipelineRenderTakeStore.take(id: range.takeID, dataRoot: dataRoot)
+                let coversShot: Bool
+                if take.shotID == placement.shotId {
+                    coversShot = true
+                } else {
+                    coversShot = try assemblyTake(
+                        take.shotID,
+                        covers: placement.shotId,
+                        dataRoot: dataRoot
+                    )
+                }
+                guard range.range.fps == fps,
+                      range.source.path == sourcePath,
+                      range.source.sha256 == sourceSHA256,
+                      coversShot else {
+                    throw ToolError("Reviewed range '\(rangeID)' does not cover shot '\(placement.shotId)' at the current timeline rate.")
+                }
+                return SelectedShotMediaV1(
+                    shotID: placement.shotId,
+                    sourceKind: .reviewedTakeRange,
+                    sourcePath: sourcePath,
+                    sourceSHA256: sourceSHA256,
+                    sourceByteCount: Int64(byteCount),
+                    sourceFPS: fps,
+                    sourceStartFrame: range.range.startFrame,
+                    sourceEndFrame: range.range.endFrame,
+                    takeID: range.takeID,
+                    reviewPath: ReviewedTakeRange.path(id: rangeID),
+                    reviewSHA256: rangeID
+                )
+            }
+            if deliveryModes[placement.shotId] == .timelineAnimatedStill {
+                return SelectedShotMediaV1(
+                    shotID: placement.shotId,
+                    sourceKind: .timelineAnimatedStill,
+                    sourcePath: sourcePath,
+                    sourceSHA256: sourceSHA256,
+                    sourceByteCount: Int64(byteCount),
+                    sourceFPS: fps,
+                    sourceStartFrame: 0,
+                    sourceEndFrame: placement.durationFrames
+                )
+            }
+            if shot.sourceMode == .imported {
+                return SelectedShotMediaV1(
+                    shotID: placement.shotId,
+                    sourceKind: .importedSource,
+                    sourcePath: sourcePath,
+                    sourceSHA256: sourceSHA256,
+                    sourceByteCount: Int64(byteCount),
+                    sourceFPS: Int(asset.sourceFPS?.rounded() ?? Double(fps)),
+                    sourceStartFrame: 0,
+                    sourceEndFrame: placement.durationFrames
+                )
+            }
+            guard let takeID = takeIndex.selected[placement.shotId] else {
+                throw ToolError("Select and review a take for '\(placement.shotId)' before assembly.")
+            }
+            let take = try PipelineRenderTakeStore.take(id: takeID, dataRoot: dataRoot, phase: phase)
+            guard take.output.path == sourcePath, take.output.sha256 == sourceSHA256,
+                  let review = try TakeReview.load(take: take, dataRoot: dataRoot), review.accepted else {
+                throw ToolError("The selected take for '\(placement.shotId)' is missing, changed or not fully reviewed.")
+            }
+            let reviewPath = TakeReview.path(takeID: takeID)
+            let reviewData = try Data(contentsOf: ProjectLocalFile.resolve(reviewPath, dataRoot: dataRoot))
+            let durationFrames = max(
+                1,
+                BeatAssembly.frame(
+                    seconds: Double(review.durationValue) / Double(review.durationTimescale),
+                    fps: fps
+                )
+            )
+            guard placement.durationFrames <= durationFrames else {
+                throw ToolError("The selected take for '\(placement.shotId)' is shorter than its planned timeline placement.")
+            }
+            return SelectedShotMediaV1(
+                shotID: placement.shotId,
+                sourceKind: .generatedTake,
+                sourcePath: sourcePath,
+                sourceSHA256: sourceSHA256,
+                sourceByteCount: Int64(byteCount),
+                sourceFPS: fps,
+                sourceStartFrame: 0,
+                sourceEndFrame: placement.durationFrames,
+                takeID: takeID,
+                reviewPath: reviewPath,
+                reviewSHA256: FileDigest.sha256(of: reviewData)
+            )
+        }
+    }
+
+    private func sourcePathForAssembly(url: URL, dataRoot: URL) -> String {
+        let root = dataRoot.standardizedFileURL.resolvingSymlinksInPath()
+        let home = FrameInventory.projectHome(of: dataRoot)
+            .standardizedFileURL.resolvingSymlinksInPath()
+        if url.path.hasPrefix(root.path + "/") {
+            return FrameInventory.relativePath(of: url, to: root)
+        }
+        return FrameInventory.relativePath(of: url, to: home)
+    }
+
+    private func assemblyTake(_ sourceShotID: String, covers targetShotID: String, dataRoot: URL) throws -> Bool {
+        let url = dataRoot.appendingPathComponent(ShotGenerationCutPlanV1.relativePath)
+        guard FileManager.default.fileExists(atPath: url.path) else { return false }
+        let plan = try JSONDecoder().decode(
+            ShotGenerationCutPlanV1.self,
+            from: Data(contentsOf: ProjectLocalFile.resolve(ShotGenerationCutPlanV1.relativePath, dataRoot: dataRoot))
+        )
+        guard plan.schema == ShotGenerationCutPlanV1.schemaVersion,
+              let generationID = plan.shots.first(where: { $0.shotID == sourceShotID })?.generationID else {
+            return false
+        }
+        return plan.shots.contains { $0.shotID == targetShotID && $0.generationID == generationID }
+    }
+
+    private func assemblyResult(
+        manifest: AssemblyManifestV1,
+        timeline: Timeline,
+        bpm: Double?,
+        songPresent: Bool,
+        songPlaced: Bool,
+        songAlreadyPresent: Bool
+    ) throws -> ToolResult {
+        let trackID = manifest.placements.first?.placement.trackID
+        let videoTrackIndex = trackID.flatMap { id in
+            timeline.tracks.firstIndex(where: { $0.id == id })
+        }
+        let totalFrames = manifest.placements.map {
+            $0.placement.timelineStartFrame
+                + $0.placement.sourceEndFrame
+                - $0.placement.sourceStartFrame
+        }.max() ?? 0
+        let rows: [[String: Any]] = manifest.placements.map {
+            [
+                "shot_id": $0.selected.shotID,
+                "start_frame": $0.placement.timelineStartFrame,
+                "duration_frames": $0.placement.sourceEndFrame - $0.placement.sourceStartFrame,
+                "source_start_frame": $0.placement.sourceStartFrame,
+                "source_end_frame": $0.placement.sourceEndFrame,
+                "clip_id": $0.clipIDs.first.map { $0 as Any } ?? NSNull(),
+            ]
+        }
+        let songTrack: Any = songPresent
+            ? ["placed": songPlaced, "already_present": songAlreadyPresent]
+            : NSNull()
+        return try jsonResult([
+            "phase": manifest.phase,
+            "fps": manifest.placements.first?.selected.sourceFPS ?? 0,
+            "bpm": bpm ?? 0,
+            "shots_placed": manifest.placements.count,
+            "total_frames": totalFrames,
+            "video_track_index": videoTrackIndex.map { $0 as Any } ?? NSNull(),
+            "song_track": songTrack,
+            "song_missing": !songPresent,
+            "placements": rows,
+            "skipped": [] as [[String: String]],
+            "idempotent": true,
+            "assembly_manifest": AssemblyManifestV1.relativePath,
+        ])
+    }
+
     private func assemblySidecarURL(dataRoot: URL) -> URL {
         dataRoot.appendingPathComponent("assembly.json")
     }
@@ -3417,15 +4467,57 @@ extension ToolExecutor {
         )
     }
 
-    private func saveAssemblySidecar(_ sidecar: AssemblySidecar, dataRoot: URL) throws {
-        var obj: [String: Any] = [:]
-        if let v = sidecar.videoTrackId { obj["video_track_id"] = v }
-        if let a = sidecar.audioTrackId { obj["audio_track_id"] = a }
-        let data = try JSONSerialization.data(
-            withJSONObject: obj,
-            options: [.prettyPrinted, .sortedKeys]
+    private func saveAssemblySidecar(
+        _ sidecar: AssemblySidecar,
+        proof: TimelineAssemblyProofV1,
+        audioPlacements: [PipelineMusicvideoAssemblyWriter.AudioPlacement],
+        songMediaID: String?,
+        dataRoot: URL,
+        declaredPack: String?,
+        declaredBinding: ProjectPackBinding?
+    ) throws {
+        guard proof.videoTrackID == sidecar.videoTrackId,
+              proof.audioTrackID == sidecar.audioTrackId else {
+            throw ToolError("The assembly proof does not match its timeline tracks.")
+        }
+        try TimelineAssemblyProofValidatorV1.validate(proof)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(proof)
+        let assemblyURL = assemblySidecarURL(dataRoot: dataRoot)
+        let musicProofURL = PipelineLayout.url(
+            MusicAssemblyProofV1.relativePath,
+            in: dataRoot
         )
-        try data.write(to: assemblySidecarURL(dataRoot: dataRoot), options: .atomic)
+        let previousAssembly = try? Data(contentsOf: assemblyURL)
+        let previousMusicProof = try? Data(contentsOf: musicProofURL)
+        do {
+            try data.write(to: assemblyURL, options: .atomic)
+            try PipelineMusicvideoAssemblyWriter.writeIfRequired(
+                assembly: proof,
+                audioPlacements: audioPlacements,
+                songMediaID: songMediaID,
+                dataRoot: dataRoot,
+                declaredPack: declaredPack,
+                declaredBinding: declaredBinding
+            )
+        } catch {
+            try restoreAssemblyFile(previousAssembly, at: assemblyURL)
+            try restoreAssemblyFile(previousMusicProof, at: musicProofURL)
+            throw error
+        }
+    }
+
+    private func restoreAssemblyFile(_ data: Data?, at url: URL) throws {
+        if let data {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try data.write(to: url, options: .atomic)
+        } else if FileManager.default.fileExists(atPath: url.path) {
+            try FileManager.default.removeItem(at: url)
+        }
     }
 
     // MARK: - Phase runner

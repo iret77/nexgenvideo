@@ -45,12 +45,29 @@ struct MusicvideoPackTests {
         #expect(descriptor.profileResourceIDs == [
             "generative_film", "narrative_storytelling",
         ])
-        #expect(descriptor.selection(for: "treatment")?.libraryIDs == [
-            "film-craft-baseline", "story-containers",
+        #expect(descriptor.version == "1.2.1")
+        #expect(descriptor.phaseSelections.map(\.phase) == [
+            "project_init", "analysis", "brief", "production_design", "treatment",
+            "storyboard", "bible", "shotlist", "sanity", "frames", "render",
         ])
+        #expect(descriptor.selection(for: "project_init")?.knowledgePhase == "init")
+        #expect(descriptor.selection(for: "analysis")?.libraryIDs.contains(
+            "film-production-post-audio-legal"
+        ) == true)
+        #expect(descriptor.selection(for: "brief")?.libraryIDs.contains(
+            "film-production-story-structures"
+        ) == true)
+        #expect(descriptor.selection(for: "treatment")?.libraryIDs.contains(
+            "film-production-film-craft"
+        ) == true)
+        #expect(descriptor.selection(for: "frames")?.libraryIDs.contains(
+            "film-production-image-model-logic"
+        ) == true)
+        #expect(descriptor.selection(for: "render")?.libraryIDs.contains(
+            "film-production-video-prompting"
+        ) == true)
         #expect(descriptor.selection(for: "sanity")?.knowledgePhase == "review")
         #expect(descriptor.selection(for: "review") == nil)
-        #expect(descriptor.selection(for: "analysis") == nil)
         #expect(descriptor.budget.maximumUTF8Bytes == 16_384)
         #expect(descriptor.budget.maximumEstimatedTokens == 4_096)
     }
@@ -85,7 +102,8 @@ struct MusicvideoPackTests {
                     ],
                     activeLibraryIDs: Set(selection.libraryIDs),
                     budget: registration.descriptor.budget
-                )
+                ),
+                preferredLibraryOrder: selection.libraryIDs
             ).libraryEntryIDs)
         }
 
@@ -118,12 +136,17 @@ struct MusicvideoPackTests {
         #expect(!treatment.contains { $0.hasPrefix("genre-baselines/") })
 
         for (phase, metadataTags) in [
+            ("project_init", Set<String>()),
+            ("analysis", Set<String>()),
+            ("brief", Set(["narrative", "quiet", "poetic"])),
             ("production_design", Set(["stylized-3d", "animation", "shape-language"])),
             ("treatment", Set(["narrative", "quiet", "poetic"])),
             ("storyboard", Set(["stylized-3d", "animation", "shape-language"])),
             ("bible", Set(["stylized-3d", "animation", "shape-language"])),
             ("shotlist", Set<String>()),
             ("sanity", Set(["stylized-3d", "animation", "shape-language"])),
+            ("frames", Set(["stylized-3d", "animation", "shape-language"])),
+            ("render", Set(["stylized-3d", "animation", "shape-language"])),
         ] {
             let selection = try #require(
                 registration.descriptor.selection(for: phase)
@@ -141,7 +164,7 @@ struct MusicvideoPackTests {
                         budget: registration.descriptor.budget
                     )
                 )
-                #expect(assembly.libraryEntryIDs.contains {
+                #expect((assembly.libraryEntryIDs + assembly.omittedLibraryEntryIDs).contains {
                     $0.hasPrefix("\(libraryID.rawValue)/")
                 })
             }
@@ -405,8 +428,8 @@ struct MusicvideoPackTests {
     func packSatisfiesContract() {
         let pack: Pack = MusicvideoPack()
         #expect(pack.name == "musicvideo")
-        #expect(pack.version == "0.5.6")
-        #expect(pack.manifest.minAppVersion == "1.5.5")
+        #expect(pack.version == "0.5.8")
+        #expect(pack.manifest.minAppVersion == "1.5.7")
     }
 
     @Test("pack exposes gallery manifest and a starter")

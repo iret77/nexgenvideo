@@ -130,18 +130,24 @@ enum MusicvideoPipelineLineage {
         selectors.append(PipelineLayout.briefFile)
         guard phase != "production_design" else { return selectors }
         selectors.append(PipelineLayout.productionDesignFile)
+        if FileManager.default.fileExists(atPath: dataRoot.appendingPathComponent(ResolvedProductionStyleV1.relativePath).path)
+            || (try? PipelineLineageStore.loadIfPresent(dataRoot: dataRoot)?.phases[ProductionStyleStoreV1.lineageID]) != nil {
+            selectors.append(ResolvedProductionStyleV1.relativePath)
+        }
         guard phase != "treatment" else { return selectors }
         selectors += treatmentSelectors(dataRoot: dataRoot)
         guard phase != "storyboard" else { return selectors }
         selectors += storyboardSelectors(dataRoot: dataRoot)
         guard phase != "bible" else { return selectors }
         selectors.append(PipelineLayout.bibleFile)
+        selectors.append(PipelineLayout.bibleIdentityVariantsFile)
         guard phase != "shotlist" else { return selectors }
         if let version = latestShotlistVersion(dataRoot: dataRoot) {
             selectors.append(PipelineLayout.shotlistVersionFile(version))
         } else {
             selectors.append(PipelineLayout.shotlistVersionFile(0))
         }
+        selectors += executionPlanSelectors
         guard phase != "sanity" else { return selectors }
         selectors.append(PipelineLayout.sanityReportFile)
         guard phase != "frames" else { return selectors }
@@ -168,7 +174,8 @@ enum MusicvideoPipelineLineage {
                 PipelineLayout.assetProofFile(
                     scope: "production_design"
                 ),
-            ]
+            ] + (FileManager.default.fileExists(atPath: dataRoot.appendingPathComponent(ResolvedProductionStyleV1.relativePath).path)
+                ? [ResolvedProductionStyleV1.relativePath] : [])
         case "treatment":
             return treatmentSelectors(dataRoot: dataRoot)
         case "storyboard":
@@ -176,13 +183,16 @@ enum MusicvideoPipelineLineage {
         case "bible":
             return [
                 PipelineLayout.bibleFile,
+                PipelineLayout.bibleIdentityVariantsFile,
                 PipelineLayout.assetProofFile(scope: "bible"),
             ]
         case "shotlist":
             if let version = latestShotlistVersion(dataRoot: dataRoot) {
                 return [PipelineLayout.shotlistVersionFile(version)]
+                    + executionPlanSelectors
             }
             return [PipelineLayout.shotlistVersionFile(0)]
+                + executionPlanSelectors
         case "sanity":
             return [PipelineLayout.sanityReportFile]
         case "frames":
@@ -199,16 +209,39 @@ enum MusicvideoPipelineLineage {
                 PipelineLayout.renderRoutingProofFile(phase: "final"),
                 RenderRecordPublicationV1.artifactPath(phase: "final"),
                 RenderShotProvenancePublicationV1.artifactPath(phase: "final"),
+                "assembly.json",
+                PipelineLayout.musicAssemblyProofFile,
             ]
         default:
             return []
         }
     }
 
+    private static let executionPlanSelectors = [
+        PipelineLayout.executionShotInputsFile,
+        PipelineLayout.creativeContextFile,
+        PipelineLayout.executionPlanFile,
+        ExecutionPlanV1.publicationArtifactPath,
+        PipelineLayout.conditioningStrategyFile,
+        PipelineLayout.cameraSetupPlanFile,
+        PipelineLayout.shotGenerationCutPlanFile,
+        PipelineLayout.stateLadderFile,
+        PipelineLayout.layoutPanelsFile,
+        PipelineLayout.blockoutProofFile,
+        PipelineLayout.blockoutDir,
+        PipelineLayout.musicPerformanceBindingFile,
+        PipelineLayout.musicVisualArcFile,
+        PipelineLayout.musicPerformanceCoverageFile,
+        PipelineLayout.musicPerformanceSegmentsDir,
+    ]
+
     private static func treatmentSelectors(dataRoot: URL) -> [String] {
         var selectors = [PipelineLayout.treatmentCurrentFile]
         if let version = TreatmentStore.versions(dataRoot: dataRoot).last {
             selectors.append(PipelineLayout.treatmentVersionFile(version))
+            if FileManager.default.fileExists(atPath: dataRoot.appendingPathComponent(StoryCausalityPlanV1.relativePath).path) {
+                selectors += [StoryCausalityPlanV1.relativePath, StoryCausalityStoreV1.versionPath(version)]
+            }
         }
         return selectors
     }
@@ -218,6 +251,9 @@ enum MusicvideoPipelineLineage {
         let version = StoryboardStore.nextVersion(dataRoot: dataRoot) - 1
         if version > 0 {
             selectors.append(PipelineLayout.storyboardVersionFile(version))
+            if FileManager.default.fileExists(atPath: dataRoot.appendingPathComponent(StoryboardCausalityV1.relativePath).path) {
+                selectors += [StoryboardCausalityV1.relativePath, "storyboard/causality/v\(version).json"]
+            }
         }
         return selectors
     }

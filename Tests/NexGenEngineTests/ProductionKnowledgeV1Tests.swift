@@ -12,7 +12,8 @@ struct ProductionKnowledgeV1Tests {
             "generative_film",
             "narrative_storytelling",
         ])
-        #expect(catalog.libraries.map(\.id.rawValue) == [
+        let legacyLibraries = catalog.libraries.filter { !$0.id.rawValue.hasPrefix("film-production-") }
+        #expect(legacyLibraries.map(\.id.rawValue) == [
             "camera-recipes",
             "continuity-and-coverage",
             "film-craft-baseline",
@@ -24,8 +25,16 @@ struct ProductionKnowledgeV1Tests {
         #expect(catalog.profiles.allSatisfy {
             $0.provenance.sourceCommit == "d07a1ce5c54b899b7c565d3e3cc4aac40b8363e2"
         })
-        #expect(catalog.libraries.allSatisfy {
+        #expect(legacyLibraries.allSatisfy {
             $0.provenance.sourceCommit == "d07a1ce5c54b899b7c565d3e3cc4aac40b8363e2"
+        })
+        let migrated = catalog.libraries.filter { $0.id.rawValue.hasPrefix("film-production-") }
+        #expect(migrated.count == 21)
+        #expect(migrated.filter { $0.id.rawValue != "film-production-blueprints" }.flatMap(\.entries).count == 254)
+        #expect(catalog.library(id: "film-production-blueprints")?.entries.count == 42)
+        #expect(migrated.allSatisfy {
+            $0.version.rawValue == "3.1.1"
+                && $0.provenance.sourceCommit == "0333751214c7af17977dd33f0ba88ba9c352421e"
         })
     }
 

@@ -128,6 +128,8 @@ struct PipelineRenderRecordWriterTests {
             ]
         )
 
+        let semanticProofPath = "frames/reference-usage/s001-start.v1.json"
+        let semanticProof = Data("semantic-reference-proof".utf8)
         let publication = try PipelineRenderRecordWriter.publish(
             manifest: manifest,
             proof: nil,
@@ -135,6 +137,7 @@ struct PipelineRenderRecordWriterTests {
             framesManifest: frames,
             replacingShotID: "s001",
             preparedLastFrame: nil,
+            additionalArtifacts: [semanticProofPath: semanticProof],
             expectedPublicationTransactionID: nil,
             dataRoot: fixture.dataRoot
         )
@@ -142,6 +145,9 @@ struct PipelineRenderRecordWriterTests {
         #expect(publication.renderProof == nil)
         #expect(publication.renderRoutingProof == nil)
         #expect(publication.framesManifest?.path == PipelineLayout.framesManifestFile)
+        #expect(try Data(
+            contentsOf: PipelineLayout.url(semanticProofPath, in: fixture.dataRoot)
+        ) == semanticProof)
         #expect(
             try PipelineRenderRecordWriter.requireCurrentPublicationIfPresent(
                 dataRoot: fixture.dataRoot,
@@ -361,6 +367,10 @@ struct PipelineRenderRecordWriterTests {
             sourceOutputSHA256: outputSHA,
             extractedAt: "2026-08-31T00:00:00+00:00"
         )
+        var takeInput = GenerationInput(prompt: "Compiled video prompt.", model: "fixture-model", duration: 4, aspectRatio: "16:9")
+        takeInput.promptShotId = shotID
+        takeInput.promptShotFingerprint = String(repeating: "a", count: 64)
+        takeInput.productionRouting = generation
         let initialPublication = try PipelineRenderRecordWriter.publish(
             manifest: manifest,
             proof: proof,
@@ -368,6 +378,7 @@ struct PipelineRenderRecordWriterTests {
             framesManifest: nil,
             replacingShotID: shotID,
             preparedLastFrame: .init(proof: firstProof, data: firstFrameData),
+            completedTake: .init(eventID: "event-one", generationInput: takeInput),
             expectedPublicationTransactionID: nil,
             dataRoot: fixture.dataRoot
         )
@@ -383,6 +394,32 @@ struct PipelineRenderRecordWriterTests {
                 phase: "preview"
             )?.lastFrames[shotID] == firstProof
         )
+
+        let takeIndexPath = PipelineRenderTakeStore.indexPath(phase: "preview")
+        let initialIndex = try PipelineRenderTakeStore.load(dataRoot: fixture.dataRoot, project: "project-001", phase: "preview")
+        #expect(initialIndex.takeIDs.count == 1)
+        let takePaths = [takeIndexPath] + initialIndex.takeIDs.map { PipelineRenderTakeStore.takePath(id: $0, phase: "preview") }
+        let takeBytes = try Dictionary(uniqueKeysWithValues: takePaths.map {
+            ($0, try Data(contentsOf: fixture.dataRoot.appendingPathComponent($0)))
+        })
+        for boundary in [PipelineRenderRecordWriter.FailurePoint.takeHistory, .renderManifest, .publication] {
+            var reachedBoundary = false
+            #expect(throws: PipelineRenderRecordError.self) {
+                _ = try PipelineRenderRecordWriter.publish(manifest: manifest, proof: proof, routingProof: routing,
+                    framesManifest: nil, replacingShotID: shotID, preparedLastFrame: .init(proof: firstProof, data: firstFrameData),
+                    completedTake: .init(eventID: "event-two", generationInput: takeInput),
+                    expectedPublicationTransactionID: initialPublication.transactionID, dataRoot: fixture.dataRoot,
+                    failureProbe: { point in
+                        if point == boundary { reachedBoundary = true; throw InjectedFailure.stop }
+                    })
+            }
+            #expect(reachedBoundary)
+            for path in takePaths { #expect(try Data(contentsOf: fixture.dataRoot.appendingPathComponent(path)) == takeBytes[path]) }
+            let failedTakeID = PipelineRenderTakeStore.identity(eventID: "event-two", outputSHA256: outputSHA)
+            #expect(!FileManager.default.fileExists(atPath: fixture.dataRoot.appendingPathComponent(PipelineRenderTakeStore.takePath(id: failedTakeID, phase: "preview")).path))
+            #expect(try PipelineRenderTakeStore.load(dataRoot: fixture.dataRoot, project: "project-001", phase: "preview") == initialIndex)
+            #expect(try PipelineRenderRecordWriter.requireCurrentPublicationIfPresent(dataRoot: fixture.dataRoot, phase: "preview") == initialPublication)
+        }
 
         let replacementData = Data("png-v2".utf8)
         let replacementProof = RenderLastFrameProofV1(

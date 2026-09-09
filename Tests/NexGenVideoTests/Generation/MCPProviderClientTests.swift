@@ -158,6 +158,12 @@ struct MCPProviderClientTests {
 
         let tools = try await client.discoverTools()
         #expect(tools.map(\.name) == ["generate"])
+        let checks = await client.discoveryChecks()
+        #expect(checks.map(\.toolName) == ["generate"])
+        #expect(checks.first?.schemaSHA256.count == 64)
+        _ = try await client.discoverTools()
+        #expect(await client.discoveryChecks() == checks)
+        #expect(ModernURLProtocol.requests().count == 2)
         let payloads = try await client.callTool(
             name: "generate",
             arguments: [

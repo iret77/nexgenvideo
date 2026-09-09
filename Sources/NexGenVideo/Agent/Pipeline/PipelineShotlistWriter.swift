@@ -8,7 +8,9 @@ enum PipelineShotlistWriter {
         dataRoot: URL,
         declaredPack: String?,
         declaredBinding: ProjectPackBinding? = nil,
-        disciplineSidecar: ProductionDisciplineSidecarV1? = nil
+        disciplineSidecar: ProductionDisciplineSidecarV1? = nil,
+        spatialPlan: SpatialProductionPlanDraftV1? = nil,
+        musicvideoPlan: MusicvideoProductionPlanDraftV1? = nil
     ) throws -> URL {
         try validate(
             shotlist,
@@ -37,6 +39,11 @@ enum PipelineShotlistWriter {
             shotIDs: Set(executionInputs.map(\.id)),
             dataRoot: dataRoot
         )
+        let conditioningSnapshot = try PipelineConditioningStrategyStore.snapshot(
+            dataRoot: dataRoot
+        )
+        let spatialSnapshot = try PipelineSpatialProductionWriter.snapshot(dataRoot: dataRoot)
+        let musicvideoSnapshot = try PipelineMusicvideoProductionWriter.snapshot(dataRoot: dataRoot)
         let previousShotlist = FileManager.default.fileExists(atPath: shotlistURL.path)
             ? try Data(contentsOf: shotlistURL)
             : nil
@@ -55,6 +62,32 @@ enum PipelineShotlistWriter {
             try PipelineExecutionShotInputStore.write(
                 executionInputData,
                 dataRoot: dataRoot
+            )
+            let conditioningPlan = try PipelineConditioningStrategyStore.makePlan(
+                shotlist: shotlist,
+                shotlistData: shotlistData,
+                executionInputs: executionInputs,
+                dataRoot: dataRoot
+            )
+            try PipelineConditioningStrategyStore.write(
+                conditioningPlan,
+                dataRoot: dataRoot
+            )
+            try PipelineSpatialProductionWriter.write(
+                spatialPlan,
+                shotlist: shotlist,
+                shotlistData: shotlistData,
+                executionInputs: executionInputs,
+                dataRoot: dataRoot
+            )
+            try PipelineMusicvideoProductionWriter.write(
+                musicvideoPlan,
+                shotlist: shotlist,
+                shotlistData: shotlistData,
+                executionInputs: executionInputs,
+                dataRoot: dataRoot,
+                declaredPack: declaredPack,
+                declaredBinding: declaredBinding
             )
             let draft = try PipelineExecutionPlanComposer.compose(
                 shotlist: shotlist,
@@ -96,6 +129,30 @@ enum PipelineShotlistWriter {
                 )
             } catch {
                 rollbackFailures.append("production inputs: \(error.localizedDescription)")
+            }
+            do {
+                try PipelineMusicvideoProductionWriter.restore(
+                    musicvideoSnapshot,
+                    dataRoot: dataRoot
+                )
+            } catch {
+                rollbackFailures.append("Music Video production plan: \(error.localizedDescription)")
+            }
+            do {
+                try PipelineSpatialProductionWriter.restore(
+                    spatialSnapshot,
+                    dataRoot: dataRoot
+                )
+            } catch {
+                rollbackFailures.append("spatial production plan: \(error.localizedDescription)")
+            }
+            do {
+                try PipelineConditioningStrategyStore.restore(
+                    conditioningSnapshot,
+                    dataRoot: dataRoot
+                )
+            } catch {
+                rollbackFailures.append("conditioning strategy: \(error.localizedDescription)")
             }
             do {
                 try PipelineExecutionShotInputStore.restore(
@@ -221,6 +278,15 @@ enum PipelineShotlistWriter {
                     + "that chain before switching this source to Imported."
             )
         }
+        if try PipelineMusicvideoProductionWriter.referencesShot(
+            shotId,
+            dataRoot: dataRoot
+        ) {
+            throw ToolError(
+                "This shot is bound to an approved performance-audio segment. "
+                    + "Ask the assistant to re-plan that binding before switching it to Imported."
+            )
+        }
         do {
             try PipelineExecutionPlanWriter.requireCurrentShotlistBinding(
                 dataRoot: dataRoot
@@ -234,6 +300,12 @@ enum PipelineShotlistWriter {
         let storedInputs = try PipelineExecutionShotInputStore.loadCurrent(
             dataRoot: dataRoot
         ).executionShots
+        let spatialPlan = try PipelineSpatialProductionWriter.loadDraftIfPresent(
+            dataRoot: dataRoot
+        )
+        let musicvideoPlan = try PipelineMusicvideoProductionWriter.loadDraftIfPresent(
+            dataRoot: dataRoot
+        )
         guard plan.shots.count == shotlist.shots.count,
               storedInputs.count == shotlist.shots.count,
               plan.shots[index].id == shotId,
@@ -244,7 +316,7 @@ enum PipelineShotlistWriter {
         }
         var executionInputs = storedInputs
         executionInputs[index] = try PipelineExecutionShotInput.imported(
-            from: plan.shots[index]
+            from: plan.shots[index], storyboardStepIDs: storedInputs[index].storyboardStepIDs
         )
         let previousMode = shotlist.shots[index].sourceMode
         shotlist.shots[index].sourceMode = mode
@@ -262,7 +334,9 @@ enum PipelineShotlistWriter {
             executionInputs: executionInputs,
             dataRoot: dataRoot,
             declaredPack: declaredPack,
-            declaredBinding: declaredBinding
+            declaredBinding: declaredBinding,
+            spatialPlan: spatialPlan,
+            musicvideoPlan: musicvideoPlan
         )
         return true
     }

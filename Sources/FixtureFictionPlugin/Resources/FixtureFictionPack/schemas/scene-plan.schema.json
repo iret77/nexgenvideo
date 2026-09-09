@@ -1,0 +1,139 @@
+{
+  "type": "object",
+  "properties": {
+    "setups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "scene_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "space": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "screen_direction": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "id",
+          "scene_id",
+          "space",
+          "screen_direction"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 2,
+      "maxItems": 24
+    },
+    "beats": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "scene_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "setup_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "function": {
+            "type": "string",
+            "enum": [
+              "establish",
+              "action",
+              "reaction",
+              "detail",
+              "transition"
+            ]
+          },
+          "visible_change": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "continuity_in": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "minItems": 0,
+            "maxItems": 24
+          },
+          "continuity_out": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "minItems": 0,
+            "maxItems": 24
+          }
+        },
+        "required": [
+          "id",
+          "scene_id",
+          "setup_id",
+          "function",
+          "visible_change",
+          "continuity_in",
+          "continuity_out"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 3,
+      "maxItems": 120
+    },
+    "causal_chain": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1000
+      },
+      "minItems": 1,
+      "maxItems": 80
+    },
+    "dialogue_coverage": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1000
+      },
+      "minItems": 0,
+      "maxItems": 80
+    }
+  },
+  "required": [
+    "setups",
+    "beats",
+    "causal_chain",
+    "dialogue_coverage"
+  ],
+  "additionalProperties": false
+}

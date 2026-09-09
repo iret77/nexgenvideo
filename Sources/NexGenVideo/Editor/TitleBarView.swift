@@ -222,7 +222,8 @@ struct TitleBarView: View {
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                         .lineLimit(1)
                     if state.budgetEur > 0 {
-                        Text(String(format: "€%.0f/%.0f", state.budgetSpentEur, state.budgetEur))
+                        Text(String(format: state.spendComplete ? "€%.0f/%.0f" : "≥€%.0f/%.0f",
+                                    state.budgetSpentEur, state.budgetEur))
                             .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium).monospacedDigit()
                             .foregroundStyle(state.budgetWarning ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
                     }

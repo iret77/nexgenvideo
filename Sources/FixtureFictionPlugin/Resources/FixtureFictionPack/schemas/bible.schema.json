@@ -1,0 +1,80 @@
+{
+  "type": "object",
+  "properties": {
+    "canon": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1000
+      },
+      "minItems": 1,
+      "maxItems": 120
+    },
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "character",
+              "location",
+              "prop",
+              "style"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "x-ngvProjectFile": {
+              "kind": "image",
+              "sha256Property": "sha256"
+            }
+          },
+          "sha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "approved": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "path",
+          "sha256",
+          "approved"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 120
+    },
+    "continuity_states": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1000
+      },
+      "minItems": 1,
+      "maxItems": 120
+    }
+  },
+  "required": [
+    "canon",
+    "assets",
+    "continuity_states"
+  ],
+  "additionalProperties": false
+}

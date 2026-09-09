@@ -634,6 +634,15 @@ struct HardStepIntakeTests {
         )
         let second = try #require(awaitedSecond)
         #expect(second.title == "Prepared character 2")
+        let confirmed = try ConfirmedIdentityAssetStoreV1.load(
+            dataRoot: dataRoot
+        )
+        let confirmedPath = "import/characters/character-one/first.png"
+        #expect(confirmed.entries[confirmedPath]?.identityName == "Character One")
+        #expect(try ConfirmedIdentityAssetStoreV1.isCurrent(
+            confirmedPath,
+            dataRoot: dataRoot
+        ))
         let firstRecord = try #require(
             editor.agentService.messages.last?.userPresentation?.workflowRecord
         )

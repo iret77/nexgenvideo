@@ -75,6 +75,7 @@ struct SpendOption: Identifiable, Equatable, Sendable, Codable {
     let credits: Int?
     /// Provider workflow tools use the same card but are not catalog models.
     let requiresCatalogAvailability: Bool
+    var generationPackage: GenerationPackageV1? = nil
 
     var id: String {
         [
@@ -172,7 +173,9 @@ enum SpendSelectionPreferences {
             options: ordered,
             actionLabel: approval.actionLabel,
             providerScope: approval.providerScope,
-            selectionScope: scope
+            selectionScope: scope,
+            requiresGenerationPackage: approval.requiresGenerationPackage == true,
+            preparationRevision: approval.preparationRevision
         )
     }
 
@@ -200,6 +203,8 @@ struct SpendApproval: Identifiable, Equatable, Sendable, Codable {
     let actionLabel: String
     let providerScope: [GenerationProvider]
     let selectionScope: SpendSelectionScope?
+    let requiresGenerationPackage: Bool?
+    let preparationRevision: String?
 
     init(
         id: String,
@@ -207,16 +212,26 @@ struct SpendApproval: Identifiable, Equatable, Sendable, Codable {
         options: [SpendOption],
         actionLabel: String,
         providerScope: [GenerationProvider]? = nil,
-        selectionScope: SpendSelectionScope? = nil
+        selectionScope: SpendSelectionScope? = nil,
+        requiresGenerationPackage: Bool = false,
+        preparationRevision: String? = nil
     ) {
         self.id = id
         self.recommendedOptionId = recommendedOptionId
         self.options = options
         self.actionLabel = actionLabel
         self.selectionScope = selectionScope
+        self.requiresGenerationPackage = requiresGenerationPackage
+        self.preparationRevision = preparationRevision ?? (requiresGenerationPackage ? UUID().uuidString : nil)
         var seen = Set<GenerationProvider>()
         self.providerScope = (providerScope ?? options.map(\.target.provider)).filter {
             seen.insert($0).inserted
         }
+    }
+
+    func replacingOptions(_ options: [SpendOption]) -> Self {
+        Self(id: id, recommendedOptionId: recommendedOptionId, options: options, actionLabel: actionLabel,
+            providerScope: providerScope, selectionScope: selectionScope,
+            requiresGenerationPackage: requiresGenerationPackage == true, preparationRevision: preparationRevision)
     }
 }

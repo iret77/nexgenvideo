@@ -23,6 +23,10 @@ public enum PipelineLayout {
     public static let productionDesignFile = "production_design/production_design.yaml"
     public static let ledgerFile = "ledger.yaml"
     public static let bibleFile = "bible/bible.yaml"
+    public static let confirmedIdentityAssetsFile =
+        "import/confirmed-identity-assets.v1.json"
+    public static let bibleIdentityVariantsFile =
+        "bible/identity-variants.v1.json"
 
     // MARK: Directories (relative to the data root)
 
@@ -39,6 +43,28 @@ public enum PipelineLayout {
     public static let executionPlanFile = "execution/plan.v1.json"
     public static let creativeContextFile = "execution/creative-context.v1.json"
     public static let executionShotInputsFile = "execution/shot-inputs.v1.json"
+    public static let conditioningStrategyFile =
+        "execution/extensions/conditioning-strategy.v1.json"
+    public static let cameraSetupPlanFile =
+        "execution/extensions/camera-setup-plan.v1.json"
+    public static let shotGenerationCutPlanFile =
+        "execution/extensions/shot-generation-cut-plan.v1.json"
+    public static let stateLadderFile =
+        "execution/extensions/state-ladder.v1.json"
+    public static let layoutPanelsFile =
+        "execution/extensions/layout-panels.v1.json"
+    public static let blockoutProofFile =
+        "execution/extensions/blockout-proof.v1.json"
+    public static let blockoutDir = "execution/blockout"
+    public static let musicPerformanceBindingFile =
+        "execution/extensions/music-performance-binding.v1.json"
+    public static let musicVisualArcFile =
+        "execution/extensions/music-visual-arc.v1.json"
+    public static let musicPerformanceCoverageFile =
+        "execution/extensions/music-performance-coverage.v1.json"
+    public static let musicAssemblyProofFile =
+        "execution/extensions/music-assembly-proof.v1.json"
+    public static let musicPerformanceSegmentsDir = "execution/audio-performance"
     public static let assetGraphFile = "execution/asset-graph.v1.json"
     public static let productionInputsPublicationFile =
         "execution/production-inputs-publication.v1.json"

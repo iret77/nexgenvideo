@@ -12,6 +12,8 @@ public struct RenderPublishedArtifactV1: Codable, Sendable, Equatable {
 
 public struct RenderLastFrameProofV1: Codable, Sendable, Equatable {
     public static let extractorID = "nexgenvideo.avfoundation.last-frame/v1"
+    public static let stillImagePassthroughID =
+        "nexgenvideo.still-image.last-frame/v1"
 
     public let shotID: String
     public let phase: String

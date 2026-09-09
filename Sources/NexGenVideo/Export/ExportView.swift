@@ -1,4 +1,5 @@
 import AVFoundation
+import NexGenEngine
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -8,6 +9,9 @@ struct ExportView: View {
     @State private var mode: ExportMode = .video
     @State private var codec: VideoCodec = .h264
     @State private var resolution: ExportResolution = .matchTimeline
+    @State private var deliveryTarget = DeliveryTargetKindV1.master
+    @State private var requireSequenceReview = false
+    @State private var preparingDelivery = false
     @State private var preview: NSImage?
     @State private var ngvResult: String?
     @State private var ngvSummary: (collect: Int, missing: Int, bytes: Int64) = (0, 0, 0)
@@ -87,6 +91,16 @@ struct ExportView: View {
 
                 switch mode {
                 case .video:
+                    settingRow(label: "Target") {
+                        Picker("", selection: $deliveryTarget) {
+                            Text("Master").tag(DeliveryTargetKindV1.master)
+                            Text("Derivative").tag(DeliveryTargetKindV1.derivative)
+                        }
+                        .labelsHidden()
+                    }
+
+                    AppDivider().opacity(AppTheme.Opacity.dim)
+
                     settingRow(label: "Codec") {
                         Picker("", selection: $codec) {
                             ForEach(VideoCodec.allCases) { c in
@@ -113,6 +127,16 @@ struct ExportView: View {
                         Text("\(editor.timeline.fps) fps")
                             .foregroundStyle(AppTheme.Text.tertiaryColor)
                     }
+
+                    AppDivider().opacity(AppTheme.Opacity.dim)
+
+                    Toggle("Require current sequence review", isOn: $requireSequenceReview)
+                        .interfaceFont(size: AppTheme.Typography.ui)
+
+                    Text("Export adopts the current timeline as the exact finish source and records output hash, media bindings and probe QC.")
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                        .padding(.top, AppTheme.Spacing.sm)
 
                 case .xml:
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
@@ -213,12 +237,18 @@ struct ExportView: View {
 
             Spacer()
 
-            Button("Cancel") { editor.showExportDialog = false }
+            Button(service.isExporting ? "Cancel Export" : "Cancel") {
+                if service.isExporting {
+                    service.cancel()
+                } else {
+                    editor.showExportDialog = false
+                }
+            }
                 .keyboardShortcut(.cancelAction)
             Button("Export") { startExport() }
                 .buttonStyle(.glassProminent)
                 .buttonBorderShape(.capsule)
-                .disabled(service.isExporting)
+                .disabled(service.isExporting || preparingDelivery)
                 .keyboardShortcut(.defaultAction)
         }
         .padding(.horizontal, AppTheme.Spacing.xl)
@@ -311,15 +341,50 @@ struct ExportView: View {
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
             Task {
-                await service.export(
-                    timeline: editor.timeline,
-                    resolver: editor.mediaResolver,
-                    format: format,
-                    resolution: resolution,
-                    outputURL: url
-                )
-                if service.error == nil {
-                    editor.showExportDialog = false
+                if mode == .xml {
+                    await service.export(
+                        timeline: editor.timeline,
+                        resolver: editor.mediaResolver,
+                        format: format,
+                        resolution: resolution,
+                        outputURL: url
+                    )
+                    if service.error == nil { editor.showExportDialog = false }
+                    return
+                }
+                preparingDelivery = true
+                service.error = nil
+                ngvResult = nil
+                do {
+                    _ = try PipelineDeliveryStore.adoptCurrentTimeline(
+                        editor: editor,
+                        requireSequenceReview: requireSequenceReview
+                    )
+                    let target = deliveryTarget == .master ? "master" : "derivative"
+                    let spec = try PipelineDeliveryStore.defaultSpec(
+                        id: "\(target).\(codec.id).\(resolution.id)",
+                        targetKind: deliveryTarget,
+                        timeline: editor.timeline,
+                        format: format,
+                        resolution: resolution,
+                        requireSequenceReview: requireSequenceReview
+                    )
+                    preparingDelivery = false
+                    let attempt = try await PipelineDeliveryStore.export(
+                        editor: editor,
+                        spec: spec,
+                        format: format,
+                        resolution: resolution,
+                        outputURL: url,
+                        service: service
+                    )
+                    let outputSize = attempt.outputByteCount.map {
+                        ByteCountFormatter.string(fromByteCount: $0, countStyle: .file)
+                    } ?? "exported"
+                    ngvResult = "QC passed · \(outputSize) · \(attempt.id.prefix(8))"
+                } catch {
+                    preparingDelivery = false
+                    service.error = error.localizedDescription
                 }
             }
         }

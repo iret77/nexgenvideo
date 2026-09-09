@@ -211,6 +211,8 @@ extension ToolExecutor {
         payload["project"] = projectName(dataRoot: root)
         payload["generated"] = currentTimestamp()
         payload["generator"] = "production-design-agent@write_production_design"
+        payload.removeValue(forKey: "style_selection")
+        payload.removeValue(forKey: "clear_style")
         payload["color_script"] = try keyedStrings(
             payload["color_script"],
             key: "section",
@@ -239,9 +241,15 @@ extension ToolExecutor {
         }
 
         let relative = "production_design/production_design.yaml"
-        try archiveExisting(relative, dataRoot: root)
         do {
-            try YAMLArtifactStore(dataRoot: root).save(design, to: relative)
+            let selection: ProductionStyleSelectionV1? = try (args["style_selection"] as? [String: Any]).map {
+                try decodeArtifact($0, as: ProductionStyleSelectionV1.self, label: "style selection")
+            }
+            guard selection?.overrides.allSatisfy({ $0.verification != nil }) != false else {
+                throw ToolError("Each style override must declare verification.scope, evidenceKind and a concrete criterion for review.")
+            }
+            try ProductionStyleStoreV1.write(design: design, selection: selection,
+                                             clearStyle: args.bool("clear_style") ?? false, dataRoot: root)
         } catch {
             throw ToolError("Couldn't write production design: \(error)")
         }
@@ -286,7 +294,11 @@ extension ToolExecutor {
         let treatment = Treatment(meta: meta, bodyMarkdown: body)
         let url: URL
         do {
-            url = try TreatmentStore.save(treatment, to: root)
+            guard let payload = args["causality_plan"] as? [String: Any] else {
+                throw ToolError("write_treatment requires causality_plan with exact treatment excerpts and a change review.")
+            }
+            let draft = try JSONDecoder().decode(StoryCausalityDraftV1.self, from: JSONSerialization.data(withJSONObject: payload))
+            url = try StoryCausalityStoreV1.write(treatment: treatment, draft: draft, dataRoot: root)
         } catch {
             throw ToolError("Couldn't write treatment: \(error)")
         }
@@ -304,6 +316,7 @@ extension ToolExecutor {
     ) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         var payload = args
+        let causalityPayload = payload.removeValue(forKey: "causality_bindings")
         payload.removeValue(forKey: "project_dir")
         payload["schema"] = storyboardSchemaVersion
         var meta: [String: Any] = [
@@ -355,7 +368,10 @@ extension ToolExecutor {
         }
         let url: URL
         do {
-            url = try StoryboardStore.save(storyboard, to: root)
+            let bindings = try causalityPayload.map {
+                try JSONDecoder().decode([StoryboardCausalityV1.Binding].self, from: JSONSerialization.data(withJSONObject: $0))
+            }
+            url = try StoryboardCausalityV1.write(storyboard: storyboard, bindings: bindings, dataRoot: root)
         } catch {
             throw ToolError("Couldn't write storyboard: \(error)")
         }
@@ -376,6 +392,9 @@ extension ToolExecutor {
         let root = try resolveDataRoot(args, editor: editor)
         var payload = args
         payload.removeValue(forKey: "project_dir")
+        let identityVariantPayload = payload.removeValue(
+            forKey: "identity_variants"
+        )
         payload["schema"] = bibleSchemaVersion
         payload["project"] = projectName(dataRoot: root)
         payload["generated"] = currentTimestamp()
@@ -412,18 +431,80 @@ extension ToolExecutor {
                 field: "bible anchor"
             )
         }
-        try requireGeneratedPipelineAssets(
-            bibleGeneratedPaths(bible),
-            scope: "bible",
+        try requireBibleAssetProvenance(
+            BibleViewProvenanceRequirementsV1.make(bible: bible),
             dataRoot: root
         )
+        let existingVariants = try BibleIdentityVariantStoreV1.loadIfPresent(
+            dataRoot: root
+        )
+        let variants: BibleIdentityVariantsV1
+        if let identityVariantPayload {
+            guard let raw = identityVariantPayload as? [[String: Any]] else {
+                throw ToolError(
+                    "write_bible.identity_variants must be an array."
+                )
+            }
+            var normalized: [[String: Any]] = []
+            for (index, item) in raw.enumerated() {
+                var entry = item
+                entry["changed_attributes"] = try keyedStrings(
+                    entry["changed_attributes"],
+                    key: "attribute",
+                    value: "value",
+                    path: "write_bible.identity_variants[\(index)].changed_attributes"
+                )
+                normalized.append(entry)
+            }
+            variants = try decodeArtifact(
+                [
+                    "schema": BibleIdentityVariantsV1.schemaVersion,
+                    "project": bible.project,
+                    "revision": (existingVariants?.revision ?? 0) + 1,
+                    "variants": normalized,
+                ],
+                as: BibleIdentityVariantsV1.self,
+                label: "bible identity variants"
+            )
+        } else if let existingVariants {
+            variants = existingVariants
+        } else {
+            variants = BibleIdentityVariantsV1(
+                project: bible.project,
+                revision: 1,
+                variants: []
+            )
+        }
+        try BibleIdentityVariantStoreV1.validate(
+            variants,
+            bible: bible,
+            dataRoot: root
+        )
+        let bibleURL = PipelineLayout.url(PipelineLayout.bibleFile, in: root)
+        let variantsURL = PipelineLayout.url(
+            PipelineLayout.bibleIdentityVariantsFile,
+            in: root
+        )
+        let previousBible = try? Data(contentsOf: bibleURL)
+        let previousVariants = try? Data(contentsOf: variantsURL)
         try archiveExisting(PipelineLayout.bibleFile, dataRoot: root)
+        try archiveExisting(
+            PipelineLayout.bibleIdentityVariantsFile,
+            dataRoot: root
+        )
         do {
             try YAMLArtifactStore(dataRoot: root).save(
                 bible,
                 to: PipelineLayout.bibleFile
             )
+            try BibleIdentityVariantStoreV1.save(
+                variants,
+                bible: bible,
+                dataRoot: root
+            )
         } catch {
+            try? restoreArtifact(previousBible, at: bibleURL)
+            try? restoreArtifact(previousVariants, at: variantsURL)
             throw ToolError("Couldn't write bible: \(error)")
         }
         return try jsonResult([
@@ -433,6 +514,8 @@ extension ToolExecutor {
             "ensembles": bible.ensembles.count,
             "props": bible.props.count,
             "locations": bible.locations.count,
+            "identity_variants": variants.variants.count,
+            "identity_variant_revision": variants.revision,
         ])
     }
 
@@ -506,6 +589,36 @@ extension ToolExecutor {
         } catch {
             throw ToolError("The execution plan input is invalid: \(error.localizedDescription)")
         }
+        let spatialPlan: SpatialProductionPlanDraftV1?
+        if let object = args["spatial_plan"] as? [String: Any] {
+            do {
+                let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+                spatialPlan = try JSONDecoder().decode(
+                    SpatialProductionPlanDraftV1.self,
+                    from: data
+                )
+                try SpatialProductionValidatorV1.validate(spatialPlan!)
+            } catch {
+                throw ToolError("The spatial production plan is invalid: \(error.localizedDescription)")
+            }
+        } else {
+            spatialPlan = nil
+        }
+        let musicvideoPlan: MusicvideoProductionPlanDraftV1?
+        if let object = args["musicvideo_plan"] as? [String: Any] {
+            do {
+                let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+                musicvideoPlan = try JSONDecoder().decode(
+                    MusicvideoProductionPlanDraftV1.self,
+                    from: data
+                )
+                try MusicvideoProductionValidatorV1.validate(musicvideoPlan!)
+            } catch {
+                throw ToolError("The Music Video production plan is invalid: \(error.localizedDescription)")
+            }
+        } else {
+            musicvideoPlan = nil
+        }
         let declaration = try mutationPackDeclaration(
             editor,
             dataRoot: root
@@ -536,7 +649,9 @@ extension ToolExecutor {
                 executionInputs: executionInputs,
                 dataRoot: stagingRoot,
                 declaredPack: declaration.packName,
-                declaredBinding: declaration.binding
+                declaredBinding: declaration.binding,
+                spatialPlan: spatialPlan,
+                musicvideoPlan: musicvideoPlan
             )
             try PipelinePhaseMutationRecorder.record(
                 phase: "shotlist",
@@ -819,6 +934,65 @@ extension ToolExecutor {
         }
     }
 
+    private func requireBibleAssetProvenance(
+        _ requirements: [BibleViewProvenanceRequirementV1],
+        dataRoot: URL
+    ) throws {
+        let proof: PipelineAssetProof
+        do {
+            proof = try loadPipelineAssetProof(
+                dataRoot: dataRoot,
+                scope: "bible"
+            )
+        } catch {
+            throw ToolError("bible generation provenance is invalid: \(error)")
+        }
+        guard proof.schema == pipelineAssetProofSchemaVersion,
+              proof.scope == "bible",
+              proof.project == projectName(dataRoot: dataRoot) else {
+            throw ToolError(
+                "bible generation provenance has the wrong project, scope, or schema."
+            )
+        }
+        let invalid = try requirements.filter { requirement in
+            let path = requirement.path
+            if let entry = proof.entries[path],
+               entry.path == path,
+               !entry.providerPrompt.trimmingCharacters(
+                in: .whitespacesAndNewlines
+               ).isEmpty,
+               !entry.generationModel.trimmingCharacters(
+                in: .whitespacesAndNewlines
+               ).isEmpty,
+               !entry.sourceMediaId.trimmingCharacters(
+                in: .whitespacesAndNewlines
+               ).isEmpty,
+               let url = projectFileURL(path, dataRoot: dataRoot),
+               (try? FileDigest.sha256(of: url)) == entry.sha256 {
+                return false
+            }
+            guard let confirmedRole = requirement.confirmedRole,
+                  let identityID = requirement.identityID,
+                  let identityName = requirement.identityName else {
+                return true
+            }
+            return try !ConfirmedIdentityAssetStoreV1.matchesCurrent(
+                path,
+                role: confirmedRole,
+                identityID: identityID,
+                identityName: identityName,
+                dataRoot: dataRoot
+            )
+        }
+        guard invalid.isEmpty else {
+            throw ToolError(
+                "\(invalid.count) Bible view asset(s) lack current generated provenance "
+                    + "or explicit host-recorded identity confirmation (e.g. "
+                    + "\(invalid.prefix(3).map { $0.path }.joined(separator: ", ")))."
+            )
+        }
+    }
+
     private func bibleReferencePaths(_ bible: Bible) -> [String] {
         var paths: [String] = []
         for entity in bible.characters {
@@ -846,25 +1020,6 @@ extension ToolExecutor {
         return paths
     }
 
-    private func bibleGeneratedPaths(_ bible: Bible) -> [String] {
-        var paths = bible.characters.flatMap {
-            Array($0.sheets.values)
-        }
-        paths += bible.ensembles.flatMap {
-            Array($0.sheets.values)
-        }
-        paths += bible.props.flatMap {
-            Array($0.sheets.values)
-        }
-        paths += bible.locations.flatMap {
-            Array($0.sheets.values)
-                + ($0.scene3d.panorama.isEmpty
-                    ? []
-                    : [$0.scene3d.panorama])
-        }
-        return paths
-    }
-
     func archiveExisting(_ relative: String, dataRoot: URL) throws {
         let source = PipelineLayout.url(relative, in: dataRoot)
         guard FileManager.default.fileExists(atPath: source.path) else { return }
@@ -883,6 +1038,18 @@ extension ToolExecutor {
             try FileManager.default.copyItem(at: source, to: destination)
         } catch {
             throw ToolError("Couldn't preserve the previous \(relative): \(error)")
+        }
+    }
+
+    private func restoreArtifact(_ data: Data?, at url: URL) throws {
+        if let data {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try data.write(to: url, options: .atomic)
+        } else if FileManager.default.fileExists(atPath: url.path) {
+            try FileManager.default.removeItem(at: url)
         }
     }
 }

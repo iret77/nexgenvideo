@@ -1124,10 +1124,11 @@ enum PhaseContractBundleLoader {
     }
 
     static func prepareDirect(pack: any Pack) throws -> PreparedPhaseContractBundle {
-        guard let badgeURL = pack.manifest.badgeURL else {
+        let resourceRoot = (pack as? any PackResourceRootProviding)?.packResourceRootURL
+            ?? pack.manifest.badgeURL?.deletingLastPathComponent()
+        guard let resourceRoot else {
             throw PhaseContractError.unavailable(pack.name)
         }
-        let resourceRoot = badgeURL.deletingLastPathComponent()
         let manifestURL = try PackResourceLocator.file(
             PackPipelineManifest.resourceName,
             inside: resourceRoot
@@ -1365,6 +1366,16 @@ enum PhaseContractRuntime {
         let failures = PipelineAgentContract.failures(
             registry: registry,
             manifest: resolved.hardSteps,
+            phaseBoundCapabilities: Dictionary(
+                uniqueKeysWithValues: resolved.phases.map {
+                    ($0.declaration.id, $0.phaseBoundCapabilities)
+                }
+            ),
+            supportingCapabilities: Dictionary(
+                uniqueKeysWithValues: resolved.phases.map {
+                    ($0.declaration.id, $0.supportingCapabilities)
+                }
+            ),
             phaseDocument: { name in
                 let relative = "phases/\(name).md"
                 guard let url = try? PackResourceLocator.file(
@@ -1377,29 +1388,6 @@ enum PhaseContractRuntime {
         guard failures.isEmpty, resolved.order == PipelineAgentContract.musicvideoPhases else {
             throw PhaseContractError.registryMismatch(
                 failures.first ?? "Music Video phase order differs from the locked contract"
-            )
-        }
-        for phase in PipelineAgentContract.musicvideoPhases {
-            guard let declaration = resolved.phase(phase) else {
-                throw PhaseContractError.registryMismatch(
-                    "Music Video is missing phase \(phase)"
-                )
-            }
-            let expectedPhaseBound = PipelineAgentContract.executableTools[phase] ?? []
-            let expectedSupporting = PipelineAgentContract.currentPhaseCapabilities[phase] ?? []
-            guard declaration.phaseBoundCapabilities == expectedPhaseBound,
-                  declaration.supportingCapabilities == expectedSupporting else {
-                throw PhaseContractError.registryMismatch(
-                    "Music Video capabilities differ for \(phase)"
-                )
-            }
-        }
-        let declaredPostPipeline = Set(
-            resolved.manifest.postPipelineCapabilities.compactMap { ToolName(rawValue: $0) }
-        )
-        guard declaredPostPipeline == PipelineAgentContract.postPipelineUtilityCapabilities else {
-            throw PhaseContractError.registryMismatch(
-                "Music Video post-pipeline capabilities differ from the locked contract"
             )
         }
     }

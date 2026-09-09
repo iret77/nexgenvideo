@@ -417,6 +417,13 @@ public struct ProductionKnowledgeContextAssemblerV1: Sendable {
     public func assemble(
         _ query: ProductionKnowledgeAssemblyQueryV1
     ) throws -> ProductionKnowledgeAssemblyV1 {
+        try assemble(query, preferredLibraryOrder: [])
+    }
+
+    public func assemble(
+        _ query: ProductionKnowledgeAssemblyQueryV1,
+        preferredLibraryOrder: [CreativeKnowledgeLibraryIDV1]
+    ) throws -> ProductionKnowledgeAssemblyV1 {
         guard query.budget.maximumUTF8Bytes > 0,
               query.budget.maximumEstimatedTokens > 0 else {
             throw ProductionKnowledgeErrorV1.invalidValue(
@@ -424,6 +431,20 @@ public struct ProductionKnowledgeContextAssemblerV1: Sendable {
                 reason: "byte and token budgets must be positive"
             )
         }
+        let preferredLibrarySet = Set(preferredLibraryOrder)
+        guard preferredLibrarySet.count == preferredLibraryOrder.count,
+              preferredLibraryOrder.isEmpty
+                || preferredLibrarySet == query.activeLibraryIDs else {
+            throw ProductionKnowledgeErrorV1.invalidValue(
+                path: "assembly.preferredLibraryOrder",
+                reason: "must list every active library exactly once"
+            )
+        }
+        let libraryRanks = Dictionary(
+            uniqueKeysWithValues: preferredLibraryOrder.enumerated().map {
+                ($0.element, $0.offset)
+            }
+        )
         let profiles = try query.activeProfileIDs.map { id in
             guard let profile = catalog.profile(id: id) else {
                 throw ProductionKnowledgeErrorV1.missingResource("profile:\(id.rawValue)")
@@ -475,7 +496,7 @@ public struct ProductionKnowledgeContextAssemblerV1: Sendable {
             ))
         }
 
-        var optionalChunks: [(id: String, text: String)] = []
+        var optionalChunks: [(libraryID: CreativeKnowledgeLibraryIDV1, id: String, text: String)] = []
         for library in effectiveLibraries.libraries {
             guard applies(
                 library.applicability,
@@ -494,10 +515,18 @@ public struct ProductionKnowledgeContextAssemblerV1: Sendable {
                 requiresIntentMatch: true
             ) {
                 let id = "\(library.id.rawValue)/\(entry.id.rawValue)"
-                optionalChunks.append((id: id, text: renderEntry(library, entry: entry)))
+                optionalChunks.append((
+                    libraryID: library.id,
+                    id: id,
+                    text: renderEntry(library, entry: entry)
+                ))
             }
         }
-        optionalChunks.sort { $0.id < $1.id }
+        optionalChunks.sort {
+            let leftRank = libraryRanks[$0.libraryID] ?? Int.max
+            let rightRank = libraryRanks[$1.libraryID] ?? Int.max
+            return leftRank == rightRank ? $0.id < $1.id : leftRank < rightRank
+        }
 
         let totalEntryCount = catalog.libraries.reduce(0) { $0 + $1.entries.count }
         if totalEntryCount > 0, optionalChunks.count == totalEntryCount {

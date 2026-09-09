@@ -193,7 +193,7 @@ public enum ComplianceLinter {
                     + "Story-Entscheidung — pruefen ob Section/Treatment "
                     + "diese Stimmung verlangt. Wenn nein: aus dem "
                     + "visual_prompt nehmen, sonst bekommt der Renderer "
-                    + "(und der NLE-Editor bei still-only) einen "
+                    + "(und die Timeline-Animation bei einem Standbild) einen "
                     + "Sonnenuntergang/Nacht-Block, den die Story nicht "
                     + "vorgesehen hat."
             ))

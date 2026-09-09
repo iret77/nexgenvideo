@@ -81,6 +81,12 @@ final class ModelCatalog {
     /// refresh never drops a signed-in provider's models, and a sign-out clears exactly that provider's.
     @ObservationIgnored private var discoveredByProvider: [GenerationProvider: [CatalogEntry]] = [:]
     @ObservationIgnored private var completedDiscoveryProviders = Set<GenerationProvider>()
+    @ObservationIgnored private(set) var routeChecks: [GenerationRouteReceipt.Check] = []
+
+    func recordRouteChecks(_ checks: [GenerationRouteReceipt.Check], for provider: GenerationProvider) {
+        routeChecks.removeAll { $0.provider == provider }
+        routeChecks.append(contentsOf: checks.filter { $0.provider == provider })
+    }
 
     init() {}
 
@@ -1481,6 +1487,7 @@ struct VideoCaps: Decodable, Sendable {
     let framesCountTowardImageReferenceLimit: Bool
     let framesCountTowardTotalReferenceLimit: Bool
     let maxReferenceImagesWhenVideoPresent: Int?
+    let sourceVideoOperation: VideoSourceOperationV1?
 
     var durations: [Int] { duration.discrete }
 
@@ -1491,6 +1498,7 @@ struct VideoCaps: Decodable, Sendable {
         case referenceTagNoun, requiresSourceVideo, requiresReferenceImage
         case framesCountTowardImageReferenceLimit, framesCountTowardTotalReferenceLimit
         case maxReferenceImagesWhenVideoPresent
+        case sourceVideoOperation
     }
 
     init(
@@ -1504,7 +1512,8 @@ struct VideoCaps: Decodable, Sendable {
         referenceTagNoun: String, requiresSourceVideo: Bool, requiresReferenceImage: Bool,
         framesCountTowardImageReferenceLimit: Bool = false,
         framesCountTowardTotalReferenceLimit: Bool = false,
-        maxReferenceImagesWhenVideoPresent: Int? = nil
+        maxReferenceImagesWhenVideoPresent: Int? = nil,
+        sourceVideoOperation: VideoSourceOperationV1? = nil
     ) {
         duration = VideoDurationCapabilities(
             discrete: durations,
@@ -1528,10 +1537,12 @@ struct VideoCaps: Decodable, Sendable {
         self.framesCountTowardImageReferenceLimit = framesCountTowardImageReferenceLimit
         self.framesCountTowardTotalReferenceLimit = framesCountTowardTotalReferenceLimit
         self.maxReferenceImagesWhenVideoPresent = maxReferenceImagesWhenVideoPresent
+        self.sourceVideoOperation = sourceVideoOperation
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        sourceVideoOperation = try container.decodeIfPresent(VideoSourceOperationV1.self, forKey: .sourceVideoOperation)
         duration = try container.decodeIfPresent(VideoDurationCapabilities.self, forKey: .duration)
             ?? VideoDurationCapabilities(discrete: try container.decodeIfPresent([Int].self, forKey: .durations) ?? [])
         resolutions = try container.decodeIfPresent([String].self, forKey: .resolutions)

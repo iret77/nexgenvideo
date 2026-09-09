@@ -16,7 +16,13 @@ struct PromptCompilerTests {
         // Composition is the engine's job; the gate's job is that the returned token validates the
         // returned text for the model. The composed text is longer than the raw intent.
         #expect(!compiled.text.isEmpty)
-        #expect(PromptCompiler.validate(token: compiled.token, text: compiled.text, modelId: "fal-ai/veo3"))
+        #expect(PromptCompiler.validate(
+            token: compiled.token,
+            text: compiled.text,
+            modelId: "fal-ai/veo3",
+            binding: compiled.binding
+        ))
+        #expect(compiled.binding.promptIRSHA256.count == 64)
     }
 
     @Test func emptyIntentThrows() async {
@@ -39,8 +45,18 @@ struct PromptCompilerTests {
         let compiled = try await PromptCompiler.compile(
             intent: "a red car on a wet street at night", modelId: "fal-ai/veo3", modality: .video, editor: nil)
         // Different model → invalid; different text → invalid.
-        #expect(!PromptCompiler.validate(token: compiled.token, text: compiled.text, modelId: "runway/gen4.5"))
-        #expect(!PromptCompiler.validate(token: compiled.token, text: compiled.text + "!", modelId: "fal-ai/veo3"))
+        #expect(!PromptCompiler.validate(
+            token: compiled.token,
+            text: compiled.text,
+            modelId: "runway/gen4.5",
+            binding: compiled.binding
+        ))
+        #expect(!PromptCompiler.validate(
+            token: compiled.token,
+            text: compiled.text + "!",
+            modelId: "fal-ai/veo3",
+            binding: compiled.binding
+        ))
     }
 
     @Test func rememberedIntentCanBeRecompiledForAUserSelectedModel() async throws {
@@ -60,7 +76,8 @@ struct PromptCompilerTests {
         #expect(PromptCompiler.validate(
             token: adapted.token,
             text: adapted.text,
-            modelId: "google/gemini-3-pro-image"
+            modelId: "google/gemini-3-pro-image",
+            binding: adapted.binding
         ))
         #expect(!PromptCompiler.validate(
             token: original.token,
@@ -72,7 +89,7 @@ struct PromptCompilerTests {
     @Test func rememberedPromptTracksTheExactOfferingCompositionMode() async throws {
         let original = try await PromptCompiler.compile(
             intent: "apply a flat cel-shaded western treatment",
-            modelId: "shared-video",
+            modelId: "runway/gen4.5",
             modality: .video,
             editor: nil,
             preserveCompositionOverride: false
@@ -80,27 +97,27 @@ struct PromptCompilerTests {
         #expect(PromptCompiler.rememberedCompositionModeMatches(
             token: original.token,
             text: original.text,
-            modelId: "shared-video",
+            modelId: "runway/gen4.5",
             preserveComposition: false
         ))
         #expect(!PromptCompiler.rememberedCompositionModeMatches(
             token: original.token,
             text: original.text,
-            modelId: "shared-video",
+            modelId: "runway/gen4.5",
             preserveComposition: true
         ))
 
         let adapted = try await PromptCompiler.recompile(
             token: original.token,
             text: original.text,
-            for: "shared-video",
+            for: "runway/gen4.5",
             editor: nil,
             preserveCompositionOverride: true
         )
         #expect(PromptCompiler.rememberedCompositionModeMatches(
             token: adapted.token,
             text: adapted.text,
-            modelId: "shared-video",
+            modelId: "runway/gen4.5",
             preserveComposition: true
         ))
     }
@@ -148,6 +165,61 @@ struct PromptCompilerTests {
         }
     }
 
+    @Test func tokenIsBoundToPromptDialectVersion() {
+        let first = PromptBinding(
+            projectKey: "/project-a/pipeline",
+            shotId: "s001",
+            shotFingerprint: "plan-a",
+            promptDialectID: "seedance-2.5",
+            promptDialectVersion: 1
+        )
+        let changed = PromptBinding(
+            projectKey: "/project-a/pipeline",
+            shotId: "s001",
+            shotFingerprint: "plan-a",
+            promptDialectID: "seedance-2.5",
+            promptDialectVersion: 2
+        )
+        let token = PromptCompiler.token(
+            for: "compiled",
+            modelId: "bytedance/seedance-2.5/reference-to-video",
+            binding: first
+        )
+
+        #expect(!PromptCompiler.validate(
+            token: token,
+            text: "compiled",
+            modelId: "bytedance/seedance-2.5/reference-to-video",
+            binding: changed
+        ))
+    }
+
+    @Test func tokenIsBoundToSerializedPromptIR() {
+        let first = PromptBinding(
+            projectKey: "/project-a/pipeline",
+            shotId: "s001",
+            shotFingerprint: "plan-a",
+            promptDialectID: "seedance-2.5",
+            promptDialectVersion: 1,
+            promptIRSHA256: String(repeating: "a", count: 64)
+        )
+        let changed = first.withPromptIRSHA256(
+            String(repeating: "b", count: 64)
+        )
+        let token = PromptCompiler.token(
+            for: "compiled",
+            modelId: "bytedance/seedance-2.5/reference-to-video",
+            binding: first
+        )
+
+        #expect(!PromptCompiler.validate(
+            token: token,
+            text: "compiled",
+            modelId: "bytedance/seedance-2.5/reference-to-video",
+            binding: changed
+        ))
+    }
+
     @Test func shotBoundImageCompilationRejectsNonGeneratedSourcesBeforeBinding() async throws {
         var shot = try Shot(
             id: "s001",
@@ -184,22 +256,22 @@ struct PromptCompilerTests {
 
     @Test func gateRejectsUncompiledAndFabricatedTokens() async throws {
         // No token at all.
-        #expect(throws: ToolError.self) {
-            try PromptCompiler.enforceGate(args: ["prompt": "raw"], prompt: "raw", modelId: "fal-ai/veo3")
+        await #expect(throws: ToolError.self) {
+            try await PromptCompiler.enforceGate(args: ["prompt": "raw"], prompt: "raw", modelId: "fal-ai/veo3")
         }
         // Fabricated token.
-        #expect(throws: ToolError.self) {
-            try PromptCompiler.enforceGate(
+        await #expect(throws: ToolError.self) {
+            try await PromptCompiler.enforceGate(
                 args: ["compileToken": "deadbeefdeadbeef"], prompt: "raw", modelId: "fal-ai/veo3")
         }
         // A genuine compile passes the gate for its own text.
         let compiled = try await PromptCompiler.compile(
             intent: "a red car on a wet street at night", modelId: "fal-ai/veo3", modality: .video, editor: nil)
-        try PromptCompiler.enforceGate(
+        try await PromptCompiler.enforceGate(
             args: ["compileToken": compiled.token], prompt: compiled.text, modelId: "fal-ai/veo3")
     }
 
-    @Test func rawPromptRequiresProSetting() {
+    @Test func rawPromptRequiresProSetting() async {
         let key = PromptCompiler.rawPromptsDefaultsKey
         let previous = UserDefaults.standard.object(forKey: key)
         defer {
@@ -208,16 +280,16 @@ struct PromptCompilerTests {
         }
 
         UserDefaults.standard.set(false, forKey: key)
-        #expect(throws: ToolError.self) {
-            try PromptCompiler.enforceGate(args: ["rawPrompt": true], prompt: "raw", modelId: "fal-ai/veo3")
+        await #expect(throws: ToolError.self) {
+            try await PromptCompiler.enforceGate(args: ["rawPrompt": true], prompt: "raw", modelId: "fal-ai/veo3")
         }
 
         UserDefaults.standard.set(true, forKey: key)
-        #expect(throws: Never.self) {
-            try PromptCompiler.enforceGate(args: ["rawPrompt": true], prompt: "raw", modelId: "fal-ai/veo3")
+        await #expect(throws: Never.self) {
+            try await PromptCompiler.enforceGate(args: ["rawPrompt": true], prompt: "raw", modelId: "fal-ai/veo3")
         }
-        #expect(throws: ToolError.self) {
-            try PromptCompiler.enforceGate(
+        await #expect(throws: ToolError.self) {
+            try await PromptCompiler.enforceGate(
                 args: ["rawPrompt": true, "shotId": "s001"],
                 prompt: "raw",
                 modelId: "fal-ai/veo3"

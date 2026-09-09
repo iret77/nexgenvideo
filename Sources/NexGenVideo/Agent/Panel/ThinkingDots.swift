@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 struct ThinkingDots: View {

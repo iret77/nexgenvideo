@@ -4,6 +4,7 @@ import NexGenEngine
 
 enum ToolName: String, CaseIterable, Sendable {
     case getTimeline = "get_timeline"
+    case getProductionKnowledge = "get_production_knowledge"
     case getMedia = "get_media"
     case addClips = "add_clips"
     case insertClips = "insert_clips"
@@ -25,6 +26,8 @@ enum ToolName: String, CaseIterable, Sendable {
     case compilePrompt = "compile_prompt"
     case generateVideo = "generate_video"
     case generateImage = "generate_image"
+    case prepareGenerationBatch = "prepare_generation_batch"
+    case getGenerationBatches = "get_generation_batches"
     case generateAudio = "generate_audio"
     case upscaleMedia = "upscale_media"
     case importMedia = "import_media"
@@ -91,7 +94,7 @@ enum ToolName: String, CaseIterable, Sendable {
     var isDurableWrite: Bool {
         switch self {
         // Approving gate tools defer their write to the user's later click.
-        case .generateVideo, .generateImage, .generateAudio, .upscaleMedia, .importMedia,
+        case .generateVideo, .generateImage, .prepareGenerationBatch, .generateAudio, .upscaleMedia, .importMedia,
              .initProject, .rewind, .runPhase, .recordRender, .recordAffect, .saveFrameAudit,
              .setLedgerAttribute, .lockLedgerAttribute, .removeLedgerAttribute,
              .attachSong, .copyProjectFile, .extractScene3dPovs, .writeBrief,
@@ -136,7 +139,7 @@ enum ToolName: String, CaseIterable, Sendable {
 
     var usesCurrentPipelinePhase: Bool {
         switch self {
-        case .compilePrompt, .generateVideo, .generateImage, .generateAudio,
+        case .compilePrompt, .generateVideo, .generateImage, .prepareGenerationBatch, .generateAudio,
              .upscaleMedia, .importMedia, .runProviderTool, .copyProjectFile,
              .cropToAspect, .setLedgerAttribute, .lockLedgerAttribute,
              .removeLedgerAttribute:
@@ -184,7 +187,42 @@ struct AgentTool: @unchecked Sendable {
 }
 
 enum ToolDefinitions {
-    static let all: [AgentTool] = [
+    static let all: [AgentTool] = base + [
+        AgentTool(name: .prepareGenerationBatch,
+            description: "Prepare multiple image/video requests for one native Approve X generations decision. Does not generate or approve spending. Each request must carry its unchanged compile_prompt output. Use one stable UUID requestID for reconnect retries; changed requests need a new UUID. Only already available references can be included. The host stores exact packages and executes approved items without per-item dialogs. Read get_generation_batches for progress; never submit the same items separately.",
+            inputSchema: objectSchema(properties: [
+                "requestID": ["type": "string"],
+                "items": ["type": "array", "minItems": 1, "maxItems": 50, "items": ["anyOf": [ToolName.generateImage, .generateVideo].map { tool in
+                    objectSchema(properties: [
+                        "tool": ["type": "string", "enum": [tool.rawValue]],
+                        "purpose": ["type": "string", "minLength": 1],
+                        "request": base.first(where: { $0.name == tool })!.inputSchema,
+                    ], required: ["tool", "purpose", "request"])
+                }]],
+            ], required: ["requestID", "items"])),
+        AgentTool(name: .getGenerationBatches,
+            description: "Read the project's durable approved generation batches and current item states. Includes the pending native manifest when present. This never submits, retries or approves any generation.",
+            inputSchema: objectSchema(properties: ["batchID": ["type": "string", "description": "Optional. Read this exact manifest and journal; omit for compact progress across batches."]]))
+    ]
+
+    private static let base: [AgentTool] = [
+        AgentTool(
+            name: .getProductionKnowledge,
+            description: "Find, read, or deterministically recommend complete, versioned production knowledge for the current task. Search returns entry IDs; read returns one complete entry with provenance. recommend_style runs the source genre, name, disclosed alias/nearest-match, mood, constraint, harmony, cross-pairing and clash rules and returns at most two candidates. Retrieve the selected procedure and its governing exceptions before applying it. Source platform claims are dated evidence, examples are not project canon, and source workflows cannot change the active pack's phase contract. Available in generic projects and format projects.",
+            inputSchema: objectSchema(
+                properties: [
+                    "operation": ["type": "string", "enum": ["search", "read", "recommend_style"]],
+                    "query": ["type": "string", "description": "Search words or a library ID; empty lists the index."],
+                    "entryID": ["type": "string", "description": "Exact library/entry ID from search; required for read."],
+                    "offset": ["type": "integer", "minimum": 0, "description": "Index offset for search pagination."],
+                    "genre": ["type": "string", "description": "Known genre or format signal for recommend_style."],
+                    "named_styles": ["type": "array", "items": ["type": "string"], "description": "Explicitly named directors, DoPs, or a documented alias for recommend_style."],
+                    "moods": ["type": "array", "items": ["type": "string"], "description": "Feel or tone words for recommend_style."],
+                    "constraints": ["type": "array", "items": ["type": "string", "enum": ProductionStyleConstraintV1.allCases.map(\.rawValue)], "description": "Production constraints; these disclose tradeoffs and never silently change the selected style or approve spend."],
+                ],
+                required: ["operation"]
+            )
+        ),
         AgentTool(
             name: .getTimeline,
             description: "Always call at the start of a session. Returns project settings (fps, resolution, totalFrames), track list with types and order, and all clips with their frames and properties. The clipId/trackId values here are what every other tool accepts.\n\nClip and track fields equal to their defaults are omitted: mediaType 'video', sourceClipType = mediaType, speed 1, volume 1, opacity 1, trims/fades 0, identity transform/crop, default textStyle, track muted/hidden false. Text clips never report trims (no source media).\n\nCaption clips (sharing a captionGroupId) come back per track as captionGroups instead of clips entries: properties common to the group are hoisted into 'shared' and each clip is a [clipId, startFrame, durationFrames, text] row (caption box width/height are auto-fit per text and omitted). Rows are capped at 200 per group — when clipCount exceeds the rows shown, page with startFrame/endFrame. Caption clips whose properties deviate from the group appear individually in clips.",
@@ -732,7 +770,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .generateImage,
-            description: "Generates an AI image and returns only after the provider result is imported, including the completed image for inspection, or returns the provider failure. Costs real money and is not undoable. PROMPT GATE: prompt, compileToken, and shotId must be passed unchanged from compile_prompt. A shot-bound token cannot be reused for another shot or project. Raw prompts work only for shotId=none through the explicit pro escape hatch.",
+            description: "Generates an AI image and returns only after the provider result is imported, including the completed image for inspection, or returns the provider failure. Costs real money and is not undoable. PROMPT GATE: prompt, compileToken, and shotId must be passed unchanged from compile_prompt. A shot-bound token cannot be reused for another shot or project. For a format-pack Frames shot, the host derives and submits the complete ordered semantic reference plan for the selected model; omit referenceMediaRefs and referenceProjectPaths. Raw prompts work only for shotId=none through the explicit pro escape hatch.",
             inputSchema: objectSchema(
                 properties: [
                     "compileToken": ["type": "string", "description": "Token from compile_prompt proving 'prompt' is the compiled prompt. Required unless rawPrompt=true."],
@@ -744,8 +782,8 @@ enum ToolDefinitions {
                     "aspectRatio": ["type": "string", "description": "Aspect ratio (e.g. '16:9', '9:16')"],
                     "resolution": ["type": "string", "description": "Resolution (e.g. '2K', '4K')"],
                     "quality": ["type": "string", "description": "Image quality (e.g. 'low', 'medium', 'high'). Only supported by some models — see list_models."],
-                    "referenceMediaRefs": ["type": "array", "items": ["type": "string"], "description": "Media asset IDs to use as reference images"],
-                    "referenceProjectPaths": ["type": "array", "items": ["type": "string"], "description": "Project-local image paths under pipeline/ to use as references, for example production_design/refs/claude.png. Production Design automatically attaches its complete staged refs set; omit this field there."],
+                    "referenceMediaRefs": ["type": "array", "items": ["type": "string"], "description": "Media asset IDs to use as reference images for free generation. Omit for format-pack Frames shots; the host supplies their semantic plan."],
+                    "referenceProjectPaths": ["type": "array", "items": ["type": "string"], "description": "Project-local image paths under pipeline/ for free or design-sheet generation. Production Design and format-pack Frames shots attach their host-owned sets automatically; omit this field there."],
                     "folderId": ["type": "string", "description": "Optional. Folder id (from list_folders or create_folder) to place the result in. Omit for the project root."],
                 ],
                 required: ["prompt", "shotId"]
@@ -1196,12 +1234,12 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .writeBible,
-            description: "Write bible/bible.yaml through the engine Bible model. Use this instead of authoring YAML. The host owns schema/project/generated/generator, validates globally unique ids, exact generated-asset provenance, every Storyboard-requested entity/view, and synchronized Production Design style/lighting. The previous manifest is preserved in history.",
+            description: "Write bible/bible.yaml and its versioned identity-variant contract through the engine models. Use this instead of authoring YAML or JSON. The host owns schema/project/generated/generator and variant revision; validates globally unique ids, exact generated or explicitly user-confirmed Canon provenance, every Storyboard-requested entity/view, synchronized Production Design style/lighting, and variant inheritance. Represent a real outfit/state variant as its own Bible entity plus identity_variants entry; unchanged attributes must equal the base and inherited_identity_paths must name the base Canon inherited by the variant. The previous artifacts are preserved in history.",
             inputSchema: PipelineArtifactWriteContract.bibleSchema
         ),
         AgentTool(
             name: .writeShotlist,
-            description: "Write the next validated Shot List and its complete format-neutral execution plan as one transaction. Use this instead of authoring YAML or execution JSON. Supply `shots`, matching `execution_shots`, and optional notes: both arrays must have identical order, ids, and source modes. The host derives schema, project, mode, budget, Song, source bindings, visible-entity count, aspect ratio, resolution, keyframe requirements, hashes, and provenance. Generated and AI-enhanced shots carry exact generation requirements; imported shots carry complete directorial execution semantics without a generation requirement. Every reference must already be a real project-local file. If any Shot List, execution-plan, AssetGraph, Demand Set, or lineage check fails, no new version is committed.",
+            description: "Write the next validated Shot List and its complete execution plan as one transaction. Supply `shots`, matching `execution_shots`, and any activated `spatial_plan`; the current Music Video pack also requires `musicvideo_plan`. The host derives project, Song, exact source bindings, hashes and provenance, exports native blockouts and exact performance-audio segments, and rolls back every artifact if validation fails. Generated and AI-enhanced shots carry generation requirements; imported shots keep directorial execution semantics without a generation requirement.",
             inputSchema: PipelineArtifactWriteContract.shotlistSchema
         ),
         AgentTool(
@@ -1228,7 +1266,7 @@ enum ToolDefinitions {
                     "home_dir": ["type": "string", "description": "Optional. Directory to scaffold under; omit to use the open project."],
                     "name": ["type": "string", "description": "Project name."],
                     "mode": ["type": "string", "description": "Cut mode: beat/phrase/section/multicam (default beat)."],
-                    "budget_eur": ["type": "number", "description": "Project budget in EUR (default 50)."],
+                    "budget_eur": ["type": "number", "description": "Planning budget in EUR (default 50); this does not enforce a hard stop."],
                 ],
                 required: ["name"]
             )
@@ -1258,7 +1296,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .estimateCost,
-            description: "The project's budget picture. Read-only.\n\nSums EUR already spent across the render ledger and compares against the project budget, returning `{project, budget_eur, spent_eur, remaining_eur, over_budget, next_phase}`. This is the spent/remaining view (not a forward per-shot estimate). `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            description: "The project's verified money journal and budget picture. Read-only.\n\nIncludes every priced reservation and charge across sheets, frames, retakes, failed submitted jobs, and renders. Returns the planning `budget_eur`, optional enforced `budget_stop_eur`, verified spend, reservation and unknown-cost counts, and remaining amounts only when the journal is complete. This is the project spend view, not a forward per-shot estimate. `project_dir` is the `pipeline/` data root; omit to use the open project.",
             inputSchema: projectDirSchema()
         ),
         AgentTool(
@@ -1321,7 +1359,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .nextRenderShot,
-            description: "The next shot artifact to render for `phase`, in shotlist order. WRITES the exact provider route and ordered ReferencePlan for a pending video shot.\n\nFor `frames`, completion is role-aware against the authoritative Frames manifest: a `start_end` shot is returned once with `role=start` and again with `role=end`; missing files or provider-prompt provenance make that role pending again. For video phases, the phase render manifest plus immutable routing provenance determine completion per shot. Returns the shot's structured generation context, or `{phase, shot_id:null, done:true}` only when every required artifact exists. A missing, unreadable, or corrupt source artifact is an error. `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            description: "The next shot artifact to deliver for `phase`, in Shot List order. WRITES the exact provider route and ordered ReferencePlan when the execution plan requires provider video.\n\nFor `frames`, completion is role-aware against the authoritative Frames manifest: a `start_end` shot is returned once with `role=start` and again with `role=end`; missing files or provider-prompt provenance make that role pending again. For video delivery, the phase render manifest plus immutable routing provenance determine completion. For `delivery_mode=timeline_animated_still`, no video provider is selected: the tool returns the exact accepted Frames image as `output_media_ref`, and the caller passes it directly to `record_render`. Returns `{phase, shot_id:null, done:true}` only when every required artifact exists. A missing, unreadable, or corrupt source artifact is an error. `project_dir` is the `pipeline/` data root; omit to use the open project.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,
@@ -1332,7 +1370,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .recordRender,
-            description: "Record a completed shot artifact into the phase manifest. WRITES.\n\nFor `status=rendered`, `output` must resolve to completed project media on disk produced by a schema-validated generation call: an image for `frames`, a video for `preview`/`final`. Imported shots never enter a provider render manifest; place their source footage on the timeline. The host stores a project-relative path, exact output hash, compiled provider prompt, generation model, shot status/cost, and `updated_at`. For frames, pass `role=start|end`; the host also records the exact compiled provider prompt in `frames/manifest.json`, which the Frames gate binds to a vision audit of the exact file. Reported cost is a production note; provider charges remain the authoritative ledger. `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            description: "Record a completed shot artifact into the phase manifest. WRITES.\n\nFor `status=rendered`, `output` must resolve to completed project media on disk produced by a schema-validated generation call: an image for `frames`, a video for provider-video delivery, or the exact accepted Frames start image for `timeline_animated_still`. Animated-still delivery rejects substitutions, video routing, take-history records, added render cost, and unaudited image bytes. Imported shots never enter a provider render manifest; place their source footage on the timeline. The host stores a project-relative path, exact output hash, compiled provider prompt, generation model, shot status/cost, and `updated_at`. For frames, pass `role=start|end`; the host also records the exact compiled provider prompt in `frames/manifest.json`, which the Frames gate binds to a vision audit of the exact file. Reported cost is a production note; provider charges remain the authoritative ledger. `project_dir` is the `pipeline/` data root; omit to use the open project.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,
@@ -1340,6 +1378,7 @@ enum ToolDefinitions {
                     "shot_id": ["type": "string", "description": "The shot id to record."],
                     "role": ["type": "string", "enum": ["start", "end"], "description": "Frame role for phase=frames (default start). Omit for video phases."],
                     "output": ["type": "string", "description": "Completed project media asset id or project path (omit if not done)."],
+                    "expected_take_id": ["type": "string", "description": "When selecting an existing take, require this exact generation-event/output identity and its accepted native review."],
                     "cost_eur": ["type": "number", "minimum": 0, "description": "Reported EUR cost for production notes (default 0); not used by the hard budget stop."],
                     "status": ["type": "string", "enum": ["rendered", "pending", "failed"], "description": "Render status (default rendered)."],
                 ],
@@ -1348,11 +1387,12 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .getRenderManifest,
-            description: "A video pass's shot-level render ledger and progress summary. Read-only.\n\nReturns `{project, phase, entries, summary}` where each entry exposes `current_output` plus its generation model and exact output hash; a replaced/missing file or missing generation provenance counts as pending, never rendered. The summary is `{total, rendered, pending, failed, spent_eur}` over provider-rendered shots only. Use `get_frames_manifest` for the role-aware Frames artifact and its exact-file audits; this shot-level ledger cannot represent both start and end roles. `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            description: "A video pass's shot-level render records, retained takes and progress summary. Read-only.\n\nEach entry exposes `current_output`, model, exact output hash, and a non-authoritative `reported_cost_eur` production note; missing or replaced bytes count as pending. Takes expose attributed review findings and generation-package identities. Pass `take_id` to return one take with its complete exact generation package or a repairable package error. The summary covers completion and `reported_phase_cost_eur`; use `estimate_cost` for authoritative project spend. Use `get_frames_manifest` for separate start/end frame audits. `project_dir` is the pipeline data root; omit for the open project.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,
                     "phase": ["type": "string", "enum": ["frames", "preview", "final"], "description": "The render phase."],
+                    "take_id": ["type": "string", "description": "Optional exact take ID for detailed generation-package inspection."],
                 ],
                 required: ["phase"]
             )
@@ -1371,6 +1411,7 @@ enum ToolDefinitions {
             description: "Record a vision-audit verdict for a rendered keyframe and get the routing decision. WRITES.\n\nCall this AFTER record_render for a keyframe and BEFORE surfacing it to the user: inspect the rendered image against the shot spec (framing, character count, gaze, blocking at t=0, forbidden elements, visible zones, proportion anchor) and report one status per audit point. The result's `verdict` routes deterministically — APPROVE (clean) → surface for approval; RERENDER (blocking, budget left) → repair the owning artifact when the patch identifies a spec defect, otherwise recompile the unchanged current shot and rerender; USER_DECIDES (minor, or blocking with budget spent) → surface the findings and let the user decide. Never inject the patch into a provider prompt and never exceed 2 auto re-renders per shot+role.\n\nYou judge; the machine measures. Supply only `status`/`observed`/`note` per check plus `overall`, `auditor`, and (when blocking) `auto_rerender_patch`. The executor fills `render_sha256`, `generated`, each `expected` (from the shot spec), and the `auto_rerender_attempt` counter — values you pass for those are ignored. All 10 standard check keys are required; extra keys are allowed. Strictly validated: `overall` must match the worst check status (a blocking check with a non-blocking overall is rejected), `pending` is never a valid end state — fix and re-call on any violation. `project_dir` is the `pipeline/` data root; omit to use the open project.",
             inputSchema: objectSchema(
                 properties: [
+                    "observation_receipt": ["type": "string", "description": "Receipt returned with the current image by inspect_media. Required when the project has a selected production style."],
                     "project_dir": projectDirProperty,
                     "shot_id": ["type": "string", "description": "The audited shot id."],
                     "role": ["type": "string", "enum": ["start", "end"], "description": "Keyframe role (default \"start\")."],
@@ -1443,11 +1484,27 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .assembleTimeline,
-            description: "Lay the rendered shots onto the timeline cut to the beat. WRITES.\n\nBuilds the final cut for the render `phase`: reads the analysis (beats, downbeats, sections), the shotlist (ordered shots + planned spans), and the render manifest (each shot's rendered file), then places every rendered shot in shotlist order on a dedicated assembly video track, each cut snapped to a beat: a downbeat at a section boundary, a regular beat otherwise. The song is laid on an audio track at frame 0 as the sync anchor if it isn't already there. Frame-exact at the project fps. Re-runnable: a second call rebuilds the assembly track in place rather than duplicating clips. Shots with no rendered output yet are skipped and named, not fatal; a shot's source_mode (generated / imported / ai_enhanced) doesn't matter, only that its output is recorded. Needs analysis (run_phase \"analysis\") and at least one recorded render first, or it returns an actionable error. Returns `{shots_placed, total_frames, video_track_index, song_track, placements, skipped}`. `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            description: "Apply the current reviewed shot selections to the timeline. WRITES.\n\nBuilds a canonical AssemblyPlan and applies it through the generic timeline assembler. Every required source must be present and exact-byte current before the timeline changes. Use `reviewed_ranges` to assign separately reviewed frame ranges from a multi-shot take; the original take remains untrimmed. Music Video projects resolve their pack policy to beat/downbeat cuts and place the approved song at frame 0. Generic and fixture projects use their shot timings without requiring Song, BPM or analysis. Re-running the same plan is idempotent. If the previously assembled region was edited, choose `drift_action` explicitly: `rebuild` replaces it from the canonical plan; `adopt` preserves it for explicit Finish-source adoption and does not misreport it as an applied AssemblyPlan. Returns exact source ranges, placements and the AssemblyManifest path. `project_dir` is the `pipeline/` data root; omit to use the open project.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,
                     "phase": ["type": "string", "enum": ["preview", "final"], "description": "The render phase to assemble (default \"final\")."],
+                    "reviewed_ranges": [
+                        "type": "array",
+                        "description": "Optional exact reviewed take range for each shot in a multi-shot generation.",
+                        "items": objectSchema(
+                            properties: [
+                                "shot_id": ["type": "string"],
+                                "review_id": ["type": "string", "pattern": "^[0-9a-f]{64}$"],
+                            ],
+                            required: ["shot_id", "review_id"]
+                        ),
+                    ],
+                    "drift_action": [
+                        "type": "string",
+                        "enum": ["adopt", "rebuild"],
+                        "description": "Required only after edits to the previously assembled region.",
+                    ],
                 ]
             )
         ),
@@ -1559,11 +1616,11 @@ enum ToolDefinitions {
                     "type": "string", "enum": ["clean", "minor", "blocking", "n/a"],
                     "description": "Verdict for this audit point (\"n/a\" when the spec doesn't constrain it).",
                 ],
-                "observed": ["type": "string", "description": "What the image shows."],
-                "note": ["type": "string", "description": "Short finding for the user / re-render patch."],
+                "observed": ["type": "string", "description": "Concrete image observation, required for every clean/minor/blocking verdict."],
+                "note": ["type": "string", "description": "Short finding or re-render patch; required explanation when status is n/a."],
                 "expected": ["type": "string", "description": "Ignored; the executor derives this from the shot spec."],
             ],
-            "required": ["status"],
+            "required": ["status", "observed", "note"],
         ]
         var properties: [String: Any] = [:]
         for key in standardAuditCheckKeys { properties[key] = checkSchema }

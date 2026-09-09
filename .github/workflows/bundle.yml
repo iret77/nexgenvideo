@@ -19,6 +19,7 @@ on:
       - 'Engine/**'
       - 'Metal/**'
       - 'Sources/MusicvideoPlugin/**'
+      - 'Sources/FixtureFictionPlugin/**'
       - 'Sources/NexGenVideo/Agent/Intake/HardStepManifest.swift'
       - 'Sources/NexGenVideo/Agent/Pipeline/**'
       - 'Sources/NexGenVideo/Agent/Tools/ToolDefinitions.swift'
@@ -58,8 +59,11 @@ jobs:
       - name: Enforce AppTheme
         run: python3 scripts/lint_app_theme.py
 
-      - name: Validate musicvideo pipeline contract
-        run: python3 scripts/validate_pipeline_contract.py plugins/musicvideo.json
+      - name: Validate pack pipeline contracts
+        run: |
+          for manifest in plugins/*.json; do
+            python3 scripts/validate_pipeline_contract.py "$manifest"
+          done
 
       - name: Verify private fixture bundle tooling
         run: python3 -m unittest discover -s scripts -p 'test_*.py'
@@ -93,6 +97,8 @@ jobs:
           # Secret-free validation of the whole pack pipeline: assemble the ad-hoc-signed
           # .ngvpack, then merge it into a catalog the app decodes.
           scripts/assemble_ngvpack.sh plugins/musicvideo.json debug .build/plugins
+          swift build --cache-path "$NGV_SWIFTPM_CACHE_PATH" --product FixtureFictionPlugin
+          scripts/assemble_ngvpack.sh plugins/fixture-fiction.json debug .build/pack-fixtures
           # Merge against a channel that already carries an OLDER version: the append-only
           # promise #168 rests on (older versions survive, so an older app keeps its last
           # compatible pack) is what makes the multi-version selection meaningful.
@@ -128,20 +134,17 @@ jobs:
           # and the pack silently never activates. No test inside the package graph can
           # catch this (they link the pack statically → one class), so we assert the
           # Mach-O invariant on the assembled bundle here.
-          PACK_BIN="$(ls .build/plugins/*.ngvpack/Contents/MacOS/* | head -1)"
           APP_BIN=".build/NexGenVideo.app/Contents/MacOS/NexGenVideo"
-          echo "pack binary: $PACK_BIN"
-          # 1) pack references the shared engine dylib dynamically
-          otool -L "$PACK_BIN" | grep -q '@rpath/libNexGenEngine.dylib' \
-            || { echo "::error::pack does not dynamically link libNexGenEngine.dylib (engine statically absorbed)"; exit 1; }
-          # 2) pack must NOT carry its own copy of the engine's PackEntry class — a DEFINED
-          #    _OBJC_CLASS_$_NGVPackEntry means NexGenEngine was statically absorbed. (We don't
-          #    assert the undefined *import* symbol: under macOS chained fixups the cross-dylib
-          #    superclass bind lives in the fixup chains, not as a classic nm 'U' entry. Step 1's
-          #    dependent-dylib link already proves the class resolves from the shared engine.)
-          if nm "$PACK_BIN" | grep -E ' [SDTtbd] _OBJC_CLASS_\$_NGVPackEntry$'; then
-            echo "::error::NexGenEngine is statically absorbed — pack defines its own NGVPackEntry class"; exit 1
-          fi
+          while IFS= read -r PACK_BIN; do
+            echo "pack binary: $PACK_BIN"
+            # 1) every pack references the shared engine dylib dynamically
+            otool -L "$PACK_BIN" | grep -q '@rpath/libNexGenEngine.dylib' \
+              || { echo "::error::$PACK_BIN does not dynamically link libNexGenEngine.dylib"; exit 1; }
+            # 2) no pack carries its own copy of the engine's PackEntry class
+            if nm "$PACK_BIN" | grep -E ' [SDTtbd] _OBJC_CLASS_\$_NGVPackEntry$'; then
+              echo "::error::$PACK_BIN statically absorbs NexGenEngine"; exit 1
+            fi
+          done < <(find .build/plugins .build/pack-fixtures -path '*.ngvpack/Contents/MacOS/*' -type f | sort)
           # 3) the app links the engine dynamically too (else the shared image never loads)
           otool -L "$APP_BIN" | grep -q '@rpath/libNexGenEngine.dylib' \
             || { echo "::error::app does not dynamically link libNexGenEngine.dylib"; exit 1; }
@@ -156,14 +159,17 @@ jobs:
           # must resolve to the host's Contents/Frameworks via @executable_path/../Frameworks. The REAL
           # app binary loads it (gate → Bundle.load() → principalClass cast → makePack()) and exits 0
           # only on success.
-          PACK_BIN="$(ls .build/plugins/*.ngvpack/Contents/MacOS/* | head -1)"
-          otool -l "$PACK_BIN" | grep -q 'path @executable_path/../Frameworks' \
-            || { echo "::error::pack is missing the @executable_path/../Frameworks rpath — it can't reach the host engine"; exit 1; }
           EXTDIR="$(mktemp -d)/packs"; mkdir -p "$EXTDIR"
-          cp -R .build/plugins/musicvideo.ngvpack "$EXTDIR/"
-          echo "loading $EXTDIR/musicvideo.ngvpack with the real app binary…"
-          NGV_SELFTEST_PACK="$EXTDIR/musicvideo.ngvpack" .build/NexGenVideo.app/Contents/MacOS/NexGenVideo
-          echo "OK: the app loaded the pack from an external directory"
+          for PACK in .build/plugins/musicvideo.ngvpack .build/pack-fixtures/fixture-fiction.ngvpack; do
+            PACK_BIN="$(find "$PACK/Contents/MacOS" -maxdepth 1 -type f | head -1)"
+            otool -l "$PACK_BIN" | grep -q 'path @executable_path/../Frameworks' \
+              || { echo "::error::$PACK is missing the host-engine rpath"; exit 1; }
+            EXTERNAL="$EXTDIR/$(basename "$PACK")"
+            cp -R "$PACK" "$EXTERNAL"
+            echo "loading $EXTERNAL with the real app binary…"
+            NGV_SELFTEST_PACK="$EXTERNAL" .build/NexGenVideo.app/Contents/MacOS/NexGenVideo
+          done
+          echo "OK: the app loaded both packs from an external directory"
 
       - name: Relaunch-test — historical ABI gate and same-contract restart keep Home interactive
         env:

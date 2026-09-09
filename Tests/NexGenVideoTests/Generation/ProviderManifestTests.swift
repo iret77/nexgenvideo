@@ -11,12 +11,14 @@ struct ProviderManifestTests {
     // now arrive via runtime MCP discovery with raw ids carrying `.mcp` offers (see MCPModelDiscoveryTests),
     // never as a static `higgsfield/`-prefixed `.api` binding.
     @Test func singleSourceModelsMapToOneApiBinding() {
+        let catalog = ModelCatalog()
+        catalog.load(entries: ModelCatalog.bootstrapEntries)
         for (id, provider) in [
             ("marble/marble-1.1", GenerationProvider.marble),
             ("runway/gen4.5", .runway),
             ("fal-ai/flux-pro/v1.1", .fal),
         ] {
-            let bindings = ProviderManifest.bindings(forModelId: id)
+            let bindings = ProviderManifest.bindings(forModelId: id, catalog: catalog)
             #expect(bindings.count == 1)
             #expect(bindings.first?.provider == provider)
             #expect(bindings.first?.transport == .api)

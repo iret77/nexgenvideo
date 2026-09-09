@@ -359,6 +359,29 @@ struct ToolDefinitionContractTests {
         }
     }
 
+    @Test("write_bible does not expose the legacy recognition trait")
+    func bibleSchemaOmitsRecognitionTrait() throws {
+        let tool = try #require(
+            ToolDefinitions.all.first { $0.name == .writeBible }
+        )
+        let root = try #require(schemaProperties(tool.inputSchema["properties"]))
+        for collection in ["characters", "ensembles", "props", "locations"] {
+            let values = try #require(root[collection])
+            let item = try #require(values["items"] as? [String: Any])
+            let properties = try #require(schemaProperties(item["properties"]))
+            let required = Set(item["required"] as? [String] ?? [])
+            #expect(properties["hard_recognition_trait"] == nil)
+            #expect(!required.contains("hard_recognition_trait"))
+        }
+        let variants = try #require(root["identity_variants"])
+        let item = try #require(variants["items"] as? [String: Any])
+        let properties = try #require(schemaProperties(item["properties"]))
+        #expect(properties["base_entity_id"] != nil)
+        #expect(properties["variant_entity_id"] != nil)
+        #expect(properties["changed_attributes"] != nil)
+        #expect(properties["inherited_identity_paths"] != nil)
+    }
+
     @Test("agent dialogs cannot claim or replace host workflow intake")
     @MainActor
     func hostWorkflowIntakeIsExclusive() async throws {
@@ -437,7 +460,7 @@ struct ToolDefinitionContractTests {
     @Test("durable-write classification covers every project filesystem writer")
     func durableWriteClassificationIsExplicit() {
         let expected: Set<ToolName> = [
-            .generateVideo, .generateImage, .generateAudio, .upscaleMedia, .importMedia,
+            .generateVideo, .generateImage, .prepareGenerationBatch, .generateAudio, .upscaleMedia, .importMedia,
             .initProject, .rewind, .runPhase, .recordRender, .recordAffect, .saveFrameAudit,
             .setLedgerAttribute, .lockLedgerAttribute, .removeLedgerAttribute,
             .attachSong, .copyProjectFile, .extractScene3dPovs,

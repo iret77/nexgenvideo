@@ -127,6 +127,7 @@ extension EditorViewModel {
         authorization: GenerationAuthorization,
         kind: GenerationSpendEvent.Kind,
         providerRequestId: String? = nil,
+        providerRequestResumable: Bool? = nil,
         money: GenerationMoney? = nil,
         note: String? = nil
     ) throws {
@@ -134,7 +135,7 @@ extension EditorViewModel {
         try authorization.projectMutationScope?.requireCurrent(editor: self)
         let previousLog = generationLog
         generationLog.version = 2
-        generationLog.spendEvents.append(GenerationSpendEvent(
+        let event = GenerationSpendEvent(
             transactionId: transactionId,
             kind: kind,
             model: authorization.target.modelId,
@@ -142,15 +143,20 @@ extension EditorViewModel {
             transport: authorization.target.transport,
             endpoint: authorization.target.endpoint,
             providerRequestId: providerRequestId,
+            providerRequestResumable: providerRequestResumable,
             money: money,
             note: note
-        ))
+        )
+        generationLog.spendEvents.append(event)
         do {
             _ = try GenerationBudgetGuard.verifiedSpend(
                 log: generationLog,
                 generatedAssets: mediaAssets,
                 requireCompleteMoney: false
             )
+            if let batch = authorization.batchItem {
+                try GenerationBatchStore.recordSpendEvent(event, authorization: batch, editor: self)
+            }
             try persistGenerationLog()
         } catch {
             generationLog = previousLog

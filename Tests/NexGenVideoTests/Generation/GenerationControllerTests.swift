@@ -1,4 +1,5 @@
 import Foundation
+import NexGenEngine
 import Testing
 
 @testable import NexGenVideo
@@ -104,6 +105,33 @@ struct GenerationControllerTests {
 
     // MARK: (b) COMPILE
 
+    @Test func aChangedLedgerInvalidatesAReviewedPackageBeforePricingOrDispatch() async throws {
+        let project = try Self.makeProject(ledgerYAML: Self.cleanLockedLedger)
+        defer {
+            ProjectIdentity.existingKey(for: project).map { ProjectWorkingCopy.discard(key: $0) }
+            try? FileManager.default.removeItem(at: project)
+        }
+        let editor = stubEditor(projectURL: project)
+        let generation = try await GenerationController.prepare(
+            videoRequest(intent: "a red car on a wet street", editor: editor), editor: editor).get()
+        let package = try await GenerationController.prepareReviewPackage(generation, editor: editor,
+            quoteLoader: { _, _ in GenerationPackageFixture.money() })
+        let home = try #require(editor.workingRoot)
+        let root = try #require(DataRootResolver.dataRoot(of: home))
+        try Self.cleanLockedLedger.replacingOccurrences(of: "warm amber and teal", with: "cold blue and silver")
+            .write(to: root.appendingPathComponent(PipelineLayout.ledgerFile), atomically: true, encoding: .utf8)
+        await #expect(throws: (any Error).self) { try await package.requireCurrentContext(editor: editor) }
+        var quotes = 0
+        let result = await GenerationController.submitPrepared(generation, editor: editor, quoteLoader: { _, _ in
+            quotes += 1
+            return GenerationPackageFixture.money()
+        })
+        guard case .failure(.gate) = result else { Issue.record("Changed canon must stop before spend"); return }
+        #expect(quotes == 0)
+        #expect(editor.mediaAssets.isEmpty)
+        #expect(editor.generationLog.spendEvents.isEmpty)
+    }
+
     @Test func compileBlocksOnLintError() async throws {
         let project = try Self.makeProject(ledgerYAML: Self.metaInstructionLedger)
         defer {
@@ -155,18 +183,21 @@ struct GenerationControllerTests {
     @Test func compileSkippedForEmptyIntentStillSubmits() async {
         let editor = stubEditor(projectURL: nil)
         let before = editor.mediaAssets.count
+        var preparations = 0
         // Empty intent (e.g. audio scored from video) → nothing to compose; the request still submits.
         let request = GenerationRequest(
             modality: .video, modelId: "fal-ai/veo3", intent: "",
             placement: .mediaLibrary(folderId: nil), origin: .panel,
             submission: .video(make: { compiled in
+                preparations += 1
                 #expect(compiled.isEmpty)
-                let genInput = GenerationInput(prompt: compiled, model: "fal-ai/veo3", duration: 5, aspectRatio: "16:9")
+                let duration = preparations == 1 ? 5 : 10
+                let genInput = GenerationInput(prompt: compiled, model: "fal-ai/veo3", duration: duration, aspectRatio: "16:9")
                 return VideoGenerationSubmission(
-                    genInput: genInput, placeholderDuration: 5, references: [],
+                    genInput: genInput, placeholderDuration: Double(duration), references: [],
                     trimmedSourceOverride: nil, name: nil, folderId: nil,
                     buildParams: { _ in .video(VideoGenerationParams(
-                        prompt: compiled, duration: 5, aspectRatio: "16:9", resolution: nil,
+                        prompt: compiled, duration: duration, aspectRatio: "16:9", resolution: nil,
                         sourceVideoURL: nil, startFrameURL: nil, endFrameURL: nil,
                         referenceImageURLs: [], generateAudio: true)) },
                     snapshotRefs: nil, preprocessRef: nil,
@@ -178,6 +209,9 @@ struct GenerationControllerTests {
             return
         }
         #expect(editor.mediaAssets.count == before + 1)
+        #expect(preparations == 1)
+        #expect(editor.mediaAssets.last?.generationInput?.duration == 5)
+        #expect(editor.mediaAssets.last?.duration == 5)
     }
 
     // MARK: Gate (agentTool origin)

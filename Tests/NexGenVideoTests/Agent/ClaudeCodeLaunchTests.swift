@@ -41,6 +41,8 @@ struct ClaudeCodeLaunchTests {
         let manual = AgentInstructions.serverInstructions
         #expect(manual.contains(AgentInstructions.presentationContract))
         #expect(manual.count > AgentInstructions.presentationContract.count * 2)
+        #expect(manual.contains("On a production task, resume, or phase transition, use get_production_knowledge"))
+        #expect(manual.contains("record cut handles, director pattern and preview routing in the Brief"))
         // And the args builder emits it verbatim.
         let cfg = ClaudeCodeLaunchConfig(workingDirectory: URL(fileURLWithPath: "/tmp/proj"), appendSystemPrompt: manual)
         #expect(valueAfter("--append-system-prompt", ClaudeCodeLaunch.arguments(cfg)) == manual)

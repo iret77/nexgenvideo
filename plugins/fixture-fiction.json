@@ -1,0 +1,13 @@
+{
+  "id": "fixture-fiction",
+  "target": "FixtureFictionPlugin",
+  "principalClass": "FixtureFictionPackEntry",
+  "displayName": "Fiction Fixture",
+  "tagline": "Architecture fixture for a format-neutral fiction pipeline.",
+  "version": "0.1.0",
+  "projectSchema": "fixture-fiction/1.0.0",
+  "migratesFrom": [],
+  "minAppVersion": "1.5.7",
+  "pipelineContractVersion": 1,
+  "resourceRoot": "FixtureFictionPack"
+}

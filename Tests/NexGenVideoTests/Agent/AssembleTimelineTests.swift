@@ -3,13 +3,24 @@ import Testing
 @testable import NexGenVideo
 import NexGenEngine
 
-/// The native `assemble_timeline` workflow tool: places the phase's rendered shots on a dedicated
-/// assembly video track cut to the beat, lays the song at frame 0, skips unrendered shots, and
-/// rebuilds in place on a second call. Driven through ToolExecutor against a temp scaffolded project
+/// The native `assemble_timeline` workflow tool: places reviewed sources on a dedicated
+/// assembly video track and applies the same canonical plan idempotently.
+/// Driven through ToolExecutor against a temp scaffolded project
 /// with a synthetic analysis + shotlist + render manifest.
 @MainActor
 @Suite("assemble_timeline")
 struct AssembleTimelineTests {
+    private struct ExecutionPlanPublication: Codable {
+        let schema: String
+        let contextSHA256: String
+        let planSHA256: String
+
+        private enum CodingKeys: String, CodingKey {
+            case schema
+            case contextSHA256 = "context_sha256"
+            case planSHA256 = "plan_sha256"
+        }
+    }
 
     // 120 BPM at 30 fps: beats every 0.5 s (15 frames), downbeats every 2 s.
     private static let analysisJSON = """
@@ -25,8 +36,8 @@ struct AssembleTimelineTests {
         }
         """
 
-    /// Scaffold a project, drop a stub song in audio/, write the analysis artifact, save a 3-shot
-    /// shotlist (s003 will be left unrendered), and write two stub render outputs on disk. Returns
+    /// Scaffold a project, drop a stub song in audio/, write the analysis artifact, save a 2-shot
+    /// shotlist, and write two stub render outputs on disk. Returns
     /// (harness, dataRoot, cleanup-root, [output paths]).
     private func setup() throws -> (ToolHarness, URL, URL, [String]) {
         let tmp = FileManager.default.temporaryDirectory
@@ -55,8 +66,7 @@ struct AssembleTimelineTests {
             generated: "2026-01-01", generator: "test",
             shots: [
                 try shot("s001", "verse", 0.0, 1.0),
-                try shot("s002", "verse", 1.0, 2.0),
-                try shot("s003", "chorus", 2.0, 4.0),
+                try shot("s002", "verse", 1.0, 4.0),
             ]
         )
         _ = try saveShotlist(shotlist, to: dataRoot)
@@ -154,6 +164,85 @@ struct AssembleTimelineTests {
         try store.save(gates, to: PipelineLayout.gatesFile)
     }
 
+    private func publishImportedExecutionPlan(
+        shotlist: Shotlist,
+        sourcePath: String,
+        dataRoot: URL
+    ) throws {
+        let sourceURL = try ProjectLocalFile.resolve(
+            sourcePath,
+            dataRoot: dataRoot
+        )
+        let media = ProjectMediaReferenceV1(
+            id: "source-s001",
+            role: "core.project-media",
+            path: sourcePath,
+            sha256: try FileDigest.sha256(of: sourceURL)
+        )
+        let context = ProjectCreativeContextV1(
+            projectID: shotlist.project,
+            artifacts: [],
+            media: [media]
+        )
+        let contextData = try ExecutionPlanCanonicalCodec.encode(context)
+        let plan = ExecutionPlanV1(
+            id: "import-only-plan",
+            projectID: shotlist.project,
+            creativeContext: CanonicalArtifactReferenceV1(
+                id: ExecutionPlanV1.creativeContextArtifactID,
+                role: ExecutionPlanV1.creativeContextArtifactRole,
+                path: PipelineLayout.creativeContextFile,
+                sha256: FileDigest.sha256(of: contextData)
+            ),
+            shots: [
+                ExecutionShotV1(
+                    id: "s001",
+                    sourceMode: .imported,
+                    sourceAssetID: media.id,
+                    startState: ExecutionStateV1(
+                        summary: "The source clip begins."
+                    ),
+                    endState: ExecutionStateV1(
+                        summary: "The source clip ends."
+                    ),
+                    primaryAction: "Use the selected source performance.",
+                    camera: ExecutionCameraPlanV1(movementID: "static"),
+                    continuityLocks: [],
+                    renderability: .green,
+                    acceptance: [
+                        ExecutionAcceptanceCriterionV1(
+                            id: "source-current",
+                            requirement: "Use the exact approved imported source.",
+                            severity: "required"
+                        ),
+                    ]
+                ),
+            ]
+        )
+        try ExecutionPlanValidator.validate(plan, against: context)
+        let planData = try ExecutionPlanCanonicalCodec.encode(plan)
+        let publication = ExecutionPlanPublication(
+            schema: "execution-plan-publication/v1",
+            contextSHA256: FileDigest.sha256(of: contextData),
+            planSHA256: FileDigest.sha256(of: planData)
+        )
+        for (data, path) in [
+            (contextData, PipelineLayout.creativeContextFile),
+            (planData, PipelineLayout.executionPlanFile),
+            (
+                try JSONEncoder().encode(publication),
+                ExecutionPlanV1.publicationArtifactPath
+            ),
+        ] {
+            let url = dataRoot.appendingPathComponent(path)
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try data.write(to: url, options: .atomic)
+        }
+    }
+
     /// Record s001 and s002 as rendered for `phase`; s003 stays unrendered.
     private func recordTwoRenders(_ h: ToolHarness, dataRoot: URL, outputs: [String], phase: String = "final") async throws {
         _ = try await h.runOK("record_render", args: [
@@ -162,6 +251,34 @@ struct AssembleTimelineTests {
         _ = try await h.runOK("record_render", args: [
             "project_dir": dataRoot.path, "phase": phase, "shot_id": "s002", "output": outputs[1],
         ])
+        try recordAcceptedTakeReviews(dataRoot: dataRoot, phase: phase)
+    }
+
+    private func recordAcceptedTakeReviews(dataRoot: URL, phase: String) throws {
+        let index = try PipelineRenderTakeStore.load(dataRoot: dataRoot, project: "demo", phase: phase)
+        let shotlist = try #require(try loadShotlist(dataRoot: dataRoot))
+        for (shotID, takeID) in index.selected {
+            let take = try PipelineRenderTakeStore.take(id: takeID, dataRoot: dataRoot, phase: phase)
+            let duration = try #require(shotlist.shots.first(where: { $0.id == shotID })).durationS
+            let findings = TakeReview.Pass.allCases.map {
+                TakeReview.Finding(pass: $0, verdict: .conforms, observation: "Reviewed fixture pass.",
+                    startSeconds: 0, endSeconds: duration)
+            }
+            let review = TakeReview(schema: "take-review/v1", takeID: takeID,
+                outputSHA256: take.output.sha256, durationValue: Int64(duration * 1_000),
+                durationTimescale: 1_000, reviewer: "native-user", findings: findings,
+                reviewedAt: "2026-09-09T00:00:00Z")
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            let data = try encoder.encode(review)
+            let current = dataRoot.appendingPathComponent(TakeReview.path(takeID: takeID))
+            let archived = dataRoot.appendingPathComponent(
+                "renders/takes/reviews/\(takeID)/\(FileDigest.sha256(of: data)).v1.json"
+            )
+            try FileManager.default.createDirectory(at: current.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: current, options: .atomic)
+            try data.write(to: archived, options: .atomic)
+        }
     }
 
     // MARK: - hard gate
@@ -193,7 +310,7 @@ struct AssembleTimelineTests {
 
     // MARK: - happy path
 
-    @Test("places rendered shots on beats, lays the song at frame 0, skips the unrendered shot")
+    @Test("generic assembly places every reviewed shot without requiring music semantics")
     func assemblesToTheBeat() async throws {
         let (h, dataRoot, cleanup, outputs) = try setup()
         defer {
@@ -209,14 +326,12 @@ struct AssembleTimelineTests {
         #expect(result["shots_placed"] as? Int == 2)
         let placements = try #require(result["placements"] as? [[String: Any]])
         #expect(placements.count == 2)
-        // s001 starts at beat 0 (frame 0), s002 at beat 2 (frame 30) — both land exactly on beats.
+        // Generic policy preserves the authored shot timings.
         let startFrames = placements.compactMap { $0["start_frame"] as? Int }
         #expect(startFrames == [0, 30])
-        for f in startFrames { #expect(f % 15 == 0) }
 
-        // s003 was never rendered → skipped, not fatal.
         let skipped = try #require(result["skipped"] as? [[String: Any]])
-        #expect(skipped.contains { $0["shot_id"] as? String == "s003" })
+        #expect(skipped.isEmpty)
 
         // The video track carries exactly the two placed clips.
         let videoIndex = try #require(result["video_track_index"] as? Int)
@@ -227,13 +342,9 @@ struct AssembleTimelineTests {
                 == ["s001-video", "s002-video"]
         )
 
-        // The song is the sync anchor: one audio clip at frame 0.
-        let songTrack = try #require(result["song_track"] as? [String: Any])
-        #expect(songTrack["placed"] as? Bool == true)
-        #expect(songTrack["already_present"] as? Bool == false)
+        #expect(result["song_missing"] as? Bool == true)
         let audioClips = h.editor.timeline.tracks.filter { $0.type == .audio }.flatMap { $0.clips }
-        #expect(audioClips.count == 1)
-        #expect(audioClips.first?.startFrame == 0)
+        #expect(audioClips.isEmpty)
     }
 
     // MARK: - re-run replaces, does not duplicate
@@ -256,16 +367,12 @@ struct AssembleTimelineTests {
         ]) as? [String: Any])
         #expect(second["shots_placed"] as? Int == 2)
 
-        // Still two video clips and one song clip — the assembly was rebuilt, not appended.
+        // Still two video clips and no implicit audio — the identical plan was not duplicated.
         let videoClips = h.editor.timeline.tracks.filter { $0.type == .video }.flatMap { $0.clips }
         let audioClips = h.editor.timeline.tracks.filter { $0.type == .audio }.flatMap { $0.clips }
         #expect(videoClips.count == 2)
-        #expect(audioClips.count == 1)
-
-        // The song was already placed on the second run.
-        let songTrack = try #require(second["song_track"] as? [String: Any])
-        #expect(songTrack["already_present"] as? Bool == true)
-        #expect(songTrack["placed"] as? Bool == false)
+        #expect(audioClips.isEmpty)
+        #expect(second["idempotent"] as? Bool == true)
     }
 
     // MARK: - actionable errors
@@ -279,11 +386,11 @@ struct AssembleTimelineTests {
         }
         let result = await h.runRaw("assemble_timeline", args: ["project_dir": dataRoot.path, "phase": "final"])
         #expect(result.isError)
-        #expect(ToolHarness.textOf(result).contains("No rendered shots"))
+        #expect(ToolHarness.textOf(result).contains("requires every selected shot source"))
     }
 
-    @Test("errors when the analysis artifact is missing")
-    func errorsWithoutAnalysis() async throws {
+    @Test("generic assembly works when the analysis artifact is missing")
+    func worksWithoutAnalysis() async throws {
         let (h, dataRoot, cleanup, outputs) = try setup()
         defer {
             h.editor.releaseWorkingCopy()
@@ -293,7 +400,80 @@ struct AssembleTimelineTests {
         try await recordTwoRenders(h, dataRoot: dataRoot, outputs: outputs)
 
         let result = await h.runRaw("assemble_timeline", args: ["project_dir": dataRoot.path, "phase": "final"])
-        #expect(result.isError)
-        #expect(ToolHarness.textOf(result).contains("analysis"))
+        #expect(result.isError == false)
+    }
+
+    @Test("an imported-only plan assembles without a provider render")
+    func assemblesImportedSourceWithoutGeneration() async throws {
+        let (h, dataRoot, cleanup, _) = try setup()
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let sourcePath = "media/imported.mp4"
+        let sourceURL = dataRoot.appendingPathComponent(sourcePath)
+        try FileManager.default.createDirectory(
+            at: sourceURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("approved-import".utf8).write(to: sourceURL)
+        h.editor.mediaAssets.append(MediaAsset(
+            id: "imported-source",
+            url: sourceURL,
+            type: .video,
+            name: "approved-import"
+        ))
+        let song = try Song(
+            title: "t",
+            audioPath: "audio/song.wav",
+            analysisPath: "analysis/song.json",
+            bpm: 120,
+            durationS: 4
+        )
+        let imported = try Shot(
+            id: "s001",
+            section: "verse",
+            timeStart: 0,
+            timeEnd: 4,
+            durationS: 4,
+            type: .performance,
+            sourceMode: .imported,
+            description: "Use the approved performance.",
+            visualPrompt: "The approved performance fills the frame.",
+            mood: "restrained",
+            keyframeStrategy: .none,
+            sourcePath: sourcePath
+        )
+        let shotlist = try Shotlist(
+            schema_: shotlistSchemaVersion,
+            mode: .section,
+            project: "demo",
+            song: song,
+            generated: "2026-09-09T00:00:00Z",
+            generator: "test",
+            shots: [imported]
+        )
+        _ = try saveShotlist(shotlist, to: dataRoot)
+        try publishImportedExecutionPlan(
+            shotlist: shotlist,
+            sourcePath: sourcePath,
+            dataRoot: dataRoot
+        )
+
+        let result = try #require(try await h.runOK(
+            "assemble_timeline",
+            args: ["project_dir": dataRoot.path, "phase": "final"]
+        ) as? [String: Any])
+        #expect(result["shots_placed"] as? Int == 1)
+        #expect((result["skipped"] as? [[String: Any]])?.isEmpty == true)
+        let proof = try JSONDecoder().decode(
+            TimelineAssemblyProofV1.self,
+            from: Data(contentsOf: dataRoot.appendingPathComponent("assembly.json"))
+        )
+        #expect(proof.placements.first?.sourcePath == sourcePath)
+        #expect(proof.placements.first?.sourceKind == .video)
+        let sourceData = try Data(contentsOf: sourceURL)
+        #expect(proof.placements.first?.sourceSHA256
+            == FileDigest.sha256(of: sourceData))
     }
 }

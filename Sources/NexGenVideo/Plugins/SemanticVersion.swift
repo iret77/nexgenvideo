@@ -8,7 +8,7 @@ import Foundation
 /// `"1.2.3.4"`), a leading non-digit (`"v1.2.3"`), and pre-release / build metadata
 /// (`"1.2.3-rc1"`, `"1.2.3+build"`) are all rejected (`nil`). A malformed gate
 /// field must read as *incompatible*, never silently as `1.2.3`.
-public struct SemanticVersion: Equatable, Comparable, CustomStringConvertible {
+public struct SemanticVersion: Equatable, Comparable, CustomStringConvertible, Sendable {
     public let major: Int
     public let minor: Int
     public let patch: Int

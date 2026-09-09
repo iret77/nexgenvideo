@@ -180,6 +180,11 @@ enum PipelineProductionRouting {
                 }
                 continue
             }
+            try PipelineConditioningStrategyStore.validate(
+                shotID: shotID,
+                referencePlan: referencePlan,
+                dataRoot: dataRoot
+            )
             guard providerAdapterSupports(
                 referencePlan: referencePlan,
                 route: match.route,
@@ -279,6 +284,11 @@ enum PipelineProductionRouting {
                 demandSet: dependencies.demandSet,
                 graph: dependencies.assetGraph,
                 candidate: record.candidate
+            )
+            try PipelineConditioningStrategyStore.validate(
+                shotID: shotID,
+                referencePlan: referencePlan,
+                dataRoot: dataRoot
             )
             let selection = try makeSelection(
                 modelID: record.modelID,

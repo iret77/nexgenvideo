@@ -15,8 +15,10 @@ enum ProviderManifest {
     /// When the catalog hasn't declared offers for a model
     /// (legacy registry entry, or catalog not yet loaded) `defaultOffers` bootstraps them.
     @MainActor
-    static func bindings(forModelId id: String) -> [ProviderBinding] {
-        let catalog = ModelCatalog.shared
+    static func bindings(
+        forModelId id: String,
+        catalog: ModelCatalog = .shared
+    ) -> [ProviderBinding] {
         let offers: [ProviderOffer]
         if let declared = catalog.offersById[id] {
             offers = declared

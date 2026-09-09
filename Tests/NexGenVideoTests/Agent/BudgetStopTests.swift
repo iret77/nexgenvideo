@@ -487,6 +487,120 @@ struct BudgetStopTests {
         #expect(spend == 4)
     }
 
+    @Test("one ledger totals Bible work, frame roles, retakes and live reservations")
+    func completeProjectSpendSnapshot() throws {
+        func events(
+            _ transaction: String,
+            model: String,
+            amount: Double,
+            charged: Bool
+        ) -> [GenerationSpendEvent] {
+            var result = [GenerationSpendEvent(
+                transactionId: transaction,
+                kind: .reserved,
+                model: model,
+                provider: .fal,
+                transport: .api,
+                endpoint: model,
+                money: money(amount)
+            )]
+            guard charged else { return result }
+            result.append(GenerationSpendEvent(
+                transactionId: transaction,
+                kind: .submitted,
+                model: model,
+                provider: .fal,
+                transport: .api,
+                endpoint: model,
+                providerRequestId: "request-\(transaction)",
+                money: money(amount)
+            ))
+            result.append(GenerationSpendEvent(
+                transactionId: transaction,
+                kind: .charged,
+                model: model,
+                provider: .fal,
+                transport: .api,
+                endpoint: model,
+                money: money(amount)
+            ))
+            return result
+        }
+
+        let jobs = [
+            ("bible-character", "image/bible", 1.0, true),
+            ("lighting-anchor", "image/lighting", 2.0, true),
+            ("frame-start", "image/frame", 3.0, true),
+            ("frame-end", "image/frame", 4.0, true),
+            ("retake-one", "video/final", 5.0, true),
+            ("retake-two", "video/final", 6.0, true),
+            ("unrecorded-render", "video/final", 7.0, false),
+        ]
+        var log = GenerationLog()
+        log.spendEvents = jobs.flatMap {
+            events($0.0, model: $0.1, amount: $0.2, charged: $0.3)
+        }
+        log.spendEvents += [
+            GenerationSpendEvent(
+                transactionId: "submitted-failure",
+                kind: .reserved,
+                model: "video/final",
+                provider: .fal,
+                transport: .api,
+                endpoint: "video/final",
+                money: money(8)
+            ),
+            GenerationSpendEvent(
+                transactionId: "submitted-failure",
+                kind: .submitted,
+                model: "video/final",
+                provider: .fal,
+                transport: .api,
+                endpoint: "video/final",
+                providerRequestId: "failed-request",
+                money: money(8),
+                note: "Provider failed after accepting the request."
+            ),
+        ]
+        let snapshot = try GenerationBudgetGuard.spendSnapshot(
+            log: log,
+            generatedInputs: []
+        )
+
+        #expect(snapshot.verifiedEur == 36)
+        #expect(snapshot.isComplete)
+        #expect(snapshot.activeReservationCount == 2)
+        #expect(snapshot.unpricedTransactionCount == 0)
+        #expect(snapshot.legacyGenerationCount == 0)
+    }
+
+    @Test("unknown and legacy costs make the project total incomplete")
+    func incompleteProjectSpendSnapshot() throws {
+        var log = GenerationLog()
+        log.entries = [GenerationLogEntry(
+            model: "legacy/image",
+            costCredits: 50,
+            createdAt: Date()
+        )]
+        log.spendEvents = [GenerationSpendEvent(
+            transactionId: "unknown-render",
+            kind: .reserved,
+            model: "video/unknown",
+            provider: .fal,
+            transport: .api,
+            endpoint: "video/unknown"
+        )]
+        let snapshot = try GenerationBudgetGuard.spendSnapshot(
+            log: log,
+            generatedInputs: []
+        )
+
+        #expect(snapshot.verifiedEur == 0)
+        #expect(!snapshot.isComplete)
+        #expect(snapshot.unpricedTransactionCount == 1)
+        #expect(snapshot.legacyGenerationCount == 1)
+    }
+
     @Test("invalid append-only transitions are rejected")
     func invalidTransitionIsRejected() throws {
         let tx = UUID().uuidString

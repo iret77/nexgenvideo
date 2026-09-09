@@ -9,6 +9,7 @@ public enum CoreReferenceSemanticJobIDV1 {
     public static let predecessorLastFrame = "core.predecessor-last-frame"
     public static let sourceVideo = "core.source-video"
     public static let audioTiming = "core.audio-timing"
+    public static let referenceAnchor = "core.reference-anchor"
 }
 
 public enum CoreReferenceInputSlotIDV1 {
@@ -20,6 +21,7 @@ public enum CoreReferenceInputSlotIDV1 {
     public static let lastFrame = "core.input.last-frame"
     public static let sourceVideo = "core.input.source-video"
     public static let audioTiming = "core.input.audio-timing"
+    public static let referenceAnchor = "reference.image.anchor"
 }
 
 public enum CoreAssetProvenanceKindIDV1 {
@@ -702,10 +704,13 @@ public enum AssetGraphValidatorV1 {
         ) else {
             return
         }
+        let outputExtension = outputURL.pathExtension.lowercased()
+        let validExtractor = frameProofExtractorMatchesSource(
+            proof.lastFrame?.extractor,
+            sourceExtension: outputExtension
+        )
         guard asset.modality == .image,
-              ProjectMediaExtensions.videos.contains(
-                  outputURL.pathExtension.lowercased()
-              ),
+              validExtractor,
               proof.renderEntry.shotId == sourceShotID,
               proof.renderEntry.phase == proof.phase,
               proof.renderEntry.status == .rendered,
@@ -717,9 +722,22 @@ public enum AssetGraphValidatorV1 {
               frameProof.path == asset.path,
               frameProof.sha256 == asset.sha256,
               frameProof.sourceOutput == proofEntry.output,
-              frameProof.sourceOutputSHA256 == proofEntry.outputSha256,
-              frameProof.extractor == RenderLastFrameProofV1.extractorID else {
+              frameProof.sourceOutputSHA256 == proofEntry.outputSha256 else {
             throw AssetGraphValidationError.invalidProvenance(asset.id)
+        }
+    }
+
+    private static func frameProofExtractorMatchesSource(
+        _ extractor: String?,
+        sourceExtension: String
+    ) -> Bool {
+        switch extractor {
+        case RenderLastFrameProofV1.extractorID:
+            return ProjectMediaExtensions.videos.contains(sourceExtension)
+        case RenderLastFrameProofV1.stillImagePassthroughID:
+            return ProjectMediaExtensions.images.contains(sourceExtension)
+        default:
+            return false
         }
     }
 

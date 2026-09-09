@@ -21,6 +21,7 @@ enum PipelineSurfaceRouting {
     enum Destination: Equatable {
         case tab(CockpitTab)
         case pack(String)
+        case storyboard
         case chat
     }
 
@@ -46,10 +47,25 @@ enum PipelineSurfaceRouting {
             )
         }
         return switch entry.surface {
-        case "review": Route(icon: "eye", label: "Review", taskClass: entry.taskClass, destination: .tab(.review))
+        case "review": reviewRoute(for: phase, taskClass: entry.taskClass)
         case "prose": Route(icon: "text.cursor", label: "Story", taskClass: entry.taskClass, destination: .tab(.story))
         case "choice": Route(icon: "slider.horizontal.3", label: "In chat", taskClass: entry.taskClass, destination: .chat)
         default: Route(icon: "questionmark", label: entry.surface, taskClass: entry.taskClass, destination: .chat)
+        }
+    }
+
+    private static func reviewRoute(for phase: String, taskClass: String) -> Route {
+        switch phase {
+        case "storyboard":
+            Route(icon: "eye", label: "Review", taskClass: taskClass, destination: .storyboard)
+        case "bible":
+            Route(icon: "eye", label: "Review", taskClass: taskClass, destination: .tab(.bible))
+        case "shotlist":
+            Route(icon: "eye", label: "Review", taskClass: taskClass, destination: .tab(.shotlist))
+        case "sanity", "frames", "render":
+            Route(icon: "eye", label: "Review", taskClass: taskClass, destination: .tab(.review))
+        default:
+            Route(icon: "slider.horizontal.3", label: "In chat", taskClass: taskClass, destination: .chat)
         }
     }
 }
@@ -84,6 +100,7 @@ struct PipelinePanelView: View {
     @State private var mutationReadiness = NativeGateApprovalReadiness.blocked(
         "The pipeline state is unavailable."
     )
+    @State private var storyboardReviewRequested = false
     /// A user-safe error plus an agent-only diagnostic for click-time races or write failures.
     @State private var gateError: GateErrorState?
 
@@ -115,6 +132,10 @@ struct PipelinePanelView: View {
         }
         .onChange(of: runningPhase) { _, _ in
             refreshApprovalReadiness()
+        }
+        .sheet(isPresented: $storyboardReviewRequested) {
+            PipelineStoryboardReviewSheet()
+                .environment(editor)
         }
     }
 
@@ -171,7 +192,8 @@ struct PipelinePanelView: View {
                                 .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
                         )
                     }
-                    if data.budgetEur > 0 || data.budgetSpentEur > 0 {
+                    if data.budgetEur > 0 || data.budgetStopEur != nil
+                        || data.budgetSpentEur > 0 || !data.spendComplete {
                         budgetCard(data)
                     }
                 }
@@ -194,8 +216,13 @@ struct PipelinePanelView: View {
                     .tracking(AppTheme.Tracking.wide)
                     .foregroundStyle(AppTheme.Text.mutedColor)
                 Spacer(minLength: 0)
-                if warn {
-                    Label(data.budgetRemainingEur <= 0 ? "Over budget" : "Low budget",
+                if !data.spendComplete {
+                    Label("Spend incomplete", systemImage: "exclamationmark.triangle.fill")
+                        .labelStyle(.titleAndIcon)
+                        .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
+                        .foregroundStyle(AppTheme.Status.errorColor)
+                } else if warn {
+                    Label((data.budgetRemainingEur ?? 0) <= 0 ? "Over budget" : "Low budget",
                           systemImage: "exclamationmark.triangle.fill")
                         .labelStyle(.titleAndIcon)
                         .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
@@ -205,19 +232,41 @@ struct PipelinePanelView: View {
 
             budgetBar(fraction: data.spentFraction, color: barColor)
 
-            if let next = data.nextPhaseName {
-                Text("Next up: \(PhaseDisplay.label(next)) — \(String(format: "€%.2f", data.budgetRemainingEur)) available")
+            if let next = data.nextPhaseName, let remaining = data.budgetRemainingEur {
+                Text("Next up: \(PhaseDisplay.label(next)) — \(String(format: "€%.2f", remaining)) planning budget available")
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+            } else if !data.spendComplete {
+                Text("Project spend includes unpriced or legacy generation. Remaining amounts are unavailable.")
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
 
             VStack(spacing: AppTheme.Spacing.smMd) {
-                amountRow(label: "Budget", amount: data.budgetEur, color: AppTheme.Text.secondaryColor)
-                amountRow(label: "Spent", amount: data.budgetSpentEur, color: AppTheme.Text.secondaryColor)
+                amountRow(label: "Planning budget", amount: data.budgetEur, color: AppTheme.Text.secondaryColor)
+                if let stop = data.budgetStopEur {
+                    amountRow(label: "Hard stop", amount: stop, color: AppTheme.Text.secondaryColor)
+                }
+                amountRow(label: data.spendComplete ? "Spend" : "Verified spend at least",
+                          amount: data.budgetSpentEur, color: AppTheme.Text.secondaryColor)
+                if data.activeReservations > 0 {
+                    textRow(label: "Active reservations", value: String(data.activeReservations),
+                            color: AppTheme.Text.secondaryColor)
+                }
                 AppDivider()
-                amountRow(label: "Remaining", amount: data.budgetRemainingEur,
-                          color: warn ? AppTheme.Status.errorColor : AppTheme.Text.primaryColor,
-                          emphasized: true)
+                if let remaining = data.budgetRemainingEur {
+                    amountRow(label: "Planning remaining", amount: remaining,
+                              color: warn ? AppTheme.Status.errorColor : AppTheme.Text.primaryColor,
+                              emphasized: true)
+                } else {
+                    textRow(label: "Planning remaining", value: "Unavailable",
+                            color: AppTheme.Status.errorColor, emphasized: true)
+                }
+                if let remaining = data.hardStopRemainingEur {
+                    amountRow(label: "Hard stop remaining", amount: remaining,
+                              color: remaining <= 0 ? AppTheme.Status.errorColor : AppTheme.Text.primaryColor,
+                              emphasized: true)
+                }
             }
         }
         .padding(AppTheme.Spacing.mdLg)
@@ -255,6 +304,21 @@ struct PipelinePanelView: View {
             Text(String(format: "€%.2f", amount))
                 .font(.system(size: emphasized ? AppTheme.FontSize.md : AppTheme.FontSize.sm,
                               weight: emphasized ? .semibold : .medium).monospacedDigit())
+                .foregroundStyle(color)
+                .textSelection(.enabled)
+        }
+    }
+
+    private func textRow(label: String, value: String, color: Color, emphasized: Bool = false) -> some View {
+        HStack {
+            Text(label)
+                .interfaceFont(size: AppTheme.Typography.ui,
+                              weight: emphasized ? .semibold : .regular)
+                .foregroundStyle(emphasized ? AppTheme.Text.secondaryColor : AppTheme.Text.tertiaryColor)
+            Spacer()
+            Text(value)
+                .interfaceFont(size: emphasized ? AppTheme.FontSize.md : AppTheme.FontSize.sm,
+                              weight: emphasized ? .semibold : .medium)
                 .foregroundStyle(color)
                 .textSelection(.enabled)
         }
@@ -584,6 +648,8 @@ struct PipelinePanelView: View {
                     editor.cockpitPackSurfaceID = nil
                 case .pack(let id):
                     editor.cockpitPackSurfaceID = id
+                case .storyboard:
+                    storyboardReviewRequested = true
                 case .chat:
                     break
                 }

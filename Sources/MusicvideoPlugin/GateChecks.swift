@@ -5,6 +5,18 @@ import NexGenEngine
 /// can be approved, so the agent can never advance a phase whose real artifact is missing — the port
 /// of the predecessor's analysis→render `require()` chain.
 enum MusicvideoGateChecks {
+    private struct ExecutionPlanPublication: Codable {
+        let schema: String
+        let contextSHA256: String
+        let planSHA256: String
+
+        private enum CodingKeys: String, CodingKey {
+            case schema
+            case contextSHA256 = "context_sha256"
+            case planSHA256 = "plan_sha256"
+        }
+    }
+
     private struct MeasuredSection {
         let index: Int
         let start: Double
@@ -28,6 +40,114 @@ enum MusicvideoGateChecks {
         let marker: String
         let start: Double
         let reliable: Bool
+    }
+
+    private static func requireExecutionPlan(
+        project: String,
+        phase: String,
+        dataRoot: URL
+    ) throws -> ExecutionPlanV1 {
+        do {
+            let planURL = try ProjectLocalFile.resolve(
+                PipelineLayout.executionPlanFile,
+                dataRoot: dataRoot
+            )
+            let contextURL = try ProjectLocalFile.resolve(
+                PipelineLayout.creativeContextFile,
+                dataRoot: dataRoot
+            )
+            let publicationURL = try ProjectLocalFile.resolve(
+                ExecutionPlanV1.publicationArtifactPath,
+                dataRoot: dataRoot
+            )
+            let publicationBefore = try Data(contentsOf: publicationURL)
+            let planData = try Data(contentsOf: planURL)
+            let contextData = try Data(contentsOf: contextURL)
+            guard publicationBefore == (try Data(contentsOf: publicationURL)) else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            let publication = try JSONDecoder().decode(
+                ExecutionPlanPublication.self,
+                from: publicationBefore
+            )
+            guard publication.schema == "execution-plan-publication/v1",
+                  publication.planSHA256 == FileDigest.sha256(of: planData),
+                  publication.contextSHA256 == FileDigest.sha256(of: contextData) else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            let plan = try ExecutionPlanCanonicalCodec.decodePlan(planData)
+            let context = try ExecutionPlanCanonicalCodec.decodeContext(contextData)
+            try ExecutionPlanValidator.validate(plan, against: context)
+            for reference in context.extensions {
+                _ = try ProjectLocalFile.requireHash(
+                    reference.sha256,
+                    at: reference.path,
+                    dataRoot: dataRoot
+                )
+            }
+            guard plan.projectID == project,
+                  plan.completeness == .complete,
+                  plan.incompleteReasons.isEmpty else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            return plan
+        } catch {
+            throw GateBlocked(
+                "Can't approve \"\(phase)\": the canonical execution plan is missing, stale, or invalid."
+            )
+        }
+    }
+
+    private static func requireCurrentStillDelivery(
+        shot: Shot,
+        entry: RenderEntry,
+        proof: RenderProofEntry,
+        frames: FramesManifest,
+        dataRoot: URL
+    ) throws {
+        guard entry.costEur == 0,
+              let output = entry.output,
+              let frame = frames.shot(shot.id)?.frames.first(where: {
+                $0.role == "start"
+              }),
+              frame.path == output,
+              proof.output == output,
+              proof.providerPrompt == frame.providerPrompt,
+              proof.generationModel == frame.runwayModel,
+              promptContains(
+                proof.providerPrompt,
+                requirements: shot.stillProductionPromptRequirements
+              ),
+              ProductionPromptPolicy.stillPromptViolations(
+                proof.providerPrompt
+              ).isEmpty,
+              let imageURL = existingProjectFile(output, dataRoot: dataRoot),
+              ProjectMediaExtensions.images.contains(
+                imageURL.pathExtension.lowercased()
+              ),
+              sha256(imageURL) == proof.outputSha256,
+              let audit = try loadFrameAudit(
+                dataRoot: dataRoot,
+                shotId: shot.id,
+                role: "start"
+              ),
+              audit.renderPath == output,
+              audit.renderSha256 == proof.outputSha256 else {
+            throw GateBlocked(
+                "The still delivery for \(shot.id) is not the exact accepted Frames image."
+            )
+        }
+        if let style = try ProductionStyleStoreV1.load(dataRoot: dataRoot) {
+            try FrameObservationStoreV1.requireStyleAudit(
+                audit,
+                style: style,
+                dataRoot: dataRoot
+            )
+        }
+        try FrameAuditAcceptanceStoreV1.requireResolved(
+            audit: audit,
+            dataRoot: dataRoot
+        )
     }
 
     private static func persistedAlignmentMarkers(
@@ -352,6 +472,56 @@ enum MusicvideoGateChecks {
                 "Can't approve \"\(phase)\": \(invalid.count) generated \(scope) "
                     + "asset(s) lack current host-recorded prompt/model provenance "
                     + "(e.g. \(invalid.prefix(3).joined(separator: ", ")))."
+            )
+        }
+    }
+
+    private static func requireBibleProjectFiles(
+        _ requirements: [BibleViewProvenanceRequirementV1],
+        phase: String,
+        dataRoot: URL
+    ) throws {
+        let proof = try assetProof(
+            scope: "bible",
+            phase: phase,
+            dataRoot: dataRoot
+        )
+        let invalid = try requirements.filter { requirement in
+            let path = requirement.path
+            if let entry = proof.entries[path],
+               entry.path == path,
+               !entry.providerPrompt.trimmingCharacters(
+                in: .whitespacesAndNewlines
+               ).isEmpty,
+               !entry.generationModel.trimmingCharacters(
+                in: .whitespacesAndNewlines
+               ).isEmpty,
+               !entry.sourceMediaId.trimmingCharacters(
+                in: .whitespacesAndNewlines
+               ).isEmpty,
+               let url = existingProjectFile(path, dataRoot: dataRoot),
+               sha256(url) == entry.sha256 {
+                return false
+            }
+            guard let confirmedRole = requirement.confirmedRole,
+                  let identityID = requirement.identityID,
+                  let identityName = requirement.identityName else {
+                return true
+            }
+            return try !ConfirmedIdentityAssetStoreV1.matchesCurrent(
+                path,
+                role: confirmedRole,
+                identityID: identityID,
+                identityName: identityName,
+                dataRoot: dataRoot
+            )
+        }
+        guard invalid.isEmpty else {
+            throw GateBlocked(
+                "Can't approve \"\(phase)\": \(invalid.count) Bible view asset(s) "
+                    + "lack current generated provenance or explicit host-recorded "
+                    + "identity confirmation (e.g. "
+                    + "\(invalid.prefix(3).map { $0.path }.joined(separator: ", ")))."
             )
         }
     }
@@ -1648,6 +1818,34 @@ enum MusicvideoGateChecks {
                 + "against the engine schema).")
         }
         try requireProjectIdentity(shotlist.project, phase: "shotlist", dataRoot: dataRoot)
+        let executionPlan = try requireExecutionPlan(
+            project: shotlist.project,
+            phase: "shotlist",
+            dataRoot: dataRoot
+        )
+        try MusicvideoProductionGate.requireCurrent(
+            executionPlan: executionPlan,
+            shotlist: shotlist,
+            dataRoot: dataRoot
+        )
+        guard executionPlan.shots.map(\.id) == shotlist.shots.map(\.id),
+              zip(executionPlan.shots, shotlist.shots).allSatisfy({ pair in
+                switch (pair.0.sourceMode, pair.1.sourceMode) {
+                case (.generated, .generated), (.imported, .imported),
+                     (.aiEnhanced, .aiEnhanced):
+                    true
+                default:
+                    false
+                }
+              }),
+              executionPlan.shots.allSatisfy({ executionShot in
+                executionShot.sourceMode == .imported
+                    || ShotDeliveryModeResolverV1.resolve(executionShot) != nil
+              }) else {
+            throw GateBlocked(
+                "Can't approve \"shotlist\": its canonical execution plan does not define every shot's delivery mode."
+            )
+        }
         guard let brief = try? YAMLArtifactStore(dataRoot: dataRoot).load(
             Brief.self,
             at: PipelineLayout.briefFile
@@ -2000,27 +2198,26 @@ enum MusicvideoGateChecks {
             label: "reference",
             dataRoot: dataRoot
         )
-        var generated = bible.characters.flatMap {
-            Array($0.sheets.values)
-        }
-        generated += bible.ensembles.flatMap {
-            Array($0.sheets.values)
-        }
-        generated += bible.props.flatMap {
-            Array($0.sheets.values)
-        }
-        generated += bible.locations.flatMap {
-            Array($0.sheets.values)
-                + ($0.scene3d.panorama.isEmpty
-                    ? []
-                    : [$0.scene3d.panorama])
-        }
-        try requireGeneratedProjectFiles(
-            generated,
-            scope: "bible",
+        try requireBibleProjectFiles(
+            BibleViewProvenanceRequirementsV1.make(bible: bible),
             phase: "bible",
             dataRoot: dataRoot
         )
+        do {
+            if let variants = try BibleIdentityVariantStoreV1.loadIfPresent(
+                dataRoot: dataRoot
+            ) {
+                try BibleIdentityVariantStoreV1.validate(
+                    variants,
+                    bible: bible,
+                    dataRoot: dataRoot
+                )
+            }
+        } catch {
+            throw GateBlocked(
+                "Can't approve \"bible\": the identity-variant inheritance contract is invalid (\(error))."
+            )
+        }
 
         guard let storyboard = try? StoryboardStore.load(dataRoot: dataRoot, version: .current) else {
             throw GateBlocked("Can't approve \"bible\": the approved storyboard is missing or invalid.")
@@ -2066,6 +2263,7 @@ enum MusicvideoGateChecks {
     /// `treatment`: schema-valid frontmatter (decode enforces version/origin/…), a real one-line
     /// summary, and a non-empty prose body.
     static func requireRealTreatment(dataRoot: URL) throws {
+        _ = try StoryCausalityStoreV1.requireCurrent(dataRoot: dataRoot)
         let versions = TreatmentStore.versions(dataRoot: dataRoot)
         guard let latest = versions.last else {
             throw GateBlocked("Can't approve \"treatment\": no valid treatment yet.")
@@ -2123,6 +2321,7 @@ enum MusicvideoGateChecks {
 
     /// `storyboard`: schema-valid, real sections each with steps, matching the complete measured song.
     static func requireRealStoryboard(dataRoot: URL) throws {
+        _ = try StoryboardCausalityV1.requireCurrent(dataRoot: dataRoot)
         guard let storyboard = try? StoryboardStore.load(dataRoot: dataRoot, version: .current),
               !storyboard.sections.isEmpty else {
             throw GateBlocked("Can't approve \"storyboard\": no valid, non-empty storyboard yet.")
@@ -2410,7 +2609,23 @@ enum MusicvideoGateChecks {
                     .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     throw GateBlocked(
                         "Can't approve \"frames\": \(shot.id)-\(role) has no "
-                            + "recorded generation model."
+                        + "recorded generation model."
+                    )
+                }
+                do {
+                    try FrameReferenceUsageStoreV1.requireCurrent(
+                        shotID: shot.id,
+                        role: role,
+                        framePath: frame.path,
+                        modelID: frame.runwayModel,
+                        provider: MusicvideoReferencePlanProvider(),
+                        dataRoot: dataRoot
+                    )
+                } catch let blocked as GateBlocked {
+                    throw blocked
+                } catch {
+                    throw GateBlocked(
+                        "Can't approve \"frames\": \(shot.id)-\(role)'s semantic reference proof is missing or stale (\(error))."
                     )
                 }
                 guard let frameURL = existingProjectFile(frame.path, dataRoot: dataRoot) else {
@@ -2456,15 +2671,60 @@ enum MusicvideoGateChecks {
                             + "or stale for the current image."
                     )
                 }
+                if let style = try ProductionStyleStoreV1.load(dataRoot: dataRoot) {
+                    try FrameObservationStoreV1.requireStyleAudit(audit, style: style, dataRoot: dataRoot)
+                }
+                try FrameAuditAcceptanceStoreV1.requireResolved(audit: audit, dataRoot: dataRoot)
             }
         }
     }
 
-    /// `render`: terminal gate — every provider-rendered shot is bound to the exact generated video.
+    /// `render`: terminal gate — every generated shot is bound to its exact executable delivery.
     static func requireRealRender(dataRoot: URL) throws {
         guard let shotlist = try? loadShotlist(dataRoot: dataRoot) else {
             throw GateBlocked("Can't approve \"render\": no shotlist to render against.")
         }
+        let executionPlan = try requireExecutionPlan(
+            project: shotlist.project,
+            phase: "render",
+            dataRoot: dataRoot
+        )
+        let creativeContext: ProjectCreativeContextV1
+        do {
+            let contextData = try Data(contentsOf: ProjectLocalFile.resolve(
+                PipelineLayout.creativeContextFile,
+                dataRoot: dataRoot
+            ))
+            creativeContext = try ExecutionPlanCanonicalCodec.decodeContext(
+                contextData
+            )
+            try ExecutionPlanValidator.validate(
+                executionPlan,
+                against: creativeContext
+            )
+        } catch {
+            throw GateBlocked(
+                "Can't approve \"render\": the canonical creative context is missing, stale, or invalid."
+            )
+        }
+        guard executionPlan.shots.map(\.id) == shotlist.shots.map(\.id) else {
+            throw GateBlocked(
+                "Can't approve \"render\": the execution plan does not match the current Shot List."
+            )
+        }
+        let deliveryModes = Dictionary(uniqueKeysWithValues: try executionPlan.shots.compactMap {
+            executionShot -> (String, ShotDeliveryModeV1)? in
+            guard executionShot.sourceMode != .imported else { return nil }
+            guard let mode = ShotDeliveryModeResolverV1.resolve(executionShot) else {
+                throw GateBlocked(
+                    "Can't approve \"render\": shot \(executionShot.id) has no executable delivery mode."
+                )
+            }
+            return (executionShot.id, mode)
+        })
+        let stillShotIDs = Set(deliveryModes.compactMap {
+            $0.value == .timelineAnimatedStill ? $0.key : nil
+        })
         let required = shotlist.shots.filter { $0.sourceMode != .imported }.map(\.id)
         let requiredSet = Set(required)
         let manifest: RenderManifest
@@ -2506,18 +2766,19 @@ enum MusicvideoGateChecks {
             )
         }
         let frames = try? loadFramesManifest(dataRoot: dataRoot)
-        let missing = required.filter {
-            let e = manifest.entries[$0]
-            let p = proof.entries[$0]
-            guard e?.status == .rendered,
-                  e?.shotId == $0,
-                  e?.phase == "final",
-                  let cost = e?.costEur,
-                  cost.isFinite,
-                  cost >= 0,
+        var missing: [String] = []
+        for shotID in required {
+            let e = manifest.entries[shotID]
+            let p = proof.entries[shotID]
+            guard let entry = e,
+                  entry.status == .rendered,
+                  entry.shotId == shotID,
+                  entry.phase == "final",
+                  entry.costEur.isFinite,
+                  entry.costEur >= 0,
                   let output = e?.output,
                   !output.isEmpty,
-                  p?.shotId == $0,
+                  p?.shotId == shotID,
                   p?.output == output,
                   let proofEntry = p,
                   let shot = shotlist.shots.first(where: {
@@ -2527,44 +2788,151 @@ enum MusicvideoGateChecks {
                   !providerPrompt.trimmingCharacters(
                     in: .whitespacesAndNewlines
                   ).isEmpty,
-                  promptContains(
-                    providerPrompt,
-                    requirements: shot.videoProductionPromptRequirements
-                  ),
-                  ProductionPromptPolicy.videoPromptViolations(
-                    providerPrompt,
-                    expectedMovement: shot.productionPlan?.cameraMovement,
-                    expectedMovementDetail: shot.productionPlan?.cameraMovementDetail
-                  ).isEmpty,
                   let generationModel = p?.generationModel,
                   !generationModel.trimmingCharacters(
                     in: .whitespacesAndNewlines
                   ).isEmpty,
-                  let outputSha256 = p?.outputSha256,
-                  renderConditioningMatches(
-                    shot: shot,
-                    proof: proofEntry,
-                    shotlist: shotlist,
-                    manifest: manifest,
-                    frames: frames,
-                    dataRoot: dataRoot
-                  ) else {
-                return true
+                  let outputSha256 = p?.outputSha256 else {
+                missing.append(shotID)
+                continue
             }
             guard let url = existingProjectFile(output, dataRoot: dataRoot) else {
-                return true
+                missing.append(shotID)
+                continue
             }
-            return !ProjectMediaExtensions.videos.contains(
-                url.pathExtension.lowercased()
-            ) || sha256(url) != outputSha256
+            switch deliveryModes[shotID] {
+            case .providerVideo:
+                guard promptContains(
+                    providerPrompt,
+                    requirements: shot.videoProductionPromptRequirements
+                ),
+                      ProductionPromptPolicy.videoPromptViolations(
+                        providerPrompt,
+                        expectedMovement: shot.productionPlan?.cameraMovement,
+                        expectedMovementDetail: shot.productionPlan?.cameraMovementDetail
+                      ).isEmpty,
+                      renderConditioningMatches(
+                        shot: shot,
+                        proof: proofEntry,
+                        shotlist: shotlist,
+                        manifest: manifest,
+                        frames: frames,
+                        dataRoot: dataRoot
+                      ),
+                      ProjectMediaExtensions.videos.contains(
+                        url.pathExtension.lowercased()
+                      ),
+                      sha256(url) == outputSha256 else {
+                    missing.append(shotID)
+                    continue
+                }
+            case .timelineAnimatedStill:
+                guard let frames else {
+                    missing.append(shotID)
+                    continue
+                }
+                do {
+                    try requireCurrentStillDelivery(
+                        shot: shot,
+                        entry: entry,
+                        proof: proofEntry,
+                        frames: frames,
+                        dataRoot: dataRoot
+                    )
+                } catch {
+                    missing.append(shotID)
+                    continue
+                }
+            case nil:
+                missing.append(shotID)
+                continue
+            }
         }
         guard missing.isEmpty else {
             throw GateBlocked(
                 "Can't approve \"render\": \(missing.count) shot(s) lack a current "
-                    + "provider-generated final video with compiled-prompt provenance "
+                    + "current executable final delivery with compiled-prompt provenance "
                     + "(e.g. \(missing.prefix(3).joined(separator: ", ")))."
             )
         }
+        let assemblyURL = dataRoot.appendingPathComponent("assembly.json")
+        let assembly: TimelineAssemblyProofV1
+        do {
+            assembly = try JSONDecoder().decode(
+                TimelineAssemblyProofV1.self,
+                from: Data(contentsOf: assemblyURL)
+            )
+            try TimelineAssemblyProofValidatorV1.validate(assembly)
+        } catch {
+            throw GateBlocked(
+                "Can't approve \"render\": assemble the current final outputs on the timeline first."
+            )
+        }
+        let allShotSet = Set(shotlist.shots.map(\.id))
+        guard assembly.project == shotlist.project,
+              assembly.phase == "final",
+              Set(assembly.placements.map(\.shotID)) == allShotSet else {
+            throw GateBlocked(
+                "Can't approve \"render\": the timeline assembly does not cover every current Shot List source."
+            )
+        }
+        let executionShotsByID = Dictionary(uniqueKeysWithValues:
+            executionPlan.shots.map { ($0.id, $0) }
+        )
+        let shotsByID = Dictionary(uniqueKeysWithValues:
+            shotlist.shots.map { ($0.id, $0) }
+        )
+        let mediaByID = Dictionary(uniqueKeysWithValues:
+            creativeContext.media.map { ($0.id, $0) }
+        )
+        for placement in assembly.placements {
+            if let executionShot = executionShotsByID[placement.shotID],
+               executionShot.sourceMode == .imported {
+                guard let sourceAssetID = executionShot.sourceAssetID,
+                      let source = mediaByID[sourceAssetID],
+                      source.role == "core.project-media",
+                      shotsByID[placement.shotID]?.sourcePath == source.path,
+                      placement.sourcePath == source.path,
+                      placement.sourceSHA256 == source.sha256,
+                      placement.sourceKind == .video,
+                      placement.motion == nil,
+                      (try? ProjectLocalFile.requireHash(
+                        source.sha256,
+                        at: source.path,
+                        dataRoot: dataRoot
+                      )) != nil else {
+                    throw GateBlocked(
+                        "Can't approve \"render\": the timeline assembly uses a stale imported source for \(placement.shotID)."
+                    )
+                }
+                continue
+            }
+            guard let entry = manifest.entries[placement.shotID],
+                  let output = entry.output,
+                  let outputSHA256 = proof.entries[placement.shotID]?.outputSha256,
+                  placement.sourcePath == output,
+                  placement.sourceSHA256 == outputSHA256,
+                  (try? ProjectLocalFile.requireHash(
+                    outputSHA256,
+                    at: output,
+                    dataRoot: dataRoot
+                  )) != nil else {
+                throw GateBlocked(
+                    "Can't approve \"render\": the timeline assembly uses stale media for \(placement.shotID)."
+                )
+            }
+            let isStill = stillShotIDs.contains(placement.shotID)
+            guard isStill == (placement.sourceKind == .stillImage),
+                  !isStill || placement.motion?.kind == .kenBurnsZoom else {
+                throw GateBlocked(
+                    "Can't approve \"render\": still shot \(placement.shotID) has no proved timeline motion."
+                )
+            }
+        }
+        try MusicvideoAssemblyGate.requireCurrent(
+            assembly: assembly,
+            dataRoot: dataRoot
+        )
     }
 
 }

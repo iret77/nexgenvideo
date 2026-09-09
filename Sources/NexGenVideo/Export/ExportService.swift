@@ -27,9 +27,14 @@ final class ExportService {
     var error: String?
     var lastReport: ExportRunReport?
 
+    func cancel() {
+        cancelRequested = true
+        activeExportSession?.cancelExport()
+    }
+
     func export(
         timeline: Timeline,
-        resolver: MediaResolver,
+        resolver liveResolver: MediaResolver,
         format: ExportFormat,
         resolution: ExportResolution,
         outputURL: URL,
@@ -37,9 +42,20 @@ final class ExportService {
     ) async {
         error = nil
         lastReport = nil
+        cancelRequested = false
         isExporting = true
         progress = 0
         defer { isExporting = false }
+        let resolver = liveResolver.snapshot()
+        var styleReview: TimelineStyleReview.Snapshot?
+        if format != .xml {
+            do {
+                styleReview = try await TimelineStyleReview.capture(timeline: timeline, resolver: resolver)
+                if let review = styleReview {
+                    try TimelineStyleReview.requireCurrent(review)
+                }
+            } catch { self.error = error.localizedDescription; return }
+        }
 
         if format == .xml {
             Log.export.notice(
@@ -72,12 +88,21 @@ final class ExportService {
         )
 
         do {
+            try await TimelineStyleReview.revalidate(styleReview, timeline: timeline, resolver: resolver)
             let prepared = try await makeExportSession(
                 timeline: timeline, resolver: resolver,
                 format: format, resolution: resolution
             )
+            if styleReview != nil {
+                guard prepared.result.offlineMediaRefs.isEmpty, prepared.result.unprocessableMediaRefs.isEmpty else {
+                    throw ToolError("The export cannot reproduce the reviewed cut because media is offline or unprocessable. Repair the media and review the resulting cut again.")
+                }
+            }
             let session = prepared.session
             guard let fileType = format.utType else { throw ExportError.invalidFormat }
+            if cancelRequested { throw CancellationError() }
+            activeExportSession = session
+            defer { activeExportSession = nil }
 
             // AVAssetExportSession fails if the file already exists
             try? FileManager.default.removeItem(at: outputURL)
@@ -93,6 +118,7 @@ final class ExportService {
 
             do {
                 try await session.export(to: outputURL, as: fileType)
+                try await TimelineStyleReview.revalidate(styleReview, timeline: timeline, resolver: resolver)
                 let outputSize = await Self.encodedVideoSize(of: outputURL) ?? prepared.renderSize
                 lastReport = ExportRunReport(
                     outputSize: outputSize,
@@ -106,7 +132,9 @@ final class ExportService {
                     data: ["format": String(describing: format), "resolution": resolution.rawValue]
                 )
             } catch {
-                if (error as NSError).domain == NSCocoaErrorDomain && (error as NSError).code == NSUserCancelledError {
+                if cancelRequested || error is CancellationError
+                    || ((error as NSError).domain == NSCocoaErrorDomain
+                        && (error as NSError).code == NSUserCancelledError) {
                     self.error = "Export was cancelled"
                     Log.export.notice(
                         "export cancelled",
@@ -125,12 +153,21 @@ final class ExportService {
 
             progressTask.cancel()
         } catch {
-            self.error = Log.detail(error)
-            Log.export.error(
-                "export setup failed: \(Log.detail(error))",
-                telemetry: "Export setup failed",
-                data: ["format": String(describing: format), "resolution": resolution.rawValue, "error": Log.detail(error)]
-            )
+            if cancelRequested || error is CancellationError {
+                self.error = "Export was cancelled"
+                Log.export.notice(
+                    "export cancelled during setup",
+                    telemetry: "Export cancelled",
+                    data: ["format": String(describing: format), "resolution": resolution.rawValue]
+                )
+            } else {
+                self.error = Log.detail(error)
+                Log.export.error(
+                    "export setup failed: \(Log.detail(error))",
+                    telemetry: "Export setup failed",
+                    data: ["format": String(describing: format), "resolution": resolution.rawValue, "error": Log.detail(error)]
+                )
+            }
         }
 
     }
@@ -224,17 +261,18 @@ final class ExportService {
         }
         session.audioMix = result.audioMix
 
-        // Bake text clips into the export via AVVideoCompositionCoreAnimationTool
-        let (parent, videoLayer) = TextLayerController.buildForExport(
-            timeline: timeline,
-            fps: timeline.fps,
-            renderSize: renderSize
-        )
         let mutableVC = result.videoComposition.mutableCopy() as! AVMutableVideoComposition
-        mutableVC.animationTool = AVVideoCompositionCoreAnimationTool(
-            postProcessingAsVideoLayer: videoLayer,
-            in: parent
-        )
+        if TextLayerController.hasVisibleText(in: timeline) {
+            let (parent, videoLayer) = TextLayerController.buildForExport(
+                timeline: timeline,
+                fps: timeline.fps,
+                renderSize: renderSize
+            )
+            mutableVC.animationTool = AVVideoCompositionCoreAnimationTool(
+                postProcessingAsVideoLayer: videoLayer,
+                in: parent
+            )
+        }
         session.videoComposition = mutableVC
         return (session, result, renderSize)
     }
@@ -265,4 +303,7 @@ final class ExportService {
             AVAssetExportPresetPassthrough // unreachable — XML returns early
         }
     }
+
+    private var activeExportSession: AVAssetExportSession?
+    private var cancelRequested = false
 }

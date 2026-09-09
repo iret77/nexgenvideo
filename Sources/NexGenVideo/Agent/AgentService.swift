@@ -310,7 +310,7 @@ final class AgentService {
     func restoreDiagnosticTranscript(_ state: HangDiagnosticTranscript) throws {
         guard ProcessInfo.processInfo.environment["NGV_DIAGNOSTIC_REPLAY"] != nil else { return }
         abandonDialog()
-        pendingSpendApproval = nil
+        clearSpendApproval(cancelling: true)
         currentSessionId = state.sessionID
         messages = state.messages
         isStreaming = state.streaming
@@ -324,6 +324,7 @@ final class AgentService {
     ) throws {
         guard pendingDialog == nil,
               pendingSpendApproval == nil,
+              editor?.generationBatchCoordinator.pending == nil,
               pendingSpendOperation == nil,
               pendingGateApproval == nil,
               nativeGateMutationID == nil else {
@@ -646,6 +647,15 @@ final class AgentService {
                         preferredFilenames: preferred
                     )
                 }.value
+                try ConfirmedIdentityAssetStoreV1.recordIntake(
+                    role: kind == "location" ? .location : .character,
+                    identityName: name,
+                    identitySlug: slug,
+                    paths: copied.map {
+                        "import/\(category)/\(slug)/\($0)"
+                    },
+                    dataRoot: dataRoot
+                )
                 self.assignIntakeRole(kind, urls: urls)
                 editor.onPipelineChanged?()
                 let noun = kind == "location" ? "Location" : "Character"
@@ -1270,6 +1280,7 @@ final class AgentService {
     var isComposerBlocked: Bool {
         pendingDialog != nil
             || pendingSpendApproval != nil
+            || editor?.generationBatchCoordinator.pending != nil
             || currentSpendFollowUp != nil
             || pendingGateApproval != nil
             || currentGateFollowUp != nil
@@ -1303,6 +1314,38 @@ final class AgentService {
     private var spendApprovalRefresh: (@MainActor () -> SpendApproval)?
 
     @ObservationIgnored
+    private var spendPreparationTask: Task<Void, Never>?
+
+    @ObservationIgnored
+    private var spendPreparationID: UUID?
+
+    @ObservationIgnored
+    private var generationBatchOrigins: [String: (origin: ToolCallOrigin, marker: String)] = [:]
+
+    func presentGenerationBatch(_ batch: GenerationBatch, origin: ToolCallOrigin, editor: EditorViewModel) throws -> ToolResult {
+        if case .externalMCP = origin { throw ToolError("Start batch approval from an in-app chat.") }
+        guard !isComposerBlocked, editor.generationBatchCoordinator.pending == nil else {
+            throw ToolError("Finish the current native decision before reviewing a generation batch.")
+        }
+        let marker = "Generation batch \(batch.id) is waiting for native approval and completion."
+        generationBatchOrigins[batch.id] = (origin, marker)
+        editor.generationBatchCoordinator.pending = batch
+        suspendToolCalls(from: origin)
+        return .suspended(marker)
+    }
+
+    func replaceGenerationBatchPresentation(oldID: String, newID: String) {
+        if let origin = generationBatchOrigins.removeValue(forKey: oldID) { generationBatchOrigins[newID] = origin }
+    }
+
+    func completeGenerationBatch(_ batchID: String, message: String) {
+        guard let stored = generationBatchOrigins.removeValue(forKey: batchID) else { return }
+        let result = ToolResult.ok(message)
+        replacePendingSpendToolResult(result, origin: stored.origin, marker: stored.marker)
+        enqueueSpendFollowUp(message, origin: stored.origin, result: result)
+    }
+
+    @ObservationIgnored
     private var pendingSpendFollowUps: [SpendFollowUp] = []
 
     @ObservationIgnored
@@ -1317,6 +1360,7 @@ final class AgentService {
     private struct PendingSpendOperation {
         let origin: ToolCallOrigin
         let acquirePipelineMutation: @MainActor () throws -> SpendPipelineMutationLease?
+        let prepare: (@MainActor (SpendOption) async throws -> GenerationPackageV1)?
         let execute: @MainActor (SpendOption) async throws -> ToolResult
         let cancel: @MainActor () -> Void
     }
@@ -1362,8 +1406,12 @@ final class AgentService {
         pipelineScope: SpendPipelineScope? = nil,
         refresh: (@MainActor () -> SpendApproval)? = nil,
         cancel: @escaping @MainActor (EditorViewModel) -> Void = { _ in },
+        prepare: (@MainActor (EditorViewModel, SpendOption) async throws -> GenerationPackageV1)? = nil,
         execute: @escaping @MainActor (EditorViewModel, SpendOption) async throws -> ToolResult
     ) throws -> ToolResult {
+        guard (approval.requiresGenerationPackage == true) == (prepare != nil) else {
+            throw ToolError("The spend card and request preparer do not share the same approval contract.")
+        }
         if case .externalMCP = origin {
             throw ToolError(
                 "External MCP sessions cannot own an in-app spend approval. Start the request from an in-app chat."
@@ -1378,7 +1426,8 @@ final class AgentService {
         guard pendingGateApproval == nil else {
             throw ToolError("A gate approval is already waiting for the user.")
         }
-        guard pendingSpendOperation == nil, pendingSpendApproval == nil else {
+        guard pendingSpendOperation == nil, pendingSpendApproval == nil,
+              editor.generationBatchCoordinator.pending == nil else {
             throw ToolError("A spend approval is already waiting for the user.")
         }
         guard runningSpendTask == nil else {
@@ -1396,88 +1445,107 @@ final class AgentService {
         editor.agentPanelVisible = true
         spendApprovalError = nil
         spendApprovalRefresh = refresh
-        pendingSpendOperation = PendingSpendOperation(
-            origin: origin,
-            acquirePipelineMutation: { [weak editor] in
-                guard let pipelineScope else { return nil }
-                guard let editor else {
-                    throw ToolError(
-                        "The project closed before the approved operation could start."
-                    )
-                }
-                let expectedRoot = pipelineScope.dataRoot.standardizedFileURL
-                    .resolvingSymlinksInPath()
-                guard let workingRoot = editor.workingRoot,
-                      let currentDataRoot = DataRootResolver.dataRoot(of: workingRoot),
-                      currentDataRoot.standardizedFileURL.resolvingSymlinksInPath()
-                        == expectedRoot else {
-                    throw ToolError(
-                        "The project changed while the spend approval was open. Review the request and try again."
-                    )
-                }
-                guard editor.declaredPluginName == pipelineScope.declaredPack,
-                      editor.declaredPluginBinding == pipelineScope.declaredBinding else {
-                    throw ToolError(
-                        "The project format changed while the spend approval was open. Review the request and try again."
-                    )
-                }
-                let projectHome = FrameInventory.projectHome(of: expectedRoot)
-                guard ProjectPluginSettings.bindingResolution(projectURL: projectHome)
-                        == pipelineScope.bindingResolution else {
-                    throw ToolError(
-                        "The project format binding changed while the spend approval was open. Review the request and try again."
-                    )
-                }
-                do {
-                    _ = try ProjectPackGate.requireLiveMutation(
-                        projectURL: projectHome,
-                        declaredPack: pipelineScope.declaredPack,
-                        declaredBinding: pipelineScope.declaredBinding
-                    )
-                } catch {
-                    throw ToolError(
-                        "The project format binding changed while the spend approval was open: "
-                            + error.localizedDescription
-                    )
-                }
-                let currentPhase = try editor.pipelineAgentHarness.guardCurrentPhaseWork(
-                    tool: pipelineScope.tool,
-                    dataRoot: expectedRoot,
+        let acquirePipelineMutation: @MainActor () throws -> SpendPipelineMutationLease? = {
+            [weak editor] in
+            guard let pipelineScope else { return nil }
+            guard let editor else {
+                throw ToolError(
+                    "The project closed before the approved operation could start."
+                )
+            }
+            let expectedRoot = pipelineScope.dataRoot.standardizedFileURL
+                .resolvingSymlinksInPath()
+            guard let workingRoot = editor.workingRoot,
+                  let currentDataRoot = DataRootResolver.dataRoot(of: workingRoot),
+                  currentDataRoot.standardizedFileURL.resolvingSymlinksInPath()
+                    == expectedRoot else {
+                throw ToolError(
+                    "The project changed while the spend approval was open. Review the request and try again."
+                )
+            }
+            guard editor.declaredPluginName == pipelineScope.declaredPack,
+                  editor.declaredPluginBinding == pipelineScope.declaredBinding else {
+                throw ToolError(
+                    "The project format changed while the spend approval was open. Review the request and try again."
+                )
+            }
+            let projectHome = FrameInventory.projectHome(of: expectedRoot)
+            guard ProjectPluginSettings.bindingResolution(projectURL: projectHome)
+                    == pipelineScope.bindingResolution else {
+                throw ToolError(
+                    "The project format binding changed while the spend approval was open. Review the request and try again."
+                )
+            }
+            do {
+                _ = try ProjectPackGate.requireLiveMutation(
+                    projectURL: projectHome,
                     declaredPack: pipelineScope.declaredPack,
                     declaredBinding: pipelineScope.declaredBinding
                 )
-                guard currentPhase == pipelineScope.phase else {
-                    throw ToolError(
-                        "The pipeline phase changed while the spend approval was open. Review the request and try again."
-                    )
-                }
-                guard let id = editor.pipelinePhaseRunCoordinator.beginMutation(
-                    projectRoot: expectedRoot,
-                    label: pipelineScope.phase ?? approval.actionLabel
-                ) else {
-                    let active = editor.pipelinePhaseRunCoordinator.runningPhase(
-                        projectRoot: expectedRoot
-                    ) ?? "pipeline work"
-                    throw ToolError(
-                        "Can't start the approved operation while \(active) is running. Wait for it to finish."
-                    )
-                }
-                return SpendPipelineMutationLease(
-                    coordinator: editor.pipelinePhaseRunCoordinator,
-                    dataRoot: expectedRoot,
-                    id: id
+            } catch {
+                throw ToolError(
+                    "The project format binding changed while the spend approval was open: "
+                        + error.localizedDescription
                 )
-            },
-            execute: { [weak editor] option in
-                guard let editor else {
-                    throw ToolError("The project closed before the approved operation could start.")
-                }
-                return try await execute(editor, option)
-            },
-            cancel: { [weak editor] in
-                guard let editor else { return }
-                cancel(editor)
             }
+            let currentPhase = try editor.pipelineAgentHarness.guardCurrentPhaseWork(
+                tool: pipelineScope.tool,
+                dataRoot: expectedRoot,
+                declaredPack: pipelineScope.declaredPack,
+                declaredBinding: pipelineScope.declaredBinding
+            )
+            guard currentPhase == pipelineScope.phase else {
+                throw ToolError(
+                    "The pipeline phase changed while the spend approval was open. Review the request and try again."
+                )
+            }
+            guard let id = editor.pipelinePhaseRunCoordinator.beginMutation(
+                projectRoot: expectedRoot,
+                label: pipelineScope.phase ?? approval.actionLabel
+            ) else {
+                let active = editor.pipelinePhaseRunCoordinator.runningPhase(
+                    projectRoot: expectedRoot
+                ) ?? "pipeline work"
+                throw ToolError(
+                    "Can't start the approved operation while \(active) is running. Wait for it to finish."
+                )
+            }
+            return SpendPipelineMutationLease(
+                coordinator: editor.pipelinePhaseRunCoordinator,
+                dataRoot: expectedRoot,
+                id: id
+            )
+        }
+        let prepareOperation: (@MainActor (SpendOption) async throws -> GenerationPackageV1)?
+        if let prepare {
+            prepareOperation = { [weak editor] option in
+                guard let editor else {
+                    throw ToolError("The project closed before request preparation.")
+                }
+                return try await prepare(editor, option)
+            }
+        } else {
+            prepareOperation = nil
+        }
+        let executeOperation: @MainActor (SpendOption) async throws -> ToolResult = {
+            [weak editor] option in
+            guard let editor else {
+                throw ToolError(
+                    "The project closed before the approved operation could start."
+                )
+            }
+            return try await execute(editor, option)
+        }
+        let cancelOperation: @MainActor () -> Void = { [weak editor] in
+            guard let editor else { return }
+            cancel(editor)
+        }
+        pendingSpendOperation = PendingSpendOperation(
+            origin: origin,
+            acquirePipelineMutation: acquirePipelineMutation,
+            prepare: prepareOperation,
+            execute: executeOperation,
+            cancel: cancelOperation
         )
         suspendToolCalls(from: origin)
         pendingSpendApproval = SpendSelectionPreferences.applyingStoredSelection(
@@ -1493,7 +1561,48 @@ final class AgentService {
             to: refresh()
         )
         guard updated.id == current.id else { return }
+        spendPreparationTask?.cancel()
+        spendPreparationID = nil
         pendingSpendApproval = updated
+    }
+
+    func prepareSpendOption(_ option: SpendOption) {
+        guard let approval = pendingSpendApproval, approval.requiresGenerationPackage == true,
+              approval.options.contains(option), let operation = pendingSpendOperation,
+              let prepare = operation.prepare else { return }
+        let previous = spendPreparationTask
+        previous?.cancel()
+        let requestID = UUID()
+        spendPreparationID = requestID
+        spendApprovalError = nil
+        pendingSpendApproval = approval.replacingOptions(approval.options.map { item in
+            var value = item; value.generationPackage = nil; return value
+        })
+        spendPreparationTask = Task { @MainActor [weak self] in
+            await previous?.value
+            guard let self, !Task.isCancelled, self.spendPreparationID == requestID,
+                  self.pendingSpendApproval?.id == approval.id else { return }
+            do {
+                let lease = try operation.acquirePipelineMutation()
+                defer {
+                    if let lease { lease.coordinator.endMutation(projectRoot: lease.dataRoot, id: lease.id) }
+                }
+                let package = try await prepare(option)
+                try package.validate()
+                guard package.payload.target == option.target else { throw ToolError("The prepared package changed the selected provider or model.") }
+                try Task.checkCancellation()
+                guard self.spendPreparationID == requestID, let current = self.pendingSpendApproval,
+                      current.id == approval.id, current.preparationRevision == approval.preparationRevision else { return }
+                self.pendingSpendApproval = current.replacingOptions(current.options.map { item in
+                    var value = item
+                    value.generationPackage = value.id == option.id ? package : nil
+                    return value
+                })
+            } catch {
+                guard self.spendPreparationID == requestID else { return }
+                self.spendApprovalError = error.localizedDescription
+            }
+        }
     }
 
     func approveSpend(_ option: SpendOption) async {
@@ -1505,6 +1614,10 @@ final class AgentService {
         }
         guard option.isCurrentlyAvailable else {
             spendApprovalError = "This provider or model is no longer available. Choose another valid option."
+            return
+        }
+        if approval.requiresGenerationPackage == true, option.generationPackage == nil {
+            spendApprovalError = "Prepare and review this request before approving generation."
             return
         }
         guard let operation = pendingSpendOperation else {
@@ -1519,6 +1632,8 @@ final class AgentService {
             return
         }
         SpendSelectionPreferences.record(option, for: approval)
+        spendPreparationID = nil
+        spendPreparationTask = nil
         pendingSpendApproval = nil
         spendApprovalRefresh = nil
         pendingSpendOperation = nil
@@ -1657,6 +1772,8 @@ final class AgentService {
     }
 
     private func clearSpendApproval(cancelling: Bool) {
+        spendPreparationTask?.cancel()
+        spendPreparationID = nil
         let operation = pendingSpendOperation
         pendingSpendApproval = nil
         spendApprovalRefresh = nil
@@ -1714,13 +1831,14 @@ final class AgentService {
 
     private func replacePendingSpendToolResult(
         _ result: ToolResult,
-        origin: ToolCallOrigin
+        origin: ToolCallOrigin,
+        marker: String = AgentService.spendSuspensionText
     ) {
         guard let sessionID = origin.chatSessionID else { return }
         if sessionID == currentSessionId {
-            guard Self.replacePendingSpendToolResult(result, in: &messages) else { return }
+            guard Self.replacePendingSpendToolResult(result, in: &messages, marker: marker) else { return }
             _claudeRuntime?.replaceToolResult(
-                containingText: Self.spendSuspensionText,
+                containingText: marker,
                 with: result
             )
             syncMessagesIntoCurrentSession()
@@ -1730,7 +1848,8 @@ final class AgentService {
         guard let sessionIndex = sessions.firstIndex(where: { $0.id == sessionID }),
               Self.replacePendingSpendToolResult(
                   result,
-                  in: &sessions[sessionIndex].messages
+                  in: &sessions[sessionIndex].messages,
+                  marker: marker
               ) else { return }
         sessions[sessionIndex].updatedAt = Date()
         onSessionsChanged?()
@@ -1738,7 +1857,8 @@ final class AgentService {
 
     private static func replacePendingSpendToolResult(
         _ result: ToolResult,
-        in messages: inout [AgentMessage]
+        in messages: inout [AgentMessage],
+        marker: String = AgentService.spendSuspensionText
     ) -> Bool {
         for messageIndex in messages.indices.reversed() {
             for blockIndex in messages[messageIndex].blocks.indices.reversed() {
@@ -1746,7 +1866,7 @@ final class AgentService {
                     messages[messageIndex].blocks[blockIndex],
                     content.contains(where: {
                         guard case .text(let text) = $0 else { return false }
-                        return text == Self.spendSuspensionText
+                        return text == marker
                     })
                 else { continue }
                 messages[messageIndex].blocks[blockIndex] = .toolResult(
@@ -1930,6 +2050,7 @@ final class AgentService {
         guard pendingDialog == nil,
               pendingSpendApproval == nil,
               pendingSpendOperation == nil,
+              editor?.generationBatchCoordinator.pending == nil,
               nativeGateMutationID == nil else {
             throw ToolError(
                 "The composer already has a host-owned decision. Do not replace or duplicate it; stop and wait for the user."
@@ -2345,11 +2466,16 @@ final class AgentService {
             let owner = pendingSpendOperation?.origin.chatSessionID
             if owner == id || (owner == nil && isCurrent) { return .actionRequired }
         }
+        if let batch = editor?.generationBatchCoordinator.pending {
+            let owner = generationBatchOrigins[batch.id]?.origin.chatSessionID
+            if owner == id || (owner == nil && isCurrent) { return .actionRequired }
+        }
         if let approval = pendingGateApproval,
            approval.sessionId == id || (approval.sessionId == nil && isCurrent) {
             return .actionRequired
         }
         if (isCurrent && isStreaming)
+            || generationBatchOrigins.values.contains(where: { $0.origin.chatSessionID == id })
             || runningSpendStatus?.chatSessionID == id
             || (isCurrent && runningSpendStatus?.chatSessionID == nil
                 && runningSpendStatus != nil) {

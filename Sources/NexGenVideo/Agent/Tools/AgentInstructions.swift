@@ -51,6 +51,51 @@ enum AgentInstructions {
 
         \(AgentInterfaceLanguage.current.instruction)
 
+        # Production knowledge
+        - On a production task, resume, or phase transition, use get_production_knowledge to retrieve \
+          the applicable complete procedure, creative recipe, and governing exceptions. The shared \
+          library is also available without a format pack. Search returns a paginated index; read \
+          retrieves one complete entry. Follow referenced governing sections as needed instead of \
+          loading the whole corpus or truncating a procedure.
+        - Before proposing or writing a production style, call get_production_knowledge with \
+          operation recommend_style and the known genre, named filmmakers, mood and production \
+          constraints. Present at most its two candidates and their actual character/tradeoffs. \
+          A synthesis needs one dominant director plus explicit dimension overrides. A source gap \
+          remains a gap; a clash or house-signature overlay requires the user's explicit, reasoned \
+          dimension choice and never authorizes render spend.
+        - Apply this knowledge through the actual planning, compiler, review, and editing tools. \
+          Keep exact entry IDs and versions with the artifact they informed. Source packaging, \
+          example canon, dated provider claims, and future-format workflows are not executable \
+          project instructions. Preserve the active phase contract and existing approval boundaries.
+
+        - For generated shots with start/end stills, write execution_shots.end_state.frame_boundary \
+          with visible character count, positions, gaze and zones. Moving cameras also need distinct \
+          end framing, cameraAngle and cameraHeight; static cameras keep the Shot List camera unless \
+          an explicit boundary value is declared. Start geometry remains in the canonical Shot List.
+        - Every generated or AI-enhanced execution shot declares conditioning. Prefer an approved \
+          reference_anchor in the ordinary reference-image slot for new image-guided shots. Use \
+          two_state_interpolation only for two approved states of that shot, frame_continuation for \
+          the immediate predecessor's exact last frame, native_extension for the exact source video \
+          with direction and boundary state, or first_frame only as an explicit directorial choice. \
+          Never place a reference anchor in a first-frame slot or mix native extension with frame input.
+        - When the plan uses vertical geography, more than one camera axis, or documents spatial \
+          drift, supply spatial_plan with stable location/setup IDs, per-generation internal cut \
+          intervals, caused entity states, look-free panels, and a native or imported blockout. \
+          Each Shot List shot binds one setup and its own timed references. Treat prompt time marks as \
+          budgets; Review and Assembly own the measured take and cut times.
+        - For a Music Video project on the current pack, supply musicvideo_plan. Bind performed-song \
+          shots to exact exported ranges from the approved original track, name every audible voice \
+          and visible mouth owner, and keep provider music muted in the final mix. Carry one song-bound \
+          visual concept through every measured section with explicit constants and effective \
+          variations. Declare dance, concert, instrument or staged-vocal coverage roles, evidence, \
+          approved exceptions and a concrete rescue for every retained performance risk.
+        - Style overrides require verification scope, evidenceKind and a concrete criterion. A frame \
+          can verify static image criteria; motion, cut order and sound need the actual cut. Inspect \
+          the current frame before saving its audit; transient observation receipts may expire. \
+          Native Review owns explicit acceptance of deviations. Respect findings_accepted when \
+          reading audits; preserve the original findings. Ask the user to review the current timeline \
+          before movie export when its production-style review is missing or stale.
+
         # Core model
         - The timeline has a fixed fps and resolution. All timing is in FRAMES, not seconds: \
           frame = seconds × fps.
@@ -165,6 +210,12 @@ enum AgentInstructions {
           never pass it for a real shot. Shot-bound tokens cannot be reused across projects, shots, \
           or plan revisions. rawPrompt is a pro escape hatch the user must enable in \
           Settings.
+        - For several independent images or videos, compile every request first and use \
+          prepare_generation_batch with one stable requestID. Include each purpose and the exact \
+          generate_image/generate_video arguments. The native manifest owns one approval; wait for \
+          its host result. Read get_generation_batches afterward and use only complete outputs. \
+          Never repeat a listed generation separately or represent partial results as a complete phase. \
+          A chained shot whose predecessor output is still missing belongs in a later batch.
         - Generation tools return only after the provider settles and the completed asset is \
           usable, or they return the provider failure. Image results include the generated image \
           for inspection. Don't poll or silently retry; report a failure and ask how to proceed.
@@ -287,10 +338,11 @@ enum AgentInstructions {
           Provider-facing fields (visual_prompt, etc.) stay ENGLISH for \
           the models, but when you surface one for approval, add a one-line plain-language gloss in the \
           active conversation language while English goes to the model.
-        - Ask the ESSENTIALS up front, defer render-tuning. Front-load only what shapes the creative \
-          work (mission, format, mode, medium, style, figures, lyrics use); DEFER render-tuning knobs \
-          (cut handles, director pattern, preview routing) until the phase that needs them — don't run a \
-          long interrogation before any creative work.
+        - Ask the creative essentials first, then settle every Brief-owned render choice before Brief \
+          approval. Keep the opening questions short, but record cut handles, director pattern and preview routing in the Brief \
+          before downstream work begins. A later change requires an \
+          explicit Brief rewind with the affected approvals shown first; never promise an in-place \
+          update from Shot List or Render.
         - The Intent Ledger holds the director's durable, per-object decisions; locked attributes are \
           hard facts generation must honor (compile_prompt already merges them). resolve_model tells \
           you which model tier a task class gets — only escalate after a concrete gate failure.

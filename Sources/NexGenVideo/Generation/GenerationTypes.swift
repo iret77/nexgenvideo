@@ -68,6 +68,7 @@ struct GenerationSpendEvent: Codable, Sendable, Equatable, Identifiable {
     let transport: ProviderTransport
     let endpoint: String
     let providerRequestId: String?
+    let providerRequestResumable: Bool?
     let money: GenerationMoney?
     let note: String?
     let createdAt: Date
@@ -81,6 +82,7 @@ struct GenerationSpendEvent: Codable, Sendable, Equatable, Identifiable {
         transport: ProviderTransport,
         endpoint: String,
         providerRequestId: String? = nil,
+        providerRequestResumable: Bool? = nil,
         money: GenerationMoney? = nil,
         note: String? = nil,
         createdAt: Date = Date()
@@ -93,6 +95,7 @@ struct GenerationSpendEvent: Codable, Sendable, Equatable, Identifiable {
         self.transport = transport
         self.endpoint = endpoint
         self.providerRequestId = providerRequestId
+        self.providerRequestResumable = providerRequestResumable
         self.money = money
         self.note = note
         self.createdAt = createdAt
@@ -146,17 +149,32 @@ struct GenerationAuthorization: Sendable {
     let target: ResolvedGenerationTarget
     let estimate: GenerationMoney?
     let projectMutationScope: GenerationProjectMutationScope?
+    let takeRepairPlanID: String?
+    let compileRecipe: GenerationCompileRecipe?
+    let referenceSnapshot: GenerationReferenceSnapshot?
+    let generationPackage: GenerationPackageV1?
+    let batchItem: GenerationBatchAuthorization?
 
     init(
         transactionId: String?,
         target: ResolvedGenerationTarget,
         estimate: GenerationMoney?,
-        projectMutationScope: GenerationProjectMutationScope? = nil
+        projectMutationScope: GenerationProjectMutationScope? = nil,
+        takeRepairPlanID: String? = nil,
+        compileRecipe: GenerationCompileRecipe? = nil,
+        referenceSnapshot: GenerationReferenceSnapshot? = nil,
+        generationPackage: GenerationPackageV1? = nil,
+        batchItem: GenerationBatchAuthorization? = nil
     ) {
         self.transactionId = transactionId
         self.target = target
         self.estimate = estimate
         self.projectMutationScope = projectMutationScope
+        self.takeRepairPlanID = takeRepairPlanID
+        self.compileRecipe = compileRecipe
+        self.referenceSnapshot = referenceSnapshot
+        self.generationPackage = generationPackage
+        self.batchItem = batchItem
     }
 }
 

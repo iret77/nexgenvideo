@@ -36,21 +36,34 @@ enum ProviderCapabilityKind: String, Sendable, Codable, Hashable {
     case tool
 }
 
+enum VideoSourceOperationV1: String, Codable, Sendable {
+    case transform
+    case extendForward = "extend_forward"
+    case extendBackward = "extend_backward"
+}
+
 struct ProviderProductionInputPolicyV1: Codable, Sendable, Hashable {
     let requiresSourceVideo: Bool
     let framesCountTowardImageReferenceLimit: Bool
     let framesCountTowardTotalReferenceLimit: Bool
+    let sourceOperation: VideoSourceOperationV1?
+
+    var preservesSourceComposition: Bool {
+        requiresSourceVideo && (sourceOperation == nil || sourceOperation == .transform)
+    }
 
     init(
         requiresSourceVideo: Bool,
         framesCountTowardImageReferenceLimit: Bool,
-        framesCountTowardTotalReferenceLimit: Bool
+        framesCountTowardTotalReferenceLimit: Bool,
+        sourceOperation: VideoSourceOperationV1? = nil
     ) {
         self.requiresSourceVideo = requiresSourceVideo
         self.framesCountTowardImageReferenceLimit =
             framesCountTowardImageReferenceLimit
         self.framesCountTowardTotalReferenceLimit =
             framesCountTowardTotalReferenceLimit
+        self.sourceOperation = sourceOperation
     }
 
     init(videoCapabilities: VideoCaps) {
@@ -59,7 +72,8 @@ struct ProviderProductionInputPolicyV1: Codable, Sendable, Hashable {
             framesCountTowardImageReferenceLimit:
                 videoCapabilities.framesCountTowardImageReferenceLimit,
             framesCountTowardTotalReferenceLimit:
-                videoCapabilities.framesCountTowardTotalReferenceLimit
+                videoCapabilities.framesCountTowardTotalReferenceLimit,
+            sourceOperation: videoCapabilities.sourceVideoOperation
         )
     }
 }
@@ -107,6 +121,9 @@ struct ResolvedVideoOfferingCapabilitiesV1: Codable, Sendable, Hashable {
 
     var contractViolation: String? {
         guard schemaVersion == 1 else { return "schema_version" }
+        if inputPolicy.sourceOperation != nil && !inputPolicy.requiresSourceVideo {
+            return "source_operation_without_source_video"
+        }
         guard durationValues.allSatisfy({ $0 > 0 }) else {
             return "duration_values"
         }

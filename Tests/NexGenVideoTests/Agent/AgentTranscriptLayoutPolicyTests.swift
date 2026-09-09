@@ -143,7 +143,7 @@ struct AgentTranscriptLayoutPolicyTests {
         #expect(implementation.contains("service.cancelRunningSpend()"))
     }
 
-    @Test func runningTranscriptActivityLeavesAStaticStatusLandmark() throws {
+    @Test func runningTranscriptActivityRetainsAnActiveStatusIndicator() throws {
         let panel = try agentPanelSource()
         let state = try sourceFile(
             "Sources/NexGenVideo/Agent/Panel/AgentSurfaceState.swift"
@@ -158,14 +158,16 @@ struct AgentTranscriptLayoutPolicyTests {
         let statusSource = try sourceFile(
             "Sources/NexGenVideo/Agent/Panel/AgentLiveStatusView.swift"
         )
-        let stateStart = try #require(statusSource.range(of: "case .streaming:"))
+        let stateStart = try #require(statusSource.range(of: "case .working, .streaming:"))
         let stateEnd = try #require(statusSource.range(
             of: "case .waiting:",
             range: stateStart.upperBound..<statusSource.endIndex
         ))
         let streamingIcon = statusSource[stateStart.lowerBound..<stateEnd.lowerBound]
-        #expect(streamingIcon.contains("Image(systemName: \"ellipsis\")"))
-        #expect(!streamingIcon.contains("ProgressView"))
+        #expect(streamingIcon.contains("ProgressView"))
+        #expect(streamingIcon.contains("if reduceMotion"))
+        #expect(streamingIcon.contains("circle.dotted.circle"))
+        #expect(statusSource.contains(".accessibilityHidden(true)"))
     }
 
     @Test func completedActivityUsesOneDisclosureWithFlatTechnicalDetail() throws {

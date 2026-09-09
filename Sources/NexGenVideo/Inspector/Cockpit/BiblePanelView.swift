@@ -223,10 +223,6 @@ struct BibleEntityCard: View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             header
 
-            if !entity.hardRecognitionTrait.trimmingCharacters(in: .whitespaces).isEmpty {
-                traitRow(entity.hardRecognitionTrait)
-            }
-
             if let ensemble = entity as? BibleEnsemble {
                 membersRow(ensemble)
             }
@@ -282,26 +278,6 @@ struct BibleEntityCard: View {
                 .foregroundStyle(AppTheme.Text.mutedColor)
                 .lineLimit(1)
         }
-    }
-
-    private func traitRow(_ trait: String) -> some View {
-        HStack(alignment: .top, spacing: AppTheme.Spacing.xs) {
-            Image(systemName: "target")
-                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
-                .foregroundStyle(AppTheme.Accent.timecodeColor)
-                .padding(.top, AppTheme.Spacing.xxs)
-            Text(trait)
-                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
-                .foregroundStyle(AppTheme.Text.secondaryColor)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(AppTheme.Spacing.sm)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                .fill(AppTheme.Accent.timecodeColor.opacity(AppTheme.Opacity.faint))
-        )
     }
 
     @ViewBuilder

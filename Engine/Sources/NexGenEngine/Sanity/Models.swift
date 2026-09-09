@@ -103,8 +103,15 @@ public enum SanityArtifactStore {
         let fixedFiles = [
             PipelineLayout.briefFile,
             PipelineLayout.bibleFile,
+            PipelineLayout.confirmedIdentityAssetsFile,
+            PipelineLayout.bibleIdentityVariantsFile,
+            PipelineLayout.assetProofFile(scope: "bible"),
             PipelineLayout.treatmentCurrentFile,
             PipelineLayout.storyboardCurrentFile,
+            PipelineLayout.executionShotInputsFile,
+            PipelineLayout.creativeContextFile,
+            PipelineLayout.executionPlanFile,
+            ExecutionPlanV1.publicationArtifactPath,
             "production_design/production_design.yaml",
         ]
         var urls = fixedFiles.map { PipelineLayout.url($0, in: dataRoot) }

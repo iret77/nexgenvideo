@@ -279,7 +279,13 @@ struct PackPipelineManifest: Sendable, Equatable, Decodable {
     }
 
     static func decode(_ data: Data) throws -> PackPipelineManifest {
-        try JSONDecoder().decode(PackPipelineManifest.self, from: data)
+        let manifest = try JSONDecoder().decode(PackPipelineManifest.self, from: data)
+        guard manifest.schema == currentSchema else {
+            throw PhaseContractError.malformed(
+                "Unsupported pipeline contract schema '\(manifest.schema)'."
+            )
+        }
+        return manifest
     }
 }
 

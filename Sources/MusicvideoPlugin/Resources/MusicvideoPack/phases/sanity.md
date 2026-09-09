@@ -76,9 +76,11 @@ explicitly every time; no implicit carry-over.
    - If `analysis.structure_resolution.status == "needs_review"`: error
      `UNRESOLVED_STRUCTURE`. This should have been blocked by the Analysis
      gate; rewind to Analysis instead of continuing.
-   - If `analysis.downbeat_source != "music-understanding"`: error
-     `NON_SYSTEM_RHYTHM`. Approved analysis requires the Apple-measured beat and
-     bar grid; a fallback grid is diagnostic only.
+   - Apply the same provenance rule as the Analysis gate. `music-understanding`
+     is valid with its native measurement record. `beat-transformer` is the
+     canonical macOS 26 path when `native_dsp` and `neural_beat_grid` both
+     succeeded. Any other or missing source is invalid. Do not invent a
+     `NON_SYSTEM_RHYTHM` error for a gate-approved beat-transformer grid.
    - Surface every `stage_diagnostics` entry whose status is `failed`,
      `degraded`, or `unavailable`; do not infer failure merely from an empty
      optional field.
@@ -95,8 +97,9 @@ explicitly every time; no implicit carry-over.
 - Shot overlaps (warn)
 - Prompt quality (too short / too generic → warn/info)
 - Brief ↔ shotlist mode consistency (error)
-- Reference-budget per shot (warn `REF_BUDGET_EXCEEDED` when the planned
-  bible refs exceed the model capability limit)
+- Required semantic-reference coverage per shot (error
+  `REF_BUDGET_EXCEEDED` when the selected offering cannot carry every required
+  job; error `REQUIRED_REFERENCE_MISSING` when a required source is absent)
 - Structural blocking for start keyframes (`NO_BLOCKING_AT_T0`)
 - Music tempo caps and aggregate ASL (`SHOT_OVER_TEMPO_CAP`, pacing warnings)
 - Per-shot action density (`SHOT_PACING_IMPLAUSIBLE`)
@@ -135,9 +138,10 @@ let the frame phase start until generation is available.
 
 This availability check is the seam where the old reference-planner
 pre-flight lived: ref budgeting itself is now folded into the engine
-`run_sanity` (`REF_BUDGET_EXCEEDED`). If that warning fires for the pilot
-shot, the shot shares too many bible anchors — adjust the storyboard
-instead of attempting a render.
+`run_sanity`. Optional alternate views may be omitted to fit the selected
+offering. If `REF_BUDGET_EXCEEDED` fires, at least one required identity,
+location, prop, explicit-reference, or lighting job cannot fit; select a
+capable offering or revise the owning artifact before attempting a render.
 
 ## Mandatory rules
 
@@ -156,9 +160,11 @@ instead of attempting a render.
   list, call `rewind(target_phase="<owning phase>")`, repair through its
   canonical writer, and rerun `run_sanity` after re-approving the
   dependent chain.
-- **`REF_BUDGET_EXCEEDED` for the pilot shot:** the shot shares too many
-  bible anchors — escalate to a storyboard adjustment instead of
-  attempting a render.
+- **`REF_BUDGET_EXCEEDED` for a shot:** the selected image offering cannot
+  carry every required semantic reference. Select a capable offering or
+  revise the owning artifact before attempting a render.
+- **`REQUIRED_REFERENCE_MISSING` for a shot:** repair the named Bible,
+  Shot List, or project-local image source before attempting a render.
 - **Generation unavailable** (the model missing from `list_models`, or
   `loaded=false`): surface it to the user; keys are bound in the
   host, never a shell command. Do not let the frame phase start.

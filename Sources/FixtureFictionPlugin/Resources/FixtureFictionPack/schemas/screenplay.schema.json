@@ -1,0 +1,127 @@
+{
+  "type": "object",
+  "properties": {
+    "logline": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000
+    },
+    "structure": {
+      "type": "string",
+      "enum": [
+        "three_act",
+        "four_part",
+        "single_turn",
+        "mosaic"
+      ]
+    },
+    "acts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "purpose": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "turning_point": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "id",
+          "purpose",
+          "turning_point"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 8
+    },
+    "scenes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "act_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "location": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "time": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "objective": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "conflict": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "outcome": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "dialogue_beats": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            },
+            "minItems": 0,
+            "maxItems": 32
+          }
+        },
+        "required": [
+          "id",
+          "act_id",
+          "location",
+          "time",
+          "objective",
+          "conflict",
+          "outcome",
+          "dialogue_beats"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 40
+    },
+    "source_preserved": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "logline",
+    "structure",
+    "acts",
+    "scenes",
+    "source_preserved"
+  ],
+  "additionalProperties": false
+}

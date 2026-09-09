@@ -286,7 +286,7 @@ struct WorkflowToolsTests {
         duration: Double = 12,
         firstFrame: Bool = true
     ) -> [String: Any] {
-        [
+        var input: [String: Any] = [
             "id": id,
             "source_mode": ExecutionSourceModeV1.generated.rawValue,
             "start_state": [
@@ -319,6 +319,14 @@ struct WorkflowToolsTests {
                 : [:],
             "reference_demands": [],
         ]
+        if firstFrame {
+            input["conditioning"] = [
+                "strategy": ConditioningStrategyKindV1.firstFrame.rawValue,
+                "rationale": "Start from the approved first frame.",
+                "mode_ids": ["image-to-video"],
+            ]
+        }
+        return input
     }
 
     private func importedExecutionShotInput(id: String = "s001") -> [String: Any] {
@@ -1567,19 +1575,105 @@ struct WorkflowToolsTests {
         let importDir = dataRoot.appendingPathComponent("import/characters/mouse", isDirectory: true)
         try FileManager.default.createDirectory(at: importDir, withIntermediateDirectories: true)
         try Data("x".utf8).write(to: importDir.appendingPathComponent("face.png"))
+        try ConfirmedIdentityAssetStoreV1.recordIntake(
+            role: .character,
+            identityName: "Mouse",
+            identitySlug: "mouse",
+            paths: ["import/characters/mouse/face.png"],
+            dataRoot: dataRoot,
+            confirmedAt: "2026-09-09T00:00:00Z"
+        )
 
         let list = try #require(try await h.runOK("list_project_files", args: [
             "project_dir": dataRoot.path, "subdir": "import",
         ]) as? [String: Any])
         #expect((list["files"] as? [String])?.contains("import/characters/mouse/face.png") == true)
 
-        _ = try await h.runOK("copy_project_file", args: [
+        let copy = try #require(try await h.runOK("copy_project_file", args: [
             "project_dir": dataRoot.path,
             "from": "import/characters/mouse/face.png", "to": "bible/refs/mouse/face.png",
-        ])
+        ]) as? [String: Any])
+        #expect(copy["confirmed_identity_provenance"] as? Bool == true)
         let copiedURL = dataRoot.appendingPathComponent("bible/refs/mouse/face.png")
         #expect(try String(contentsOf: copiedURL, encoding: .utf8) == "x")                 // bytes copied
         #expect(try String(contentsOf: importDir.appendingPathComponent("face.png"), encoding: .utf8) == "x")  // source intact (copy)
+        #expect(try ConfirmedIdentityAssetStoreV1.isCurrent(
+            "bible/refs/mouse/face.png",
+            dataRoot: dataRoot
+        ))
+        let variantImport = dataRoot.appendingPathComponent(
+            "import/characters/mouse-red/front.png"
+        )
+        try FileManager.default.createDirectory(
+            at: variantImport.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("red-outfit".utf8).write(to: variantImport)
+        try ConfirmedIdentityAssetStoreV1.recordIntake(
+            role: .character,
+            identityName: "Mouse — red outfit",
+            identitySlug: "mouse-red",
+            paths: ["import/characters/mouse-red/front.png"],
+            dataRoot: dataRoot,
+            confirmedAt: "2026-09-09T00:00:00Z"
+        )
+        _ = try await h.runOK("copy_project_file", args: [
+            "project_dir": dataRoot.path,
+            "from": "import/characters/mouse-red/front.png",
+            "to": "bible/mouse-red/front.png",
+        ])
+        _ = try await h.runOK("write_bible", args: [
+            "project_dir": dataRoot.path,
+            "look": ["style": "restrained hand-drawn animation"],
+            "characters": [[
+                "id": "mouse",
+                "name": "Mouse",
+                "visual_prompt": "A small grey mouse in a magenta waistcoat.",
+                "attributes": [
+                    ["key": "species", "value": "grey mouse"],
+                    ["key": "wardrobe", "value": "purple waistcoat"],
+                ],
+                "reference_images": [],
+                "sheets": [[
+                    "view": "front",
+                    "path": "bible/refs/mouse/face.png",
+                ]],
+            ], [
+                "id": "mouse_red",
+                "name": "Mouse — red outfit",
+                "visual_prompt": "The same small grey mouse in a red waistcoat.",
+                "attributes": [
+                    ["key": "species", "value": "grey mouse"],
+                    ["key": "wardrobe", "value": "red waistcoat"],
+                ],
+                "reference_images": [],
+                "sheets": [[
+                    "view": "front",
+                    "path": "bible/mouse-red/front.png",
+                ]],
+            ]],
+            "ensembles": [],
+            "props": [],
+            "locations": [],
+            "identity_variants": [[
+                "base_entity_id": "mouse",
+                "variant_entity_id": "mouse_red",
+                "changed_attributes": [[
+                    "attribute": "wardrobe",
+                    "value": "red waistcoat",
+                ]],
+                "inherited_identity_paths": [
+                    "bible/refs/mouse/face.png",
+                ],
+            ]],
+        ])
+        #expect(try loadBible(dataRoot: dataRoot)?.characters.first?
+            .sheets["front"] == "bible/refs/mouse/face.png")
+        let variants = try #require(
+            try BibleIdentityVariantStoreV1.loadIfPresent(dataRoot: dataRoot)
+        )
+        #expect(variants.revision == 1)
+        #expect(variants.variants.first?.variantEntityID == "mouse_red")
 
         // A lexically escaping path is refused.
         let escape = await h.runRaw("copy_project_file", args: [
@@ -2163,7 +2257,92 @@ struct WorkflowToolsTests {
         #expect(cost?["spent_eur"] as? Double == 0.0)
         #expect(cost?["remaining_eur"] as? Double == 50.0)
         #expect(cost?["over_budget"] as? Bool == false)
+        #expect(cost?["spend_complete"] as? Bool == true)
+        #expect(cost?["verified_spend_eur"] as? Double == 0.0)
+        #expect(cost?["active_reservations"] as? Int == 0)
         #expect(cost?.keys.contains("next_phase") == true)
+    }
+
+    @Test("estimate_cost never presents an unpriced reservation as a complete zero total")
+    func estimateCostReportsIncompleteMoney() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        var log = GenerationLog()
+        log.spendEvents = [GenerationSpendEvent(
+            transactionId: "unpriced-render",
+            kind: .reserved,
+            model: "provider/model",
+            provider: .fal,
+            transport: .api,
+            endpoint: "provider/model"
+        )]
+        try JSONEncoder().encode(log).write(
+            to: FrameInventory.projectHome(of: dataRoot)
+                .appendingPathComponent(Project.generationLogFilename),
+            options: .atomic
+        )
+
+        let cost = try await h.runOK(
+            "estimate_cost",
+            args: ["project_dir": dataRoot.path]
+        ) as? [String: Any]
+        let state = try await h.runOK(
+            "get_project_state",
+            args: ["project_dir": dataRoot.path]
+        ) as? [String: Any]
+        #expect(cost?["spend_complete"] as? Bool == false)
+        #expect(cost?["spent_eur"] is NSNull)
+        #expect(cost?["remaining_eur"] is NSNull)
+        #expect(cost?["over_budget"] is NSNull)
+        #expect(cost?["unpriced_transactions"] as? Int == 1)
+        #expect(state?["spend_complete"] as? Bool == false)
+        #expect(state?["budget_remaining_eur"] is NSNull)
+    }
+
+    @Test("pipeline cockpit state reads the same spend journal as estimate_cost")
+    func projectStateUsesGenerationMoneyJournal() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let money = GenerationMoney(
+            nativeAmount: 12,
+            nativeCurrency: "USD",
+            eurAmount: 10,
+            eurPerNativeUnit: 10 / 12,
+            exchangeRateDate: "2026-09-09",
+            pricingSource: "https://provider.example/pricing",
+            exchangeRateSource: "https://www.ecb.europa.eu/"
+        )
+        var log = GenerationLog()
+        log.spendEvents = [GenerationSpendEvent(
+            transactionId: "bible-sheet",
+            kind: .reserved,
+            model: "image/bible",
+            provider: .fal,
+            transport: .api,
+            endpoint: "image/bible",
+            money: money
+        )]
+        try JSONEncoder().encode(log).write(
+            to: FrameInventory.projectHome(of: dataRoot)
+                .appendingPathComponent(Project.generationLogFilename),
+            options: .atomic
+        )
+
+        let state = try await h.runOK(
+            "get_project_state",
+            args: ["project_dir": dataRoot.path]
+        ) as? [String: Any]
+        let cost = try await h.runOK(
+            "estimate_cost",
+            args: ["project_dir": dataRoot.path]
+        ) as? [String: Any]
+
+        #expect(state?["budget_spent_eur"] as? Double == 10)
+        #expect(state?["budget_remaining_eur"] as? Double == 40)
+        #expect(state?["spend_complete"] as? Bool == true)
+        #expect(state?["active_reservations"] as? Int == 1)
+        #expect(cost?["verified_spend_eur"] as? Double == 10)
+        #expect(cost?["remaining_eur"] as? Double == 40)
     }
 
     @Test("storyboard writer rejects declared direction-only set anchors")
@@ -2274,6 +2453,18 @@ struct WorkflowToolsTests {
             "origin": "agent_proposal",
             "summary_oneline": "A quiet dawn begins the film.",
             "body_markdown": "The empty yard holds until the performer arrives.",
+            "causality_plan": [
+                "mode": "narrative", "applicationReason": "A single establishing beat opens this section.",
+                "beats": [["id": "arrival", "sceneID": "yard", "excerpt": "The empty yard holds until the performer arrives.", "elementIDs": []]],
+                "chronology": ["arrival"], "edges": [], "elements": [], "stateChanges": [], "unresolvedDecisions": [],
+                "changeReview": [
+                    "reviewer": "test director", "upstreamCause": "The approved brief calls for a quiet opening.",
+                    "downstreamConsequence": "The yard establishes the later performance space.", "affectedBeatIDs": ["arrival"],
+                    "checks": StoryCausalityDraftV1.ReviewQuestion.allCases.map {
+                        ["question": $0.rawValue, "verdict": "notApplicable", "explanation": "This initial single-beat section contains no subplot or revision dependency."]
+                    },
+                ],
+            ],
         ])
         let treatment = try TreatmentStore.load(dataRoot: dataRoot)
         #expect(treatment.meta.project == "demo")
@@ -2306,6 +2497,7 @@ struct WorkflowToolsTests {
             "project_dir": dataRoot.path,
             "origin": "agent_proposal",
             "summary_oneline": "The yard wakes.",
+            "causality_bindings": storyboardSteps.map { ["stepID": $0["id"]!, "beatIDs": ["arrival"], "reason": "Coverage of the approved arrival beat."] },
             "sections": [[
                 "id": "intro",
                 "label": "intro",
@@ -2352,7 +2544,6 @@ struct WorkflowToolsTests {
             "name": "Schoolyard",
             "visual_prompt": "A quiet hand-drawn schoolyard at blue hour.",
             "attributes": [],
-            "hard_recognition_trait": "red gate",
             "reference_images": [],
             "sheets": [["view": "wide", "path": "bible/yard-wide.png"]],
             "view_purpose": [["view": "wide", "purpose": "establishing"]],
@@ -2417,7 +2608,42 @@ struct WorkflowToolsTests {
                 "blocking_anchors": [],
             ],
         ]
-        let generatedExecution = generatedExecutionShotInput()
+        var generatedExecution = generatedExecutionShotInput()
+        generatedExecution["storyboard_step_ids"] = storyboardSteps.compactMap { $0["id"] as? String }
+        let musicvideoPlan: [String: Any] = [
+            "performance_segments": [],
+            "final_mix": [
+                "original_song_timeline_start_seconds": 0,
+                "original_song_occurrences": 1,
+                "provider_song_audio_muted": true,
+                "approved_additional_layer_ids": [],
+            ],
+            "visual_arc": [
+                "concept": "The yard opens from stillness into arrival.",
+                "motifs": [[
+                    "id": "yard-threshold",
+                    "description": "The yard entrance remains the section anchor.",
+                    "setup_ids": [],
+                ]],
+                "sections": [[
+                    "section_id": "intro",
+                    "musical_function": "opening",
+                    "visual_function": "establish the yard before the arrival",
+                    "motif_ids": ["yard-threshold"],
+                    "shot_ids": ["s001"],
+                    "constants": [[
+                        "kind": "guidance",
+                        "target_id": "s001",
+                        "value": "Hold the empty yard before the entrance.",
+                        "rationale": "The opening establishes the section's visual baseline.",
+                    ]],
+                    "variations": [],
+                    "lyrics_relation": "unused",
+                    "change_explanation": "The arrival changes the held opening frame.",
+                ]],
+            ],
+            "coverage": [],
+        ]
         var missingPlanShot = shot
         missingPlanShot.removeValue(forKey: "production_plan")
         let missingPlan = await h.runRaw("write_shotlist", args: [
@@ -2578,6 +2804,7 @@ struct WorkflowToolsTests {
             "project_dir": dataRoot.path,
             "shots": [shot],
             "execution_shots": [generatedExecution],
+            "musicvideo_plan": musicvideoPlan,
         ])
         let shotlist = try #require(try loadShotlist(dataRoot: dataRoot))
         #expect(shotlist.project == "demo")
@@ -2597,10 +2824,13 @@ struct WorkflowToolsTests {
         #expect(latestShotlistVersion(dataRoot: dataRoot) == 1)
 
         importedShot.removeValue(forKey: "production_plan")
+        var importedExecution = importedExecutionShotInput()
+        importedExecution["storyboard_step_ids"] = storyboardSteps.compactMap { $0["id"] as? String }
         _ = try await h.runOK("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [importedShot],
-            "execution_shots": [importedExecutionShotInput()],
+            "execution_shots": [importedExecution],
+            "musicvideo_plan": musicvideoPlan,
         ])
         let importedShotlist = try #require(try loadShotlist(dataRoot: dataRoot))
         #expect(importedShotlist.shots.first?.sourceMode == .imported)
@@ -2963,7 +3193,7 @@ struct WorkflowToolsTests {
         ]) as? [String: Any]
         #expect(recorded?["shot_id"] as? String == "s001")
         #expect(recorded?["status"] as? String == "rendered")
-        #expect(recorded?["spent_eur"] as? Double == 1.5)
+        #expect(recorded?["reported_phase_cost_eur"] as? Double == 1.5)
 
         let manifest = try await h.runOK("get_render_manifest", args: ["project_dir": dir, "phase": "preview"]) as? [String: Any]
         #expect(manifest?["phase"] as? String == "preview")
@@ -2972,7 +3202,7 @@ struct WorkflowToolsTests {
         let summary = try #require(manifest?["summary"] as? [String: Any])
         #expect(summary["total"] as? Int == 1)
         #expect(summary["rendered"] as? Int == 1)
-        #expect(summary["spent_eur"] as? Double == 1.5)
+        #expect(summary["reported_phase_cost_eur"] as? Double == 1.5)
         let proof = try loadRenderProofManifest(
             dataRoot: dataRoot,
             phase: "preview"
@@ -3759,11 +3989,6 @@ struct WorkflowToolsTests {
             try hybridShotlist(),
             dataRoot: dataRoot
         )
-        try FileManager.default.removeItem(at: source)
-        try FileManager.default.createSymbolicLink(
-            at: source,
-            withDestinationURL: outside
-        )
         try addGeneratedVideo(
             "s002-video",
             at: home.appendingPathComponent("s002.mp4"),
@@ -3777,6 +4002,11 @@ struct WorkflowToolsTests {
             "shot_id": "s002",
             "output": "s002-video",
         ])
+        try FileManager.default.removeItem(at: source)
+        try FileManager.default.createSymbolicLink(
+            at: source,
+            withDestinationURL: outside
+        )
 
         let result = await h.runRaw("next_render_shot", args: [
             "project_dir": dataRoot.path,
@@ -3854,7 +4084,7 @@ struct WorkflowToolsTests {
         let result = await h.runRaw("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [shot],
-            "execution_shots": [generatedExecutionShotInput(firstFrame: false)],
+            "execution_shots": [generatedExecutionShotInput()],
         ])
 
         #expect(result.isError)

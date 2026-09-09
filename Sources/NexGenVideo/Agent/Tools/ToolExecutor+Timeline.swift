@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import ImageIO
+import NexGenEngine
 
 struct TimelineWord {
     let index: Int
@@ -25,7 +26,17 @@ extension ToolExecutor {
     private static let captionRowLimit = 200
     private static let captionRowFormat = ["clipId", "startFrame", "durationFrames", "text"]
 
-    func getTimeline(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+    func getTimeline(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
+        let home = editor.workingRoot
+        let styleState = await Task.detached(priority: .utility) { () -> (ResolvedProductionStyleV1?, Bool, String?) in
+            guard let home, let root = DataRootResolver.dataRoot(of: home) else { return (nil, false, nil) }
+            do {
+                guard let style = try ProductionStyleStoreV1.load(dataRoot: root) else { return (nil, false, nil) }
+                let approved = try YAMLArtifactStore(dataRoot: root).load(Gates.self, at: PipelineLayout.gatesFile).get("production_design").approved
+                return (style, approved, nil)
+            } catch { return (nil, false, error.localizedDescription) }
+        }.value
+        guard editor.workingRoot == home else { throw ToolError("The project changed while reading the timeline. Read the active project again.") }
         try validateUnknownKeys(args, allowed: Self.getTimelineAllowedKeys, path: "get_timeline")
         var window: Range<Int>?
         if args.int("startFrame") != nil || args.int("endFrame") != nil {
@@ -53,6 +64,19 @@ extension ToolExecutor {
             dict["window"] = [window.lowerBound, min(window.upperBound, editor.timeline.totalFrames)]
         }
         dict["currentFrame"] = editor.currentFrame
+        if let style = styleState.0 {
+            dict["productionStyle"] = [
+                "approved": styleState.1,
+                "resolved": try JSONSerialization.jsonObject(with: JSONEncoder().encode(style)),
+                "editingInstruction": "Apply editing and timing to actual clip order and source ranges. Sequence criteria require observed assembled media; frame audits do not satisfy them.",
+                "audioOwnership": editor.declaredPluginName == "musicvideo"
+                    ? "The approved original song owns Musicvideo timing and music."
+                    : "Follow the project's approved audio decisions; style is not spending approval.",
+            ]
+        } else if let failure = styleState.2 {
+            dict["productionStyle"] = ["state": "stale_or_unreadable", "reason": failure,
+                "action": "Explicitly rewind Production Design and replace or clear the style before production."]
+        }
         guard let json = Self.jsonString(roundJSONFloatingPointNumbers(dict, toPlaces: 3)) else {
             throw ToolError("Failed to encode timeline")
         }
@@ -320,7 +344,7 @@ extension ToolExecutor {
         }
 
         switch asset.type {
-        case .image: return try await readImage(asset: asset, args: args)
+        case .image: return try await readImage(asset: asset, args: args, editor: editor)
         case .video: return try await readVideo(editor: editor, asset: asset, args: args, mapping: mapping)
         case .audio: return try await readAudio(editor: editor, asset: asset, args: args, mapping: mapping)
         case .lottie: return try await readLottie(asset: asset, args: args)
@@ -351,8 +375,10 @@ extension ToolExecutor {
         ]
     }
 
-    private func readImage(asset: MediaAsset, args: [String: Any]) async throws -> ToolResult {
+    private func readImage(asset: MediaAsset, args: [String: Any], editor: EditorViewModel) async throws -> ToolResult {
+        let inspectedProject = editor.workingRoot
         let url = asset.url
+        let before = try await Task.detached(priority: .utility) { try FileDigest.sha256(of: url) }.value
         let encoded = await Task.detached(priority: .userInitiated) {
             ImageEncoder.encode(url: url).map {
                 (base64: $0.data.base64EncodedString(), mime: $0.mime, encodedByteSize: $0.data.count)
@@ -369,6 +395,19 @@ extension ToolExecutor {
         meta["encodedByteSize"] = encoded.encodedByteSize
         if let props = Self.imagePropertiesSummary(at: url) {
             meta["imageProperties"] = props
+        }
+        let after = try await Task.detached(priority: .utility) { try FileDigest.sha256(of: url) }.value
+        guard before == after else {
+            throw ToolError("The image changed during inspection. Inspect it again.")
+        }
+        guard editor.workingRoot == inspectedProject else {
+            throw ToolError("The project changed during image inspection. Inspect the image in the active project again.")
+        }
+        if let home = inspectedProject, DataRootResolver.dataRoot(of: home) != nil,
+           let imageBytes = Data(base64Encoded: encoded.base64) {
+            let receipt = try imageObservations.observe(project: home, sourceSHA256: before, image: imageBytes, mediaID: asset.id)
+            meta["observationReceipt"] = receipt.id
+            meta["observationNote"] = "This receipt identifies the image supplied in this tool result; it is not a visual verdict."
         }
 
         guard let metaJSON = Self.jsonString(roundJSONFloatingPointNumbers(meta, toPlaces: 3)) else {

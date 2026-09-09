@@ -203,18 +203,20 @@ model, and exact `shotId`; the injected core profile and compiler own
 the resulting prompt. Then pass its `compiledPrompt` unchanged as `generate_image.prompt` and
 its `compileToken` as `generate_image.compileToken` and its `shotId` as
 `generate_image.shotId`, together with
-`aspectRatio`, `resolution="2K"`, and the ordered
-`referenceMediaRefs`. It returns only after the exact asset is complete,
+`aspectRatio` and `resolution="2K"`. The host resolves the selected
+offering's exact reference limit, constructs the ordered semantic reference
+plan, and attaches those exact bytes. Do not import or pass Bible references
+manually. It returns only after the exact asset is complete,
 or returns the provider failure.
 
 After the image is in, proceed to the F2.5 audit.
 
 #### F2.10 — Reference images via the bible
 
-Build the multi-ref pool from the bible by a deterministic priority,
-then `import_media(source={path: <abs path>})` each chosen sheet/anchor
-PNG to get a mediaRef, and pass the mediaRefs in priority order via
-`generate_image(..., referenceMediaRefs=[...])`.
+The host builds the multi-ref pool directly from the approved Bible, Shot
+List, and available identity-anchor frames. Each character, location, prop,
+explicit shot reference, and declared lighting anchor is a required semantic
+job. Alternate views are optional.
 
 Prioritization order (deterministic):
 
@@ -225,10 +227,10 @@ Prioritization order (deterministic):
 3. Remaining sheets/refs by relevance.
 4. Props last.
 
-Cap at the model's `maxReferenceImages` (confirm via `list_models`;
-typically 9). If you must drop refs because of the cap, tell the user —
-usually it means the shot references too many bible anchors and should be
-split. Never silently pass fewer refs without saying so.
+The host may omit optional alternate views at the model's
+`maxReferenceImages`. If all required jobs do not fit, generation stops before
+spend approval. Select a compatible model or revise the shot; never remove a
+required identity or lighting job to fit.
 
 If the shot needs reference identity but the model does not support
 reference images, choose a catalog-proven supporting model before the call.
@@ -245,7 +247,8 @@ After a frame is in the project:
   `provider_prompt`.
 - Budget check after every call via `estimate_cost(project_dir)`. If
   `over_budget` would flip true, stop and escalate to the user before
-  further calls.
+  further calls. If `spend_complete=false`, stop as well; never treat an
+  unavailable remainder as zero spend.
 
 #### F2.12 — Shots without keyframes
 
@@ -455,3 +458,28 @@ frame (keep the old one as `*-vN.png`), re-record via `record_render`.
 | Audit blocking deviation | Repair the owning artifact when needed; otherwise recompile the unchanged shot and rerender, max 2 attempts. |
 | One frame of a start/end pair is missing at review time | Generate the missing frame first; never half-approve a pair. |
 | `estimate_cost` shows over_budget | Stop and escalate to the user before further `generate_image` calls. |
+
+## Current audit evidence and explicit deviations
+
+Read `get_frame_audit` before inspection for the host's current start/end expectations.
+If `current_expected_available` is false, the saved audit is historical; repair the
+canonical plan before saving a replacement. End counts and camera values come from the
+approved end boundary, never from a prose copy of the start state.
+
+Image observation receipts are transient until `save_frame_audit` succeeds. Inspect the
+current image again if its receipt expired. A still cannot attest motion, editing or
+sound criteria. Report concrete observations for each image criterion. The native Review
+surface lets the user explicitly accept exact displayed deviations with a reason.
+When `findings_accepted` is true, respect that decision and request the Frames gate;
+retain the original audit findings instead of rerendering the accepted frame. Any changed
+image, audit, plan or style must be reviewed again. Timeline motion and sound criteria
+remain unreviewed until the actual cut is reviewed before movie export.
+
+## Independent generation batches
+
+When several requests can execute independently, compile each one and call `prepare_generation_batch`
+with a stable requestID, a purpose for each item and its exact generation-tool arguments. All required
+approved references must already exist; dependent views or chained shots wait for their predecessors.
+The host presents one native batch approval and owns execution. Wait for its completion result, then
+read `get_generation_batches`. Inspect completed assets before staging or writing the phase artifact.
+A failed or blocked item is not a complete output and must never be silently rerun as an individual call.

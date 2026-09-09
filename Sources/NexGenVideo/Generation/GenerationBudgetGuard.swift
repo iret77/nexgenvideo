@@ -11,6 +11,14 @@ enum GenerationBudgetError: LocalizedError {
     }
 }
 
+struct ProjectSpendSnapshot: Sendable, Equatable {
+    let verifiedEur: Double
+    let isComplete: Bool
+    let activeReservationCount: Int
+    let unpricedTransactionCount: Int
+    let legacyGenerationCount: Int
+}
+
 @MainActor
 enum GenerationBudgetGuard {
     typealias QuoteLoader = @MainActor (
@@ -22,14 +30,29 @@ enum GenerationBudgetGuard {
         input: GenerationPricingInput,
         target: ResolvedGenerationTarget,
         editor: EditorViewModel,
+        approvedPackage: GenerationPackageV1? = nil,
         quoteLoader: QuoteLoader = LiveGenerationPricing.quote
     ) async throws -> GenerationAuthorization {
+        if let approvedPackage {
+            try approvedPackage.validate()
+            guard approvedPackage.payload.target == target, approvedPackage.payload.outputCount == input.outputCount else {
+                throw GenerationBudgetError.blocked("The priced request differs from its generation package.")
+            }
+        }
         guard let workingRoot = editor.workingRoot else {
             if editor.projectURL != nil {
                 throw GenerationBudgetError.blocked(
                     "Budget stop could not access the live project working copy. "
                     + "Restore or reopen the project before generating."
                 )
+            }
+            if let ceiling = approvedPackage?.payload.estimate {
+                let current = try await quoteLoader(target, input)
+                try validate(current)
+                guard current.eurAmount <= ceiling.eurAmount else {
+                    throw GenerationBudgetError.blocked("The current price exceeds the reviewed estimate. Prepare and review the generation again.")
+                }
+                return GenerationAuthorization(transactionId: nil, target: target, estimate: current)
             }
             return GenerationAuthorization(transactionId: nil, target: target, estimate: nil)
         }
@@ -48,6 +71,12 @@ enum GenerationBudgetGuard {
         } catch {
             estimate = nil
             pricingFailure = error.localizedDescription
+        }
+
+        if let ceiling = approvedPackage?.payload.estimate {
+            guard let estimate, estimate.eurAmount <= ceiling.eurAmount else {
+                throw GenerationBudgetError.blocked("The current price is unavailable or exceeds the reviewed estimate. Prepare and review the generation again.")
+            }
         }
 
         guard editor.workingRoot?.standardizedFileURL == workingRoot.standardizedFileURL else {
@@ -166,6 +195,29 @@ enum GenerationBudgetGuard {
         generatedAssets: [MediaAsset],
         requireCompleteMoney: Bool
     ) throws -> Double {
+        let snapshot = try spendSnapshot(
+            log: log,
+            generatedInputs: generatedAssets.compactMap(\.generationInput)
+        )
+        if requireCompleteMoney, snapshot.legacyGenerationCount > 0 {
+            throw GenerationBudgetError.blocked(
+                "Budget stop: existing generation history has no verified monetary ledger. "
+                    + "No provider request was sent."
+            )
+        }
+        if requireCompleteMoney, snapshot.unpricedTransactionCount > 0 {
+            throw GenerationBudgetError.blocked(
+                "Budget stop: project spend contains an unpriced provider request. "
+                    + "No provider request was sent."
+            )
+        }
+        return snapshot.verifiedEur
+    }
+
+    nonisolated static func spendSnapshot(
+        log: GenerationLog,
+        generatedInputs: [GenerationInput]
+    ) throws -> ProjectSpendSnapshot {
         guard (1...2).contains(log.version) else {
             throw corrupt("generation-log.json uses unsupported version \(log.version)")
         }
@@ -198,39 +250,28 @@ enum GenerationBudgetGuard {
             }
         }
 
-        if requireCompleteMoney {
-            if log.entries.contains(where: { $0.spendTransactionId == nil }) {
-                throw GenerationBudgetError.blocked(
-                    "Budget stop: existing generation history has no verified monetary ledger. "
-                    + "No provider request was sent."
-                )
-            }
-            if generatedAssets.contains(where: {
-                $0.generationInput != nil && $0.generationInput?.spendTransactionId == nil
-            }) {
-                throw GenerationBudgetError.blocked(
-                    "Budget stop: generated project media predates the verified monetary ledger. "
-                    + "No provider request was sent."
-                )
-            }
-        }
-
         for entry in log.entries {
             guard let transactionId = entry.spendTransactionId else { continue }
             guard let state = states[transactionId], state.kind != .released else {
                 throw corrupt("activity entry \(entry.id) has no active spend transaction")
             }
         }
+        for input in generatedInputs {
+            guard let transactionId = input.spendTransactionId else { continue }
+            guard let state = states[transactionId], state.kind != .released else {
+                throw corrupt("generated media has no active spend transaction")
+            }
+        }
 
         var total = 0.0
+        var unpricedTransactionCount = 0
+        var activeReservationCount = 0
         for state in states.values where state.kind != .released {
+            if state.kind != .charged {
+                activeReservationCount += 1
+            }
             guard let money = state.effectiveMoney else {
-                if requireCompleteMoney {
-                    throw GenerationBudgetError.blocked(
-                        "Budget stop: project spend contains an unpriced provider request. "
-                        + "No provider request was sent."
-                    )
-                }
+                unpricedTransactionCount += 1
                 continue
             }
             total += money.eurAmount
@@ -238,7 +279,28 @@ enum GenerationBudgetGuard {
         guard total.isFinite, total >= 0 else {
             throw corrupt("project spend total is invalid")
         }
-        return total
+        let legacyTransactionIDs = Set(
+            log.entries.compactMap { entry in
+                entry.spendTransactionId == nil ? entry.id : nil
+            }
+        )
+        let legacyAssetIDs = Set(
+            generatedInputs.enumerated().compactMap { index, input in
+                input.spendTransactionId == nil ? "asset:\(index)" : nil
+            }
+        )
+        let legacyGenerationCount = max(
+            legacyTransactionIDs.count,
+            legacyAssetIDs.count
+        )
+        return ProjectSpendSnapshot(
+            verifiedEur: total,
+            isComplete: unpricedTransactionCount == 0
+                && legacyGenerationCount == 0,
+            activeReservationCount: activeReservationCount,
+            unpricedTransactionCount: unpricedTransactionCount,
+            legacyGenerationCount: legacyGenerationCount
+        )
     }
 
     private static func budgetStop(in workingRoot: URL) throws -> Double? {
@@ -284,7 +346,7 @@ enum GenerationBudgetGuard {
         }
     }
 
-    private static func validate(_ money: GenerationMoney?) throws {
+    nonisolated private static func validate(_ money: GenerationMoney?) throws {
         guard let money else { return }
         guard money.nativeAmount.isFinite, money.nativeAmount >= 0,
               money.eurAmount.isFinite, money.eurAmount >= 0,

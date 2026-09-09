@@ -17,7 +17,7 @@
     },
     "contentMarkdown": "# ai-film-production\n\n![From clay blockout to final take — one continuous scene, one method](assets/hero.jpg)\n\n[![Download the latest skill (.skill)](https://img.shields.io/badge/download-latest%20skill%20(.skill)-2563eb?style=flat-square)](https://github.com/iret77/ai-film-production/releases/latest/download/ai-film-production.skill)\n\nA complete film-production methodology for Claude — 25 chapters of sourced, confidence-labeled craft that turn the model into your crew: DoP, editor, gaffer, script consultant, line producer. You stay the director. Built for a **Seedance 2.5 / Higgsfield Cinema Studio** stills-first pipeline, with a MiniMax H3 profile rebuilt on MiniMax's official prompt-writing guides and compact syntax profiles for Kling 3.0, Veo 3.1, and Grok Imagine.\n\n",
     "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
-    "runtimeStatus": "extracted-not-wired",
+    "runtimeStatus": "provenance-only",
     "localReferences": [],
     "contextDependencies": [
       "precedence.json",
@@ -44,7 +44,7 @@
     },
     "contentMarkdown": "## The problem\n\nAI video is easy to generate and hard to direct. The default way people prompt a video model looks like this:\n\n```\nEpic cinematic shot of a hero on a wooden ship in a violent storm,\nultra realistic, 8k, dramatic lighting, masterpiece, trending\n```\n\nWhat comes back: a drifting face, physics from a dream, a camera that does whatever it wants, quality words the model never reads — and after five rerolls, render budget spent on slop. There is room for something better. How about:\n\n```\nSCENE CONTEXT   Ilias crosses the storm deck toward the mast while the crew\n                hauls a torn sail. Night, mid-Aegean.\nACTIVE REFERENCES\n                @ilias — 30s, lean deckhand, soaked linen shirt, rope-scarred\n                hands. 100% matches the reference.\nCAMERA          Handheld at chest height, 3 m behind @ilias, matching his\n                pace at 5 km/h; no drift mid-segment.\nACTION          0-4s: @ilias grabs the rail, a wave bursts over the bow —\n                spray hits him a beat later, he flinches, keeps moving. …\nLIGHTING        Single practical: swinging deck lantern, 3200K, hard swings\n                of shadow with the ship's roll.\nPOSITIVE LOCKS  Lantern stays lit in every frame. The crew stays aft of the\n                mast. One continuous shot, no cuts.\n```\n\nSame model. The difference is method: every aspect has one home, everything is measurable, and the prompt is written in the logic the model was trained on — not in the logic of a human reader.\n\n",
     "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
-    "runtimeStatus": "extracted-not-wired",
+    "runtimeStatus": "provenance-only",
     "localReferences": [],
     "contextDependencies": [
       "precedence.json",
@@ -71,7 +71,7 @@
     },
     "contentMarkdown": "## How it works\n\nIt starts the moment you say \"plan my short film.\" The skill doesn't jump into prompts. It reads your genre's craft baseline, asks for the story before the style, and offers a dramaturgical container. Then it builds the way productions build: locations and cast as approved reference assets first, every shot as an approved still before any video — attached as a reference anchor, not as a start frame, unless a take must chain frame-exactly onto an existing clip — every prompt through a fixed seven-step checklist — canon, routing, references, writing, lint, delivery, review — and delivered under a Render Slate that names the platform, the surface, the model and mode, every input and where the result is stored. Platform facts are never invented: each slate carries a receipt that says whether the route was live-checked or taken from the skill's dated ledger. When a take comes back 90% right, it doesn't reroll; it repairs the 10% with the platform's edit modes. And everything that survives your approval becomes canon in a living production bible, so the next session picks up exactly where this one stopped.\n\nClaude just runs a film production.\n\n",
     "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
-    "runtimeStatus": "extracted-not-wired",
+    "runtimeStatus": "provenance-only",
     "localReferences": [],
     "contextDependencies": [
       "precedence.json",
@@ -98,7 +98,7 @@
     },
     "contentMarkdown": "## Quick start\n\n1. [Download the latest `ai-film-production.skill`](https://github.com/iret77/ai-film-production/releases/latest/download/ai-film-production.skill) — built automatically for every release. It's a zip with a custom suffix; macOS won't auto-extract it.\n2. Upload it in Claude's skill settings (the dialog takes `.skill` directly), or unzip into your agent's skills path (e.g. `~/.claude/skills/` for Claude Code).\n3. Talk to it like a director:\n\n> \"Break this logline into a treatment with a shot list: a lighthouse keeper finds a message that was never sent.\"\n> \"Make this scene AI-ready — can it even be generated?\"\n> \"The take is perfect except the camera. Fix it without touching the performance.\"\n\nThe skill triggers on its own whenever the production path is clearly generative video — treatments, scripts, shot lists, asset orders, Seedance/Veo/Kling/Higgsfield prompts.\n\n",
     "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
-    "runtimeStatus": "extracted-not-wired",
+    "runtimeStatus": "provenance-only",
     "localReferences": [],
     "contextDependencies": [
       "precedence.json",
@@ -125,7 +125,7 @@
     },
     "contentMarkdown": "## What's inside\n\n**25 chapters · 16 always-on rules · a 7-step per-prompt checklist · a Render Slate per prompt · 10 workflow runbooks incl. the storyboard-first production model · 13 genre baselines · 31 director recipes + 11 DoP signatures · 11 animation style vocabularies + footage/era/optics packages · 6 video models profiled · a platform ledger re-verified 2026-09-04.**\n\n- **Direction & craft** — model-independent film language (composition, editing, light, color, dramaturgy), director and DoP recipes with per-recipe verify gates, genre entry points, story structures from three-act to kishōtenketsu.\n- **Prompting method** — the block-structure prompt template with camera-third ordering and FOV-in-degrees discipline; how image models actually read prompts (position, scale, count, negation — with the research receipts); style enforcement that survives more than one shot.\n- **Production operations** — stills-first pipeline, the storyboard-first production model (eight gated stages: idea → bible + beat lint → storyboard with camera setup system and take/cut table → sheets → 3D blockout → location anchors → draft takes → production takes), asset and reference-pool build-out, renderability linting with green/red lists and rescue paths, coverage ladder, continuity ledger, a living production-bible convention for multi-session projects.\n- **Built to be executed, not just read** — v3.0 reworked the whole skill for weaker agents: one meaning per term (`references/glossary.md`), a precedence ladder for conflicting sources, a citation convention that makes every chapter reference unambiguous, fixed order of operations, slate rows with fixed labels, receipt states that forbid fabricated platform facts, a copy-ready worked example, and six review passes with a fixed take-verdict order.\n- **Platform knowledge** — Seedance 2.5 doctrine (50-reference control incl. clay-render staging — Blender-built or Seedance-generated — the edit suite, extension chains), Higgsfield Cinema Studio settings, the MiniMax H3 official schema (cut-point timestamps, six-section reference form, retention markers), compact profiles for Kling, Veo, and Grok, production rules distilled from Higgsfield's open-sourced feature films (headless sheets, one asset per state, speech-count lock, crowd scale in three layers, the negation third class), dated platform caveats, and a real-face moderation plan for licensed likenesses.\n\n",
     "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
-    "runtimeStatus": "extracted-not-wired",
+    "runtimeStatus": "provenance-only",
     "localReferences": [
       {
         "sourceName": "glossary.md",
@@ -159,7 +159,7 @@
     },
     "contentMarkdown": "## Why you'd use it — and why you wouldn't\n\n**Use it if** you want AI footage that doesn't look AI-generated: the whole method designs every shot around the failure classes of current video models — identity drift, physics errors, broken in-frame text, interaction errors — instead of fighting them in post. And if you burn money on rerolls: the checklist, the lint passes, and the repair-before-reroll rule exist because every skipped step has already cost real render budget.\n\n**Skip it if** you want a one-click text-to-video toy — this is a methodology that expects a director's decisions, and it will ask for them. Skip it if your pipeline is built on a stack it doesn't cover deeply (it's Seedance/Higgsfield-first; MiniMax H3 gets a full official-schema profile, Kling, Veo, and Grok compact profiles, everything else principles only). And know that model facts age in weeks: version-volatile claims are marked as such and should be re-verified against the live platforms before a production run.\n\n",
     "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
-    "runtimeStatus": "extracted-not-wired",
+    "runtimeStatus": "provenance-only",
     "localReferences": [],
     "contextDependencies": [
       "precedence.json",
@@ -186,7 +186,7 @@
     },
     "contentMarkdown": "## Where the rules come from\n\nNo rule ships without a label: 🟢 verified across sources / official / production-proven · 🟡 plausible but single-source or untested · 🔴 marketing claim — test yourself. Source tags ([H-off], [BD-off], [MM-off], [F], [P1–P50] — itemized in `references/sources.md` —, [PP], [W], …) trace every rule to its origin — official platform docs and prompt-writing guides, the vendor's own open-sourced feature-film breakdowns, practitioner protocols, deep-research passes over papers and benchmarks, and first-party production sessions whose lessons flow back here as generalized rules. Where sources conflict, the conflict is documented with ⚠️ instead of silently resolved.\n\n",
     "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
-    "runtimeStatus": "extracted-not-wired",
+    "runtimeStatus": "provenance-only",
     "localReferences": [
       {
         "sourceName": "sources.md",
@@ -220,7 +220,7 @@
     },
     "contentMarkdown": "## Philosophy\n\n- **Stills-first** — the look is won in the image; video only secures it.\n- **Canon before invention** — every beat is read from the script, never guessed into a prompt.\n- **References over prose** — prose is for what happens; references are for what persists.\n- **Repair before reroll** — an approved take is edited, never re-diced.\n- **Ellipsis over simulation** — what the model can't render, the edit implies.\n\n",
     "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
-    "runtimeStatus": "extracted-not-wired",
+    "runtimeStatus": "provenance-only",
     "localReferences": [],
     "contextDependencies": [
       "precedence.json",
@@ -247,7 +247,7 @@
     },
     "contentMarkdown": "## Structure\n\n<details>\n<summary>All 20 files at a glance</summary>\n\n| File | Role |\n|---|---|\n| `SKILL.md` | Entry point: citation convention, precedence, order of operations + task routing table, 16 inline always-rules, the mandatory per-prompt checklist, Render Slate contract with ID grammar, 5-step project workflow |\n| `references/genre-baselines.md` | 13 genre entry points (incl. Commercial/Ad): craft defaults, subgenres, recipe shortlists, per-genre skill filters |\n| `references/production-pipeline.md` | Ch. 1–11 + 16: pipeline principles, assets, QA, model choice, coverage ladder, interview production path (7b) |\n| `references/video-prompting.md` | Ch. 12 + 14 + 14b: THE block-structure prompt template, cross-model adaptation, sequence prompting, negation classes, Seedance 2.5 doctrine (reference-maximal control, edit suite, extension chains, large casts, montage ceiling, Dreamina-only surfaces) |\n| `references/platforms-models.md` | Ch. 13 + 21: archival Higgsfield Cinema Studio notes; MiniMax H3 profile on the official guides (three-field base form, six-section Ref2VA, camera vocabulary, dialogue tags); Kling/Veo/Grok compact profiles |\n| `references/platform-ui-workflows.md` | Current, source-linked UI/workflow reference and version ledger: which web/MCP/ChatGPT surface owns each selectable setting in Higgsfield, fal.ai, Runway, OpenArt, Arcads, and GPT Image 2; plus re-verification rules |\n| `references/post-audio-legal.md` | Ch. 17–20: post, audio/music/voices, continuity, legal & AI disclosure |\n| `references/style-control.md` | Style enforcement across image and video models, vocabularies, reference protocol |\n| `references/image-model-logic.md` | Ch. 24: how generators read prompts — writing contract, position/scale/count/negation recipes, mask strictness per platform |\n| `references/renderability.md` | Green/red lists, rescue paths, format matrix, model quick profiles |\n| `references/film-craft.md` | Model-independent film language: composition, camera, editing, light, color, timing, dramaturgy |\n| `references/director-recipes.md` | 31 director recipes + 11 DoP signatures; selection index, per-recipe Verify gates, harmony map |\n| `references/pixar-look.md` | Sourced Pixar look bible incl. figure-anchor rule, style-forcing method, and the hybrid previs-to-AI case study (wide-shot rescue, hidden faces, style donor) |\n| `references/production-bible.md` | Ch. 22: living project-state document — template (incl. storyboard canon section B3b and take/cut columns on the shot board), session rules, platform mapping, ID grammar (Render ID tokens, instance chain, bootstrap) |\n| `references/story-structures.md` | Ch. 23: dramaturgical containers — intake gate, classic/alternative structures, series poles & online-native formats |\n| `references/workflows.md` | Ch. 25: ten runbooks for the typical production jobs — project start to session close, with interaction contract, lock gate and receipt states; W10 = the storyboard-first production model in eight gated stages |\n| `references/worked-example.md` | Compact end-to-end mini production: shot table, asset order, Render Slate + ch. 12 prompt, risk register, extension round, bible rows |\n| `references/glossary.md` | One meaning per term: shot/take/sequence, plates and sheets, the seven kinds of anchor, locks, channel/axis, camera setup / panel / take-cut table / state ladder, artefact names |\n| `references/sources.md` | Registry of practitioner and vendor-thread protocols P17–P50 plus the official MiniMax guides [MM-off] (date, URL, sponsorship flag) behind the source tags |\n| `LICENSE` | MIT |\n\n</details>\n\n",
     "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
-    "runtimeStatus": "extracted-not-wired",
+    "runtimeStatus": "provenance-only",
     "localReferences": [
       {
         "sourceName": "SKILL.md",
@@ -612,7 +612,7 @@
     },
     "contentMarkdown": "## Versioning\n\nv3.1.1-en (2026-09). Universal — contains nothing project- or person-specific. This repository is the source of truth for the skill; lessons from production flow back here via commits, and every release ships an upload-ready `.skill` package.\n\n",
     "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
-    "runtimeStatus": "extracted-not-wired",
+    "runtimeStatus": "provenance-only",
     "localReferences": [],
     "contextDependencies": [
       "precedence.json",
@@ -640,7 +640,7 @@
     },
     "contentMarkdown": "### Changelog\n\n- **v3.1.1-en (2026-09-07)** — version line directly under the SKILL.md title; no rule changes.\n- **v3.1-en (2026-09-07)** — W10 storyboard-first production model (eight gated stages with deliverable, gate and reads; camera setup system, take/cut table, state ladder, layout map; blockout trigger rule; draft-tier test takes; production-take edit route as a documented exception); STORYBOARD deliverable shape + export schema (production-pipeline ch. 2); bible section B3b + shot-board columns Internal TC / Cut type / Continuity lock / State; glossary terms; FilmFlow Pro planning ledger key `FILMFLOW-WEB@2026-09-07`; the rules W10 relies on were unified into their canonical chapters (build-order rule with three cases in ch. 1, anchor standard ch. 3, light openings and scale relations ch. 4, position lock ch. 6, blockout trigger rule ch. 8, two storyboard roles ch. 9, production-take exception W3 step 6, four new renderability §2 rows) and W10 only cites them.\n- **v3.0-en (2026-09-05)** — executability rework for weaker models (89 review findings), platform ledger re-verified 2026-09-04, glossary and ID grammar as reference files, trigger eval 19/20.\n\n",
     "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
-    "runtimeStatus": "extracted-not-wired",
+    "runtimeStatus": "provenance-only",
     "localReferences": [
       {
         "sourceName": "SKILL.md",
@@ -685,7 +685,7 @@
     },
     "contentMarkdown": "## License\n\n[MIT](LICENSE).\n",
     "selectionUnit": "complete-section-with-ancestors-and-applicable-overrides",
-    "runtimeStatus": "extracted-not-wired",
+    "runtimeStatus": "provenance-only",
     "localReferences": [],
     "contextDependencies": [
       "precedence.json",

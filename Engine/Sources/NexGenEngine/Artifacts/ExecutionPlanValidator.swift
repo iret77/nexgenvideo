@@ -1,6 +1,6 @@
 import Foundation
 
-public enum ExecutionPlanValidationError: Error, Sendable, Equatable {
+public enum ExecutionPlanValidationError: Error, Sendable, Equatable, LocalizedError {
     case unsupportedSchema(String)
     case emptyField(String)
     case invalidSHA256(path: String)
@@ -21,6 +21,51 @@ public enum ExecutionPlanValidationError: Error, Sendable, Equatable {
     case forbiddenOutputReference(String)
     case invalidExtensionSchema(String)
     case invalidLegacyProjection
+
+    public var errorDescription: String? {
+        switch self {
+        case .unsupportedSchema(let schema):
+            "Unsupported execution-plan schema: \(schema)."
+        case .emptyField(let field):
+            "The execution plan field '\(field)' is empty."
+        case .invalidSHA256(let path):
+            "The execution-plan reference for '\(path)' has an invalid SHA-256 digest."
+        case .duplicateID(let id):
+            "The execution plan contains the duplicate identifier '\(id)'."
+        case .emptyCollection(let field):
+            "The execution plan collection '\(field)' is empty."
+        case .planIncomplete(let reasons):
+            "The execution plan is incomplete: \(reasons.joined(separator: "; "))."
+        case .invalidSourceBinding(let shotID):
+            "Shot '\(shotID)' has an invalid source binding."
+        case .invalidGenerationRequirement(let shotID):
+            "Shot '\(shotID)' has an invalid generation requirement."
+        case .invalidDuration(let shotID):
+            "Shot '\(shotID)' has an invalid requested duration."
+        case .invalidNumber(let shotID, let field):
+            "Shot '\(shotID)' has an invalid numeric value for '\(field)'."
+        case .invalidTimedBeat(let shotID):
+            "Shot '\(shotID)' has invalid timed action beats."
+        case .missingRescue(let shotID):
+            "Shot '\(shotID)' requires a rescue plan."
+        case .unknownMediaReference(let shotID, let assetID):
+            "Shot '\(shotID)' refers to unknown media '\(assetID)'."
+        case .invalidCreativeContextReference:
+            "The execution plan has an invalid creative-context reference."
+        case .projectMismatch(let plan, let context):
+            "The execution-plan project '\(plan)' does not match creative context '\(context)'."
+        case .extensionReferenceMismatch:
+            "The execution plan does not exactly match its extension references."
+        case .invalidReferencePath(let path):
+            "The execution plan contains an invalid reference path: '\(path)'."
+        case .forbiddenOutputReference(let path):
+            "The execution plan cannot use its own output as an input: '\(path)'."
+        case .invalidExtensionSchema(let schema):
+            "The execution plan contains an invalid extension schema: '\(schema)'."
+        case .invalidLegacyProjection:
+            "The legacy execution-plan projection is invalid."
+        }
+    }
 }
 
 public enum ExecutionPlanValidator {
@@ -483,7 +528,13 @@ public enum ExecutionPlanValidator {
     private static func validateExtensionPath(_ path: String) throws {
         try validateReferencePath(path)
         let prefix = PipelineLayout.executionExtensionsDir + "/"
-        guard path.hasPrefix(prefix), path.count > prefix.count else {
+        let hostOwnedExtensions = Set([
+            StoryCausalityPlanV1.relativePath,
+            StoryboardCausalityV1.relativePath,
+            ResolvedProductionStyleV1.relativePath,
+        ])
+        guard hostOwnedExtensions.contains(path)
+                || (path.hasPrefix(prefix) && path.count > prefix.count) else {
             throw ExecutionPlanValidationError.invalidReferencePath(path)
         }
     }

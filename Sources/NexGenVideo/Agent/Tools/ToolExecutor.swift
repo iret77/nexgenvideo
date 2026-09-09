@@ -14,6 +14,7 @@ final class ToolExecutor {
     private let editorProvider: () -> EditorViewModel?
     let providerActivation: () -> ProviderActivation
     let productionRouteCandidates: ProductionRouteCandidateProvider
+    let modelCatalog: ModelCatalog
     var editor: EditorViewModel? { editorProvider() }
 
     /// The hard gate refuses a phase's work tool until every earlier gate is approved. ON by default so
@@ -25,32 +26,37 @@ final class ToolExecutor {
         editor: EditorViewModel,
         enforceHardGates: Bool = true,
         providerActivation: @escaping () -> ProviderActivation = { ProviderActivation.current() },
-        productionRouteCandidates: @escaping ProductionRouteCandidateProvider = {
-            ModelCatalog.shared.productionRouteCandidates(activation: $0)
-        }
+        modelCatalog: ModelCatalog = .shared,
+        productionRouteCandidates: ProductionRouteCandidateProvider? = nil
     ) {
         self.editorProvider = { [weak editor] in editor }
         self.enforceHardGates = enforceHardGates
         self.providerActivation = providerActivation
-        self.productionRouteCandidates = productionRouteCandidates
+        self.modelCatalog = modelCatalog
+        self.productionRouteCandidates = productionRouteCandidates ?? {
+            modelCatalog.productionRouteCandidates(activation: $0)
+        }
     }
 
     init(
         editorProvider: @escaping () -> EditorViewModel?,
         enforceHardGates: Bool = true,
         providerActivation: @escaping () -> ProviderActivation = { ProviderActivation.current() },
-        productionRouteCandidates: @escaping ProductionRouteCandidateProvider = {
-            ModelCatalog.shared.productionRouteCandidates(activation: $0)
-        }
+        modelCatalog: ModelCatalog = .shared,
+        productionRouteCandidates: ProductionRouteCandidateProvider? = nil
     ) {
         self.editorProvider = editorProvider
         self.enforceHardGates = enforceHardGates
         self.providerActivation = providerActivation
-        self.productionRouteCandidates = productionRouteCandidates
+        self.modelCatalog = modelCatalog
+        self.productionRouteCandidates = productionRouteCandidates ?? {
+            modelCatalog.productionRouteCandidates(activation: $0)
+        }
     }
 
     private var agentUndoStack: [String] = []
     var feedbackState = FeedbackState()
+    let imageObservations = ImageObservationCache()
 
     func requirePhaseIdle(
         _ editor: EditorViewModel,
@@ -380,7 +386,8 @@ final class ToolExecutor {
         origin: ToolCallOrigin
     ) async throws -> ToolResult {
         switch tool {
-        case .getTimeline:   return try getTimeline(editor, args)
+        case .getProductionKnowledge: return try getProductionKnowledge(args)
+        case .getTimeline:   return try await getTimeline(editor, args)
         case .getMedia:      return try getMedia(editor)
         case .inspectMedia:  return try await inspectMedia(editor, args)
         case .getTranscript: return try await getTranscript(editor, args)
@@ -413,6 +420,10 @@ final class ToolExecutor {
         case .generateImage:
             await CatalogDiscovery.ensureCurrent()
             return try await generate(editor, args, type: .image, origin: origin)
+        case .prepareGenerationBatch:
+            return try await prepareGenerationBatch(editor, args, origin: origin)
+        case .getGenerationBatches:
+            return try await getGenerationBatches(editor, args)
         case .generateAudio:
             await CatalogDiscovery.ensureCurrent()
             return try await generateAudio(editor, args, origin: origin)

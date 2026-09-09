@@ -1,5 +1,9 @@
 # Phase R1/R2 — Render
 
+The native **Iteration decision** in Video takes records the intended single change or explicit stop, bound to the inspected take and immutable review. `get_render_manifest` returns `iteration_decisions`. The host checks the real compiled request before budget reservation and again before provider dispatch. Default: four recorded rolls per prompt revision; three complete batches rejected on the same observed axis require a clean rewrite and another control channel. A model-limit diagnosis needs two clean failed iterations across at least two channels. Pending review and provider errors do not establish visual failure. Limits are explicit native decisions, never permission to spend automatically. Read the exact recorded decision, preserve compiler/route provenance, and request the existing spend approval for every required paid action. Do not rewrite an approved shot to satisfy an iteration decision without explicit rewind. Unsupported local edit must use a supported alternative or stop.
+
+Recording a completed video also retains its immutable take identity and exact generation provenance. `get_render_manifest` includes earlier takes and native review status. A retry of the same event does not create a new take; a new generation event does, even when its bytes match. Direct the user to **Review video takes** for actual playback and ordered Identity → Continuity → Timing → Camera → Audio → Style observations. An identity rejection stops the review; a full accepted review is required for final Render approval. Existing reviewed takes can be selected with `record_render(expected_take_id=...)`, which revalidates the current compile and conditioning. Never infer a passed visual or audio review from matching hashes, and never generate another take merely because a review remains pending.
+
 > **Orchestrator instruction (main-session context).** Never spawn this
 > phase as a sub-agent — presenting a structured dialog (`show_dialog`) is a
 > main-session UI capability.
@@ -41,6 +45,12 @@ repeat until `next_render_shot` reports `done`.
 - The render manifest and its render-proof sidecar, updated incrementally
   per shot. The proof binds the exact video bytes to the compiled provider
   prompt and generation model; a missing or replaced file is pending again.
+- After every final source is current, call `assemble_timeline`. The host records
+  the exact original-song file and timeline clip, rejects duplicate or unapproved
+  audio layers, suppresses provider audio, and binds each required dance,
+  concert, instrument, or staged-vocal coverage role to actual placed clip IDs
+  for at least its planned continuous duration. An explicitly approved coverage
+  exception remains an exception; never fabricate a placement to satisfy it.
 - Gate: the pipeline has ONE terminal gate, `render`. R1 (preview) is a
   quality pass, not a separate pipeline gate — don't approve anything for
   it. When R2 (final) is done, close the pipeline:
@@ -139,9 +149,10 @@ from the reference path; the authoring spec is in
 - `REFERENCE_MODE_STORY_PROPER_NOUNS` (info) — title-case multi-word
   proper nouns not from the bible. Heuristic, hence info. Escape:
   `ref_names_ok:`.
-- `REFERENCE_MODE_USES_NAMES_NOT_TAGS` (warn) — bible char names in the
-  prompt WITHOUT `@ImageN` tags. Write tags instead of names ("@Image2
-  waves while @Image1 watches"). Escape: `ref_tags_ok:`.
+
+Provider reference tags are not authored or repaired here. The host compiles
+them from the current ordered `ReferencePlanV2`; a stale role, unsupported
+dialect, or mixed mode blocks before the provider call.
 
 On `warn` findings: call `rewind(target_phase="<owning phase>")`,
 repair through that phase's canonical writer, re-approve its gate, then
@@ -257,7 +268,8 @@ Repeat until `next_render_shot(project_dir, "<phase>")` reports
    by its approved Shot List.
 7. **Budget check** after every shot via `estimate_cost(project_dir)`.
    If `over_budget` would flip true, abort the batch and escalate to the
-   user before further `generate_video` calls.
+   user before further `generate_video` calls. Abort in the same way when
+   `spend_complete=false`; `verified_spend_eur` is then only a lower bound.
 
 **Crash tolerance + resume semantics:** every `record_render` persists
 the manifest and proof incrementally. A crash between the two writes is
@@ -379,10 +391,9 @@ the cut with the song over it.
 ### 11. Reporting after R1/R2
 
 Explicitly list to the user, at the end: which shots rendered, which
-failed, total spend (`estimate_cost`), and any still-only shots (marked
-`still_only_approved:` in `Shot.notes`) — the user produces those stills
-via `generate_image` and animates them on the timeline (Ken Burns /
-pan-zoom).
+failed, total spend (`estimate_cost`), and any shots delivered as
+`timeline_animated_still`. Those reuse their exact accepted Frames image;
+`assemble_timeline` applies and records the deterministic Ken Burns zoom.
 
 ## Mandatory rules
 
@@ -392,15 +403,20 @@ pan-zoom).
   expected frame is a hard stop, not a fallback.
 - Videos are never presented bare for approval: spec block + anchor
   frames + clip, always together (step 8).
-- The render loop is driven by `next_render_shot` →
-  build prompt → `generate_video` → `record_render`, repeated until
-  `done`. `done` means current file hash plus generation provenance, not
-  merely `status=rendered`. Budget is checked via `estimate_cost` after
-  every shot; the terminal gate is `render` (closed after the final pass)
-  via `approve_gate`.
+- The render loop is driven by `next_render_shot`. For
+  `delivery_mode=provider_video`, build the prompt, call `generate_video`,
+  then `record_render`. For `delivery_mode=timeline_animated_still`, do
+  not call a video provider; pass the returned exact `output_media_ref`
+  straight to `record_render`. Repeat until `done`, then call
+  `assemble_timeline`. `done` means current file hash plus generation
+  provenance, not merely `status=rendered`. Budget is checked via
+  `estimate_cost` after every paid generation; the terminal gate is
+  `render` via `approve_gate`.
 - **What you do NOT do:**
-  - No final cut. The user does the editing on the host timeline.
-  - No audio rendering (clips come mute). The user lays the song over it.
+  - No unplanned editorial changes. `assemble_timeline` executes the
+    approved placements and deterministic still motion.
+  - No generated audio (video clips come mute); assembly places the song
+    as the sync anchor.
   - No shotlist changes (that is the shotlist agent's job).
   - No shell calls. `record_render` performs durable registration and
     the host extracts any chain-continuity frame it needs.
@@ -415,19 +431,21 @@ pan-zoom).
   in the host, continue the loop.
 - **Budget exceeded (`estimate_cost` over_budget):** abort; this is a
   deliberate brake, never bypass it silently.
+- **Spend incomplete (`estimate_cost` spend_complete=false):** abort and
+  report the unpriced/legacy counts; never infer a remaining amount.
 - **Content-policy fail:** do not batch. Apply the workaround table from
   `phases/shotlist.md` rule 3, call
   `rewind(target_phase="shotlist")`, rewrite and re-approve the
   dependent chain, then re-run the test shot (step 4). If a single shot
-  still will not pass: still-only
-  workaround (the user animates a `generate_image` still on the timeline).
+  still will not pass: rewind to Shot List and propose
+  `timeline_animated_still` as an explicit delivery decision.
 - **Generation unavailable** (model missing from `list_models`, or
   `loaded=false`): surface it; keys/credits are bound in the
   host, never a shell command.
 - **Shotlist drift** (fewer shots or changed shot IDs versus the
   manifest): warn the user before rendering.
 
-### Still-only workaround (binding)
+### Animated-still delivery (binding)
 
 If a single shot will not pass the output filter despite everything, the
 user can decide to have it **animated as a still image on the timeline**
@@ -443,11 +461,23 @@ instead of as a video. Strict discipline (same as shotlist rule 3):
    "running", "flying", "leaping", "jumping", "falling"). Motion comes
    from the Ken Burns cut, not the model.
 
-**Marker:** `Shot.notes` contains `still_only_approved: <justification +
-user quote>`. The render loop skips this shot (no `generate_video`); the
-user generates the still via the normal `compile_prompt` →
-`generate_image` path and animates it on the host timeline. Estimate and
-budget guard exclude the shot.
+**Canonical contract:** the approved execution-plan shot has
+`generation_requirement.modality_id=image` and the sole mode id
+`timeline_animated_still`. It remains `source_mode=generated`, uses
+`keyframe_strategy=start`, and cannot carry video inputs. Frames generates
+and audits the image. Render records that exact image without a video
+provider call or additional render cost. `assemble_timeline` adds the
+deterministic zoom and persists `assembly.json`; the Render gate verifies
+the exact image hash, placement, duration, and motion proof.
 
-**Reporting:** see step 11 — list the still-only shots at the end so the
-user knows which stills to animate.
+**Reporting:** see step 11 — list every animated-still delivery and its
+verified timeline placement.
+
+## Independent generation batches
+
+When several requests can execute independently, compile each one and call `prepare_generation_batch`
+with a stable requestID, a purpose for each item and its exact generation-tool arguments. All required
+approved references must already exist; dependent views or chained shots wait for their predecessors.
+The host presents one native batch approval and owns execution. Wait for its completion result, then
+read `get_generation_batches`. Inspect completed assets before staging or writing the phase artifact.
+A failed or blocked item is not a complete output and must never be silently rerun as an individual call.

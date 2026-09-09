@@ -15,7 +15,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/README.md#L1",
       "sha256": "f647b4c133a190c94feb639b0ed10e226337c333d58f2f492bb4352562a7faa8"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "provenance-only"
   },
   {
     "id": "readme-3a81446b4f64",
@@ -34,7 +34,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/README.md#L9",
       "sha256": "d409d979c021cf81a44ae4c92c2f89c9348aade5d71d4e017ae224c305a22414"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "provenance-only"
   },
   {
     "id": "readme-f0379e57e094",
@@ -53,7 +53,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/README.md#L38",
       "sha256": "86a6285dfb10e1598947bb81c458a623d903f160f42f0e67859a1e5d0f787a79"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "provenance-only"
   },
   {
     "id": "readme-069a79a5ab3d",
@@ -72,7 +72,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/README.md#L44",
       "sha256": "54dce4bb3f2ccd493c2c0528195881781ed427036eb04e32c30937a28ac68561"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "provenance-only"
   },
   {
     "id": "readme-14533f67587a",
@@ -91,7 +91,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/README.md#L56",
       "sha256": "23a7ef180f1925bdcdaac7914ff7a9e3b8752fe3da387882db3f51e13350ece9"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "provenance-only"
   },
   {
     "id": "readme-bad66faf92e5",
@@ -110,7 +110,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/README.md#L66",
       "sha256": "04a8be1e82e97cdea69e7fa3fea82daa430391f7ca191e558ed319278a0848ea"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "provenance-only"
   },
   {
     "id": "readme-47d75f7205f2",
@@ -129,7 +129,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/README.md#L72",
       "sha256": "be4d3ab7a743004533c5fb235d7a2ed84b7c60077ceb11c431ccecf80e89b6dc"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "provenance-only"
   },
   {
     "id": "readme-ae47b92afe70",
@@ -148,7 +148,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/README.md#L76",
       "sha256": "7ed888b9755abeacec02bbd36ec38c9a1f6093bf867cc3d2bd41ffaff4a4cf12"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "provenance-only"
   },
   {
     "id": "readme-a992d075c47d",
@@ -167,7 +167,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/README.md#L84",
       "sha256": "9f0f37aa964356bc0938613b7112eca05228fd62776a422c312a1a36753c8426"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "provenance-only"
   },
   {
     "id": "readme-b9ebf627db34",
@@ -186,7 +186,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/README.md#L114",
       "sha256": "29e6560a32519b73355b991132b042e6e8c87adedf2c3acd9e76d700c39c94dc"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "provenance-only"
   },
   {
     "id": "readme-09c5d7d8a535",
@@ -206,7 +206,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/README.md#L118",
       "sha256": "50b276eec609c1f04cee84e97750503851cecd1ed0b959ce9c8e19e51e5c4489"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "provenance-only"
   },
   {
     "id": "readme-e04770fdc3ef",
@@ -225,7 +225,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/README.md#L124",
       "sha256": "1764ba80c67fd13215fdf6e2a79f9d02b624539c9e38ac9f234ee126c5e304e8"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "provenance-only"
   },
   {
     "id": "skill-9fc6d6e46c26",
@@ -241,7 +241,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/SKILL.md#L1",
       "sha256": "857618ecd10c811bc24a83bdc5e5aa71f674c1ce1151b9dfedb587a00a5cd9b2"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "skill-dceff66d0b82",
@@ -259,7 +259,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/SKILL.md#L7",
       "sha256": "2131bf81671bc8048479b3b73e6ca83c711c1f8c8215c6ef9cd82f8358d26636"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "skill-97ff9b201107",
@@ -278,7 +278,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/SKILL.md#L25",
       "sha256": "6b44561d60562b7a19794aa35b0ebdadb3b508dfc1cb0c64cb314c57c0542495"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "skill-c1c24ea6da18",
@@ -297,7 +297,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/SKILL.md#L29",
       "sha256": "5c8c0800cab8f86dec985a07610971737d6c9b2d31a171269e62e6d0caf0407e"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "skill-705399a08ca6",
@@ -316,7 +316,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/SKILL.md#L33",
       "sha256": "d745bd202d292a7800e52ac55f86dd1f7745eb7a67125984c178c53035889eb6"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "skill-05a8c920538c",
@@ -335,7 +335,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/SKILL.md#L44",
       "sha256": "a513216423bed39a85a2a96031ded5c645540fbafd1c61e39264f0f45d69f5b4"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "skill-f468f0c333ce",
@@ -354,7 +354,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/SKILL.md#L69",
       "sha256": "c86ba314f7919381373280d379566b99a71576bdfe9e8e9b2248f8b353ad68f1"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "skill-a9c8ddc59709",
@@ -373,7 +373,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/SKILL.md#L106",
       "sha256": "8dd4163f54f86ebf3ce670a093dbc13f317685263574252c99b5227c30865b93"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "skill-cffc1e447b50",
@@ -392,7 +392,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/SKILL.md#L123",
       "sha256": "04fe2b6a886140852944050414236b3f82cf1f75305a33759d57d1a176703315"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "skill-11d6f150df4d",
@@ -411,7 +411,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/SKILL.md#L144",
       "sha256": "0e98cce29d5ad7bb73f6f91931696b10b830551202037ddcc1ea026f2cc45cab"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "skill-2e42f043c413",
@@ -430,7 +430,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/SKILL.md#L156",
       "sha256": "0998f4f4bca78b4f0e6d062f0fd85b116ea6acf5e996f3cc15dda1bedf8af390"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "skill-da7177bac7a7",
@@ -449,7 +449,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/SKILL.md#L177",
       "sha256": "339595a934956ed8bc5171a8ee3cf85d27fa138666b933e6e75a7736c9937134"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "director-recipes-ead52cc58afb",
@@ -467,7 +467,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/director-recipes.md#L1",
       "sha256": "026d914dddc10c8073f040b7536c3278ef87f856c96f4925368c1e0c18714448"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "director-recipes-056ac0ea6c03",
@@ -486,7 +486,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/director-recipes.md#L7",
       "sha256": "34886aeefde6f5c6146bbfe5dc1143a72b4f68a79f09c400ad7fb8535f7623a9"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "director-recipes-ed7e5494d54b",
@@ -505,7 +505,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/director-recipes.md#L134",
       "sha256": "eb3f6fb2f4a4af4e639a15d7b2925aeaed248b39ebf7b540301804c689960dcb"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "director-recipes-17cfc8bdffd7",
@@ -524,7 +524,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/director-recipes.md#L151",
       "sha256": "5602924262b65ce6dbdc098d59750bbb7f9bc37359be1f19c5b24f2ed61f8d67"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "film-craft-2248687307ab",
@@ -542,7 +542,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/film-craft.md#L1",
       "sha256": "9104a59c4230b5b08c14d9b63dbd0dce0a6cfe57cbe9c92a94e15ebb9bb78e27"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "film-craft-570fba3d71dd",
@@ -561,7 +561,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/film-craft.md#L5",
       "sha256": "788c1ad6d573ef8d4d80e983135eb26deda5178e25d0633bd6df9e2122d60661"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "film-craft-67a9384f75ea",
@@ -580,7 +580,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/film-craft.md#L8",
       "sha256": "8a41178c380a35f6c414cf2815adf29edee66d2c2181ec735db58de63ff897ba"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "film-craft-b70a3b38e137",
@@ -599,7 +599,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/film-craft.md#L23",
       "sha256": "715e08968706baed91c1121dd0669036d485c626bcf86d1a95faed6d15285a76"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "film-craft-53cc6a016d88",
@@ -618,7 +618,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/film-craft.md#L40",
       "sha256": "8b9898e6dd02fbd9896c4ed3d6b9bcafaf2222f4fceee09c15a953acdee2a70f"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "film-craft-250a592981e5",
@@ -637,7 +637,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/film-craft.md#L58",
       "sha256": "f2924dd8009318183ef83aae4785612e705e460e5b452e69e26f0d731f6a2744"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "film-craft-08c1a1b2c538",
@@ -656,7 +656,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/film-craft.md#L65",
       "sha256": "4711d2fb42dc93ca4abf06217cbbf6bd799d0ab8040616032fb437bd281c9cce"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "film-craft-3467e7856eaf",
@@ -675,7 +675,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/film-craft.md#L71",
       "sha256": "084aa6d0f0199552163440f209dc84a228c7375c480b0e9b26219ca2ca0aeb1e"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "film-craft-9ebd24a43e12",
@@ -694,7 +694,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/film-craft.md#L76",
       "sha256": "9a902a05a8214854570cfee031b5c06e0c6254053593ac64ec82a4603bc77b55"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "film-craft-56d3d772fec2",
@@ -713,7 +713,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/film-craft.md#L83",
       "sha256": "17d195ae1b62aba39b037c33e6cbd02e53c7a829e29eee3632a919fdcbb960c9"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "genre-baselines-c56dc8097a52",
@@ -731,7 +731,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/genre-baselines.md#L1",
       "sha256": "918008fa90483b4da9c4509f6bc2ce296b1f93c95428fec84c78a1d574544e3a"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "genre-baselines-41eb04e85ab9",
@@ -750,7 +750,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/genre-baselines.md#L9",
       "sha256": "bb19e743552997d967c57073a8e57099139dc99e7b0c35060da5e18017dc572d"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "genre-baselines-388bc706ea77",
@@ -769,7 +769,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/genre-baselines.md#L12",
       "sha256": "4f6dae402fbe6e9de8f59544024f89da2cdfbd2bc1cb771b8ed1691a386041d9"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "genre-baselines-bf25776c9d83",
@@ -788,7 +788,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/genre-baselines.md#L15",
       "sha256": "35a6bfea0315d43d3974cb5b938cefc577ab96481c70769c6293f433d60ea666"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "genre-baselines-5cf688811c5e",
@@ -807,7 +807,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/genre-baselines.md#L18",
       "sha256": "a426b1cb73ef8e24ea9bec5ae39203d88d0dee91f70123ab6cba1ad4bcfdca57"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "genre-baselines-26a2df9e7d9a",
@@ -826,7 +826,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/genre-baselines.md#L21",
       "sha256": "47be8c7b2a37d6b0b1bc2badbaf18539a7b69a69faf3a86bbfa0ea0a44eb1341"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "genre-baselines-7c42d9ae1707",
@@ -845,7 +845,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/genre-baselines.md#L24",
       "sha256": "a9aa9f11b8ddadd892e8d9342e1d195ad8c14be35b19bd4da458414bd687bba2"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "genre-baselines-d3d8f306e5b2",
@@ -864,7 +864,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/genre-baselines.md#L27",
       "sha256": "52dedf03f690ed1ff4d2e82b05e52cddc7569d891fd379c2b8cb26855be06bc5"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "genre-baselines-37d395f687f6",
@@ -883,7 +883,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/genre-baselines.md#L30",
       "sha256": "fa5dc2bd27a505e88a00fb5ced25a98609d3d987ed35e350f603a62a96ea38c8"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "genre-baselines-e477db36b513",
@@ -902,7 +902,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/genre-baselines.md#L33",
       "sha256": "58901bd7f3448575f7a6574c34325161979217ce7c01ecbef0be2e751f43a3b2"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "genre-baselines-6dd720cce1ef",
@@ -921,7 +921,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/genre-baselines.md#L36",
       "sha256": "aae608d95eba07ba57a6a88f09ce3bd50480ada4878b75576188d6a5e9f86c4f"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "genre-baselines-5cabde8905e6",
@@ -940,7 +940,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/genre-baselines.md#L39",
       "sha256": "071639106e70c9657201f4d2477fa807398a1700447786f21bef0fe83c284db8"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "genre-baselines-fc0343dda7d2",
@@ -959,7 +959,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/genre-baselines.md#L42",
       "sha256": "10a4d9ca8da8e46f766eb52e5c51ac0a20a7558c94663c36d41cd4e572d1e655"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "genre-baselines-38db61f05ab2",
@@ -978,7 +978,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/genre-baselines.md#L45",
       "sha256": "a38a42aab9083fc0dab2bc78eb9fdb3d56a2c5e9f0b54e9ac77bee31739fc8f6"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "genre-baselines-aa2f4a1f1e43",
@@ -997,7 +997,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/genre-baselines.md#L50",
       "sha256": "5fc6c8e9ad413c36f730120fd75fcd904df4a92e9c3618f432eb3510d36f1b24"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "glossary-f7cde8a25df6",
@@ -1015,7 +1015,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/glossary.md#L1",
       "sha256": "988dd45dc630ed47b2be3a2fc9116415388e36d1d5e2bb42d958fe3226687e3d"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "image-model-logic-5799d83263ad",
@@ -1033,7 +1033,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/image-model-logic.md#L1",
       "sha256": "f932ae2a45d31348f197d5ef39e57fc4c42f5925899a1948438ef3b671114696"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "image-model-logic-22b73abae673",
@@ -1052,7 +1052,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/image-model-logic.md#L5",
       "sha256": "88760fc1930b48cc9010832c43e13e15d8f7bc68b984644273c62ffd240d9fc6"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "image-model-logic-41396add3783",
@@ -1071,7 +1071,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/image-model-logic.md#L19",
       "sha256": "464bfc312381839e71c82868158e2b70df2653f85a4901f7be8af1fa29e488ee"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "image-model-logic-abe5c3ee6575",
@@ -1090,7 +1090,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/image-model-logic.md#L31",
       "sha256": "0eb6b17ec5ec89c60bb3cf6f3025364f5d9a4fc51bcb1bdd160eb1ed61c1372c"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "image-model-logic-3eccf19c66e7",
@@ -1109,7 +1109,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/image-model-logic.md#L44",
       "sha256": "54cad5caa8109169a63eb4278a6b287d93324809524506b02824c6911dbd60a1"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "image-model-logic-22bf602239dc",
@@ -1128,7 +1128,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/image-model-logic.md#L55",
       "sha256": "a386345d38a032d8443cf3a0e52a0b7d2af47a1771c616d1ad4d5d5bb3091d9e"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "image-model-logic-df953370803e",
@@ -1147,7 +1147,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/image-model-logic.md#L62",
       "sha256": "91e482f09b7c150176f2799008d9b98ab16d88f9ffc72a5259b1cbe25545f85a"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "image-model-logic-9fca2f3509ec",
@@ -1166,7 +1166,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/image-model-logic.md#L77",
       "sha256": "b8454878be47ea42c8d23688ec5b81ef360e3926cd7d4ce7606934302925076d"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "image-model-logic-981739564d0a",
@@ -1185,7 +1185,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/image-model-logic.md#L92",
       "sha256": "18c7709ba4cda15d3602e3925e65679135d4ab3a94d698512b913f038387e193"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "pixar-look-e2bffc9f8b7c",
@@ -1203,7 +1203,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/pixar-look.md#L1",
       "sha256": "408f93b488f40dab49608cf9c864d634e90a17aabb80865193a063ce3ac5a3b8"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "pixar-look-6067d37adaa1",
@@ -1222,7 +1222,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/pixar-look.md#L5",
       "sha256": "0012ebb7a717845acb7604b5d5e118adbf31036b42c57f0b227e364713da0e7c"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "pixar-look-ffa1fc7ecbcc",
@@ -1241,7 +1241,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/pixar-look.md#L10",
       "sha256": "f92f4df7fff31cf74bdb6d1e96833a0bf659edca42a35ef683e532c0733e406f"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "pixar-look-8448fb177d42",
@@ -1260,7 +1260,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/pixar-look.md#L16",
       "sha256": "cd4e4bbc33604db87cff89280d4d4da5dde7e7639b248ab6b661c657939da634"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "pixar-look-67b9aafd568b",
@@ -1279,7 +1279,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/pixar-look.md#L21",
       "sha256": "c6e6ecca6ace695dda17e5c5868665e2be4a65b8553def78dd5e4690bbd6d882"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "pixar-look-79aef52eb72e",
@@ -1298,7 +1298,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/pixar-look.md#L27",
       "sha256": "4a6fd89a7861a9f832bd69b29056f99b53ff093c664fa9158717efc57349be67"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "pixar-look-eeafb6781cc6",
@@ -1317,7 +1317,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/pixar-look.md#L31",
       "sha256": "f01c7854380547350395bdac2a91565f88d49af877a5037ac5ee66e2d982c725"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "pixar-look-441de0d8a9d1",
@@ -1337,7 +1337,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/pixar-look.md#L32",
       "sha256": "fa0520c0c44a49829e8ed8902af88e18183961234687fd1757e3284700382787"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "pixar-look-f22e3f8ad2cd",
@@ -1357,7 +1357,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/pixar-look.md#L36",
       "sha256": "96558babdf7c3bb2a43abc851e672f61c377470bb847f522ebf45730f1129a12"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "pixar-look-266b78d1a40e",
@@ -1377,7 +1377,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/pixar-look.md#L40",
       "sha256": "12506bedba100e1c26b88f213410ad4a6da044df36c8f3d1ffd2ea00ea1ab517"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "pixar-look-1da5c9533bf3",
@@ -1396,7 +1396,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/pixar-look.md#L43",
       "sha256": "fc736d41e1c211cee94625dbcdb98ac19edbc2713927bc2125eb21d6ff7ccce2"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "pixar-look-68ec1764bb32",
@@ -1415,7 +1415,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/pixar-look.md#L52",
       "sha256": "54352ed44b32ca4637a22b779965241588fdfc8af09b0b33062a5f86563ab9c2"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "pixar-look-fdcec6b2c0f0",
@@ -1434,7 +1434,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/pixar-look.md#L58",
       "sha256": "0bfbb145f1680f64e050f2a19ed9d4365bdfedf1fcac2dad2c30827c9e834214"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "pixar-look-56847cb20874",
@@ -1453,7 +1453,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/pixar-look.md#L117",
       "sha256": "f4e2319ce2fd768a348d92a686d09d45627f12207910219faa0b1c92943d9474"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-6dc670fc3f91",
@@ -1471,7 +1471,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L1",
       "sha256": "2c5947b3a5c87d2b7944f5779efb726d9be68fe4221aac56b33146b7d3de8ece"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-3b8acc5f6415",
@@ -1490,7 +1490,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L8",
       "sha256": "7a5910ef9b81025d7beecbb590bed09eb817d3357823ea9d31073f03a1a0fd6d"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-7d54a0037e59",
@@ -1509,7 +1509,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L20",
       "sha256": "86dcabadf8564777a7d20a0b7c927f96984118999bffe8f930c77a9f5650749f"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-04c305aa5fa4",
@@ -1528,7 +1528,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L44",
       "sha256": "d0d2cfe67dce9490ef0a4fed344ec2f7e9530f9b76467c6429e01b0b9a348e6c"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-4c833d2eab54",
@@ -1548,7 +1548,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L57",
       "sha256": "fc723c90189b5bb4eb42e4e6acba29367a6aa31f02b4fd4f18c8db4c9df24e17"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-446046bb6ca5",
@@ -1567,7 +1567,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L73",
       "sha256": "4f51327ef110bcbdd2f869c1252c1f4091333fc32e526b2337a852e39f0ab772"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-63c227d438e9",
@@ -1587,7 +1587,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L94",
       "sha256": "1cbc6a3e9bb6097c6f8191fa9ce17f7d0eceffb8e9e19234137bba3916ebb617"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-1bbc05467732",
@@ -1606,7 +1606,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L109",
       "sha256": "efaaae5952e8c34602f52b7c3bb3febdafeed06e01e04f8e4688743c9c037720"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-a54da21dd877",
@@ -1626,7 +1626,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L115",
       "sha256": "3e2e3baef8238bec477654b053eadfa05d7835092b17b9becd317b3d5f289153"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-1800a14f8efb",
@@ -1646,7 +1646,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L126",
       "sha256": "76309016fe9a5de946deea7dbb2ccdcbfe369bb715a78db457fc4e1180721342"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-93d12ca52dd2",
@@ -1666,7 +1666,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L139",
       "sha256": "ba9d066ad5822cef6a6e1d88ac107758f565f1d887554700ec7d16a0d6b48de0"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-87281cdfb693",
@@ -1686,7 +1686,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L151",
       "sha256": "2db194d0e229d81371aced674cbeda23347cfc882fb61942d1d5addc28def2bb"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-ef1df540bb42",
@@ -1705,7 +1705,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L160",
       "sha256": "66557dc356615a909a0aabcaf35b95de2159bab9bdf2f26e44e56aac22d2c9c8"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-4cb5fa24727f",
@@ -1725,7 +1725,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L164",
       "sha256": "636ccb33581ef8b1ae32c1874f0555e3a7f2dbfad9117580aabac81b84a05381"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-d6cf98a9c992",
@@ -1745,7 +1745,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L176",
       "sha256": "058dbf64e3f6aad78693c7e312cc5bedbe7ebfe957dc3478a0fad42192ead94b"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-dffe420e1652",
@@ -1765,7 +1765,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L198",
       "sha256": "a435785f05aee07dade0b76f335b467787918d65ab05eeb518bb3c832ccfd5a1"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-071ec10c4b30",
@@ -1785,7 +1785,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L211",
       "sha256": "c76ac71637e1d01670853f285ad88c0c8d3012b500ef7beb2d301baab98f0bcf"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-7a41a20d840f",
@@ -1805,7 +1805,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L228",
       "sha256": "9f0326a23a18bbbfd1934759c05b36103c231ecfd9d4781a2c01c34785e931db"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-c25a75d5f8b0",
@@ -1825,7 +1825,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L238",
       "sha256": "41d0c7964b542f4d311e6aa4b4561e66c471c6ba21eb3c43c443f7f47bcb46e6"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-e065c23134cc",
@@ -1845,7 +1845,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L245",
       "sha256": "0e25585ec9127b7b8b5c8eb650914cb94f4843af0466855e6e8527122bffbf4d"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-2fc39d4c2fa2",
@@ -1864,7 +1864,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L254",
       "sha256": "fb61beef8f3ca9cf390a3136309753acfbfdaf43fcaf5653182bbc4273fd0bd5"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-55a52d3a83bb",
@@ -1884,7 +1884,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L258",
       "sha256": "a58c8639173469a0334e080f70d29a419f52dbd6b40e75237fcdf213a28dcaeb"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-afd48d04b60f",
@@ -1904,7 +1904,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L262",
       "sha256": "76e49ff53258159cd8d17b3746fe4f57756a85f541c8729d9132d0caa9495588"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-cfc45e4aa90b",
@@ -1924,7 +1924,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L274",
       "sha256": "2140a31fb3fdcc05280d2f3d651dfac5bdbe9b91b71d31c10e8e7102fae40fc5"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-f9e9c67e2b82",
@@ -1944,7 +1944,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L295",
       "sha256": "5b0337071ddf6cfdad5689a36112995ec20f39a68a4304c360699c4751e56ee5"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-2793dec3f603",
@@ -1964,7 +1964,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L304",
       "sha256": "56d5e2216b41e3993ee377a2534e06c531c4a950a250c0e8474c4afcc4be3114"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-6176107bac0a",
@@ -1984,7 +1984,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L316",
       "sha256": "010fd8a9921a79b822566b3253b725ef7caa066b1954dbe30bc8aad99fa9f6c9"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-e7ff5638cd65",
@@ -2004,7 +2004,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L326",
       "sha256": "a8cf1ca0db787f453b83049b3ec43fccf33362e193e6cd26af994b19e0f6ed93"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-0d16d75d5809",
@@ -2023,7 +2023,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L335",
       "sha256": "eb588096e47fb8116b76add420b17765bb51d082427665a341b85d9a31024534"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-904199cbdc1a",
@@ -2043,7 +2043,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L339",
       "sha256": "8af5cf8700ac11dac703ac1eca70c289d5fd548e493c34de20ea687aa9ec010d"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-4418f52deb3c",
@@ -2063,7 +2063,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L353",
       "sha256": "3ed96370f49556f5377bc85207f39dddc7699e074bc4bd92e02a04ee014dd7af"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-e9b2d1bc61c4",
@@ -2084,7 +2084,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L355",
       "sha256": "ab198b918a41882d2ad175945d2dbb1a91524ec6fc725f8c088dfb1e73b0544f"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-86a70ac78823",
@@ -2105,7 +2105,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L367",
       "sha256": "a9a0d240dcf2da2ead1343015c3be02f5f3910556cd0e42abaaf91c153517271"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-7a7a82672859",
@@ -2126,7 +2126,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L383",
       "sha256": "eae4bc7b1c220416e9bece1aee8810edc42a865fa3814bca543079d2967861b0"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-bb1c0df9af39",
@@ -2146,7 +2146,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L387",
       "sha256": "7990339adb9af32bfb5bcef199a09cbc3ad32893d436f07a14d29cc9d2c27a92"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-a2f90ea048dd",
@@ -2166,7 +2166,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L416",
       "sha256": "f17a80a0463027d77cdf2933c2beb9bccfac23f02cde8a4059316ac7211fae60"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-890d79b44fab",
@@ -2186,7 +2186,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L429",
       "sha256": "605262f612a65d30474e0ca2330a76d4ae9dc87ec55d5bc0d0ff8bc632a5ca90"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-9afe66081c3f",
@@ -2206,7 +2206,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L435",
       "sha256": "e5c4eb85974935a8ebfe175d3eb471dc17bf75f15cf9abb409eee67808eebc90"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-f4622546e4ea",
@@ -2226,7 +2226,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L440",
       "sha256": "37a6d4d86cc7ef3d3159436e7eda759a0735c816aa644aa00e27fd60081e1e68"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-0fcd03ac29bc",
@@ -2245,7 +2245,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L449",
       "sha256": "a286d8a465ea019a10164c3c0dfcce3c78c894d435cf4f6d79d24a8de5aa92f2"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-c80b9d082feb",
@@ -2265,7 +2265,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L453",
       "sha256": "15d317392d933f70a392fbf724624f82156b6e35bef0c26cad423e18495486cf"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-c58d776d3e35",
@@ -2285,7 +2285,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L464",
       "sha256": "c92ce44270bd198d8d98b613107195f7a2003d5aac3aa63593bcfc673b283bd9"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-58cb6bb8864b",
@@ -2305,7 +2305,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L475",
       "sha256": "d43576e0d0fed938a335bfbf77024145d9bccb3b9b7b69343bded7833b87202a"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-4976feb5aef0",
@@ -2326,7 +2326,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L483",
       "sha256": "5bc902018936c451d38ee016b41e4cf90e561931f45e43a7b2aeb9adc656b43e"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-85eec349cf69",
@@ -2347,7 +2347,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L501",
       "sha256": "22137fa633e66d729ca58e74d7b6b08688bc94989a53602816a682e53bd1292b"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-6692176f1743",
@@ -2367,7 +2367,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L508",
       "sha256": "f0f7b7004b1b50549e123f69e88eba245eda4c8eea989a8f064ed7f0c0e2d2f5"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-21265d567b98",
@@ -2387,7 +2387,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L520",
       "sha256": "6693c2f098301f02c747ff35c0570c4dddaae0f54eb3ee7426cbc56cc7963c50"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-4b6d0762ce25",
@@ -2407,7 +2407,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L530",
       "sha256": "48049fdf1bd3437c56b8e7aae136f92426b4fb1071f31279800c343dcd7d3203"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-2f26645f5b2d",
@@ -2427,7 +2427,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L536",
       "sha256": "50dda8137d5e409ba02db8157683a0499920508d101a7971ef9b5de256489e1d"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-03c0f524fd96",
@@ -2446,7 +2446,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L545",
       "sha256": "e69ffe343f7d043dfe71aa999393cb9ff8425564cf37f2a1f4ae6db2a730e847"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-cc6f1d24d639",
@@ -2466,7 +2466,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L549",
       "sha256": "de4656c489573c9ebf647722edda7d33643ded649907a1fa5901d2c8b7e8731f"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-47ed307fe438",
@@ -2486,7 +2486,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L563",
       "sha256": "ad00fce3465ce15fbef2f2357d964d9e1d044ac4bd17f8739bac9288343fbc55"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-e4f03834a023",
@@ -2506,7 +2506,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L574",
       "sha256": "f10f187fc238d4596bae34d99bfab9ce620d298a3cfb5c4f6e336676cac94a8d"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-1b8baeb4fe8e",
@@ -2526,7 +2526,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L582",
       "sha256": "b3f1abe9446899ed9d68217b380fea535628227cfea2b478fd07b80d5fabc001"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-dac737fb48cd",
@@ -2546,7 +2546,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L586",
       "sha256": "f6e15fca11044b8eba546dceb0da52e52de651ce65b9d719c60fc7d308c0e2b1"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-cc3e829c0f33",
@@ -2565,7 +2565,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L595",
       "sha256": "7a572a1a1cb94726e485f1952ba6e1ecafe49c5160636973938aed11fcec6fe5"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-e23bc75bdf23",
@@ -2585,7 +2585,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L599",
       "sha256": "01689a2c4ad2ba1eb1228e4f0542bcc8fbff72eb1198b13b553ab041ec3551be"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-2ed9b643b727",
@@ -2605,7 +2605,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L617",
       "sha256": "ac2795a63981d183c2defa36b1c5820423909df5ccda3bb9e1fe5404cd52ac7e"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-905b7b1a103b",
@@ -2625,7 +2625,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L628",
       "sha256": "a668c797d39114bfbfba52f888f07de4263c3b1ce0c284cdbde624ea284ec40d"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-ad5ae3bbf61d",
@@ -2644,7 +2644,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L640",
       "sha256": "2163075059e66062363d9234bf49e53481e7577b8b45b5c47eee8e4c577cb4db"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platform-ui-workflows-ba1359d74f17",
@@ -2663,7 +2663,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platform-ui-workflows.md#L657",
       "sha256": "9584f9c77f09d6030820a7b8e24bf021662cefaafc6582ac78daa3817149cdb9"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platforms-models-c159854e7bd9",
@@ -2681,7 +2681,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platforms-models.md#L1",
       "sha256": "be5129b59d4775f1815413c7cc7fe139fb6b92936db409fbd0a17608cbe1ccf4"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platforms-models-8ee6da64109f",
@@ -2700,7 +2700,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platforms-models.md#L6",
       "sha256": "44df89058d9439a091c7268d3207e6d40da58b8f7da32064bbce8f7f177b1139"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platforms-models-ac9faa3b5e53",
@@ -2719,7 +2719,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platforms-models.md#L15",
       "sha256": "4a6b6e43c338717ffbb2233712f3292a0adf33eebd1c8e3538174eb88818f83b"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platforms-models-eff59588bc73",
@@ -2739,7 +2739,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platforms-models.md#L21",
       "sha256": "ce7013b69424d373c224f6cd5a6d0ca4f21dc669536d6ab9b6457fcb49215ecd"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platforms-models-57a34d2b06e5",
@@ -2759,7 +2759,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platforms-models.md#L39",
       "sha256": "698d6b7efc84d0750c7f3cdfa656672a1c5a69da018efe60b96d19db0f5b9cc9"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platforms-models-f565be362c5d",
@@ -2778,7 +2778,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platforms-models.md#L46",
       "sha256": "2834ee5d6e370ac4691204201acf3db5e850762f7ca0085a9f5d24c762225da8"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platforms-models-a0954cd3380a",
@@ -2798,7 +2798,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platforms-models.md#L54",
       "sha256": "193c5cab31307f64f06143edcb6eff73409a70784fdd463f18bd0cefb549f77c"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platforms-models-11af2fa0ab95",
@@ -2817,7 +2817,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platforms-models.md#L64",
       "sha256": "2d62b5104bfb6ff1e43b599ba27d0d1ecdd1326b648d88881be3df89b8492221"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platforms-models-e2702c4d5d1c",
@@ -2837,7 +2837,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platforms-models.md#L69",
       "sha256": "f8dc9842aa2dbd9b120a3d009c23add50cf0570d8b3c02e6518d88822b303eac"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platforms-models-2ffba5575630",
@@ -2857,7 +2857,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platforms-models.md#L102",
       "sha256": "dead881f9b8428c25f8e6512a6c4d809e950395ad1121ed62956a0b61ca03267"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platforms-models-195226cac8fa",
@@ -2877,7 +2877,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platforms-models.md#L111",
       "sha256": "0b4cf47fbea100b0ecddf3b762ea1c616e9e5367be72242c712ef31f0319fef1"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "platforms-models-13d27380ec0e",
@@ -2897,7 +2897,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/platforms-models.md#L119",
       "sha256": "58374f5ac6c061fd87d328988fed1ec9f76a486f89079818b24187fe4fae29e1"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "post-audio-legal-5949409d78e1",
@@ -2915,7 +2915,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/post-audio-legal.md#L1",
       "sha256": "89236329efec8c0302cb855fb197ee3b1b014c56e6f637d8665edd916c0cb316"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "post-audio-legal-d966bfa722d1",
@@ -2934,7 +2934,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/post-audio-legal.md#L6",
       "sha256": "2a6c5cf93b9d6fa9f7ab0a0fcfad8210faf58aa1efcd2d5a85f2648e9bd828fd"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "post-audio-legal-9aca3116b4f9",
@@ -2953,7 +2953,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/post-audio-legal.md#L18",
       "sha256": "468e953eadc1bb54c9c0c0b91221633f7468da2ca94dcd0d9adc79959cd4f21e"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "post-audio-legal-fd0a7b340780",
@@ -2972,7 +2972,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/post-audio-legal.md#L32",
       "sha256": "b856b261fbd61c209ab7d41cb9a4bd46f4446df8a0e7ed8389625bf3201c9476"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "post-audio-legal-1c65925d87d5",
@@ -2991,7 +2991,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/post-audio-legal.md#L42",
       "sha256": "4e6a22ce7b0517e56aed6e634f874ae3e8d6dcbc8609afdc25f7a71590042b33"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "production-bible-c3cd847c925c",
@@ -3009,7 +3009,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/production-bible.md#L1",
       "sha256": "fc7cfd959e3960c2bb08dd4a419fc79f9cd6a67b59fb02f05e64d760acc266d5"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "production-bible-3072a82d206e",
@@ -3028,7 +3028,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/production-bible.md#L5",
       "sha256": "7645221713897283ee6dbdcb2fa29d1e60b615620afa441dec15fca6c4c98a16"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "production-bible-a27a5ed127e1",
@@ -3047,7 +3047,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/production-bible.md#L15",
       "sha256": "a851f59631e4ebf640ada69b7ff051105a09db141ff3af2ce6d0e95b7d26c2c0"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "production-bible-667997dee933",
@@ -3066,7 +3066,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/production-bible.md#L105",
       "sha256": "b0e13b32732af876f6430311a716847c812912584a15116f3d280239eb92b548"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "production-bible-82235e8038c5",
@@ -3085,7 +3085,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/production-bible.md#L115",
       "sha256": "a495af858e2172c087b1f6f2f7f59009cc00ad6db831ee32b88ad969849b5be6"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "production-bible-f5df78b14f2f",
@@ -3104,7 +3104,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/production-bible.md#L119",
       "sha256": "4a7891ac909f8678a088a3ad9ff6a728f6f1ff5ef0e29a0ea9fcd63f5351cfd6"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "production-pipeline-3e7423e91475",
@@ -3122,7 +3122,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/production-pipeline.md#L1",
       "sha256": "3e53abe887ffd7cf6ab604794d183136418c99cec5eb2edb2ee9bcca90bb7206"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "production-pipeline-fe8ae664fb1e",
@@ -3141,7 +3141,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/production-pipeline.md#L6",
       "sha256": "e01ed0bc21cb37aa8ed423f11c0333833b6facece3acdf1c92f17213543c8bea"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "production-pipeline-0fdca1da8970",
@@ -3160,7 +3160,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/production-pipeline.md#L19",
       "sha256": "b6e7bd48c044856da229a7aeba67e352e6c354335bd2af0b7e51a286657b53ef"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "production-pipeline-524c7d64a7f3",
@@ -3179,7 +3179,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/production-pipeline.md#L27",
       "sha256": "9a913c85c0efff659915301b14f80f937a66b2bbef25e192bdeb74b892191a37"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "production-pipeline-41c7b8294114",
@@ -3199,7 +3199,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/production-pipeline.md#L46",
       "sha256": "bf9c4d18622de837bf35e5f7ff43d9b14fff97e61674e6231c619bebd99941e2"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "production-pipeline-455241c73ce4",
@@ -3219,7 +3219,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/production-pipeline.md#L52",
       "sha256": "628859601bb3154720ad4810892c9fd0dfe922b1c3e4af3a42111e055c3bd4f6"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "production-pipeline-f7091f27c6d1",
@@ -3238,7 +3238,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/production-pipeline.md#L58",
       "sha256": "3c960c6e236114a359c63003365b20c58e7685cd4b5ec2e29f7fa4ade6253436"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "production-pipeline-668103488e98",
@@ -3257,7 +3257,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/production-pipeline.md#L67",
       "sha256": "efdea9a15940708e3a47ca98eac96e116ad7ad5948b28bba22ee03eac0f4e937"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "production-pipeline-d16d62c31ae0",
@@ -3277,7 +3277,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/production-pipeline.md#L81",
       "sha256": "011a6b452c3f2dd4c09972e02c5a3337ee44c20122d4a44dea71343ae095adc5"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "production-pipeline-d1f0cfe8e195",
@@ -3296,7 +3296,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/production-pipeline.md#L84",
       "sha256": "d9d5b50ff608e3a6d829877c2700d1fa4bb86826e7c686374e1cbeecbb28aebf"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "production-pipeline-3f320156d67f",
@@ -3315,7 +3315,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/production-pipeline.md#L91",
       "sha256": "9f9eadba4652e0de49d826b68ded75e65abd0cf5df9ba284381f2173456a1d2b"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "production-pipeline-a2fb95cff485",
@@ -3334,7 +3334,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/production-pipeline.md#L96",
       "sha256": "4bdb62f9959e65f21759ea2c11c5cf3b84a69ef78aac5d64b19098003f2ddff9"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "production-pipeline-446e57806ce5",
@@ -3353,7 +3353,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/production-pipeline.md#L110",
       "sha256": "2e741e9210b5367b253c3d17cebea71975162e39f29debe32cab2106e2b33032"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "production-pipeline-99e7beb6f331",
@@ -3372,7 +3372,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/production-pipeline.md#L127",
       "sha256": "a472ec64aca0e148adb90af87431ac829a2b37bdfa9ebbbc53b5c1572e884f5d"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "production-pipeline-1bb10d449ca5",
@@ -3391,7 +3391,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/production-pipeline.md#L135",
       "sha256": "979b5cd42143ff626b95a743fcd60c1b08e1c7f25412a2139b94d5e0e8e6965c"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "production-pipeline-b4b53fe52130",
@@ -3410,7 +3410,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/production-pipeline.md#L146",
       "sha256": "87af1c6db997c8b6f780134b1b1b767476da1c8dc55c529c13e2c87af002c84b"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "production-pipeline-9bf4e03af57e",
@@ -3429,7 +3429,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/production-pipeline.md#L149",
       "sha256": "4f81a6316784cc29d34eac3eb8201b93bd5db455f83ca94285d482bebfb2c03e"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "production-pipeline-f418e48ce02f",
@@ -3449,7 +3449,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/production-pipeline.md#L158",
       "sha256": "12056d2c36a72ba9faf537f28354106cbe8bf98bcfa4be872184c042e245e5e2"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "renderability-1b6016907c61",
@@ -3467,7 +3467,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/renderability.md#L1",
       "sha256": "94e0b91c66cdde61b3241c745a9bb28286ad10c844313721bb038bc5cb500b4f"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "renderability-d58da1655e55",
@@ -3486,7 +3486,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/renderability.md#L5",
       "sha256": "ee2d2ed58deefd5f996c8256b62fbb35c9064c6caa62606a9bfd4b629c5f06c4"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "renderability-111b29259b37",
@@ -3505,7 +3505,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/renderability.md#L8",
       "sha256": "e45218d0ed4a43d6930fa801df74fc9c287ce43d07930bd9cc7819530b178b32"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "renderability-0a1e0a4a4edc",
@@ -3524,7 +3524,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/renderability.md#L28",
       "sha256": "3f54b31f89e12a8e5b6ed00884a4d8f18b19f513ca5813b457cc252e4775553e"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "renderability-32075c011ed3",
@@ -3543,7 +3543,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/renderability.md#L39",
       "sha256": "818f65d002d1dce14e011107b2b68496e4697e33e66adfe720bcfddc5f40f50e"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "renderability-d07031e108b5",
@@ -3562,7 +3562,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/renderability.md#L49",
       "sha256": "becd17f4be9d8d249fdbe2e863eee39e31aabdfddb794da9e1ffd38bcee3c41a"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "renderability-28385106c00e",
@@ -3581,7 +3581,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/renderability.md#L52",
       "sha256": "aed13f4d2d499f63e354847e8decfe01d760dde6f7e35050e7da056aecb6ddef"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "renderability-4074c75ffcb1",
@@ -3600,7 +3600,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/renderability.md#L57",
       "sha256": "4444b05788ffb3a509e19ebebe7f990db5ef5c99f5318ea1117bff50a08f439a"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "sources-9de87ed0c000",
@@ -3618,7 +3618,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/sources.md#L1",
       "sha256": "d02893227474798cd6251b67c4f8468c9a294383b369b6638bf9f779db76e8cf"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "story-structures-7abc87b68e5a",
@@ -3636,7 +3636,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/story-structures.md#L1",
       "sha256": "04981afee973eb07b186a6a71afad5741b83aa84bbc501fa5a437edecdcd2149"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "story-structures-90eb64a2ea6a",
@@ -3655,7 +3655,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/story-structures.md#L5",
       "sha256": "57ede99ad0b965eee15db24aaaefd072c336e8c79a411fe5d2bcc4cb48f72dc7"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "story-structures-aa0a70987b00",
@@ -3674,7 +3674,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/story-structures.md#L11",
       "sha256": "0e97f4ccae02256e45419ff05ecfef14866a10869cf42debe5cc2bf81c39813d"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "story-structures-7b9e691860d5",
@@ -3693,7 +3693,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/story-structures.md#L19",
       "sha256": "66fc4ec7abd457f448964bca85536b5e84ea7eb11f9cd22f74655af0205bad26"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "story-structures-a2ef1752ee94",
@@ -3712,7 +3712,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/story-structures.md#L33",
       "sha256": "09bf7b4654d236fe64d463997fe39d1c237579dbf8d594e785148bc20fb5e8d7"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "story-structures-2461c94b52af",
@@ -3731,7 +3731,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/story-structures.md#L60",
       "sha256": "47e04f70d8821d23379c970dc089f7d1fd3f0479eb3722e537b235a0323700ea"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "story-structures-7e4cbcfc1e56",
@@ -3750,7 +3750,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/story-structures.md#L76",
       "sha256": "a6690cf6e52610e747444770ab0a3d71d21370b4ac84fccb2ce0fe9453852bb5"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "story-structures-ac4719f483f6",
@@ -3769,7 +3769,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/story-structures.md#L84",
       "sha256": "f90e9fe70cda73c9317bae1076ca6f777aed6856b4e7179ed04672058be473e8"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "story-structures-8b5165de10fc",
@@ -3789,7 +3789,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/story-structures.md#L88",
       "sha256": "7444c322e0412976ae0e4d89705a33ebe975be3cb8a25f255b2726308837602c"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "story-structures-810d3217fe16",
@@ -3809,7 +3809,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/story-structures.md#L97",
       "sha256": "ed42b2e1880e35dde6623c01086ab7282155172c76fec272c406c437f7550432"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "style-control-671a457dd443",
@@ -3827,7 +3827,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/style-control.md#L1",
       "sha256": "94c0a145829dd5b509a0cd479d2a91fb83dd275565de3a01a48e54ec7c33ebd5"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "style-control-79b3e6b7c14b",
@@ -3846,7 +3846,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/style-control.md#L5",
       "sha256": "5732d4aae70d4a39c26b8bff63545911880905f0a0d965f8bc0317932f35f40c"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "style-control-2cf209a10276",
@@ -3865,7 +3865,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/style-control.md#L11",
       "sha256": "f560fc8bd8d62f62705aed7cc6ab8ad1f868be871feaffaa0048c855db047874"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "style-control-f84b2ba9034a",
@@ -3885,7 +3885,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/style-control.md#L34",
       "sha256": "4259a3a9666c96d80da5e72e796645a0dcfe91cb26e22190a1705c2523c4aa75"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "style-control-481af1471ae1",
@@ -3905,7 +3905,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/style-control.md#L42",
       "sha256": "3290e4f18647c6a8767d303216f3c054b1cb6e055b35a25671181a589e62cb10"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "style-control-7665e999d1da",
@@ -3924,7 +3924,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/style-control.md#L49",
       "sha256": "cb500db7aa783d92e7c36767e24b0f2c121be3ec64b6722c55a7555f1b525d66"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "style-control-63a866503413",
@@ -3943,7 +3943,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/style-control.md#L57",
       "sha256": "07fb6e61a4ed04331b0d1e5f961bac714bf19848f2782ae915df3fdc7357be0f"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "style-control-b73f6f0f3ffe",
@@ -3962,7 +3962,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/style-control.md#L60",
       "sha256": "6b09dcc269272e556c8f4f38eb68aa11a7858581f9067fa90da8e08fe4dae339"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "style-control-bfffd977ce4d",
@@ -3981,7 +3981,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/style-control.md#L64",
       "sha256": "0778337ae14ddf1f7519b758e581e82c9a522fb4d63b147845528104a1ce8467"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "style-control-cbe1c1252598",
@@ -4001,7 +4001,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/style-control.md#L67",
       "sha256": "5709d8370271b774a89fd1d9193fbef197cfcbcba811fd6a863410797bc1f6d7"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "style-control-c58bd9c5a494",
@@ -4021,7 +4021,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/style-control.md#L75",
       "sha256": "257f8b1f49e1fa7401ff60e4bbe6af090904bf5ca524c26ec91ecedeb3db8053"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "style-control-666cdb1219e7",
@@ -4041,7 +4041,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/style-control.md#L80",
       "sha256": "d12e993ff7af69aa400aea002750de33e31c9675409e4d086f4673ab29e908da"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "style-control-ab661985aaa4",
@@ -4061,7 +4061,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/style-control.md#L85",
       "sha256": "d6b8b78c500683bdf9ccef34ce3b99e9966ecf3a3309fd7b632819a4dd847f79"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "style-control-d208337fba85",
@@ -4081,7 +4081,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/style-control.md#L88",
       "sha256": "e1bfc843a06e499c5134edd4b4f269fb300fdf2f5b623760ad5893187c072310"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "style-control-2baa47554330",
@@ -4101,7 +4101,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/style-control.md#L91",
       "sha256": "23af4971d6429eb7e7d5070477ff6e3084f838df4caad82b0032212d96d10048"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "style-control-23d9278937c0",
@@ -4121,7 +4121,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/style-control.md#L94",
       "sha256": "1d26b8ac51ead4d3a8e18a47c5c8c0df66e749336d89c49cb60c67b880cb301e"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "style-control-ff888ede11ee",
@@ -4140,7 +4140,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/style-control.md#L97",
       "sha256": "962be652a58fed313b55a4d9c1aa582e1fd9c39b76c72b6cc08064d25a2eb4f7"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "style-control-73867a0b4daf",
@@ -4159,7 +4159,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/style-control.md#L114",
       "sha256": "a35edce8c3ebfb11963494d8b1ce1a30315c82b79fe61ac40c6337893e5d45f3"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "style-control-5257ea810f14",
@@ -4179,7 +4179,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/style-control.md#L115",
       "sha256": "c4d7aceb781a89a0bf3c2956f0c4df56e3eafd96cb44ed30f5ff72709e30a7c6"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "style-control-7b703384f157",
@@ -4199,7 +4199,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/style-control.md#L121",
       "sha256": "ec209892125633a2dc139d75348f678f4d1e57b10166839dd02fc319a74b66f7"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "style-control-da4feb1794ad",
@@ -4219,7 +4219,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/style-control.md#L128",
       "sha256": "9675eca90b719085ca2e07b1194c149299faf7c9efcc39ad4acef471daeec58d"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "style-control-fc8ef8be9186",
@@ -4238,7 +4238,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/style-control.md#L131",
       "sha256": "3503ea8df28cb1cde248b21201ff31f56fc32153bd3dc7269605945f2f4cc81c"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "video-prompting-6ebc68114145",
@@ -4256,7 +4256,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/video-prompting.md#L1",
       "sha256": "023f211f31e9a100f053592b175f19d2bcd3a6c9356cada863bfdabcb8d4eb90"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "video-prompting-b8193dd15dd6",
@@ -4275,7 +4275,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/video-prompting.md#L6",
       "sha256": "d394b5967eff6bcf1d013f97b910718b8546832a3879c36c9b4f995a3f8e5107"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "video-prompting-ddfa67879961",
@@ -4295,7 +4295,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/video-prompting.md#L14",
       "sha256": "51014678839696d441655c99a35e73e09c15177f283ea99ea93f7e0e7b93205f"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "video-prompting-33ae6df5c3f0",
@@ -4315,7 +4315,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/video-prompting.md#L60",
       "sha256": "07f66981af295631b7a7c0bd4ed47627fa728cb7d919261b6dd635bc5d1db4a2"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "video-prompting-4a8d407dff7a",
@@ -4335,7 +4335,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/video-prompting.md#L79",
       "sha256": "e7a01d05cf2dac46a7fd7e1cf3a0e838cb9e654a847fe3d6639667d2ed64a39e"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "video-prompting-a3510dce6126",
@@ -4354,7 +4354,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/video-prompting.md#L93",
       "sha256": "980002226feb1a10ba820b6d29bd3a2b4603ef1c8db079f0a35270f2ae2d0e55"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "video-prompting-f6e454e1d76b",
@@ -4373,7 +4373,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/video-prompting.md#L108",
       "sha256": "8229d1fa820b220942f57a6c6563bd086c2cf5a9a6d359723c1ef44f2f9e886d"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "video-prompting-5275ee1254bc",
@@ -4392,7 +4392,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/video-prompting.md#L119",
       "sha256": "e73dcffcf65e4f176c5e4fdbab4a40ce1f2233865da163162b77d75899cead7b"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "video-prompting-d87cde00835d",
@@ -4411,7 +4411,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/video-prompting.md#L140",
       "sha256": "c92ae7a9a05794972ae5184f586a1f429c477a42e82f4f3baa740e5c2a37f6c1"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "video-prompting-cd15da11c9c9",
@@ -4430,7 +4430,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/video-prompting.md#L149",
       "sha256": "f5150dcdb14f0dc4a8b7444171b254121b3f1905ae3129ea811c7308a0e3ed2e"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "video-prompting-77153717e7be",
@@ -4449,7 +4449,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/video-prompting.md#L159",
       "sha256": "46389c6b5867ae217ce07c2b02c3887bc7ac918e942b267eec5cb71ce9f82211"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "video-prompting-3145b34f3b5d",
@@ -4468,7 +4468,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/video-prompting.md#L180",
       "sha256": "166156fbd3d095ec75f371f485aee59f5349d9a4a7ae9df9d8f9e8e8b1ff2bac"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "video-prompting-39026ee6df7f",
@@ -4488,7 +4488,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/video-prompting.md#L191",
       "sha256": "082079e5b2e5e9063920b43b9b05b2da756cbae04a4d6414038a8ecf6e66ecb5"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "video-prompting-cb91fd3500e1",
@@ -4508,7 +4508,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/video-prompting.md#L204",
       "sha256": "1e311983b7380ef032cd3e877650070a2d8977501ac067ae6300484fb656a38a"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "video-prompting-2d077c405e26",
@@ -4527,7 +4527,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/video-prompting.md#L208",
       "sha256": "753d10462397db4d5af6635ed70eb8c741a111c3ab27cc78b65bd7f6c6a91d3d"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "video-prompting-ae84e7dfae96",
@@ -4546,7 +4546,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/video-prompting.md#L239",
       "sha256": "9f7a393874d4053625347a9456564041ebc26c165d8c27ab43ab8979361db246"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "worked-example-f3d5fa6b6205",
@@ -4564,7 +4564,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/worked-example.md#L1",
       "sha256": "d9a56da5d26137a1138d21ea23ed4fdc1f2a718548abba216d3b68ccc6aed738"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "worked-example-fa7721159cff",
@@ -4583,7 +4583,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/worked-example.md#L5",
       "sha256": "0f1353e91a89ae070ffb52d5bd2fcca42a9b54f70c0a433f0e14104d6893b84b"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "worked-example-35cfa29f22f4",
@@ -4602,7 +4602,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/worked-example.md#L18",
       "sha256": "560e8ca19b3d4dadf40f9744cca1901e8b3b285116df3a902c0ddb6ab2c8168a"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "worked-example-65f26dd4a67e",
@@ -4621,7 +4621,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/worked-example.md#L21",
       "sha256": "978d873ac8eff4e6b94911e8a8e3a5fab124542170128a9a394da6066da1ee77"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "worked-example-139e9c1e8417",
@@ -4640,7 +4640,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/worked-example.md#L43",
       "sha256": "ce33f5a5795791a7004246ce9745bf93726d28ad34a35889cbd8760d58bfee04"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "worked-example-7671e3cd2a49",
@@ -4659,7 +4659,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/worked-example.md#L78",
       "sha256": "f419f10488ab0cffe8050bdb69381dfe8136380993c732ebf9ea442155aac2f3"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "worked-example-bb187e0467ef",
@@ -4678,7 +4678,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/worked-example.md#L106",
       "sha256": "d41c05b616c1fa76bd11fdfbe7cd379a4efd37b79b56a435cf4e83eecd91b3e5"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "workflows-eccdac4aed0c",
@@ -4696,7 +4696,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/workflows.md#L1",
       "sha256": "9878769da337920264bc79c3be28e2375508ef05b8e7c83eaba6e13ec0af5fea"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "workflows-6f957f7120f1",
@@ -4715,7 +4715,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/workflows.md#L5",
       "sha256": "4d10c6e36a8b4ba595eb17626a6394ed772160b46281085c7df470a1cfbfdc20"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "workflows-d91a72e57720",
@@ -4734,7 +4734,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/workflows.md#L13",
       "sha256": "a328714e47f14f9c5975aed4058de8f5ef7fbf6225115a77267c566e10231fa3"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "workflows-ef7dba1933ce",
@@ -4753,7 +4753,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/workflows.md#L22",
       "sha256": "39487ca7f7029fe1c4d93fa80f5f1f5a4544cb64409ca6ad8ce3fc90353810ba"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "workflows-9ff2b6097758",
@@ -4772,7 +4772,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/workflows.md#L31",
       "sha256": "043e70034b264f607924a2f06ea9b5c8b8ea80a96fc881903c90eafc224b7324"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "workflows-0979effa719d",
@@ -4791,7 +4791,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/workflows.md#L38",
       "sha256": "f7c6c9a4b0bbd7236f6a65e2f35daed128a107e18f5f48aac0ed33ec907c7007"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "workflows-de63f05d633e",
@@ -4810,7 +4810,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/workflows.md#L54",
       "sha256": "319eac50d236b5125e155aa806c0ba5aeeb56acee03ae6d1a309124c9787f845"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "workflows-35ea99e846a8",
@@ -4829,7 +4829,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/workflows.md#L62",
       "sha256": "c8259c5978f298da91ff2313f2e78382229a0d125cdcb550ab8fef4471012ed9"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "workflows-ca2a59d14ade",
@@ -4848,7 +4848,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/workflows.md#L70",
       "sha256": "84e80f878d3d45d8a07e1c8ea8d0d3c605a833705f335696663edba8ac7f33b9"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "workflows-4d964bcaead8",
@@ -4867,7 +4867,7 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/workflows.md#L78",
       "sha256": "dbb52f17fcd2eec3d155def9289bff34a4b8c5d6793eeadcbc0f8551d7bba36a"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   },
   {
     "id": "workflows-a32d2b8635bd",
@@ -4886,6 +4886,6 @@
       "url": "https://github.com/iret77/ai-film-production/blob/0333751214c7af17977dd33f0ba88ba9c352421e/references/workflows.md#L82",
       "sha256": "8889e6b21fd00c7402cbf147883a29ac4330d2ffbb97d295e0b36ad2f434791d"
     },
-    "runtimeStatus": "extracted-not-wired"
+    "runtimeStatus": "runtime-active"
   }
 ]

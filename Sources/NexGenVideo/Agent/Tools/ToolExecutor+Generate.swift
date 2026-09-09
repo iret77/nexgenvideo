@@ -3,6 +3,29 @@ import ImageIO
 import NexGenEngine
 
 @MainActor
+final class AgentPreparedGeneration {
+    let package: GenerationPackageV1
+    let generation: GenerationController.PreparedGeneration?
+    private let run: @MainActor () async throws -> ToolResult
+    private var task: Task<ToolResult, Error>?
+
+    init(package: GenerationPackageV1, generation: GenerationController.PreparedGeneration? = nil,
+         run: @escaping @MainActor () async throws -> ToolResult) {
+        self.package = package
+        self.generation = generation
+        self.run = run
+    }
+
+    func execute() async throws -> ToolResult {
+        if let task { return try await task.value }
+        let operation = run
+        let task = Task { try await operation() }
+        self.task = task
+        return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+    }
+}
+
+@MainActor
 final class AgentGenerationAwaiter {
     enum Completion {
         case succeeded(MediaAsset?)
@@ -618,12 +641,32 @@ extension ToolExecutor {
         preflight: GenerationController.Preflight? = nil,
         success: @escaping (String) -> String
     ) async throws -> ToolResult {
+        let generation = try await GenerationController.prepare(request, editor: editor, preflight: preflight).get()
+        return try await routePreparedThroughController(generation, editor: editor, success: success)
+    }
+
+    private func prepareController(
+        _ request: GenerationRequest, editor: EditorViewModel,
+        preflight: GenerationController.Preflight? = nil,
+        success: @escaping (String) -> String
+    ) async throws -> AgentPreparedGeneration {
+        let generation = try await GenerationController.prepare(request, editor: editor, preflight: preflight).get()
+        let package = try await GenerationController.prepareReviewPackage(generation, editor: editor)
+        return AgentPreparedGeneration(package: package, generation: generation) {
+            try await self.routePreparedThroughController(generation, editor: editor, success: success)
+        }
+    }
+
+    private func routePreparedThroughController(
+        _ generation: GenerationController.PreparedGeneration, editor: EditorViewModel,
+        success: @escaping (String) -> String
+    ) async throws -> ToolResult {
+        let request = generation.request
         let result = try await AgentGenerationAwaiter.waitForSubmission(
             start: { awaiter in
-                let submission = await GenerationController.submit(
-                    request,
+                let submission = await GenerationController.submitPrepared(
+                    generation,
                     editor: editor,
-                    preflight: preflight,
                     onSuccess: { asset in awaiter.resolve(.succeeded(asset)) },
                     onFailure: { awaiter.resolve(.failed(nil)) }
                 )
@@ -647,8 +690,10 @@ extension ToolExecutor {
             } ?? "The provider did not return a usable result."
             throw ToolError(message)
         case .succeeded(let asset):
+            let packageID = asset?.generationInput?.generationPackageID ?? generation.reviewedPackage?.id
+            let packageNote = packageID.map { "\nGeneration package: \($0)" } ?? ""
             return try await Self.completedGenerationResult(
-                text: success(result.placeholderId),
+                text: success(result.placeholderId) + packageNote,
                 asset: request.modality == .image ? asset : nil
             )
         }
@@ -682,8 +727,9 @@ extension ToolExecutor {
         _ args: [String: Any],
         prompt: String,
         modality: PromptComposer.Modality,
+        modelId: String,
         editor: EditorViewModel
-    ) throws -> (
+    ) async throws -> (
         precompiled: (text: String, token: String, binding: PromptBinding)?,
         raw: Bool
     ) {
@@ -704,14 +750,26 @@ extension ToolExecutor {
             }
             return (nil, false)
         }
-        let binding = try PromptCompiler.currentBinding(
+        let currentBinding = try await PromptCompiler.currentBinding(
             editor: editor,
             shotId: shotId,
-            modality: modality
+            modality: modality,
+            modelId: modelId
         )
+        guard let token = args.string("compileToken"),
+              let binding = PromptCompiler.rememberedBinding(
+                  token: token,
+                  text: prompt,
+                  modelId: modelId
+              ),
+              currentBinding.matchesCurrentState(of: binding) else {
+            throw ToolError(
+                "The compiled prompt is stale or invalid. Compile the current shot again."
+            )
+        }
         return ((
             text: prompt,
-            token: args.string("compileToken") ?? "",
+            token: token,
             binding: binding
         ), false)
     }
@@ -719,7 +777,7 @@ extension ToolExecutor {
     // MARK: - Cost-Guard (M7) — the user's final word on paid agent renders
 
     @MainActor
-    private func withSpendApproval(
+    func withSpendApproval(
         _ editor: EditorViewModel, currentModelId: String, currentModelName: String,
         credits: Int?, actionLabel: String,
         selectionScope: SpendSelectionScope,
@@ -733,8 +791,28 @@ extension ToolExecutor {
         targetIsCompatible: @escaping @MainActor (ResolvedGenerationTarget) -> Bool = { _ in true },
         diagnosticProviderScope: @escaping @MainActor () -> [GenerationProvider] = { [] },
         cancel: @escaping @MainActor (EditorViewModel) -> Void = { _ in },
-        execute: @escaping @MainActor (EditorViewModel, SpendOption) async throws -> ToolResult
+        prepare: (@MainActor (EditorViewModel, SpendOption) async throws -> AgentPreparedGeneration)? = nil,
+        execute: (@MainActor (EditorViewModel, SpendOption) async throws -> ToolResult)? = nil
     ) async throws -> ToolResult {
+        var prepared: [String: AgentPreparedGeneration] = [:]
+        func prepareSelected(_ editor: EditorViewModel, _ option: SpendOption) async throws -> GenerationPackageV1 {
+            guard let prepare else { throw ToolError("This operation has no generation-package preparer.") }
+            prepared.removeAll()
+            let value = try await prepare(editor, option)
+            guard value.package.payload.target == option.target else { throw ToolError("The prepared package changed the selected provider or model.") }
+            prepared = [option.id: value]
+            return value.package
+        }
+        func executeSelected(_ editor: EditorViewModel, _ option: SpendOption) async throws -> ToolResult {
+            if prepare != nil {
+                guard let value = prepared[option.id], value.package == option.generationPackage else {
+                    throw ToolError("Prepare and review the exact generation package before spending.")
+                }
+                return try await value.execute()
+            }
+            guard let execute else { throw ToolError("The generation operation is unavailable.") }
+            return try await execute(editor, option)
+        }
         func currentOptions() -> [SpendOption] {
             if let exactOptions {
                 return exactOptions().filter { targetIsCompatible($0.target) }
@@ -775,9 +853,22 @@ extension ToolExecutor {
                     ?? "No enabled model is available through an active provider for this request. Choose a runnable model from list_models."
             )
         }
+        if let batch = GenerationBatchPreparation.current {
+            guard let prepare else { throw ToolError("This operation cannot be included in a visual generation batch.") }
+            let value = try await prepare(editor, recommended)
+            guard value.package.payload.target == recommended.target,
+                  let references = value.generation?.references else {
+                throw ToolError("The batch item has no exact prepared inputs.")
+            }
+            try await GenerationPackageInputs.persist(package: value.package, snapshot: references, editor: editor)
+            batch.packages.append(value.package)
+            return .ok("Prepared generation package: \(value.package.id). No generation was submitted.")
+        }
         guard CostGuard.needsApproval(credits: recommended.credits) else {
             do {
-                return try await execute(editor, recommended)
+                var selected = recommended
+                if prepare != nil { selected.generationPackage = try await prepareSelected(editor, selected) }
+                return try await executeSelected(editor, selected)
             } catch {
                 cancel(editor)
                 throw error
@@ -807,7 +898,8 @@ extension ToolExecutor {
                 providerScope: GenerationProvider.allCases.filter {
                     providerScope.contains($0)
                 },
-                selectionScope: selectionScope
+                selectionScope: selectionScope,
+                requiresGenerationPackage: prepare != nil
             )
         }
         return try editor.agentService.requestSpendApproval(
@@ -820,7 +912,8 @@ extension ToolExecutor {
             ),
             refresh: makeApproval,
             cancel: cancel,
-            execute: execute
+            prepare: prepare == nil ? nil : prepareSelected,
+            execute: executeSelected
         )
     }
 
@@ -943,13 +1036,14 @@ extension ToolExecutor {
         editor: EditorViewModel
     ) async throws -> (text: String, token: String, binding: PromptBinding)? {
         guard let precompiled else { return nil }
-        let currentBinding = try PromptCompiler.currentBinding(
+        let currentBinding = try await PromptCompiler.currentBinding(
             editor: editor,
             shotId: precompiled.binding.shotId,
-            modality: PromptCompiler.modalityForModel(approvedModelId)
+            modality: PromptCompiler.modalityForModel(approvedModelId),
+            modelId: approvedModelId
         )
         let preserveComposition = approvedTarget?.binding?
-            .resolvedVideoCapabilities?.inputPolicy.requiresSourceVideo
+            .resolvedVideoCapabilities?.inputPolicy.preservesSourceComposition
         let compositionModeMatches = preserveComposition.map {
             PromptCompiler.rememberedCompositionModeMatches(
                 token: precompiled.token,
@@ -959,7 +1053,7 @@ extension ToolExecutor {
             )
         } ?? true
         guard approvedModelId != originalModelId
-                || currentBinding != precompiled.binding
+                || !currentBinding.matchesCurrentState(of: precompiled.binding)
                 || !compositionModeMatches else {
             return precompiled
         }
@@ -997,10 +1091,11 @@ extension ToolExecutor {
                     + "is not part of the ProductionRequirement."
             )
         }
-        let (precompiled, raw) = try Self.agentPrompt(
+        let (precompiled, raw) = try await Self.agentPrompt(
             args,
             prompt: prompt,
             modality: .video,
+            modelId: model.id,
             editor: editor
         )
 
@@ -1113,7 +1208,7 @@ extension ToolExecutor {
                     displayName: candidate.displayName
                 ) == nil
             },
-            execute: { editor, approved in
+            prepare: { editor, approved in
                 let selectedRouting: PipelineProductionRouteSelection?
                 let selectedInputs: ProductionVideoGenerationInputs?
                 if let productionRouting {
@@ -1214,7 +1309,7 @@ extension ToolExecutor {
                             name: name, folderId: folderId,
                             generateAudio: requestedGenerateAudio)
                     }))
-                return try await self.routeThroughController(
+                return try await self.prepareController(
                     request, editor: editor,
                     preflight: {
                         if let err = finalCapabilities.validate(
@@ -1267,10 +1362,11 @@ extension ToolExecutor {
             ?? offeringCapabilities.aspectRatios.first ?? ""
         let resolution = args.string("resolution")
             ?? offeringCapabilities.resolutions?.first
-        let (precompiled, raw) = try Self.agentPrompt(
+        let (precompiled, raw) = try await Self.agentPrompt(
             args,
             prompt: prompt,
             modality: .video,
+            modelId: model.id,
             editor: editor
         )
 
@@ -1400,7 +1496,7 @@ extension ToolExecutor {
                     displayName: candidate.displayName
                 ) == nil
             },
-            execute: { editor, approved in
+            prepare: { editor, approved in
                 let selectedRouting: PipelineProductionRouteSelection?
                 let selectedInputs: ProductionVideoGenerationInputs?
                 if let productionRouting {
@@ -1519,7 +1615,7 @@ extension ToolExecutor {
                         + "\(finalInputAssets.videoRefs.count)vid/"
                         + "\(finalInputAssets.audioRefs.count)aud"
                     : ""
-                return try await self.routeThroughController(
+                return try await self.prepareController(
                     request, editor: editor,
                     preflight: {
                         if let err = finalCapabilities.validate(
@@ -1556,13 +1652,25 @@ extension ToolExecutor {
         let aspectRatio = args.string("aspectRatio") ?? model.aspectRatios.first ?? ""
         let resolution = args.string("resolution") ?? model.resolutions?.first
         let quality = args.string("quality") ?? model.qualities?.last
-        let (precompiled, raw) = try Self.agentPrompt(
+        let (precompiled, raw) = try await Self.agentPrompt(
             args,
             prompt: prompt,
             modality: .image,
+            modelId: model.id,
             editor: editor
         )
-        let refIds = args.stringArray("referenceMediaRefs")
+        let shotId = precompiled?.binding.shotId ?? "none"
+        let initialFramePlan = try PromptCompiler.currentFrameReferencePlan(
+            editor: editor,
+            shotId: shotId,
+            modelId: model.id
+        )
+        let frameReferenceDataRoot = editor.workingRoot.flatMap {
+            DataRootResolver.dataRoot(of: $0)
+        }
+        let refIds = initialFramePlan == nil
+            ? args.stringArray("referenceMediaRefs")
+            : []
         let libraryRefs: [MediaAsset] = try refIds.map { id in
             let a = try asset(id, editor: editor, label: "Reference image")
             guard a.type == .image else {
@@ -1570,7 +1678,9 @@ extension ToolExecutor {
             }
             return a
         }
-        let requestedProjectPaths = args.stringArray("referenceProjectPaths")
+        let requestedProjectPaths = initialFramePlan == nil
+            ? args.stringArray("referenceProjectPaths")
+            : []
         let productionDesignSnapshot: ProductionDesignReferenceSnapshot?
         let productionDesignDataRoot: URL?
         if let workingRoot = editor.workingRoot,
@@ -1592,7 +1702,15 @@ extension ToolExecutor {
         let projectPaths = productionDesignSnapshot?.paths ?? requestedProjectPaths
         let projectRefs = try projectImageReferences(projectPaths, editor: editor)
         let effectiveLibraryRefs = productionDesignSnapshot == nil ? libraryRefs : []
-        let refs = effectiveLibraryRefs + projectRefs
+        let refs = try initialFramePlan.map { plan in
+            guard let frameReferenceDataRoot else {
+                throw ToolError("Frame references require an open pipeline project.")
+            }
+            return try Self.frameReferenceAssets(
+                plan,
+                dataRoot: frameReferenceDataRoot
+            )
+        } ?? (effectiveLibraryRefs + projectRefs)
         let currentValidation = model.validate(
             aspectRatio: aspectRatio,
             resolution: resolution,
@@ -1634,7 +1752,7 @@ extension ToolExecutor {
             alternatives: { [] },
             exactOptions: exactImageOptions,
             diagnosticProviderScope: { self.activeImageProviderScope() },
-            execute: { editor, approved in
+            prepare: { editor, approved in
                 var verifiedProductionDesignRoot: URL?
                 if let productionDesignSnapshot {
                     guard let approvedDataRoot = productionDesignDataRoot,
@@ -1661,8 +1779,29 @@ extension ToolExecutor {
                     verifiedProductionDesignRoot = currentDataRoot
                 }
 
-                let submit: @MainActor ([MediaAsset]) async throws -> ToolResult = {
-                    generationReferences in
+                let submit: @MainActor ([MediaAsset]) async throws -> AgentPreparedGeneration = {
+                    submittedReferences in
+                    guard let approvedModel = ImageModelConfig.allModels.first(where: {
+                        $0.id == approved.target.modelId
+                    }) else {
+                        throw ToolError(
+                            "The approved image model is no longer in the live catalog. Review the refreshed provider and model choices."
+                        )
+                    }
+                    let framePlan = try PromptCompiler.currentFrameReferencePlan(
+                        editor: editor,
+                        shotId: shotId,
+                        modelId: approvedModel.id
+                    )
+                    let generationReferences = try framePlan.map { plan in
+                        guard let frameReferenceDataRoot else {
+                            throw ToolError("Frame references require an open pipeline project.")
+                        }
+                        return try Self.frameReferenceAssets(
+                            plan,
+                            dataRoot: frameReferenceDataRoot
+                        )
+                    } ?? submittedReferences
                     let selectedOffering: CatalogImageOfferingCandidate?
                     if isMarble {
                         selectedOffering = nil
@@ -1682,7 +1821,7 @@ extension ToolExecutor {
                             )
                         }
                     }
-                    let selectedModel = selectedOffering?.model ?? model
+                    let selectedModel = selectedOffering?.model ?? approvedModel
                     let selectedModelID = selectedModel.id
                     let selectedAspectRatio = selectedOffering?.aspectRatio ?? aspectRatio
                     let selectedResolution = selectedOffering?.resolution ?? resolution
@@ -1693,6 +1832,14 @@ extension ToolExecutor {
                         approvedModelId: selectedModel.id,
                         editor: editor
                     )
+                    if let framePlan {
+                        guard approvedPrompt?.binding.frameReferencePlanSHA256
+                                == framePlan.fingerprint else {
+                            throw ToolError(
+                                "The frame reference plan changed while generation approval was open. Compile and review the shot again."
+                            )
+                        }
+                    }
                     let folderId = try self.resolveFolderId(
                         args, editor: editor, fallbackReferences: generationReferences
                     )
@@ -1711,10 +1858,18 @@ extension ToolExecutor {
                         input.promptShotId = approvedPrompt?.binding.shotId
                         input.promptProjectKey = approvedPrompt?.binding.projectKey
                         input.promptShotFingerprint = approvedPrompt?.binding.shotFingerprint
+                        input.frameReferencePlan = framePlan
                         return input
                     }
                     let preflight: GenerationController.Preflight = {
-                        finalModel.validate(
+                        if let productionDesignSnapshot {
+                            guard let root = verifiedProductionDesignRoot,
+                                  let current = try? Self.productionDesignReferenceSnapshot(dataRoot: root),
+                                  current == productionDesignSnapshot else {
+                                return "The Production Design reference set changed. Prepare and review the image request again."
+                            }
+                        }
+                        return finalModel.validate(
                             aspectRatio: finalAspectRatio,
                             resolution: finalResolution,
                             quality: finalQuality,
@@ -1738,7 +1893,7 @@ extension ToolExecutor {
                                     genInput: genInput(compiled), model: finalModel,
                                     reference: reference, name: name, folderId: folderId)
                             }))
-                        return try await self.routeThroughController(
+                        return try await self.prepareController(
                             request, editor: editor, preflight: preflight,
                             success: {
                                 "Marble world generation completed. Asset ID: \($0). Model: \(finalModel.displayName). Result: equirectangular panorama image."
@@ -1754,32 +1909,49 @@ extension ToolExecutor {
                             ImageGenerationSubmission.make(
                                 genInput: genInput(compiled), model: finalModel,
                                 references: generationReferences,
-                                referenceAssetIDs: effectiveLibraryRefs.map(\.id),
+                                referenceAssetIDs: generationReferences.map(\.id),
                                 name: name, folderId: folderId)
                         }))
-                    return try await self.routeThroughController(
+                    return try await self.prepareController(
                         request, editor: editor, preflight: preflight,
                         success: {
                             "Generation completed. Asset ID: \($0). Model: \(finalModel.displayName), aspect: \(finalAspectRatio)"
                         })
                 }
 
-                guard let productionDesignSnapshot else {
-                    return try await submit(refs)
-                }
-                guard let verifiedProductionDesignRoot else {
-                    throw ToolError(
-                        "The Production Design references could not be verified. Review them and generate again."
-                    )
-                }
-                return try await Self.withStagedProductionDesignReferences(
-                    snapshot: productionDesignSnapshot,
-                    projectReferences: projectRefs,
-                    dataRoot: verifiedProductionDesignRoot,
-                    operation: submit
-                )
+                return try await submit(refs)
             }
         )
+    }
+
+    @MainActor
+    private static func frameReferenceAssets(
+        _ plan: FrameReferencePlanV1,
+        dataRoot: URL
+    ) throws -> [MediaAsset] {
+        guard plan.isExecutable else {
+            throw ToolError("The frame reference plan is not executable.")
+        }
+        return try plan.bindings.enumerated().map { index, binding in
+            let url = try ProjectLocalFile.requireHash(
+                binding.sha256,
+                at: binding.path,
+                dataRoot: dataRoot
+            )
+            guard ClipType(fileExtension: url.pathExtension.lowercased()) == .image,
+                  projectImageValidationFailure(url) == nil else {
+                throw ToolError(
+                    "Frame reference '\(binding.path)' must be a readable project image."
+                )
+            }
+            return MediaAsset(
+                id: "frame-reference:\(index):\(binding.sha256)",
+                url: url,
+                type: .image,
+                name: url.deletingPathExtension().lastPathComponent,
+                originalFilename: url.lastPathComponent
+            )
+        }
     }
 
     nonisolated static func productionDesignReferencePaths(
@@ -2288,10 +2460,11 @@ extension ToolExecutor {
         let styleInstructions = model.supportsStyleInstructions ? args.string("styleInstructions") : nil
         let name = args.string("name")
         let folderId = try resolveFolderId(args, editor: editor)
-        let (precompiled, raw) = try Self.agentPrompt(
+        let (precompiled, raw) = try await Self.agentPrompt(
             args,
             prompt: prompt,
             modality: .audio,
+            modelId: model.id,
             editor: editor
         )
 
@@ -2478,18 +2651,26 @@ extension ToolExecutor {
 
     func listModels(_ args: [String: Any]) -> ToolResult {
         let filter = args.string("type")
+        let activation = providerActivation()
         var out: [[String: Any]] = []
         if filter == nil || filter == "video" {
-            out += VideoModelConfig.allModels.map { Self.videoModelInfo($0, includeType: true) }
+            out += modelCatalog.video.map {
+                Self.videoModelInfo(
+                    $0,
+                    includeType: true,
+                    catalog: modelCatalog,
+                    activation: activation
+                )
+            }
         }
         if filter == nil || filter == "image" {
-            out += ImageModelConfig.allModels.map { Self.imageModelInfo($0, includeType: true) }
+            out += modelCatalog.image.map { Self.imageModelInfo($0, includeType: true) }
         }
         if filter == nil || filter == "audio" {
-            out += AudioModelConfig.allModels.map { Self.audioModelInfo($0) }
+            out += modelCatalog.audio.map { Self.audioModelInfo($0) }
         }
         if filter == nil || filter == "upscale" {
-            out += UpscaleModelConfig.allModels.map { Self.upscaleModelInfo($0) }
+            out += modelCatalog.upscale.map { Self.upscaleModelInfo($0) }
         }
         // Usable-only (LLM → NGV → Provider; docs concept #159 + the user's final say): the agent
         // sees ONLY models it can actually run — an activated provider services the model AND the
@@ -2499,12 +2680,19 @@ extension ToolExecutor {
         let prefs = ModelPreferences.shared
         out = out.filter { info in
             guard let id = info["id"] as? String else { return false }
-            return prefs.isEnabled(id) && GenerationProvider.canRun(modelId: id)
+            return prefs.isEnabled(id) && ProviderResolver.resolve(
+                bindings: ProviderManifest.bindings(
+                    forModelId: id,
+                    catalog: modelCatalog
+                ),
+                activation: activation,
+                effectiveCost: ProviderManifest.effectiveCost
+            ) != nil
         }
         // Attach each model's curated card (strengths/weaknesses/best-for/rank) so the agent
         // recommends from the CURRENT truth NGV feeds it, not stale training knowledge. Cards are
         // hosted + refreshed without an app release; absent card = no `card` key (still usable).
-        let cards = ModelCatalog.shared.cardsById
+        let cards = modelCatalog.cardsById
         out = out.map { info in
             guard let id = info["id"] as? String, let card = cards[id] else { return info }
             var info = info
@@ -2527,7 +2715,7 @@ extension ToolExecutor {
         }
         var body: [String: Any] = [
             "models": out,
-            "loaded": ModelCatalog.shared.isLoaded,
+            "loaded": modelCatalog.isLoaded,
         ]
         if out.isEmpty {
             body["note"] = "No usable models yet — activate a provider in Settings → Providers "
@@ -2541,10 +2729,11 @@ extension ToolExecutor {
 
     static func videoModelInfo(
         _ m: VideoModelConfig,
-        includeType: Bool = false
+        includeType: Bool = false,
+        catalog: ModelCatalog = .shared,
+        activation: ProviderActivation = .current()
     ) -> [String: Any] {
-        let activation = ProviderActivation.current()
-        let bindings = ProviderManifest.bindings(forModelId: m.id)
+        let bindings = ProviderManifest.bindings(forModelId: m.id, catalog: catalog)
             .filter { binding in
                 guard activation.isActive(binding.provider, binding.transport),
                       binding.kind == .generation,

@@ -49,6 +49,23 @@ enum PipelineArtifactWriteContract {
             )),
             "color_script": keyValueArray(key: "section", value: "description"),
             "lighting_anchor": string,
+            "style_selection": object([
+                "directorID": string,
+                "signatureID": string,
+                "signatureDimensions": array(enumeration(ProductionStyleDimensionV1.allCases.map(\.rawValue))),
+                "overrides": array(object([
+                    "dimension": enumeration(ProductionStyleDimensionV1.allCases.map(\.rawValue)),
+                    "value": string,
+                    "reason": string,
+                    "sourceEntryID": string,
+                    "verification": object([
+                        "scope": enumeration(["frame", "shot", "sequence", "project"]),
+                        "evidenceKind": enumeration(["image", "video", "audio", "audiovisual"]),
+                        "criterion": nonEmptyString,
+                    ], required: ["scope", "evidenceKind", "criterion"]),
+                ], required: ["dimension", "value", "reason", "verification"])),
+            ], required: ["directorID", "signatureDimensions", "overrides"]),
+            "clear_style": ["type": "boolean"],
             "notes": string,
         ],
         required: ["visual_medium", "refs", "color_script"]
@@ -62,9 +79,45 @@ enum PipelineArtifactWriteContract {
             "title": string,
             "notes": string,
             "body_markdown": string,
+            "causality_plan": causalitySchema,
         ],
-        required: ["origin", "summary_oneline", "body_markdown"]
+        required: ["origin", "summary_oneline", "body_markdown", "causality_plan"]
     ) }
+
+    static var causalitySchema: [String: Any] { object([
+        "mode": enumeration(["narrative", "hybrid", "performance", "abstract", "documentary", "other"]),
+        "applicationReason": nonEmptyString,
+        "beats": array(object([
+            "id": nonEmptyString, "sceneID": nonEmptyString, "excerpt": nonEmptyString,
+            "elementIDs": stringArray, "causalException": nonEmptyString,
+        ], required: ["id", "sceneID", "excerpt", "elementIDs"]), minimum: 1),
+        "chronology": stringArray,
+        "edges": array(object([
+            "cause": nonEmptyString, "consequence": nonEmptyString,
+            "relation": enumeration(["therefore", "but"]), "reason": nonEmptyString,
+        ], required: ["cause", "consequence", "relation", "reason"])),
+        "elements": array(object([
+            "id": nonEmptyString, "label": nonEmptyString, "introductionBeatID": nonEmptyString,
+            "payoffBeatIDs": stringArray, "noPayoffReason": nonEmptyString,
+        ], required: ["id", "label", "introductionBeatID", "payoffBeatIDs"])),
+        "stateChanges": array(object([
+            "elementID": nonEmptyString, "beatID": nonEmptyString, "causeBeatID": nonEmptyString,
+            "before": nonEmptyString, "after": nonEmptyString, "excerpt": nonEmptyString,
+        ], required: ["elementID", "beatID", "causeBeatID", "before", "after", "excerpt"])),
+        "unresolvedDecisions": array(object([
+            "id": nonEmptyString, "affectedBeatIDs": stringArray,
+            "question": nonEmptyString, "alternatives": stringArray,
+        ], required: ["id", "affectedBeatIDs", "question", "alternatives"])),
+        "changeReview": object([
+            "reviewer": nonEmptyString, "upstreamCause": nonEmptyString,
+            "downstreamConsequence": nonEmptyString, "affectedBeatIDs": stringArray,
+            "checks": array(object([
+                "question": enumeration(StoryCausalityDraftV1.ReviewQuestion.allCases.map(\.rawValue)),
+                "verdict": enumeration(["satisfied", "concern", "notApplicable"]),
+                "explanation": nonEmptyString,
+            ], required: ["question", "verdict", "explanation"])),
+        ], required: ["reviewer", "upstreamCause", "downstreamConsequence", "affectedBeatIDs", "checks"]),
+    ], required: ["mode", "applicationReason", "beats", "chronology", "edges", "elements", "stateChanges", "unresolvedDecisions", "changeReview"]) }
 
     static var storyboardSchema: [String: Any] { object(
         [
@@ -78,6 +131,9 @@ enum PipelineArtifactWriteContract {
             "summary_oneline": string,
             "notes": string,
             "sections": array(storyboardSection),
+            "causality_bindings": array(object([
+                "stepID": nonEmptyString, "beatIDs": stringArray, "reason": nonEmptyString,
+            ], required: ["stepID", "beatIDs", "reason"])),
         ],
         required: ["origin", "summary_oneline", "sections"]
     ) }
@@ -90,6 +146,23 @@ enum PipelineArtifactWriteContract {
             "ensembles": array(ensemble),
             "props": array(prop),
             "locations": array(location),
+            "identity_variants": array(object(
+                [
+                    "base_entity_id": nonEmptyString,
+                    "variant_entity_id": nonEmptyString,
+                    "changed_attributes": keyValueArray(
+                        key: "attribute",
+                        value: "value"
+                    ),
+                    "inherited_identity_paths": stringArray,
+                ],
+                required: [
+                    "base_entity_id",
+                    "variant_entity_id",
+                    "changed_attributes",
+                    "inherited_identity_paths",
+                ]
+            )),
             "notes": string,
         ],
         required: ["look", "characters", "ensembles", "props", "locations"]
@@ -100,6 +173,8 @@ enum PipelineArtifactWriteContract {
             "project_dir": projectDir,
             "shots": array(shot, minimum: 1),
             "execution_shots": array(executionShot, minimum: 1),
+            "spatial_plan": spatialProductionPlan,
+            "musicvideo_plan": musicvideoProductionPlan,
             "notes": string,
         ],
         required: ["shots", "execution_shots"]
@@ -298,7 +373,6 @@ enum PipelineArtifactWriteContract {
             "name": string,
             "visual_prompt": string,
             "attributes": keyValueArray(key: "key", value: "value"),
-            "hard_recognition_trait": string,
             "reference_images": stringArray,
             "sheets": keyValueArray(key: "view", value: "path"),
         ]
@@ -309,7 +383,6 @@ enum PipelineArtifactWriteContract {
         "name",
         "visual_prompt",
         "attributes",
-        "hard_recognition_trait",
         "reference_images",
         "sheets",
     ]
@@ -371,11 +444,13 @@ enum PipelineArtifactWriteContract {
                 "generation_requirement": executionGenerationRequirement,
                 "core_inputs": generatedCoreInputs,
                 "reference_demands": array(executionReferenceDemand),
+                "conditioning": generatedConditioning,
             ]) { _, new in new },
             required: executionShotCommonRequired + [
                 "generation_requirement",
                 "core_inputs",
                 "reference_demands",
+                "conditioning",
             ]
         )
     }
@@ -388,11 +463,13 @@ enum PipelineArtifactWriteContract {
                 "camera_endpoint": nonEmptyString,
                 "generation_requirement": executionGenerationRequirement,
                 "core_inputs": aiEnhancedCoreInputs,
-                "reference_demands": array(executionReferenceDemand, maximum: 0),
+                "reference_demands": array(executionReferenceDemand),
+                "conditioning": nativeExtensionConditioning,
             ]) { _, new in new },
             required: executionShotCommonRequired + [
                 "generation_requirement",
                 "core_inputs",
+                "conditioning",
             ]
         )
     }
@@ -426,8 +503,9 @@ enum PipelineArtifactWriteContract {
     private static var executionShotCommonProperties: [String: [String: Any]] {
         [
             "id": nonEmptyString,
+            "storyboard_step_ids": array(nonEmptyString, minimum: 1),
             "source_mode": enumeration(ExecutionSourceModeV1.allCases.map(\.rawValue)),
-            "start_state": executionState,
+            "start_state": executionStartState,
             "end_state": executionState,
             "blocking": array(executionBlocking),
             "timed_action_beats": array(executionTimedActionBeat),
@@ -447,11 +525,25 @@ enum PipelineArtifactWriteContract {
         ]
     }
 
+    private static var executionStartState: [String: Any] { object(
+        ["summary": nonEmptyString, "entity_state_ids": stringArray, "spatial_state": nonEmptyString],
+        required: ["summary", "entity_state_ids"]
+    ) }
+
     private static var executionState: [String: Any] { object(
         [
             "summary": nonEmptyString,
             "entity_state_ids": stringArray,
             "spatial_state": nonEmptyString,
+            "frame_boundary": object([
+                "characterCount": ["type": "integer", "minimum": 0],
+                "characterPositions": ["type": "string"],
+                "gaze": ["type": "string"],
+                "visibleZones": stringArray,
+                "framing": nonEmptyString,
+                "cameraAngle": nonEmptyString,
+                "cameraHeight": nonEmptyString,
+            ], required: ["characterCount", "characterPositions", "gaze", "visibleZones"]),
         ],
         required: ["summary", "entity_state_ids"]
     ) }
@@ -571,6 +663,343 @@ enum PipelineArtifactWriteContract {
             "canon_ids",
         ]
     ) }
+
+    private static var spatialProductionPlan: [String: Any] { object(
+        [
+            "activation": object([
+                "vertical_geography": boolean,
+                "axis_ids": array(nonEmptyString, minimum: 1),
+                "documented_spatial_drift": boolean,
+                "rationale": nonEmptyString,
+            ], required: [
+                "vertical_geography", "axis_ids", "documented_spatial_drift", "rationale",
+            ]),
+            "setups": array(cameraSetupPlanItem, minimum: 1),
+            "shots": array(plannedGenerationShot, minimum: 1),
+            "states": array(productionState, minimum: 1),
+            "layouts": array(spatialLayout, minimum: 1),
+            "shapes": array(blockoutShape, minimum: 1),
+            "panels": array(lookFreePanel),
+            "blockout": blockoutRequest,
+        ],
+        required: [
+            "activation", "setups", "shots", "states", "layouts", "shapes",
+            "panels", "blockout",
+        ]
+    ) }
+
+    private static var musicvideoProductionPlan: [String: Any] { object(
+        [
+            "performance_segments": array(musicPerformanceSegment),
+            "final_mix": object([
+                "original_song_timeline_start_seconds": ["type": "number", "const": 0],
+                "original_song_occurrences": ["type": "integer", "const": 1],
+                "provider_song_audio_muted": ["type": "boolean", "const": true],
+                "approved_additional_layer_ids": stringArray,
+                "credit_and_usage_note": nonEmptyString,
+            ], required: [
+                "original_song_timeline_start_seconds", "original_song_occurrences",
+                "provider_song_audio_muted", "approved_additional_layer_ids",
+            ]),
+            "visual_arc": object([
+                "concept": nonEmptyString,
+                "motifs": array(object([
+                    "id": nonEmptyString,
+                    "description": nonEmptyString,
+                    "setup_ids": stringArray,
+                ], required: ["id", "description", "setup_ids"]), minimum: 1),
+                "sections": array(musicArcSection, minimum: 1),
+            ], required: ["concept", "motifs", "sections"]),
+            "coverage": array(musicCoverageItem),
+        ],
+        required: ["performance_segments", "final_mix", "visual_arc", "coverage"]
+    ) }
+
+    private static var musicPerformanceSegment: [String: Any] { object(
+        [
+            "id": nonEmptyString,
+            "shot_ids": array(nonEmptyString, minimum: 1),
+            "source_start_sample": ["type": "integer", "minimum": 0],
+            "source_end_sample": ["type": "integer", "minimum": 1],
+            "sample_rate": ["type": "integer", "minimum": 8000, "maximum": 192000],
+            "timeline_start_seconds": ["type": "number", "minimum": 0],
+            "purpose": enumeration(MusicPerformancePurposeV1.allCases.map(\.rawValue)),
+            "performer_ids": stringArray,
+            "audible_voice_ids": stringArray,
+            "mouth_ownership": array(object([
+                "performer_id": nonEmptyString,
+                "voice_id": nonEmptyString,
+                "timeline_start_seconds": ["type": "number", "minimum": 0],
+                "timeline_end_seconds": ["type": "number", "exclusiveMinimum": 0],
+            ], required: [
+                "performer_id", "voice_id", "timeline_start_seconds", "timeline_end_seconds",
+            ])),
+            "lyrics_alignment_path": nonEmptyString,
+            "lyrics_alignment_sha256": ["type": "string", "pattern": "^[0-9a-fA-F]{64}$"],
+            "route_input_role_id": nonEmptyString,
+            "phrase_boundary_evidence": nonEmptyString,
+        ],
+        required: [
+            "id", "shot_ids", "source_start_sample", "source_end_sample", "sample_rate",
+            "timeline_start_seconds", "purpose", "performer_ids", "audible_voice_ids",
+            "mouth_ownership", "route_input_role_id", "phrase_boundary_evidence",
+        ]
+    ) }
+
+    private static var musicArcParameter: [String: Any] { object(
+        [
+            "kind": enumeration(MusicArcParameterKindV1.allCases.map(\.rawValue)),
+            "target_id": nonEmptyString,
+            "value": nonEmptyString,
+            "rationale": nonEmptyString,
+        ],
+        required: ["kind", "target_id", "value", "rationale"]
+    ) }
+
+    private static var musicArcSection: [String: Any] { object(
+        [
+            "section_id": nonEmptyString,
+            "musical_function": nonEmptyString,
+            "visual_function": nonEmptyString,
+            "motif_ids": array(nonEmptyString, minimum: 1),
+            "shot_ids": array(nonEmptyString, minimum: 1),
+            "constants": array(musicArcParameter),
+            "variations": array(musicArcParameter),
+            "lyrics_relation": enumeration(MusicArcRelationV1.allCases.map(\.rawValue)),
+            "change_explanation": nonEmptyString,
+        ],
+        required: [
+            "section_id", "musical_function", "visual_function", "motif_ids", "shot_ids",
+            "constants", "variations", "lyrics_relation", "change_explanation",
+        ]
+    ) }
+
+    private static var musicCoverageEvidence: [String: Any] { object(
+        [
+            "role_id": nonEmptyString,
+            "shot_ids": array(nonEmptyString, minimum: 1),
+            "performer_ids": stringArray,
+            "setup_ids": stringArray,
+            "shows_full_body": boolean,
+            "shows_floor_contact": boolean,
+            "instrument_id": nonEmptyString,
+            "shows_hands_and_orientation": boolean,
+            "minimum_continuous_seconds": ["type": "number", "exclusiveMinimum": 0],
+            "assembly_role_id": nonEmptyString,
+            "reference_demand_ids": stringArray,
+        ],
+        required: [
+            "role_id", "shot_ids", "performer_ids", "setup_ids", "shows_full_body",
+            "shows_floor_contact", "shows_hands_and_orientation", "minimum_continuous_seconds",
+            "assembly_role_id", "reference_demand_ids",
+        ]
+    ) }
+
+    private static var musicCoverageItem: [String: Any] { object(
+        [
+            "id": nonEmptyString,
+            "section_ids": array(nonEmptyString, minimum: 1),
+            "kind": enumeration(MusicCoverageKindV1.allCases.map(\.rawValue)),
+            "required_role_ids": array(nonEmptyString, minimum: 1),
+            "evidence": array(musicCoverageEvidence),
+            "approved_exception_role_ids": stringArray,
+            "choreography_beat_ids": stringArray,
+            "risk": nonEmptyString,
+            "rescue": nonEmptyString,
+        ],
+        required: [
+            "id", "section_ids", "kind", "required_role_ids", "evidence",
+            "approved_exception_role_ids", "choreography_beat_ids",
+        ]
+    ) }
+
+    private static var spatialVector: [String: Any] { object(
+        ["x": number, "y": number, "z": number],
+        required: ["x", "y", "z"]
+    ) }
+
+    private static var cameraSetupPlanItem: [String: Any] { object(
+        [
+            "id": nonEmptyString,
+            "location_id": nonEmptyString,
+            "position": spatialVector,
+            "orientation_degrees": spatialVector,
+            "axis_id": nonEmptyString,
+            "axis_side": enumeration(CameraAxisSideV1.allCases.map(\.rawValue)),
+            "height_meters": ["type": "number", "minimum": 0],
+            "focal_length_mm": ["type": "number", "exclusiveMinimum": 0],
+            "horizontal_fov_degrees": ["type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 180],
+            "look_target": nonEmptyString,
+            "path": array(object([
+                "time_seconds": ["type": "number", "minimum": 0],
+                "position": spatialVector,
+                "look_at": spatialVector,
+            ], required: ["time_seconds", "position", "look_at"])),
+            "deviation_reason": nonEmptyString,
+        ],
+        required: [
+            "id", "location_id", "position", "orientation_degrees", "axis_id", "axis_side",
+            "height_meters", "focal_length_mm", "horizontal_fov_degrees", "look_target", "path",
+        ]
+    ) }
+
+    private static var plannedGenerationShot: [String: Any] { object(
+        [
+            "shot_id": nonEmptyString,
+            "generation_id": nonEmptyString,
+            "setup_id": nonEmptyString,
+            "internal_start_seconds": ["type": "number", "minimum": 0],
+            "internal_end_seconds": ["type": "number", "exclusiveMinimum": 0],
+            "cut_after": enumeration(PlannedCutKindV1.allCases.map(\.rawValue)),
+            "start_state_id": nonEmptyString,
+            "end_state_id": nonEmptyString,
+            "continuity_in": stringArray,
+            "continuity_out": stringArray,
+            "timed_references": array(object([
+                "role_id": nonEmptyString,
+                "demand_id": nonEmptyString,
+                "time_seconds": ["type": "number", "minimum": 0],
+            ], required: ["role_id", "demand_id", "time_seconds"])),
+        ],
+        required: [
+            "shot_id", "generation_id", "setup_id", "internal_start_seconds",
+            "internal_end_seconds", "cut_after", "start_state_id", "end_state_id",
+            "continuity_in", "continuity_out", "timed_references",
+        ]
+    ) }
+
+    private static var productionState: [String: Any] { object(
+        [
+            "id": nonEmptyString,
+            "entity_id": nonEmptyString,
+            "version": ["type": "integer", "minimum": 1],
+            "description": nonEmptyString,
+            "cause_beat_id": nonEmptyString,
+            "state_sheet_path": nonEmptyString,
+            "state_sheet_sha256": ["type": "string", "pattern": "^[0-9a-fA-F]{64}$"],
+        ],
+        required: ["id", "entity_id", "version", "description", "cause_beat_id"]
+    ) }
+
+    private static var spatialLayout: [String: Any] { object(
+        [
+            "location_id": nonEmptyString,
+            "width_meters": ["type": "number", "exclusiveMinimum": 0],
+            "depth_meters": ["type": "number", "exclusiveMinimum": 0],
+            "height_meters": ["type": "number", "exclusiveMinimum": 0],
+            "setup_ids": array(nonEmptyString, minimum: 1),
+        ],
+        required: [
+            "location_id", "width_meters", "depth_meters", "height_meters", "setup_ids",
+        ]
+    ) }
+
+    private static var lookFreePanel: [String: Any] { object(
+        [
+            "id": nonEmptyString,
+            "setup_id": nonEmptyString,
+            "path": nonEmptyString,
+            "sha256": ["type": "string", "pattern": "^[0-9a-fA-F]{64}$"],
+            "look_free": boolean,
+        ],
+        required: ["id", "setup_id", "path", "sha256", "look_free"]
+    ) }
+
+    private static var blockoutShape: [String: Any] { object(
+        [
+            "id": nonEmptyString,
+            "entity_id": nonEmptyString,
+            "entity_state_ids": array(nonEmptyString, minimum: 1),
+            "location_id": nonEmptyString,
+            "primitive": enumeration(BlockoutShapePrimitiveV1.allCases.map(\.rawValue)),
+            "center": spatialVector,
+            "size": spatialVector,
+            "heading_degrees": number,
+        ],
+        required: [
+            "id", "entity_id", "entity_state_ids", "location_id", "primitive",
+            "center", "size", "heading_degrees",
+        ]
+    ) }
+
+    private static var blockoutRequest: [String: Any] {
+        ["anyOf": [
+            blockoutVariant(.none),
+            blockoutVariant(.native),
+            blockoutVariant(
+                .imported,
+                extra: ["imported_clip_path": nonEmptyString],
+                required: ["imported_clip_path"]
+            ),
+        ]]
+    }
+
+    private static func blockoutVariant(
+        _ mode: BlockoutSourceModeV1,
+        extra: [String: [String: Any]] = [:],
+        required extraRequired: [String] = []
+    ) -> [String: Any] {
+        object([
+            "mode": enumeration([mode.rawValue]),
+            "width": ["type": "integer", "minimum": 64],
+            "height": ["type": "integer", "minimum": 64],
+            "fps": ["type": "integer", "minimum": 1],
+            "duration_seconds": ["type": "number", "exclusiveMinimum": 0],
+        ].merging(extra) { _, new in new }, required: [
+            "mode", "width", "height", "fps", "duration_seconds",
+        ] + extraRequired)
+    }
+
+    private static var generatedConditioning: [String: Any] {
+        ["anyOf": [
+            conditioningVariant(
+                .referenceAnchor,
+                extra: ["anchor_demand_ids": array(nonEmptyString, minimum: 1)],
+                required: ["anchor_demand_ids"]
+            ),
+            conditioningVariant(.twoStateInterpolation),
+            conditioningVariant(
+                .frameContinuation,
+                extra: ["predecessor_shot_id": nonEmptyString],
+                required: ["predecessor_shot_id"]
+            ),
+            conditioningVariant(.firstFrame),
+        ]]
+    }
+
+    private static var nativeExtensionConditioning: [String: Any] {
+        conditioningVariant(
+            .nativeExtension,
+            extra: [
+                "source_shot_id": nonEmptyString,
+                "direction": enumeration(NativeExtensionDirectionV1.allCases.map(\.rawValue)),
+                "boundary_state_id": nonEmptyString,
+                "original_reference_demand_ids": stringArray,
+            ],
+            required: [
+                "source_shot_id",
+                "direction",
+                "boundary_state_id",
+                "original_reference_demand_ids",
+            ]
+        )
+    }
+
+    private static func conditioningVariant(
+        _ strategy: ConditioningStrategyKindV1,
+        extra: [String: [String: Any]] = [:],
+        required extraRequired: [String] = []
+    ) -> [String: Any] {
+        object([
+            "strategy": enumeration([strategy.rawValue]),
+            "rationale": nonEmptyString,
+            "mode_ids": array(nonEmptyString, minimum: 1),
+        ].merging(extra) { _, new in new }, required: [
+            "strategy",
+            "rationale",
+            "mode_ids",
+        ] + extraRequired)
+    }
 
     private static func shotVariant(
         sourceMode: SourceMode,

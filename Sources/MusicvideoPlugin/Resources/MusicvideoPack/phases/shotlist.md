@@ -1,5 +1,7 @@
 # Phase K7 — Shotlist
 
+For a causality-bound Storyboard, every `execution_shots` item names its approved `storyboard_step_ids`. Preserve complete step coverage across the Shot List, including imported sources. The host binds exact Treatment/Storyboard causality bytes to the execution plan and independently rechecks coverage before approval. Mapping an ID does not prove that an image depicts the intended action; actual take and sequence review remain necessary.
+
 > **Orchestrator instruction (main-session context).** Never spawn this
 > phase as a sub-agent — presenting a structured dialog (`show_dialog`) is a
 > main-session UI capability.
@@ -46,6 +48,14 @@ story-first order, the storyboard phase runs **before** the shotlist.
   `show_artifact(project_dir, "shotlist")` — output the `markdown` field
   in full before asking for approval. Do not hand-print a finished
   user-facing table here.
+
+For generated `start_end` shots, each matching `execution_shots` entry must declare
+`end_state.frame_boundary`: `characterCount`, `characterPositions`, `gaze`, and
+`visibleZones`. Describe the visible end state, including entrances and exits. A moving
+camera also requires separate `framing`, `cameraAngle`, and `cameraHeight` end values.
+A static camera retains the Shot List's framing/angle/height unless explicit end values
+are declared. Start geometry belongs to the Shot List, not a second start-boundary object.
+The host validates these fields before publication and uses them for end-frame audits.
 
 ## Steps
 
@@ -169,35 +179,22 @@ editorial validation. Never split an atomic step by inventing compound action.
 - `model_suggestion` based on shot type and `brief.model_preference`.
   Resolve the concrete video model against the host's live `nexgen`
   catalog at render time (`list_models` with `type="video"`).
-- `keyframe_strategy` (default: `start`):
-  - `start` — default. **Mandatory as soon as a shot carries bible
-    refs** (`location_ref`, `character_refs`, `prop_refs`,
-    `ensemble_refs`). The frame phase creates the anchor from the
-    bible sheets. Also applies to figure-less shots — an empty street
-    needs the `bible/<loc>/wide.png` as anchor, otherwise the video
-    model invents the world freely (sanity block
-    `MISSING_BIBLE_ANCHOR_FOR_T2V`).
-  - `start_end` — **MANDATORY for expanding camera moves** (pull, pan,
-    tilt, track, orbit, crane, zoom-out). These moves bring new world
-    area into the frame — without an end frame, the video model
-    extrapolates and hallucinates. Also sensible for strict movement
-    between two poses. Sanity check `EXPANDING_CAMERA_NEEDS_END_FRAME`
-    warns when `motion`/`camera` describes an expanding move but
-    `start_end` is not set. Escape: `keyframe_end_skip_ok: <reason>` in
-    `notes`, e.g. "newly revealed area is pure SKY/GROUND,
-    hallucination harmless".
-  - `none` — for completely abstract / world-free visuals (logo
-    insert, color field, lyrics overlay with no world reference), or
-    for a generated `chain_with_previous_end=true` shot whose sole
-    start condition is the previous render's extracted last frame.
-    Such shots carry no explicit reference images. For a justified
-    text-to-video exception: `text_to_video_ok: <reason>` in `notes`.
-
-For `chain_with_previous_end=true`, the shot must be generated, follow
-an earlier renderable shot, use `keyframe_strategy=none` and
-`seedance_input_mode=keyframe`, and leave `reference_image_refs` empty.
-Do not create a separate Frames start image: the predecessor's exact
-last frame is the sole continuity anchor.
+- Choose each generated shot's `execution_shots.conditioning` before prose.
+  `reference_anchor` sends approved named image demands through reference
+  slots and never through the first-frame slot. `two_state_interpolation`
+  binds this shot's approved first and last states. `frame_continuation`
+  binds only the exact last frame of the immediate predecessor on a route
+  without native extension. `first_frame` is an explicit directorial choice,
+  not a default. Record the chosen route mode IDs and the reason.
+- An AI-enhanced extension uses `native_extension`: bind the exact project-local
+  source video, source shot, forward/backward direction, boundary state and the
+  original reference demands that must persist. A harvested still can describe
+  the boundary but cannot replace the source video. Do not combine native
+  extension with a first-frame input.
+- Keep `keyframe_strategy`, `chain_with_previous_end` and
+  `seedance_input_mode` consistent with that strategy. Frames still owns and
+  approves actual first/last images. Existing projects pinned to an older pack
+  retain their stored legacy strategy until an explicit Recovery-copy upgrade.
 
 ### 6a. Source modes — ask early (hybrid production)
 
@@ -229,6 +226,51 @@ ownership and blocking-anchor requirements; do not restate that doctrine here.
 write prompts, so live shots get shooting specs and enhanced shots route
 to the edit path. Set `source_mode` per shot accordingly. When unstated,
 the shot is `generated`.
+
+### 6b. Spatial and Music Video execution extensions
+
+Supply `spatial_plan` when the sequence uses vertical geography, multiple
+camera axes, or documented spatial drift. Give every location stable setup IDs,
+metric layout bounds, camera position/orientation/height/optics/FOV, axis side,
+look target and any timed path. Every Shot List shot binds exactly one setup,
+one planned generation group and its own non-overlapping internal interval,
+start/end entity states caused by real Storyboard step IDs, continuity and timed
+reference roles. Give every blockout entity a stable primitive shape, location,
+metric center/size/heading and the exact State Ladder IDs that shape represents.
+Each internal shot in a shared generation owns distinct timed roles and reference
+demands; every non-final internal shot declares its real manual or model-internal
+cut. Panels are look-free checking views, never implicit generator references.
+Use the native graybox export or register a project-local imported QuickTime
+blockout; the host records exact plan, shape assignments and clip hashes.
+
+For the current Music Video pack, every call also supplies `musicvideo_plan`:
+
+- Bind each performed or timing-driven shot to an exact sample range of the
+  approved original track. Name its target song-timeline position, purpose,
+  performers, audible voices, mouth owner and time range. Lyrics/alignment are
+  optional, but when cited they must be exact project-local bytes. The host
+  exports the range and routes those exact bytes through the audio-timing slot.
+- Keep the original song once at timeline frame zero and provider song audio
+  muted. List any separately approved diegetic/dialogue layer; never turn it
+  into a second song bed.
+- Carry one visual concept through every measured section. Every section names
+  its musical and visual function, recurring motifs/setups, constant parameters,
+  actual camera/state/lighting/performance variations or explicit guidance,
+  lyrics relation, affected shots and the reason for change. Performance and
+  abstract projects need no invented plot.
+- For each continuous performance segment, declare dance, concert, instrument
+  or staged-vocal coverage roles and the shots/setups that satisfy them. Dance
+  proof that owns the master role must show full body and floor contact;
+  instrument proof names the instrument and shows hands/orientation. Concert
+  roles need master, performer, reaction and detail unless the absent role is an
+  explicit approved exception. For every generated coverage view, list the exact
+  `reference_demand_ids` that carry its body, instrument or motion evidence;
+  imported views leave this list empty. Every retained risk has a concrete rescue.
+
+These are parts of Shot List, not additional phases or intake questions. A
+change to the song, analysis, Treatment, Sections, setup/state sheets, blockout,
+performance segment or coverage plan invalidates Shot List currency and its
+downstream approvals.
 
 ### 7. Shot IDs gapless: `s001, s002, …`
 
@@ -382,8 +424,7 @@ master, but render sheets in an illustrated style (see the bible phase).
 (There is no solution (b) — the labels (a)/(c) are kept as in the
 original registry.)
 
-**Mandatory conditions for workaround (c)** (the user animates every
-still-only shot manually in the NLE, hence strict rules):
+**Mandatory conditions for workaround (c):**
 
 1. **User approval is mandatory.** The skill must **never
    unilaterally** switch a shot to still-only. Before every proposal,
@@ -406,11 +447,15 @@ still-only shot manually in the NLE, hence strict rules):
    "standing still", "sitting", "leaning against …", "looking at …".
    Motion is invented by the Ken Burns cut, not by the model.
 
-**Markers in the shot** (NOT optional):
-- `Shot.notes` must contain `still_only_approved: <justification + user
-  quote>` as soon as (c) is chosen. The render phase skips still-only
-  shots; the user produces the still via `generate_image` and animates it
-  in the NLE.
+**Canonical execution contract:** after the user's decision, write this
+shot's execution input with `generation_requirement.modality_id=image`
+and the sole `mode_id=timeline_animated_still`. Keep
+`source_mode=generated`, use `keyframe_strategy=start`, disable chaining
+and every video core input, and keep output audio false. The approval view
+shows “animated still” for that shot. Frames generates and audits the
+image; Render reuses those exact bytes without calling a video provider;
+timeline assembly applies the deterministic Ken Burns zoom and records its
+proof.
 
 **NOT recommended:**
 
@@ -472,39 +517,19 @@ empirically a trigger for the output filter.
 | Setting-architecture lists do not belong in the prompt when `location_ref` is set. | The location reference carries the setting. Escape: `ref_setting_ok:`. |
 | Story proper nouns that are NOT visible in the image (place names, brands, titles) do not belong in the prompt. | Pushes render budget into invisible tokens. Escape: `ref_names_ok:`. |
 
-### Rule 5 — Reference mode: `@ImageN` tags instead of names in the `visual_prompt`
+### Rule 5 — Reference roles come from the host plan
 
-When you write bible character **names** into the `visual_prompt`, the
-builder has to guess which uploaded reference is which actor. On
-multi-character shots that goes wrong. Write the deterministic reference
-tags directly into the prompt instead.
+Write named actors and concrete action in `visual_prompt`. Never invent
+`@ImageN`, `@VideoN`, or `@AudioN` tags and never assume a fixed upload order.
+The host resolves the selected offering's real limits, produces one ordered
+`ReferencePlanV2`, and compiles its typed entity/view/job bindings into the
+exact provider dialect. Start frame, end frame, source video, identity,
+location, prop, lighting, motion, voice, and timing are distinct jobs.
 
-**Reference order** (the host resolves `referenceImageMediaRefs` in this
-order; refer to them as `@Image1`, `@Image2`, …):
-
-1. `character_refs[0]` → `@Image1`
-2. `character_refs[1]` → `@Image2`
-3. … further character_refs (1-based)
-4. `location_ref` → `@Image{N+1}` (if present)
-5. `prop_refs[0]` → `@Image{...}` (if present)
-6. … further prop_refs
-
-Cap: 9 images (typical model limit — confirm via `list_models`
-`maxReferenceImages`).
-
-**How the agent writes the `visual_prompt`:**
-
-> **instead of** "Claude Mouse waves while AI Cat watches from the
-> porch."
->
-> **write** "@Image2 waves while @Image1 watches from the porch."
-
-For a 1-character shot, `@Image1` is sufficient (or the pronoun, when
-it is clear who is meant — as long as no name appears).
-
-**Advantages:** the builder has to guess nothing — the binding is
-explicit; no identity duplication (rule 4); multi-character shots get an
-unambiguous actor mapping.
+The compiler rejects missing dialects, mixed modes, stale bindings, and an
+unbound required reference before spend. Optional references omitted by the
+plan are also omitted from prompt syntax. Character names in the Shot List
+remain stable semantic IDs; they are not provider slot numbers.
 
 **Sanity codes** (reference-mode-only):
 
@@ -514,15 +539,13 @@ unambiguous actor mapping.
   setting-architecture enumeration.
 - `REFERENCE_MODE_STORY_PROPER_NOUNS` (info) — title-case multi-word
   proper noun (heuristic, high false-positive risk, hence info).
-- `REFERENCE_MODE_USES_NAMES_NOT_TAGS` (warn) — bible character names in
-  the visual_prompt without `@ImageN` tags. Escape: `ref_tags_ok:`.
+- Do not emit a `REFERENCE_MODE_USES_NAMES_NOT_TAGS` finding. Provider tags
+  are host-owned compiler output and do not belong in the Shot List.
 
 Consequence for treatment + storyboard: literary world description in
 `Treatment` and `Storyboard.notes` is OK and desired — it does not go
-into the provider prompt. The **translation** into the
-`Shot.visual_prompt` actively strips identity descriptions and replaces
-character names with `@ImageN` tags. That is the place where the project
-agent must enforce discipline.
+into the provider prompt. The host compiler combines the named action with
+the current typed plan and emits provider syntax after routing is fixed.
 
 ### Rule 6 — Literal spec language: no metaphors, no ad-hoc figures, no title cards, no off-frame persons
 
@@ -625,9 +648,9 @@ not reflexively write pose+vector into figure-less shots.
   token linter sees. The mandatory test-shot-before-batch process is
   defined in the render phase (`phases/render.md`) — do not
   promise the user a safe batch from a clean linter (Rule 3).
-- **Still-only workaround (c)** → never without explicit user approval
+- **Animated-still delivery (c)** → never without explicit user approval
   via `show_dialog`; minimum deployment; medium restriction; rest
-  positions; `still_only_approved:` marker in `Shot.notes` (Rule 3).
+  positions; encode the image delivery mode in the execution plan (Rule 3).
 - **Out of scope for this phase:**
   - No frame rendering (that is the frame agent's job).
   - No video render calls (`generate_video`).

@@ -2,11 +2,8 @@ import Foundation
 import NexGenEngine
 
 // In-process native reader for every cockpit read kind — no venv, no Python, no subprocess. Each
-// function returns raw JSON bytes in the SAME shape the former Python read CLI emitted, so the Cockpit
-// panel decoders consume it unchanged.
-//
-// Parity is proven in NexGenEngineTests: the `state` bytes here match the committed state.json golden
-// (a frozen fixture from the Python oracle; see Tests/NexGenEngineTests/Goldens/README.md).
+// function returns raw JSON bytes in the former Python read CLI shape, extended where the native host
+// owns authoritative state such as the generation money journal.
 enum NativeCockpitReader {
 
     /// True for the kinds served natively — which, after M7, is every cockpit read kind. Retained as
@@ -212,12 +209,24 @@ enum NativeCockpitReader {
         } catch {
             throw NativeError.notInitialized
         }
-        return try serialize(stateDictionary(snapshot))
+        let spend = try projectSpendSnapshot(dataRoot: dataRoot)
+        let brief = try? YAMLArtifactStore(dataRoot: dataRoot).load(
+            Brief.self,
+            at: PipelineLayout.briefFile
+        )
+        return try serialize(stateDictionary(
+            snapshot,
+            spend: spend,
+            budgetStopEur: brief?.budgetStopEur
+        ))
     }
 
-    /// The `ProjectState.model_dump()` dictionary shape — extracted so the parity test can build the
-    /// same bytes the CLI/golden carry. Keys and gate-state raw strings match `state.py` exactly.
-    static func stateDictionary(_ s: ProjectStateBuilder.ProjectState) -> [String: Any] {
+    /// The pipeline state plus the host-owned generation money journal used by the Cockpit.
+    static func stateDictionary(
+        _ s: ProjectStateBuilder.ProjectState,
+        spend: ProjectSpendSnapshot,
+        budgetStopEur: Double?
+    ) -> [String: Any] {
         let phases: [[String: Any]] = s.phases.map { p in
             [
                 "phase": p.phase,
@@ -226,12 +235,28 @@ enum NativeCockpitReader {
                 "notes": p.notes.map { $0 as Any } ?? NSNull(),
             ]
         }
+        let remaining: Any = spend.isComplete
+            ? max(0.0, s.budgetEur - spend.verifiedEur)
+            : NSNull()
+        let stopRemaining: Any
+        if spend.isComplete, let budgetStopEur {
+            stopRemaining = max(0.0, budgetStopEur - spend.verifiedEur)
+        } else {
+            stopRemaining = NSNull()
+        }
         return [
             "project": s.project,
             "mode": s.mode,
             "budget_eur": s.budgetEur,
-            "budget_spent_eur": s.budgetSpentEur,
-            "budget_remaining_eur": s.budgetRemainingEur,
+            "budget_stop_eur": budgetStopEur.map { $0 as Any } ?? NSNull(),
+            "budget_spent_eur": spend.verifiedEur,
+            "verified_spend_eur": spend.verifiedEur,
+            "budget_remaining_eur": remaining,
+            "hard_stop_remaining_eur": stopRemaining,
+            "spend_complete": spend.isComplete,
+            "active_reservations": spend.activeReservationCount,
+            "unpriced_transactions": spend.unpricedTransactionCount,
+            "legacy_generations": spend.legacyGenerationCount,
             "phases": phases,
             "next_phase": s.nextPhase.map { $0 as Any } ?? NSNull(),
         ]
@@ -273,7 +298,13 @@ enum NativeCockpitReader {
         // meta re-encoded via its Codable (by-alias CodingKeys), wrapped with body_markdown.
         let metaData = try JSONEncoder().encode(treatment.meta)
         let metaObject = try JSONSerialization.jsonObject(with: metaData)
-        return try serialize(["meta": metaObject, "body_markdown": treatment.bodyMarkdown])
+        var body = treatment.bodyMarkdown
+        do {
+            if let plan = try StoryCausalityStoreV1.history(dataRoot: dataRoot, through: treatment.meta.version) {
+                body += "\n\n" + plan.reviewMarkdown
+            }
+        } catch { body += "\n\nStory causality unavailable: \(error.localizedDescription)" }
+        return try serialize(["meta": metaObject, "body_markdown": body])
     }
 
     /// `read.py` "bible": `mcp_server.bible` → `Bible.model_dump(by_alias=True)` or literal `null`.
@@ -285,7 +316,28 @@ enum NativeCockpitReader {
         }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        return try encoder.encode(bible)
+        let bibleData = try encoder.encode(bible)
+        guard var object = try JSONSerialization.jsonObject(
+            with: bibleData
+        ) as? [String: Any] else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        if let variants = try BibleIdentityVariantStoreV1.loadIfPresent(
+            dataRoot: dataRoot
+        ) {
+            let variantData = try encoder.encode(variants)
+            guard let variantObject = try JSONSerialization.jsonObject(
+                with: variantData
+            ) as? [String: Any] else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            object["identity_variants"] = variantObject["variants"] ?? []
+            object["identity_variant_revision"] = variants.revision
+        } else {
+            object["identity_variants"] = []
+            object["identity_variant_revision"] = 0
+        }
+        return try serialize(object)
     }
 
     /// `read.py` "shotlist": the latest shotlist `model_dump(by_alias=True, mode="json")`, or literal
@@ -369,9 +421,7 @@ enum NativeCockpitReader {
         return try serialize(["project": report.project, "findings": findings])
     }
 
-    /// `read.py` "cost": `mcp_server.estimate_cost` → the spent/remaining budget picture (NOT the
-    /// forward per-shot estimate). `{project, budget_eur, spent_eur, remaining_eur, over_budget,
-    /// next_phase}`.
+    /// The verified project spend and remaining budget picture, not a forward per-shot estimate.
     static func costJSON(dataRoot: URL, activePack: String? = nil) throws -> Data {
         return try serialize(costDictionary(dataRoot: dataRoot, activePack: activePack))
     }
@@ -389,15 +439,82 @@ enum NativeCockpitReader {
         } catch {
             throw NativeError.notInitialized
         }
-        let spent = alreadySpentInProject(dataRoot: dataRoot)
+        let spend = try projectSpendSnapshot(dataRoot: dataRoot)
+        let brief = try? YAMLArtifactStore(dataRoot: dataRoot).load(
+            Brief.self,
+            at: PipelineLayout.briefFile
+        )
+        let verifiedTotal: Any = spend.isComplete
+            ? spend.verifiedEur
+            : NSNull()
+        let remaining: Any = spend.isComplete
+            ? max(0.0, snapshot.budgetEur - spend.verifiedEur)
+            : NSNull()
+        let overBudget: Any = spend.isComplete
+            ? spend.verifiedEur > snapshot.budgetEur
+            : NSNull()
+        let stopRemaining: Any
+        if spend.isComplete, let stop = brief?.budgetStopEur {
+            stopRemaining = max(0.0, stop - spend.verifiedEur)
+        } else {
+            stopRemaining = NSNull()
+        }
         return [
             "project": snapshot.project,
             "budget_eur": snapshot.budgetEur,
-            "spent_eur": spent,
-            "remaining_eur": max(0.0, snapshot.budgetEur - spent),
-            "over_budget": spent > snapshot.budgetEur,
+            "budget_stop_eur": brief?.budgetStopEur.map { $0 as Any }
+                ?? NSNull(),
+            "spent_eur": verifiedTotal,
+            "verified_spend_eur": spend.verifiedEur,
+            "remaining_eur": remaining,
+            "hard_stop_remaining_eur": stopRemaining,
+            "over_budget": overBudget,
+            "spend_complete": spend.isComplete,
+            "active_reservations": spend.activeReservationCount,
+            "unpriced_transactions": spend.unpricedTransactionCount,
+            "legacy_generations": spend.legacyGenerationCount,
             "next_phase": snapshot.nextPhase.map { $0 as Any } ?? NSNull(),
         ]
+    }
+
+    private static func projectSpendSnapshot(dataRoot: URL) throws -> ProjectSpendSnapshot {
+        let home = FrameInventory.projectHome(of: dataRoot)
+        let logURL = home.appendingPathComponent(Project.generationLogFilename)
+        let log: GenerationLog
+        if FileManager.default.fileExists(atPath: logURL.path) {
+            do {
+                log = try JSONDecoder().decode(
+                    GenerationLog.self,
+                    from: Data(contentsOf: logURL)
+                )
+            } catch {
+                throw NativeError.load("generation-log.json is unreadable")
+            }
+        } else {
+            log = GenerationLog()
+        }
+        let manifestURL = home.appendingPathComponent(Project.manifestFilename)
+        let generatedInputs: [GenerationInput]
+        if FileManager.default.fileExists(atPath: manifestURL.path) {
+            do {
+                generatedInputs = try JSONDecoder().decode(
+                    MediaManifest.self,
+                    from: Data(contentsOf: manifestURL)
+                ).entries.compactMap(\.generationInput)
+            } catch {
+                throw NativeError.load("media.json is unreadable")
+            }
+        } else {
+            generatedInputs = []
+        }
+        do {
+            return try GenerationBudgetGuard.spendSnapshot(
+                log: log,
+                generatedInputs: generatedInputs
+            )
+        } catch {
+            throw NativeError.load(error.localizedDescription)
+        }
     }
 
     /// The Intent Ledger loaded from `ledger.yaml`, or the empty default when the file is missing —

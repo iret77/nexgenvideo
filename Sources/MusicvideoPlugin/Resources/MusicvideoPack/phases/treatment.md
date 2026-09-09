@@ -1,5 +1,7 @@
 # Phase K3 — Treatment
 
+`write_treatment` requires `causality_plan`, indexed by stable beat/scene IDs and exact excerpts of `body_markdown`. Separate presentation order from story chronology. Link visible causes, state changes, introduced elements and payoffs; record all eight attributed change-review answers and affected downstream beats. Unresolved canon alternatives may remain in a draft but block approval. Use the approved concept type: abstract and performance work need not invent a causal plot. Read the complete causal-change procedure through `get_production_knowledge`; do not replace it with a three-act template or another startup interview.
+
 > **Orchestrator instruction (main-session context).** Never spawn this
 > phase as a sub-agent — presenting a structured dialog (`show_dialog`) is a
 > main-session UI capability.

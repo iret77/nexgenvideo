@@ -1061,7 +1061,7 @@ struct MCPModelDiscoveryTests {
     /// A discovered model routes through the SAME prompt-engine gate as every content model: its offer
     /// is `.generation` over `.mcp`, so `GenerationController` compiles+tokens before dispatch, and the
     /// model id carries the model arg. Discovery adds models; it never opens a raw-prompt bypass.
-    @Test @MainActor func discoveredModelIsAGatedGenerationBinding() {
+    @Test @MainActor func discoveredModelIsAGatedGenerationBinding() async {
         let (models, _) = MCPModelDiscovery.parseListing(videoListing)
         let byModality = MCPModelDiscovery.generateToolsByModality(higgsfieldTools)
         let entries = MCPModelDiscovery.catalogEntries(
@@ -1082,13 +1082,13 @@ struct MCPModelDiscoveryTests {
         #expect(b.providerRef == "generate_video")
         #expect(b.modelParam == "cinematic_studio_3_0")
 
-        // The gate itself rejects a raw prompt for this discovered model, and accepts only a valid token.
-        #expect(throws: (any Error).self) {
-            try PromptCompiler.enforceGate(args: [:], prompt: "a neon skyline", modelId: "cinematic_studio_3_0")
+        // Discovery does not invent a prompt dialect for an historical or unknown model identity.
+        await #expect(throws: (any Error).self) {
+            try await PromptCompiler.enforceGate(args: [:], prompt: "a neon skyline", modelId: "cinematic_studio_3_0")
         }
         let token = PromptCompiler.token(for: "a neon skyline", modelId: "cinematic_studio_3_0")
-        #expect(throws: Never.self) {
-            try PromptCompiler.enforceGate(
+        await #expect(throws: PromptDialectRegistryError.self) {
+            try await PromptCompiler.enforceGate(
                 args: ["compileToken": token], prompt: "a neon skyline", modelId: "cinematic_studio_3_0")
         }
     }

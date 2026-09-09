@@ -73,9 +73,18 @@ enum PackSelfTest {
         guard creative.allSatisfy({ !$0.required }) else {
             return "creative-material intake is not fully optional"
         }
+        guard let contract = PhaseContractStore.contract(packID: record.id) else {
+            return "resolved pipeline contract is unavailable after pack loading"
+        }
         let failures = PipelineAgentContract.failures(
             registry: PackCatalog.registry(activePack: record.id),
             manifest: manifest,
+            phaseBoundCapabilities: Dictionary(uniqueKeysWithValues: contract.phases.map {
+                ($0.declaration.id, $0.phaseBoundCapabilities)
+            }),
+            supportingCapabilities: Dictionary(uniqueKeysWithValues: contract.phases.map {
+                ($0.declaration.id, $0.supportingCapabilities)
+            }),
             phaseDocument: {
                 phaseDocument($0, bundleURL: record.bundleURL)
             }

@@ -37,6 +37,7 @@ ENGINE_REGISTRY_STORED_PROPERTIES = [
     "declarativeCockpitSurface",
     "phaseArtifactProviders",
     "productionKnowledgeConsumers",
+    "frameReferencePlanProvider",
 ]
 ENGINE_BOUNDARY_LAYOUT_CONTRACT = 9
 ENGINE_BOUNDARY_COMPATIBILITY_FLOOR = 2
@@ -755,13 +756,38 @@ def validate_hardsteps() -> None:
 
 
 def validate_pipeline_contract() -> None:
-    try:
-        validate_pipeline_contract_module.validate_pack_manifest(
-            ROOT / "plugins/musicvideo.json",
-            ROOT,
-        )
-    except validate_pipeline_contract_module.PipelineContractValidationError as error:
-        fail(f"musicvideo pipeline contract is invalid: {error}")
+    manifests = sorted((ROOT / "plugins").glob("*.json"))
+    if not manifests:
+        fail("no pack manifests found in plugins/")
+    seen_ids: set[str] = set()
+    for manifest_path in manifests:
+        try:
+            validate_pipeline_contract_module.validate_pack_manifest(
+                manifest_path,
+                ROOT,
+            )
+        except validate_pipeline_contract_module.PipelineContractValidationError as error:
+            fail(f"{manifest_path.name} pipeline contract is invalid: {error}")
+        manifest = load_json(manifest_path)
+        pack_id = manifest.get("id")
+        target = manifest.get("target")
+        resource_root = manifest.get("resourceRoot")
+        if not all(isinstance(value, str) and value for value in [pack_id, target, resource_root]):
+            fail(f"{manifest_path.name} has incomplete pack identity")
+        if pack_id in seen_ids:
+            fail(f"duplicate pack id {pack_id!r}")
+        seen_ids.add(pack_id)
+        source_root = ROOT / "Sources" / target
+        swift_sources = sorted(source_root.glob("*.swift"))
+        if not swift_sources:
+            fail(f"{manifest_path.name} target has no Swift sources: Sources/{target}")
+        source = "\n".join(path.read_text(encoding="utf-8") for path in swift_sources)
+        if f'public let name = "{pack_id}"' not in source:
+            fail(f"{manifest_path.name} id does not match its Pack.name")
+        if f'public let version = "{manifest.get("version")}"' not in source:
+            fail(f"{manifest_path.name} version does not match its Pack.version")
+        if f'@objc({manifest.get("principalClass")})' not in source:
+            fail(f"{manifest_path.name} principalClass is not implemented by its target")
 
 
 def validate_agent_guidance() -> None:
