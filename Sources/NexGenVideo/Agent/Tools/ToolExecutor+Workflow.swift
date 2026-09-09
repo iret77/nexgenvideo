@@ -3302,8 +3302,14 @@ extension ToolExecutor {
                     throw ToolError("The previously assembled timeline region changed. Choose drift_action \"adopt\" to finish the current cut or \"rebuild\" to replace it from the canonical plan.")
                 }
             }
-            if previousAssembly.plan == plan,
-               previousAssembly.planData == planData,
+            let sameInputs = previousAssembly.policy == policy
+                && previousAssembly.plan.projectID == plan.projectID
+                && previousAssembly.plan.phase == plan.phase
+                && previousAssembly.plan.selectedMedia == plan.selectedMedia
+                && previousAssembly.plan.placements == plan.placements
+                && previousAssembly.plan.policyPath == plan.policyPath
+                && previousAssembly.plan.policySHA256 == plan.policySHA256
+            if sameInputs,
                currentRegion == previousAssembly.manifest.appliedRegionFingerprint {
                 return try assemblyResult(
                     manifest: previousAssembly.manifest,
@@ -3329,11 +3335,7 @@ extension ToolExecutor {
                 declaredBinding: declaration.binding
             )
             // Dedicated assembly video track — reused across runs, cleared before each rebuild.
-            let videoTrackId = ensureAssemblyTrack(
-                editor,
-                existingId: sidecar.videoTrackId ?? "ngv-assembly-video-v1",
-                type: .video
-            )
+            let videoTrackId = ensureAssemblyTrack(editor, existingId: sidecar.videoTrackId, type: .video)
             sidecar.videoTrackId = videoTrackId
             if let vi = editor.timeline.tracks.firstIndex(where: { $0.id == videoTrackId }) {
                 editor.timeline.tracks[vi].clips = []

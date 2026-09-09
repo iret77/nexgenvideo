@@ -10,7 +10,6 @@ enum PipelineAssemblyStore {
     struct ExistingState {
         let policy: AssemblyPolicyV1
         let plan: AssemblyPlanV1
-        let planData: Data
         let manifest: AssemblyManifestV1
     }
 
@@ -69,7 +68,6 @@ enum PipelineAssemblyStore {
         return ExistingState(
             policy: policy,
             plan: plan,
-            planData: planData,
             manifest: manifest
         )
     }

@@ -432,6 +432,7 @@ struct PromptComposerShotTests {
 
     @Test("director pattern contributes lighting without overriding the shot camera")
     func patternDoesNotInjectCameraVocabulary() async throws {
+        ModelCatalog.shared.load(entries: ModelCatalog.launchEntries)
         let shot = try Self.shot(height: .eyeLevel, framing: .full)
         let brief = try Brief(
             project: "prompt-test",
