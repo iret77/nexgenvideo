@@ -137,6 +137,37 @@ struct GenerationBatchTests {
         #expect(throws: (any Error).self) { try journal.validate(batch: changed) }
     }
 
+    @Test func cancelingQueuedItemsDoesNotInvalidateAnotherItemsCompletion() async throws {
+        let (root, editor, batch) = try await fixture()
+        defer { cleanup(root) }
+        let initial = try await GenerationBatchStore.approve(batch, editor: editor)
+        let home = try #require(editor.workingRoot)
+        let first = batch.payload.items[0]
+        let outputs = placeholders(first, transaction: "running")
+        #expect(throws: (any Error).self) {
+            try GenerationBatchStore.updateExecution(initial, itemID: first.id, editor: editor) { $0.cancelRemaining() }
+        }
+        #expect(try GenerationBatchStore.load(id: batch.id, home: home) == initial)
+        let running = try GenerationBatchStore.update(initial, editor: editor) {
+            try $0.beginSubmission(itemID: first.id, packageID: first.package.id,
+                transactionID: "running", placeholders: outputs, batch: batch)
+            try $0.recordProviderRequest(itemID: first.id, transactionID: "running", requestID: "provider-job")
+        }
+        _ = try GenerationBatchStore.update(running, editor: editor) { $0.cancelRemaining() }
+        let completed = try GenerationBatchStore.updateExecution(running, itemID: first.id, editor: editor) {
+            try $0.finish(itemID: first.id, outputAssetIDs: outputs.map(\.id), batch: batch)
+        }
+        #expect(completed.journal.executions.map(\.state) == [.complete, .canceled, .canceled])
+        #expect(throws: (any Error).self) {
+            try GenerationBatchStore.updateExecution(running, itemID: first.id, editor: editor) {
+                try $0.stop(itemID: first.id, state: .blocked, detail: "stale completion")
+            }
+        }
+        #expect(throws: (any Error).self) {
+            try GenerationBatchStore.updateExecution(initial, itemID: first.id, editor: editor) { $0.cancelRemaining() }
+        }
+    }
+
     @Test func partialOutputsRetainExactBytesAcrossInterruptedJobs() async throws {
         let (root, editor, batch) = try await fixture()
         defer { cleanup(root) }

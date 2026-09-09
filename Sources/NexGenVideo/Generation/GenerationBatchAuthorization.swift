@@ -80,7 +80,7 @@ struct GenerationBatchAuthorization: Sendable, Equatable {
                 throw GenerationRequestError.storage("A completed batch output changed while its receipt was verified.")
             }
         }
-        _ = try GenerationBatchStore.update(snapshot, editor: editor) { journal in
+        _ = try GenerationBatchStore.updateExecution(snapshot, itemID: itemID, editor: editor) { journal in
             if [.running, .blocked].contains(execution.state), ready.count == item.package.payload.outputCount,
                Set(receipts.map(\.asset.id)) == Set(readyIDs) {
                 try journal.finish(itemID: itemID, outputAssetIDs: ready.map(\.id), batch: snapshot.batch)

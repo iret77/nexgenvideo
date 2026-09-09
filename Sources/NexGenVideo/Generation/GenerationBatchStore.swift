@@ -85,6 +85,23 @@ enum GenerationBatchStore {
         return updated
     }
 
+    static func updateExecution(_ expected: Snapshot, itemID: String, editor: EditorViewModel,
+                                mutate: (inout GenerationBatchJournal) throws -> Void) throws -> Snapshot {
+        guard let home = editor.workingRoot else { throw GenerationRequestError.storage("The generation batch project is no longer open.") }
+        let current = try load(id: expected.batch.id, home: home)
+        guard current.batch == expected.batch, current.journal.approvedAt == expected.journal.approvedAt,
+              let execution = expected.journal.executions.first(where: { $0.itemID == itemID }),
+              current.journal.executions.first(where: { $0.itemID == itemID }) == execution else {
+            throw GenerationRequestError.gate("This batch item advanced while its output was verified. Read its current execution before continuing.")
+        }
+        return try update(current, editor: editor) { journal in
+            try mutate(&journal)
+            guard journal.executions.filter({ $0.itemID != itemID }) == current.journal.executions.filter({ $0.itemID != itemID }) else {
+                throw GenerationRequestError.gate("An item update cannot change another batch execution.")
+            }
+        }
+    }
+
     private static func markDirty(editor: EditorViewModel) throws {
         guard let key = editor.openWorkingCopyKey else { throw GenerationRequestError.storage("The generation batch has no recoverable working copy.") }
         try ProjectWorkingCopy.markDirty(key: key)
