@@ -109,7 +109,7 @@ enum NativeBlockoutExporter {
         context.setFillColor(CGColor(gray: 0.16, alpha: 1))
         context.fill(bounds)
         context.setStrokeColor(CGColor(gray: 0.38, alpha: 1))
-        context.setLineWidth(1)
+        context.setLineWidth(AppTheme.BorderWidth.thin)
         let grid = max(24, min(width, height) / 10)
         for x in stride(from: 0, through: width, by: grid) {
             context.move(to: CGPoint(x: x, y: 0))
@@ -132,7 +132,7 @@ enum NativeBlockoutExporter {
             )
             context.setStrokeColor(color)
             context.setFillColor(color)
-            context.setLineWidth(3)
+            context.setLineWidth(AppTheme.BorderWidth.heavy)
             let points = setup.path.isEmpty
                 ? [setup.position]
                 : setup.path.map(\.position)
