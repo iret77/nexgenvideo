@@ -444,7 +444,7 @@ struct GateGuardTests {
             media.append(
                 ProjectMediaReferenceV1(
                     id: sourceAssetID,
-                    role: "source_video",
+                    role: "core.project-media",
                     path: sourcePath,
                     sha256: try FileDigest.sha256(of: sourceURL)
                 )
@@ -1943,8 +1943,9 @@ struct GateGuardTests {
             withIntermediateDirectories: true
         )
         try Data("frame-v1".utf8).write(to: image)
-        let prompt = try #require(current.shots.first)
-            .stillProductionPromptRequirements
+        let currentShot = try #require(current.shots.first)
+        let prompt = ([currentShot.visualPrompt]
+            + currentShot.stillProductionPromptRequirements)
             .joined(separator: ". ")
         func frames(_ providerPrompt: String) -> FramesManifest {
             FramesManifest(
@@ -2077,8 +2078,9 @@ struct GateGuardTests {
             withIntermediateDirectories: true
         )
         try Data("still-image".utf8).write(to: image)
-        let prompt = try #require(current.shots.first)
-            .stillProductionPromptRequirements
+        let currentShot = try #require(current.shots.first)
+        let prompt = ([currentShot.visualPrompt]
+            + currentShot.stillProductionPromptRequirements)
             .joined(separator: ". ")
         try saveFramesManifest(
             FramesManifest(

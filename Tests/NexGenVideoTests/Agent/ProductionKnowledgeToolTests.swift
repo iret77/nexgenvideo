@@ -39,4 +39,21 @@ struct ProductionKnowledgeToolTests {
         #expect(result.contains("0333751214c7af17977dd33f0ba88ba9c352421e"))
         #expect(result.contains("not_observed"))
     }
+
+    @Test("style recommendation exposes aliases and source tradeoffs as structured JSON")
+    func styleRecommendation() throws {
+        let executor = ToolExecutor(editorProvider: { nil })
+        let result = try text(executor.getProductionKnowledge([
+            "operation": "recommend_style",
+            "named_styles": ["Jarmusch"],
+            "constraints": ["low_reroll_budget"],
+        ]))
+        let decoded = try JSONDecoder().decode(ProductionStyleRecommendationV1.self, from: Data(result.utf8))
+        let candidate = try #require(decoded.candidates.first)
+        #expect(decoded.candidates.count == 1)
+        #expect(candidate.kind == .alias)
+        #expect(candidate.proposedSelection?.directorID == "director-wim-wenders-the-seeing-road")
+        #expect(candidate.proposedSelection?.signatureID == "dop-robby-m-ller")
+        #expect(candidate.synthesisSourceIDs == ["director-yasujir-ozu-domestic-stillness"])
+    }
 }

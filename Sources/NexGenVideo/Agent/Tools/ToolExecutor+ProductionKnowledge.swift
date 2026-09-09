@@ -5,6 +5,24 @@ extension ToolExecutor {
     func getProductionKnowledge(_ args: [String: Any]) throws -> ToolResult {
         let catalog = try EngineProductionKnowledgeResourcesV1.loadCatalog()
         let operation = try args.requireString("operation")
+        if operation == "recommend_style" {
+            let named = (args["named_styles"] as? [String]) ?? []
+            let moods = (args["moods"] as? [String]) ?? []
+            let rawConstraints = (args["constraints"] as? [String]) ?? []
+            let constraints = try rawConstraints.map { value -> ProductionStyleConstraintV1 in
+                guard let constraint = ProductionStyleConstraintV1(rawValue: value) else {
+                    throw ToolError("Unknown production style constraint '\(value)'.")
+                }
+                return constraint
+            }
+            let recommendation = try ProductionStyleAdvisorV1.recommend(
+                genre: args.string("genre"), namedStyles: named, moods: moods,
+                constraints: constraints, catalog: catalog
+            )
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            return .ok(String(decoding: try encoder.encode(recommendation), as: UTF8.self))
+        }
         if operation == "read" {
             let id = try args.requireString("entryID")
             let parts = id.split(separator: "/", maxSplits: 1).map(String.init)

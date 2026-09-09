@@ -60,6 +60,10 @@ struct LottieExportTests {
             let evidence = URL(fileURLWithPath: directory).appendingPathComponent("lottie-export-evidence")
             try FileManager.default.createDirectory(at: evidence, withIntermediateDirectories: true)
             try rep.representation(using: .png, properties: [:])?.write(to: evidence.appendingPathComponent("export.png"))
+            try FileManager.default.copyItem(
+                at: outURL,
+                to: evidence.appendingPathComponent("export.mp4")
+            )
             for url in try FileManager.default.contentsOfDirectory(
                 at: LottieVideoGenerator.cacheDirectory, includingPropertiesForKeys: nil
             ) where url.lastPathComponent.hasPrefix(mediaRef + "_") || url.lastPathComponent.hasPrefix("lottie-fixture_") {

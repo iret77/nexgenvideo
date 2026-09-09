@@ -1,7 +1,7 @@
 import Foundation
 import NexGenEngine
 
-enum PipelineExecutionPlanError: Error, Sendable, Equatable {
+enum PipelineExecutionPlanError: Error, Sendable, Equatable, LocalizedError {
     case creativeContextReferenceMismatch
     case extensionReferenceMismatch
     case referencedFileInvalid(String)
@@ -12,6 +12,31 @@ enum PipelineExecutionPlanError: Error, Sendable, Equatable {
     case publicationFailed(String)
     case publicationRollbackFailed(String)
     case unsafePublicationPath(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .creativeContextReferenceMismatch:
+            "The execution plan does not reference the exact creative context."
+        case .extensionReferenceMismatch:
+            "The execution plan does not reference its exact extension artifacts."
+        case .referencedFileInvalid(let path):
+            "The execution-plan file at '\(path)' is missing, stale, or outside the project."
+        case .persistedArtifactInvalid(let detail):
+            "The persisted execution plan is invalid: \(detail)"
+        case .projectMetadataInvalid(let detail):
+            "The project metadata is invalid: \(detail)"
+        case .projectMetadataMismatch(let expected, let actual):
+            "The execution-plan project '\(actual)' does not match project '\(expected)'."
+        case .shotlistReferenceMismatch:
+            "The execution plan does not match the current Shot List."
+        case .publicationFailed(let detail):
+            "Execution-plan publication failed: \(detail)"
+        case .publicationRollbackFailed(let detail):
+            "Execution-plan rollback failed: \(detail)"
+        case .unsafePublicationPath(let path):
+            "The execution-plan path is unsafe: \(path)"
+        }
+    }
 }
 
 enum PipelineExecutionPlanWriter {
@@ -370,6 +395,8 @@ enum PipelineExecutionPlanWriter {
                 planData,
                 contextData
             )
+        } catch let error as PipelineExecutionPlanError {
+            throw error
         } catch {
             throw PipelineExecutionPlanError.persistedArtifactInvalid(
                 error.localizedDescription

@@ -57,6 +57,12 @@ enum AgentInstructions {
           library is also available without a format pack. Search returns a paginated index; read \
           retrieves one complete entry. Follow referenced governing sections as needed instead of \
           loading the whole corpus or truncating a procedure.
+        - Before proposing or writing a production style, call get_production_knowledge with \
+          operation recommend_style and the known genre, named filmmakers, mood and production \
+          constraints. Present at most its two candidates and their actual character/tradeoffs. \
+          A synthesis needs one dominant director plus explicit dimension overrides. A source gap \
+          remains a gap; a clash or house-signature overlay requires the user's explicit, reasoned \
+          dimension choice and never authorizes render spend.
         - Apply this knowledge through the actual planning, compiler, review, and editing tools. \
           Keep exact entry IDs and versions with the artifact they informed. Source packaging, \
           example canon, dated provider claims, and future-format workflows are not executable \

@@ -66,6 +66,7 @@ public struct ResolvedProductionStyleV1: Codable, Sendable, Equatable {
 
     public static func resolve(_ selection: ProductionStyleSelectionV1,
                                catalog: ProductionKnowledgeCatalogV1) throws -> Self {
+        try ProductionStyleAdvisorV1.validateCombination(selection)
         guard let library = catalog.library(id: "film-production-blueprints") else {
             throw ProductionKnowledgeErrorV1.missingResource("film-production-blueprints")
         }
@@ -128,10 +129,23 @@ public struct ResolvedProductionStyleV1: Codable, Sendable, Equatable {
                 throw invalid("Unknown override source: \(source)")
             }
             resolved[override.dimension] = (override.value, override.sourceEntryID ?? "project-decision", override.reason)
-            if !criteria.contains(where: { $0.dimension == override.dimension }), let verification = override.verification {
+            let sourceCriteria: [ProductionStyleCriterionV1]
+            if let sourceID = override.sourceEntryID,
+               let sourceEntry = library.entries.first(where: { $0.id.rawValue == sourceID }) {
+                sourceCriteria = try verification(of: sourceEntry).filter { $0.dimension == override.dimension }
+            } else {
+                sourceCriteria = []
+            }
+            let priorCriteria = criteria.filter { $0.dimension == override.dimension }
+            criteria.removeAll { $0.dimension == override.dimension }
+            if !sourceCriteria.isEmpty {
+                criteria += sourceCriteria
+            } else if let verification = override.verification {
                 criteria.append(ProductionStyleCriterionV1(id: "project-override." + override.dimension.rawValue,
                     recipeID: override.sourceEntryID ?? "project-decision", sourceClause: verification.criterion,
                     dimension: override.dimension, scope: verification.scope, evidenceKind: verification.evidenceKind))
+            } else {
+                criteria += priorCriteria
             }
         }
         return Self(schema: schemaVersion, libraryVersion: library.version.rawValue,

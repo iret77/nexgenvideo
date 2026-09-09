@@ -528,7 +528,13 @@ public enum ExecutionPlanValidator {
     private static func validateExtensionPath(_ path: String) throws {
         try validateReferencePath(path)
         let prefix = PipelineLayout.executionExtensionsDir + "/"
-        guard path.hasPrefix(prefix), path.count > prefix.count else {
+        let hostOwnedExtensions = Set([
+            StoryCausalityPlanV1.relativePath,
+            StoryboardCausalityV1.relativePath,
+            ResolvedProductionStyleV1.relativePath,
+        ])
+        guard hostOwnedExtensions.contains(path)
+                || (path.hasPrefix(prefix) && path.count > prefix.count) else {
             throw ExecutionPlanValidationError.invalidReferencePath(path)
         }
     }

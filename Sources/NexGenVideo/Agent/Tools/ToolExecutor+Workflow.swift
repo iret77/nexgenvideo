@@ -1285,13 +1285,33 @@ extension ToolExecutor {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = try args.requireString("phase")
         let declaration = try mutationPackDeclaration(editor, dataRoot: root)
+        guard let shotlist = try readShotlist(dataRoot: root) else {
+            throw ToolError("No shotlist yet. Plan and approve the shots before rendering.")
+        }
+        let deliveryModes: [String: ShotDeliveryModeV1]
+        do {
+            deliveryModes = try renderDeliveryModes(
+                phase: phase,
+                shotlist: shotlist,
+                dataRoot: root
+            )
+        } catch PipelineExecutionPlanError.referencedFileInvalid(let path) {
+            if let sourceShot = shotlist.shots.first(where: {
+                $0.sourceMode == .aiEnhanced && $0.sourcePath == path
+            }) {
+                throw ToolError(
+                    "Shot '\(sourceShot.id)' has no current project-local source video at '\(path)'. "
+                        + "Restore the declared source or rewind the Shot List."
+                )
+            }
+            throw ToolError(
+                "The current execution plan references a missing or stale file at '\(path)'."
+            )
+        }
         try PipelineRenderRecordWriter.requireCurrentPublicationIfPresent(
             dataRoot: root,
             phase: phase
         )
-        guard let shotlist = try readShotlist(dataRoot: root) else {
-            throw ToolError("No shotlist yet. Plan and approve the shots before rendering.")
-        }
         let renderManifest = phase == "frames"
             ? nil
             : try readRenderManifest(dataRoot: root, phase: phase)
@@ -1301,11 +1321,6 @@ extension ToolExecutor {
         let renderRoutingProof = phase == "frames"
             ? nil
             : try readRenderRoutingProof(dataRoot: root, phase: phase)
-        let deliveryModes = try renderDeliveryModes(
-            phase: phase,
-            shotlist: shotlist,
-            dataRoot: root
-        )
         let shot: Shot?
         let frameRole: String?
         if phase == "frames" {
@@ -3172,7 +3187,7 @@ extension ToolExecutor {
         }
         guard !planInputs.isEmpty else {
             throw ToolError(
-                "No current rendered or imported shot sources are available "
+                "No rendered shots or current imported shot sources are available "
                     + "for phase \"\(phase)\"."
             )
         }

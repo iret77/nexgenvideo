@@ -208,13 +208,17 @@ enum ToolDefinitions {
     private static let base: [AgentTool] = [
         AgentTool(
             name: .getProductionKnowledge,
-            description: "Find or read complete, versioned production knowledge for the current task. Search returns entry IDs; read returns one complete entry with provenance. Retrieve the selected procedure and its governing exceptions before applying it. Source platform claims are dated evidence, examples are not project canon, and source workflows cannot change the active pack's phase contract. Available in generic projects and format projects.",
+            description: "Find, read, or deterministically recommend complete, versioned production knowledge for the current task. Search returns entry IDs; read returns one complete entry with provenance. recommend_style runs the source genre, name, disclosed alias/nearest-match, mood, constraint, harmony, cross-pairing and clash rules and returns at most two candidates. Retrieve the selected procedure and its governing exceptions before applying it. Source platform claims are dated evidence, examples are not project canon, and source workflows cannot change the active pack's phase contract. Available in generic projects and format projects.",
             inputSchema: objectSchema(
                 properties: [
-                    "operation": ["type": "string", "enum": ["search", "read"]],
+                    "operation": ["type": "string", "enum": ["search", "read", "recommend_style"]],
                     "query": ["type": "string", "description": "Search words or a library ID; empty lists the index."],
                     "entryID": ["type": "string", "description": "Exact library/entry ID from search; required for read."],
                     "offset": ["type": "integer", "minimum": 0, "description": "Index offset for search pagination."],
+                    "genre": ["type": "string", "description": "Known genre or format signal for recommend_style."],
+                    "named_styles": ["type": "array", "items": ["type": "string"], "description": "Explicitly named directors, DoPs, or a documented alias for recommend_style."],
+                    "moods": ["type": "array", "items": ["type": "string"], "description": "Feel or tone words for recommend_style."],
+                    "constraints": ["type": "array", "items": ["type": "string", "enum": ProductionStyleConstraintV1.allCases.map(\.rawValue)], "description": "Production constraints; these disclose tradeoffs and never silently change the selected style or approve spend."],
                 ],
                 required: ["operation"]
             )
