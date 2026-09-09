@@ -10,6 +10,17 @@ import NexGenEngine
 @MainActor
 @Suite("assemble_timeline")
 struct AssembleTimelineTests {
+    private struct ExecutionPlanPublication: Codable {
+        let schema: String
+        let contextSHA256: String
+        let planSHA256: String
+
+        private enum CodingKeys: String, CodingKey {
+            case schema
+            case contextSHA256 = "context_sha256"
+            case planSHA256 = "plan_sha256"
+        }
+    }
 
     // 120 BPM at 30 fps: beats every 0.5 s (15 frames), downbeats every 2 s.
     private static let analysisJSON = """
