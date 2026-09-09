@@ -442,11 +442,13 @@ enum PipelineArtifactWriteContract {
                 "generation_requirement": executionGenerationRequirement,
                 "core_inputs": generatedCoreInputs,
                 "reference_demands": array(executionReferenceDemand),
+                "conditioning": generatedConditioning,
             ]) { _, new in new },
             required: executionShotCommonRequired + [
                 "generation_requirement",
                 "core_inputs",
                 "reference_demands",
+                "conditioning",
             ]
         )
     }
@@ -459,11 +461,13 @@ enum PipelineArtifactWriteContract {
                 "camera_endpoint": nonEmptyString,
                 "generation_requirement": executionGenerationRequirement,
                 "core_inputs": aiEnhancedCoreInputs,
-                "reference_demands": array(executionReferenceDemand, maximum: 0),
+                "reference_demands": array(executionReferenceDemand),
+                "conditioning": nativeExtensionConditioning,
             ]) { _, new in new },
             required: executionShotCommonRequired + [
                 "generation_requirement",
                 "core_inputs",
+                "conditioning",
             ]
         )
     }
@@ -657,6 +661,57 @@ enum PipelineArtifactWriteContract {
             "canon_ids",
         ]
     ) }
+
+    private static var generatedConditioning: [String: Any] {
+        ["anyOf": [
+            conditioningVariant(
+                .referenceAnchor,
+                extra: ["anchor_demand_ids": array(nonEmptyString, minimum: 1)],
+                required: ["anchor_demand_ids"]
+            ),
+            conditioningVariant(.twoStateInterpolation),
+            conditioningVariant(
+                .frameContinuation,
+                extra: ["predecessor_shot_id": nonEmptyString],
+                required: ["predecessor_shot_id"]
+            ),
+            conditioningVariant(.firstFrame),
+        ]]
+    }
+
+    private static var nativeExtensionConditioning: [String: Any] {
+        conditioningVariant(
+            .nativeExtension,
+            extra: [
+                "source_shot_id": nonEmptyString,
+                "direction": enumeration(NativeExtensionDirectionV1.allCases.map(\.rawValue)),
+                "boundary_state_id": nonEmptyString,
+                "original_reference_demand_ids": stringArray,
+            ],
+            required: [
+                "source_shot_id",
+                "direction",
+                "boundary_state_id",
+                "original_reference_demand_ids",
+            ]
+        )
+    }
+
+    private static func conditioningVariant(
+        _ strategy: ConditioningStrategyKindV1,
+        extra: [String: [String: Any]] = [:],
+        required extraRequired: [String] = []
+    ) -> [String: Any] {
+        object([
+            "strategy": enumeration([strategy.rawValue]),
+            "rationale": nonEmptyString,
+            "mode_ids": array(nonEmptyString, minimum: 1),
+        ].merging(extra) { _, new in new }, required: [
+            "strategy",
+            "rationale",
+            "mode_ids",
+        ] + extraRequired)
+    }
 
     private static func shotVariant(
         sourceMode: SourceMode,

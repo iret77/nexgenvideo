@@ -43,6 +43,8 @@ public enum PipelineLayout {
     public static let executionPlanFile = "execution/plan.v1.json"
     public static let creativeContextFile = "execution/creative-context.v1.json"
     public static let executionShotInputsFile = "execution/shot-inputs.v1.json"
+    public static let conditioningStrategyFile =
+        "execution/extensions/conditioning-strategy.v1.json"
     public static let assetGraphFile = "execution/asset-graph.v1.json"
     public static let productionInputsPublicationFile =
         "execution/production-inputs-publication.v1.json"

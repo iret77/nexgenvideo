@@ -37,6 +37,9 @@ enum PipelineShotlistWriter {
             shotIDs: Set(executionInputs.map(\.id)),
             dataRoot: dataRoot
         )
+        let conditioningSnapshot = try PipelineConditioningStrategyStore.snapshot(
+            dataRoot: dataRoot
+        )
         let previousShotlist = FileManager.default.fileExists(atPath: shotlistURL.path)
             ? try Data(contentsOf: shotlistURL)
             : nil
@@ -54,6 +57,16 @@ enum PipelineShotlistWriter {
             try shotlistData.write(to: shotlistURL, options: .atomic)
             try PipelineExecutionShotInputStore.write(
                 executionInputData,
+                dataRoot: dataRoot
+            )
+            let conditioningPlan = try PipelineConditioningStrategyStore.makePlan(
+                shotlist: shotlist,
+                shotlistData: shotlistData,
+                executionInputs: executionInputs,
+                dataRoot: dataRoot
+            )
+            try PipelineConditioningStrategyStore.write(
+                conditioningPlan,
                 dataRoot: dataRoot
             )
             let draft = try PipelineExecutionPlanComposer.compose(
@@ -96,6 +109,14 @@ enum PipelineShotlistWriter {
                 )
             } catch {
                 rollbackFailures.append("production inputs: \(error.localizedDescription)")
+            }
+            do {
+                try PipelineConditioningStrategyStore.restore(
+                    conditioningSnapshot,
+                    dataRoot: dataRoot
+                )
+            } catch {
+                rollbackFailures.append("conditioning strategy: \(error.localizedDescription)")
             }
             do {
                 try PipelineExecutionShotInputStore.restore(

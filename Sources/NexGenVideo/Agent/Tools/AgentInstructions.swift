@@ -72,6 +72,12 @@ enum AgentInstructions {
           with visible character count, positions, gaze and zones. Moving cameras also need distinct \
           end framing, cameraAngle and cameraHeight; static cameras keep the Shot List camera unless \
           an explicit boundary value is declared. Start geometry remains in the canonical Shot List.
+        - Every generated or AI-enhanced execution shot declares conditioning. Prefer an approved \
+          reference_anchor in the ordinary reference-image slot for new image-guided shots. Use \
+          two_state_interpolation only for two approved states of that shot, frame_continuation for \
+          the immediate predecessor's exact last frame, native_extension for the exact source video \
+          with direction and boundary state, or first_frame only as an explicit directorial choice. \
+          Never place a reference anchor in a first-frame slot or mix native extension with frame input.
         - Style overrides require verification scope, evidenceKind and a concrete criterion. A frame \
           can verify static image criteria; motion, cut order and sound need the actual cut. Inspect \
           the current frame before saving its audit; transient observation receipts may expire. \

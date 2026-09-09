@@ -9,6 +9,7 @@ public enum CoreReferenceSemanticJobIDV1 {
     public static let predecessorLastFrame = "core.predecessor-last-frame"
     public static let sourceVideo = "core.source-video"
     public static let audioTiming = "core.audio-timing"
+    public static let referenceAnchor = "core.reference-anchor"
 }
 
 public enum CoreReferenceInputSlotIDV1 {
@@ -20,6 +21,7 @@ public enum CoreReferenceInputSlotIDV1 {
     public static let lastFrame = "core.input.last-frame"
     public static let sourceVideo = "core.input.source-video"
     public static let audioTiming = "core.input.audio-timing"
+    public static let referenceAnchor = "reference.image.anchor"
 }
 
 public enum CoreAssetProvenanceKindIDV1 {

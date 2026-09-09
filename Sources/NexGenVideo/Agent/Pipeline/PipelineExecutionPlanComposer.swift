@@ -379,13 +379,25 @@ enum PipelineExecutionPlanComposer {
                 throw PipelineExecutionPlanComposerError.invalidCoreInputs(shot.id)
             }
         }
-        let requiresFirstFrame = !isAnimatedStill && (
-            shot.chainWithPreviousEnd
-                || shot.keyframeStrategy == .start
-                || shot.keyframeStrategy == .startEnd
-        )
-        let requiresLastFrame = !isAnimatedStill
-            && shot.keyframeStrategy == .startEnd
+        let requiresFirstFrame: Bool
+        let requiresLastFrame: Bool
+        if let conditioning = input.conditioning {
+            requiresFirstFrame = !isAnimatedStill && [
+                ConditioningStrategyKindV1.twoStateInterpolation,
+                .frameContinuation,
+                .firstFrame,
+            ].contains(conditioning.strategy)
+            requiresLastFrame = !isAnimatedStill
+                && conditioning.strategy == .twoStateInterpolation
+        } else {
+            requiresFirstFrame = !isAnimatedStill && (
+                shot.chainWithPreviousEnd
+                    || shot.keyframeStrategy == .start
+                    || shot.keyframeStrategy == .startEnd
+            )
+            requiresLastFrame = !isAnimatedStill
+                && shot.keyframeStrategy == .startEnd
+        }
         let expectedFirst = shot.chainWithPreviousEnd
             ? coreInputs.predecessorLastFrameModeID != nil
                 && coreInputs.firstFrameModeID == nil
@@ -900,6 +912,16 @@ enum PipelineExecutionPlanComposer {
         dataRoot: URL
     ) throws -> [PackArtifactExtensionReferenceV1] {
         var references: [PackArtifactExtensionReferenceV1] = []
+        if let plan = try PipelineConditioningStrategyStore.loadCurrent(dataRoot: dataRoot) {
+            let path = ConditioningStrategyPlanV1.relativePath
+            let data = try Data(contentsOf: ProjectLocalFile.resolve(path, dataRoot: dataRoot))
+            references.append(PackArtifactExtensionReferenceV1(
+                id: PipelineConditioningStrategyStore.extensionID,
+                schema: plan.schema,
+                path: path,
+                sha256: FileDigest.sha256(of: data)
+            ))
+        }
         if try StoryCausalityStoreV1.requireCurrent(dataRoot: dataRoot) != nil {
             _ = try StoryboardCausalityV1.requireCurrent(dataRoot: dataRoot)
             for (id, schema, path) in [

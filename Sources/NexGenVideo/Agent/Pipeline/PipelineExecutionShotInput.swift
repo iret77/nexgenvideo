@@ -26,7 +26,7 @@ struct PipelineExecutionStateInput: Codable, Sendable, Equatable {
         self.frameBoundary = frameBoundary
     }
 
-    private enum CodingKeys: String, CodingKey {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
         case summary
         case entityStateIDs = "entity_state_ids"
         case spatialState = "spatial_state"
@@ -272,6 +272,105 @@ struct PipelineExecutionCoreInputsInput: Codable, Sendable, Equatable {
     }
 }
 
+struct PipelineConditioningInput: Codable, Sendable, Equatable {
+    let strategy: ConditioningStrategyKindV1
+    let rationale: String
+    let modeIDs: [String]
+    let anchorDemandIDs: [String]
+    let predecessorShotID: String?
+    let sourceShotID: String?
+    let direction: NativeExtensionDirectionV1?
+    let boundaryStateID: String?
+    let originalReferenceDemandIDs: [String]
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case strategy
+        case rationale
+        case modeIDs = "mode_ids"
+        case anchorDemandIDs = "anchor_demand_ids"
+        case predecessorShotID = "predecessor_shot_id"
+        case sourceShotID = "source_shot_id"
+        case direction
+        case boundaryStateID = "boundary_state_id"
+        case originalReferenceDemandIDs = "original_reference_demand_ids"
+    }
+
+    init(
+        strategy: ConditioningStrategyKindV1,
+        rationale: String,
+        modeIDs: [String],
+        anchorDemandIDs: [String] = [],
+        predecessorShotID: String? = nil,
+        sourceShotID: String? = nil,
+        direction: NativeExtensionDirectionV1? = nil,
+        boundaryStateID: String? = nil,
+        originalReferenceDemandIDs: [String] = []
+    ) {
+        self.strategy = strategy
+        self.rationale = rationale
+        self.modeIDs = modeIDs
+        self.anchorDemandIDs = anchorDemandIDs
+        self.predecessorShotID = predecessorShotID
+        self.sourceShotID = sourceShotID
+        self.direction = direction
+        self.boundaryStateID = boundaryStateID
+        self.originalReferenceDemandIDs = originalReferenceDemandIDs
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        strategy = try container.decode(ConditioningStrategyKindV1.self, forKey: .strategy)
+        rationale = try container.decode(String.self, forKey: .rationale)
+        modeIDs = try container.decode([String].self, forKey: .modeIDs)
+        anchorDemandIDs = try container.decodeIfPresent([String].self, forKey: .anchorDemandIDs) ?? []
+        predecessorShotID = try container.decodeIfPresent(String.self, forKey: .predecessorShotID)
+        sourceShotID = try container.decodeIfPresent(String.self, forKey: .sourceShotID)
+        direction = try container.decodeIfPresent(NativeExtensionDirectionV1.self, forKey: .direction)
+        boundaryStateID = try container.decodeIfPresent(String.self, forKey: .boundaryStateID)
+        originalReferenceDemandIDs = try container.decodeIfPresent(
+            [String].self,
+            forKey: .originalReferenceDemandIDs
+        ) ?? []
+        let decodedKeys = try decoder.container(keyedBy: PipelineDynamicCodingKey.self).allKeys
+        let allowed = Set(CodingKeys.allCases.map(\.stringValue))
+        guard decodedKeys.allSatisfy({ allowed.contains($0.stringValue) }) else {
+            throw PipelineExecutionShotInputValidationError.invalid("conditioning")
+        }
+    }
+
+    func validate(path: String) throws {
+        try PipelineExecutionInputValidation.require(rationale, field: "\(path).rationale")
+        try PipelineExecutionInputValidation.uniqueCanonical(
+            modeIDs,
+            by: \.self,
+            field: "\(path).mode_ids"
+        )
+        guard !modeIDs.isEmpty else {
+            throw PipelineExecutionShotInputValidationError.invalid("\(path).mode_ids")
+        }
+        try PipelineExecutionInputValidation.uniqueNonEmpty(
+            anchorDemandIDs,
+            field: "\(path).anchor_demand_ids"
+        )
+        try PipelineExecutionInputValidation.requireOptional(
+            predecessorShotID,
+            field: "\(path).predecessor_shot_id"
+        )
+        try PipelineExecutionInputValidation.requireOptional(
+            sourceShotID,
+            field: "\(path).source_shot_id"
+        )
+        try PipelineExecutionInputValidation.requireOptional(
+            boundaryStateID,
+            field: "\(path).boundary_state_id"
+        )
+        try PipelineExecutionInputValidation.uniqueNonEmpty(
+            originalReferenceDemandIDs,
+            field: "\(path).original_reference_demand_ids"
+        )
+    }
+}
+
 struct PipelineReferenceDemandInput: Codable, Sendable, Equatable {
     let id: String
     let assetPath: String
@@ -374,6 +473,7 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
     let generationRequirement: PipelineGenerationRequirementInput?
     let coreInputs: PipelineExecutionCoreInputsInput?
     let referenceDemands: [PipelineReferenceDemandInput]
+    let conditioning: PipelineConditioningInput?
 
     let primaryAction: String?
     let camera: PipelineExecutionCameraInput?
@@ -397,6 +497,7 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
         case generationRequirement = "generation_requirement"
         case coreInputs = "core_inputs"
         case referenceDemands = "reference_demands"
+        case conditioning
         case primaryAction = "primary_action"
         case camera
         case continuityLocks = "continuity_locks"
@@ -420,6 +521,7 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
         generationRequirement: PipelineGenerationRequirementInput?,
         coreInputs: PipelineExecutionCoreInputsInput?,
         referenceDemands: [PipelineReferenceDemandInput],
+        conditioning: PipelineConditioningInput?,
         primaryAction: String?,
         camera: PipelineExecutionCameraInput?,
         continuityLocks: [String],
@@ -441,6 +543,7 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
         self.generationRequirement = generationRequirement
         self.coreInputs = coreInputs
         self.referenceDemands = referenceDemands
+        self.conditioning = conditioning
         self.primaryAction = primaryAction
         self.camera = camera
         self.continuityLocks = continuityLocks
@@ -501,6 +604,7 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
             generationRequirement: nil,
             coreInputs: nil,
             referenceDemands: [],
+            conditioning: nil,
             primaryAction: shot.primaryAction,
             camera: PipelineExecutionCameraInput(
                 movementID: shot.camera.movementID,
@@ -554,6 +658,10 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
                 [PipelineReferenceDemandInput].self,
                 forKey: .referenceDemands
             )
+            conditioning = try container.decodeIfPresent(
+                PipelineConditioningInput.self,
+                forKey: .conditioning
+            )
             primaryAction = nil
             camera = nil
             continuityLocks = []
@@ -576,6 +684,10 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
                 [PipelineReferenceDemandInput].self,
                 forKey: .referenceDemands
             ) ?? []
+            conditioning = try container.decodeIfPresent(
+                PipelineConditioningInput.self,
+                forKey: .conditioning
+            )
             primaryAction = nil
             camera = nil
             continuityLocks = []
@@ -589,6 +701,7 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
             generationRequirement = nil
             coreInputs = nil
             referenceDemands = []
+            conditioning = nil
             primaryAction = try container.decode(String.self, forKey: .primaryAction)
             camera = try container.decode(PipelineExecutionCameraInput.self, forKey: .camera)
             continuityLocks = try container.decode([String].self, forKey: .continuityLocks)
@@ -621,6 +734,7 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
             try container.encode(generationRequirement, forKey: .generationRequirement)
             try container.encode(coreInputs, forKey: .coreInputs)
             try container.encode(referenceDemands, forKey: .referenceDemands)
+            try container.encodeIfPresent(conditioning, forKey: .conditioning)
         case .aiEnhanced:
             try container.encodeIfPresent(cameraPlacement, forKey: .cameraPlacement)
             try container.encodeIfPresent(cameraEndpoint, forKey: .cameraEndpoint)
@@ -629,6 +743,7 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
             if !referenceDemands.isEmpty {
                 try container.encode(referenceDemands, forKey: .referenceDemands)
             }
+            try container.encodeIfPresent(conditioning, forKey: .conditioning)
         case .imported:
             try container.encode(primaryAction, forKey: .primaryAction)
             try container.encode(camera, forKey: .camera)
@@ -694,6 +809,7 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
         }
         try generationRequirement.validate(path: "\(path).generation_requirement")
         try coreInputs.validate(path: "\(path).core_inputs")
+        try conditioning?.validate(path: "\(path).conditioning")
 
         if sourceMode == .generated {
             guard coreInputs.sourceVideoModeID == nil else {
@@ -705,8 +821,7 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
             guard coreInputs.sourceVideoModeID != nil,
                   coreInputs.firstFrameModeID == nil,
                   coreInputs.lastFrameModeID == nil,
-                  coreInputs.predecessorLastFrameModeID == nil,
-                  referenceDemands.isEmpty else {
+                  coreInputs.predecessorLastFrameModeID == nil else {
                 throw PipelineExecutionShotInputValidationError.invalid(path)
             }
         }
@@ -750,6 +865,95 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
             throw PipelineExecutionShotInputValidationError.invalid(
                 "\(path).reference_demands"
             )
+        }
+        try validateConditioning(path: path, coreInputs: coreInputs)
+    }
+
+    private func validateConditioning(
+        path: String,
+        coreInputs: PipelineExecutionCoreInputsInput
+    ) throws {
+        guard let conditioning else { return }
+        let declaredModes = Set(generationRequirement?.modeIDs.map(
+            ProductionIdentifierNormalizerV1.canonical
+        ) ?? [])
+        guard conditioning.modeIDs.allSatisfy({
+            declaredModes.contains(ProductionIdentifierNormalizerV1.canonical($0))
+        }) else {
+            throw PipelineExecutionShotInputValidationError.invalid(
+                "\(path).conditioning.mode_ids"
+            )
+        }
+        let demandsByID = Dictionary(uniqueKeysWithValues: referenceDemands.map { ($0.id, $0) })
+        let noFrameInputs = coreInputs.firstFrameModeID == nil
+            && coreInputs.lastFrameModeID == nil
+            && coreInputs.predecessorLastFrameModeID == nil
+        let valid: Bool = switch conditioning.strategy {
+        case .referenceAnchor:
+            sourceMode == .generated && noFrameInputs && coreInputs.sourceVideoModeID == nil
+                && !conditioning.anchorDemandIDs.isEmpty
+                && conditioning.anchorDemandIDs.allSatisfy { id in
+                    guard let demand = demandsByID[id] else { return false }
+                    return demand.modality == .image
+                        && ProductionIdentifierNormalizerV1.matches(
+                            demand.semanticJobID,
+                            CoreReferenceSemanticJobIDV1.referenceAnchor
+                        )
+                }
+                && conditioning.predecessorShotID == nil
+                && conditioning.sourceShotID == nil
+                && conditioning.direction == nil
+                && conditioning.boundaryStateID == nil
+                && conditioning.originalReferenceDemandIDs.isEmpty
+        case .twoStateInterpolation:
+            sourceMode == .generated
+                && coreInputs.firstFrameModeID != nil
+                && coreInputs.lastFrameModeID != nil
+                && coreInputs.predecessorLastFrameModeID == nil
+                && coreInputs.sourceVideoModeID == nil
+                && conditioning.anchorDemandIDs.isEmpty
+                && conditioning.predecessorShotID == nil
+                && conditioning.sourceShotID == nil
+                && conditioning.direction == nil
+                && conditioning.boundaryStateID == nil
+                && conditioning.originalReferenceDemandIDs.isEmpty
+        case .frameContinuation:
+            sourceMode == .generated
+                && coreInputs.predecessorLastFrameModeID != nil
+                && coreInputs.firstFrameModeID == nil
+                && coreInputs.lastFrameModeID == nil
+                && coreInputs.sourceVideoModeID == nil
+                && conditioning.anchorDemandIDs.isEmpty
+                && conditioning.predecessorShotID != nil
+                && conditioning.sourceShotID == nil
+                && conditioning.direction == nil
+                && conditioning.boundaryStateID == nil
+                && conditioning.originalReferenceDemandIDs.isEmpty
+        case .nativeExtension:
+            sourceMode == .aiEnhanced && noFrameInputs
+                && coreInputs.sourceVideoModeID != nil
+                && conditioning.anchorDemandIDs.isEmpty
+                && conditioning.predecessorShotID == nil
+                && conditioning.sourceShotID != nil
+                && conditioning.direction != nil
+                && conditioning.boundaryStateID != nil
+                && Set(conditioning.originalReferenceDemandIDs)
+                    .isSubset(of: Set(referenceDemands.map(\.id)))
+        case .firstFrame:
+            sourceMode == .generated
+                && coreInputs.firstFrameModeID != nil
+                && coreInputs.lastFrameModeID == nil
+                && coreInputs.predecessorLastFrameModeID == nil
+                && coreInputs.sourceVideoModeID == nil
+                && conditioning.anchorDemandIDs.isEmpty
+                && conditioning.predecessorShotID == nil
+                && conditioning.sourceShotID == nil
+                && conditioning.direction == nil
+                && conditioning.boundaryStateID == nil
+                && conditioning.originalReferenceDemandIDs.isEmpty
+        }
+        guard valid else {
+            throw PipelineExecutionShotInputValidationError.invalid("\(path).conditioning")
         }
     }
 
@@ -841,6 +1045,7 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
                 CodingKeys.generationRequirement.rawValue,
                 CodingKeys.coreInputs.rawValue,
                 CodingKeys.referenceDemands.rawValue,
+                CodingKeys.conditioning.rawValue,
             ]
         case .aiEnhanced:
             variant = [
@@ -849,6 +1054,7 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
                 CodingKeys.generationRequirement.rawValue,
                 CodingKeys.coreInputs.rawValue,
                 CodingKeys.referenceDemands.rawValue,
+                CodingKeys.conditioning.rawValue,
             ]
         case .imported:
             variant = [
