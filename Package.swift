@@ -37,6 +37,7 @@ let package = Package(
         // signed into `musicvideo.ngvpack` by the release workflow. NOT a
         // dependency of the app: it ships OUTSIDE the DMG and loads at runtime.
         .library(name: "MusicvideoPlugin", type: .dynamic, targets: ["MusicvideoPlugin"]),
+        .library(name: "FixtureFictionPlugin", type: .dynamic, targets: ["FixtureFictionPlugin"]),
     ],
     dependencies: [
         // NexGenEngine is its OWN package (Engine/) so the app AND the pack link its
@@ -111,6 +112,14 @@ let package = Package(
                 .copy("Resources/MusicvideoPack"),
             ]
         ),
+        .target(
+            name: "FixtureFictionPlugin",
+            dependencies: [.product(name: "NexGenEngine", package: "Engine")],
+            path: "Sources/FixtureFictionPlugin",
+            resources: [
+                .copy("Resources/FixtureFictionPack"),
+            ]
+        ),
         .testTarget(
             name: "NexGenVideoTests",
             dependencies: [
@@ -119,6 +128,7 @@ let package = Package(
                 .product(name: "NexGenEngine", package: "Engine"),
                 .product(name: "MCP", package: "swift-sdk"),
                 "MusicvideoPlugin",
+                "FixtureFictionPlugin",
             ],
             path: "Tests/NexGenVideoTests"
         ),
@@ -129,6 +139,7 @@ let package = Package(
             dependencies: [
                 .product(name: "NexGenEngine", package: "Engine"),
                 "MusicvideoPlugin",
+                "FixtureFictionPlugin",
             ],
             path: "Tests/NexGenEngineTests",
             resources: [

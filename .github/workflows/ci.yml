@@ -73,8 +73,11 @@ jobs:
       - name: Enforce AppTheme
         run: python3 scripts/lint_app_theme.py
 
-      - name: Validate musicvideo pipeline contract
-        run: python3 scripts/validate_pipeline_contract.py plugins/musicvideo.json
+      - name: Validate pack pipeline contracts
+        run: |
+          for manifest in plugins/*.json; do
+            python3 scripts/validate_pipeline_contract.py "$manifest"
+          done
 
       - name: Verify private fixture bundle tooling
         run: python3 -m unittest discover -s scripts -p 'test_*.py'

@@ -71,6 +71,10 @@ public enum PackKnowledge {
         packRoot?.appendingPathComponent("MusicvideoPack").appendingPathComponent(subpath)
     }
 
+    public static func resourceRootURL() -> URL? {
+        packRoot?.appendingPathComponent("MusicvideoPack")
+    }
+
     /// URLs of every pattern-library YAML bundled with the pack.
     public static func patternLibraryURLs() -> [URL] {
         guard let dir = packDir("library") else { return [] }

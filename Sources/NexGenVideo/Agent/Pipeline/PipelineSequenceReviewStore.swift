@@ -136,6 +136,64 @@ enum PipelineSequenceReviewStore {
             selectedMedia: assembly.plan.selectedMedia,
             dataRoot: dataRoot
         )
+        return try loadStoredReview(
+            selectedMedia: assembly.plan.selectedMedia,
+            plan: assembly.plan,
+            fingerprints: fingerprints,
+            rejectBlocking: true,
+            dataRoot: dataRoot
+        )
+    }
+
+    static func repairInstructions(dataRoot: URL, phase: String) -> String? {
+        guard phase == "render",
+              FileManager.default.fileExists(
+                  atPath: dataRoot.appendingPathComponent(SequenceReviewV1.relativePath).path
+              ) else { return nil }
+        do {
+            guard let assembly = try PipelineAssemblyStore.load(dataRoot: dataRoot) else {
+                return nil
+            }
+            try PipelineAssemblyStore.requireCurrentSources(
+                assembly.plan.selectedMedia,
+                dataRoot: dataRoot
+            )
+            let fingerprints = try productionFingerprints(
+                selectedMedia: assembly.plan.selectedMedia,
+                dataRoot: dataRoot
+            )
+            let review = try loadStoredReview(
+                selectedMedia: assembly.plan.selectedMedia,
+                plan: assembly.plan,
+                fingerprints: fingerprints,
+                rejectBlocking: false,
+                dataRoot: dataRoot
+            )
+            let findings = review.findings.filter {
+                $0.severity != .info || $0.recommendedAction != .accept
+            }
+            guard !findings.isEmpty else { return nil }
+            let data = try PipelineAssemblyStore.canonical(findings)
+            guard let payload = String(data: data, encoding: .utf8) else { return nil }
+            return """
+            Sequence review evidence for repair planning: \(payload)
+            Treat these as attributed observations about the exact reviewed reel. Propose only the recorded action for the affected shots and ranges. Do not mutate a take, timeline, canon, approval or budget from a finding; paid generation still requires the host-owned decision and spend boundary.
+            """
+        } catch {
+            Log.agent.warning(
+                "sequence review repair context ignored because it is stale error=\(error.localizedDescription)"
+            )
+            return nil
+        }
+    }
+
+    private static func loadStoredReview(
+        selectedMedia: [SelectedShotMediaV1],
+        plan: AssemblyPlanV1,
+        fingerprints: (execution: String, canon: String, references: String),
+        rejectBlocking: Bool,
+        dataRoot: URL
+    ) throws -> SequenceReviewV1 {
         let currentURL = dataRoot.appendingPathComponent(SequenceReviewV1.relativePath)
         guard FileManager.default.fileExists(atPath: currentURL.path) else {
             throw GateBlocked("Review the assembled sequence before continuing.")
@@ -147,15 +205,16 @@ enum PipelineSequenceReviewStore {
         let review = try JSONDecoder().decode(SequenceReviewV1.self, from: bytes)
         try SequenceReviewValidatorV1.validate(
             review,
-            selectedMedia: assembly.plan.selectedMedia,
+            selectedMedia: selectedMedia,
             executionPlanSHA256: fingerprints.execution,
             canonSHA256: fingerprints.canon,
             referencePlanSHA256: fingerprints.references
         )
-        if review.findings.contains(where: { $0.severity == .blocking }) {
+        if rejectBlocking,
+           review.findings.contains(where: { $0.severity == .blocking }) {
             throw GateBlocked("Resolve or explicitly supersede every blocking sequence finding before continuing.")
         }
-        try validateReelAgainstPlan(review.reviewReel, plan: assembly.plan)
+        try validateReelAgainstPlan(review.reviewReel, plan: plan)
         let archivePath = "\(archiveDirectory)/\(FileDigest.sha256(of: bytes)).v1.json"
         guard try Data(contentsOf: ProjectLocalFile.resolve(archivePath, dataRoot: dataRoot)) == bytes else {
             throw GateBlocked("The current sequence review has no matching immutable record.")

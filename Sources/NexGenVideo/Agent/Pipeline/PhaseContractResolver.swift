@@ -1124,10 +1124,11 @@ enum PhaseContractBundleLoader {
     }
 
     static func prepareDirect(pack: any Pack) throws -> PreparedPhaseContractBundle {
-        guard let badgeURL = pack.manifest.badgeURL else {
+        let resourceRoot = (pack as? any PackResourceRootProviding)?.packResourceRootURL
+            ?? pack.manifest.badgeURL?.deletingLastPathComponent()
+        guard let resourceRoot else {
             throw PhaseContractError.unavailable(pack.name)
         }
-        let resourceRoot = badgeURL.deletingLastPathComponent()
         let manifestURL = try PackResourceLocator.file(
             PackPipelineManifest.resourceName,
             inside: resourceRoot

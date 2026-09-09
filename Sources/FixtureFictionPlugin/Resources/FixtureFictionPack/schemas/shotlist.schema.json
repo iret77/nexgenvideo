@@ -1,0 +1,271 @@
+{
+  "type": "object",
+  "properties": {
+    "generated_shots": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "scene_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "primary_action": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "narrative_function": {
+            "type": "string",
+            "enum": [
+              "establish",
+              "action",
+              "reaction",
+              "detail",
+              "transition"
+            ]
+          },
+          "start_state": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "end_state": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "continuity_locks": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "minItems": 0,
+            "maxItems": 32
+          },
+          "source_mode": {
+            "type": "string",
+            "enum": [
+              "generated"
+            ]
+          },
+          "keyframe_strategy": {
+            "type": "string",
+            "enum": [
+              "none",
+              "start",
+              "start_end"
+            ]
+          },
+          "generation_requirement_path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "id",
+          "scene_id",
+          "primary_action",
+          "narrative_function",
+          "start_state",
+          "end_state",
+          "continuity_locks",
+          "source_mode",
+          "keyframe_strategy",
+          "generation_requirement_path"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "ai_enhanced_shots": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "scene_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "primary_action": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "narrative_function": {
+            "type": "string",
+            "enum": [
+              "establish",
+              "action",
+              "reaction",
+              "detail",
+              "transition"
+            ]
+          },
+          "start_state": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "end_state": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "continuity_locks": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "minItems": 0,
+            "maxItems": 32
+          },
+          "source_mode": {
+            "type": "string",
+            "enum": [
+              "ai_enhanced"
+            ]
+          },
+          "source_path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "generation_requirement_path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "id",
+          "scene_id",
+          "primary_action",
+          "narrative_function",
+          "start_state",
+          "end_state",
+          "continuity_locks",
+          "source_mode",
+          "source_path",
+          "generation_requirement_path"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "imported_shots": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "scene_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "primary_action": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "narrative_function": {
+            "type": "string",
+            "enum": [
+              "establish",
+              "action",
+              "reaction",
+              "detail",
+              "transition"
+            ]
+          },
+          "start_state": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "end_state": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "continuity_locks": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "minItems": 0,
+            "maxItems": 32
+          },
+          "source_mode": {
+            "type": "string",
+            "enum": [
+              "imported"
+            ]
+          },
+          "source_path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "id",
+          "scene_id",
+          "primary_action",
+          "narrative_function",
+          "start_state",
+          "end_state",
+          "continuity_locks",
+          "source_mode",
+          "source_path"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "sequence_order": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "minItems": 1,
+      "maxItems": 100
+    }
+  },
+  "required": [
+    "generated_shots",
+    "ai_enhanced_shots",
+    "imported_shots",
+    "sequence_order"
+  ],
+  "additionalProperties": false
+}

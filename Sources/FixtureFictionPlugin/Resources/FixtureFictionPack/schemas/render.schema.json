@@ -1,0 +1,130 @@
+{
+  "type": "object",
+  "properties": {
+    "generated_requests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "shot_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "request_envelope_path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "request_envelope_sha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "compiled_prompt_path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "compiled_prompt_sha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "shot_id",
+          "request_envelope_path",
+          "request_envelope_sha256",
+          "compiled_prompt_path",
+          "compiled_prompt_sha256"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "ai_enhanced_requests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "shot_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "source_path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "source_sha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "request_envelope_path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "request_envelope_sha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "compiled_prompt_path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "compiled_prompt_sha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "shot_id",
+          "source_path",
+          "source_sha256",
+          "request_envelope_path",
+          "request_envelope_sha256",
+          "compiled_prompt_path",
+          "compiled_prompt_sha256"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "imported_shots_skipped": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "provider_outputs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500
+      },
+      "minItems": 0,
+      "maxItems": 100
+    }
+  },
+  "required": [
+    "generated_requests",
+    "ai_enhanced_requests",
+    "imported_shots_skipped",
+    "provider_outputs"
+  ],
+  "additionalProperties": false
+}

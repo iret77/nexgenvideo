@@ -31,7 +31,7 @@ public struct MusicDurationPolicy: DurationPolicy {
     }
 }
 
-public struct MusicvideoPack: Pack {
+public struct MusicvideoPack: Pack, PackResourceRootProviding {
     public let name = "musicvideo"
     public let version = "0.5.8"
 
@@ -351,6 +351,8 @@ public struct MusicvideoPack: Pack {
     }
 
     public init() {}
+
+    public var packResourceRootURL: URL? { PackKnowledge.resourceRootURL() }
 
     private func registerHardenedGate(
         _ phase: String,

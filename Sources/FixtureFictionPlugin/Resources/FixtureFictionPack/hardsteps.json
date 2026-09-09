@@ -1,0 +1,26 @@
+{
+  "schema": "hardsteps/1.0",
+  "phases": [
+    {
+      "phase": "project_init",
+      "steps": [
+        {
+          "id": "project_init.screenplay",
+          "attachAs": "script",
+          "accept": ["text"],
+          "multiple": false,
+          "required": false,
+          "title": "Premise or screenplay",
+          "intro": "Start with a premise and constraints, or attach an existing screenplay.",
+          "prompt": "Describe the premise, or drop an existing screenplay (.txt / .md)",
+          "symbol": "text.book.closed",
+          "confirmLabel": "Continue",
+          "textField": {
+            "placeholder": "Premise and production constraints",
+            "multiline": true
+          }
+        }
+      ]
+    }
+  ]
+}

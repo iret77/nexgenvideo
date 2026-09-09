@@ -378,9 +378,10 @@ struct ExportView: View {
                         outputURL: url,
                         service: service
                     )
-                    ngvResult = "QC passed · \(attempt.outputByteCount.map {
+                    let outputSize = attempt.outputByteCount.map {
                         ByteCountFormatter.string(fromByteCount: $0, countStyle: .file)
-                    } ?? "exported") · \(attempt.id.prefix(8))"
+                    } ?? "exported"
+                    ngvResult = "QC passed · \(outputSize) · \(attempt.id.prefix(8))"
                 } catch {
                     preparingDelivery = false
                     service.error = error.localizedDescription

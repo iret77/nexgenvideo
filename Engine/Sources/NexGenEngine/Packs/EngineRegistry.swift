@@ -669,6 +669,11 @@ public protocol Pack: Sendable {
     func register(_ registry: EngineRegistry) -> Void
 }
 
+/// Optional resource location for packs whose pipeline bundle does not carry presentation art.
+public protocol PackResourceRootProviding: Sendable {
+    var packResourceRootURL: URL? { get }
+}
+
 extension Pack {
     public func starters(for progress: PackProgress) -> [PackStarter] { starters }
 }

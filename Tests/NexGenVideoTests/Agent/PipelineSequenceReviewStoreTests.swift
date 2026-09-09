@@ -79,6 +79,66 @@ struct PipelineSequenceReviewStoreTests {
         }
     }
 
+    @Test("current sequence findings reach render repair planning without mutating state")
+    func sequenceFindingsReachRepairPlanner() async throws {
+        let fixture = try await makeFixture(withGap: false)
+        defer { try? FileManager.default.removeItem(at: fixture.home) }
+        let reel = try await ReviewReelBuilder.build(
+            plan: fixture.plan,
+            dataRoot: fixture.dataRoot
+        )
+        let fingerprints = try PipelineSequenceReviewStore.productionFingerprints(
+            selectedMedia: fixture.plan.selectedMedia,
+            dataRoot: fixture.dataRoot
+        )
+        let finding = SequenceReviewFindingV1(
+            id: "finding-prop-state",
+            scope: .adjacentPair,
+            category: .stateAndProps,
+            severity: .blocking,
+            shotIDs: ["shot-001", "shot-002"],
+            startFrame: 25,
+            endFrame: 35,
+            evidence: "The carried prop disappears across the cut.",
+            recommendedAction: .localRepair,
+            provenance: .init(kind: .nativeUser, reviewerID: "native-user")
+        )
+        let review = SequenceReviewV1(
+            projectID: fixture.plan.projectID,
+            selectedMedia: fixture.plan.selectedMedia,
+            reviewReel: reel,
+            executionPlanSHA256: fingerprints.execution,
+            canonSHA256: fingerprints.canon,
+            referencePlanSHA256: fingerprints.references,
+            adjacentPairCompleted: true,
+            wholePlaybackCompleted: true,
+            findings: [finding],
+            reviewedAt: "2026-09-09T00:00:00Z"
+        )
+        let bytes = try PipelineAssemblyStore.canonical(review)
+        let current = fixture.dataRoot.appendingPathComponent(SequenceReviewV1.relativePath)
+        let archive = fixture.dataRoot.appendingPathComponent(
+            "reviews/sequence/archive/\(FileDigest.sha256(of: bytes)).v1.json"
+        )
+        try FileManager.default.createDirectory(
+            at: archive.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try bytes.write(to: current, options: .atomic)
+        try bytes.write(to: archive, options: .atomic)
+
+        let instructions = try #require(PipelineSequenceReviewStore.repairInstructions(
+            dataRoot: fixture.dataRoot,
+            phase: "render"
+        ))
+        #expect(instructions.contains(finding.id))
+        #expect(instructions.contains(finding.evidence))
+        #expect(PipelineSequenceReviewStore.repairInstructions(
+            dataRoot: fixture.dataRoot,
+            phase: "frames"
+        ) == nil)
+    }
+
     private struct Fixture {
         let home: URL
         let dataRoot: URL

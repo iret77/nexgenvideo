@@ -200,6 +200,12 @@ final class PipelineAgentHarness {
             if let iteration = TakeRepairPlan.runtimeInstructions(phase: phase) {
                 prompt += "\n\n" + iteration
             }
+            if let sequenceRepair = PipelineSequenceReviewStore.repairInstructions(
+                dataRoot: dataRoot,
+                phase: phase
+            ) {
+                prompt += "\n\n" + sequenceRepair
+            }
             if let style = try ProductionStyleContext.prompt(dataRoot: dataRoot, phase: phase) {
                 prompt += "\n\n" + style
             }
