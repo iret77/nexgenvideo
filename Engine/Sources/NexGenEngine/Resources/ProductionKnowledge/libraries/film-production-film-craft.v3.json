@@ -5,24 +5,21 @@
   "applicability": {
     "packIDs": [],
     "phases": [
-      "init",
-      "analysis",
-      "brief",
-      "production_design",
-      "treatment",
-      "storyboard",
-      "bible",
-      "shotlist",
-      "sanity",
-      "frames",
-      "render",
-      "review",
       "assembly",
       "finish",
-      "generic"
+      "frames",
+      "generic",
+      "production_design",
+      "render",
+      "review",
+      "sanity",
+      "shotlist",
+      "storyboard",
+      "treatment"
     ],
     "intentTags": [
-      "film-craft"
+      "film-craft",
+      "craft"
     ],
     "activeProfileIDs": []
   },
@@ -33,13 +30,9 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
           "production_design",
           "treatment",
           "storyboard",
-          "bible",
           "shotlist",
           "sanity",
           "frames",
@@ -50,7 +43,8 @@
           "generic"
         ],
         "intentTags": [
-          "film-craft"
+          "film-craft",
+          "craft"
         ],
         "activeProfileIDs": []
       },
@@ -74,13 +68,9 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
           "production_design",
           "treatment",
           "storyboard",
-          "bible",
           "shotlist",
           "sanity",
           "frames",
@@ -91,7 +81,8 @@
           "generic"
         ],
         "intentTags": [
-          "film-craft"
+          "film-craft",
+          "craft"
         ],
         "activeProfileIDs": []
       },
@@ -115,13 +106,9 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
           "production_design",
           "treatment",
           "storyboard",
-          "bible",
           "shotlist",
           "sanity",
           "frames",
@@ -132,7 +119,8 @@
           "generic"
         ],
         "intentTags": [
-          "film-craft"
+          "film-craft",
+          "craft"
         ],
         "activeProfileIDs": []
       },
@@ -156,13 +144,9 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
           "production_design",
           "treatment",
           "storyboard",
-          "bible",
           "shotlist",
           "sanity",
           "frames",
@@ -173,7 +157,8 @@
           "generic"
         ],
         "intentTags": [
-          "film-craft"
+          "film-craft",
+          "craft"
         ],
         "activeProfileIDs": []
       },
@@ -197,13 +182,9 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
           "production_design",
           "treatment",
           "storyboard",
-          "bible",
           "shotlist",
           "sanity",
           "frames",
@@ -214,7 +195,8 @@
           "generic"
         ],
         "intentTags": [
-          "film-craft"
+          "film-craft",
+          "craft"
         ],
         "activeProfileIDs": []
       },
@@ -238,13 +220,9 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
           "production_design",
           "treatment",
           "storyboard",
-          "bible",
           "shotlist",
           "sanity",
           "frames",
@@ -255,7 +233,8 @@
           "generic"
         ],
         "intentTags": [
-          "film-craft"
+          "film-craft",
+          "craft"
         ],
         "activeProfileIDs": []
       },
@@ -279,13 +258,9 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
           "production_design",
           "treatment",
           "storyboard",
-          "bible",
           "shotlist",
           "sanity",
           "frames",
@@ -296,7 +271,8 @@
           "generic"
         ],
         "intentTags": [
-          "film-craft"
+          "film-craft",
+          "craft"
         ],
         "activeProfileIDs": []
       },
@@ -320,13 +296,9 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
           "production_design",
           "treatment",
           "storyboard",
-          "bible",
           "shotlist",
           "sanity",
           "frames",
@@ -337,7 +309,8 @@
           "generic"
         ],
         "intentTags": [
-          "film-craft"
+          "film-craft",
+          "craft"
         ],
         "activeProfileIDs": []
       },
@@ -361,13 +334,9 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
           "production_design",
           "treatment",
           "storyboard",
-          "bible",
           "shotlist",
           "sanity",
           "frames",
@@ -378,7 +347,8 @@
           "generic"
         ],
         "intentTags": [
-          "film-craft"
+          "film-craft",
+          "craft"
         ],
         "activeProfileIDs": []
       },
@@ -402,13 +372,9 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
           "production_design",
           "treatment",
           "storyboard",
-          "bible",
           "shotlist",
           "sanity",
           "frames",
@@ -419,7 +385,8 @@
           "generic"
         ],
         "intentTags": [
-          "film-craft"
+          "film-craft",
+          "craft"
         ],
         "activeProfileIDs": []
       },

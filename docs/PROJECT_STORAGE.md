@@ -7,9 +7,10 @@ survives a crash. Modeled on Final Cut Pro (self-contained library) and ACE Stud
 
 ## Principles
 
-1. **One self-contained container per project.** Everything durable lives inside the
-   `.ngv` package. Copying/moving the `.ngv` takes the whole project — nothing is left
-   behind, nothing is shared between projects.
+1. **One self-contained container per project.** Portable project truth and history live inside the
+   `.ngv` package. Copying or moving it takes the complete editable project. The sole host-bound
+   exception is single-use authority for already approved generation batches; it cannot travel with
+   a copied package or create project truth by itself.
 2. **The projects folder holds only projects.** `~/Documents/NexGenVideo/` (user-set)
    contains `*.ngv` and nothing else. No per-project subdirectories, ever.
 3. **Transient/runtime data never touches the project or the projects folder.** It goes
@@ -22,6 +23,7 @@ survives a crash. Modeled on Final Cut Pro (self-contained library) and ACE Stud
 | A project (timeline, media, chat, thumbnail, generation-log, **and** the engine data root: bible, treatment, storyboard, shotlist, frames, renders, import, `project.yaml`, `gates.yaml`, + active pack dirs) | inside the `.ngv` package |
 | Registry of known projects (`project-registry.json`), app-global config | `~/Library/Application Support/NexGenVideo/` |
 | Installed format-pack versions | `~/Library/Application Support/NexGenVideo/Plugins/<id>/<version>.ngvpack` |
+| Single-use authority for approved generation batches, retained exact inputs, spend/provider receipts and completed output bytes | `~/Library/Application Support/NexGenVideo/ApprovedGenerationExecutions/<hostId>/<projectId>/<batchId>/` |
 | Render scratch, decode caches, preview proxies, in-flight generation staging, thumbnails/waveforms | `~/Library/Caches/NexGenVideo/…` and `NSTemporaryDirectory()` |
 | Live working copy of the open project (unsaved work) | Recovery store: `~/Library/Application Support/NexGenVideo/Recovery/<projectId>/` |
 
@@ -57,6 +59,24 @@ file path. It is minted when the project is created and travels with the package
 - Save As / duplicate mints a new id for the copy (a distinct project).
 
 Pre-identity packages are migrated (an id is generated and written) on first open.
+
+## Approved generation execution lifetime
+
+Approval of an immutable generation manifest creates host-owned execution authority before any item
+can enter submission. The authority is keyed by stable host identity, project UUID and batch UUID. It
+retains the exact compiled packages and input bytes, the single-use execution journal, append-only
+spend events, provider request receipts and verified completed output bytes. The project package and
+Recovery copy keep a portable history projection, but neither can mint or restore authority.
+
+The host record is authoritative when an older saved package or a replaced Recovery copy contains an
+earlier projection. A relaunch can join or resume the same queued/submitted provider job without a new
+approval. Unknown or missing provider evidence blocks resubmission. Completed bytes are hydrated back
+into the working copy only after their receipt and digest match.
+
+Save As mints a new project UUID, so the copy can inspect inherited history but cannot execute the
+source project's approval. A different Mac likewise has no authority. Explicitly canceling queued
+items consumes their authority; discarding editing changes never erases already incurred spend or
+turns a submitted item back into a fresh request.
 
 ## Idle cleanup (launch)
 

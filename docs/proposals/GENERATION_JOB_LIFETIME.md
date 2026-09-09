@@ -1,6 +1,6 @@
 # Approved generation lifetime
 
-Status: proposal for the locked project-storage contract, not implemented or accepted.
+Status: accepted and implemented for NexGenVideo 1.5.7.
 
 An approved provider request must not become unsubmitted when an older project save is reopened.
 The current storage contract clears the Recovery working copy after a clean save/quit; discarding
@@ -8,7 +8,7 @@ unsaved work also replaces that copy from the saved package. If submission advan
 snapshot, that can erase the receipt while retaining an older queued authorization in the package.
 Replaying that authorization would create another paid job.
 
-## Proposed ownership
+## Ownership
 
 Keep the host's approved-execution journal independently of the discardable editing working copy,
 keyed by the project UUID and a stable host identity. It contains immutable batch/package identity,
@@ -38,5 +38,7 @@ and finalization; save while each boundary advances; discard Recovery; reopen ol
 open a copied project on another host; and reconcile a lost journal-write acknowledgment. Assert no
 second content-generation request, no lost completed media and no budget bypass.
 
-Approval would extend `docs/PROJECT_STORAGE.md` with a separate durable approved-execution lifetime.
-It would not change the rule that editing writes the Recovery copy and package changes use atomic save.
+`docs/PROJECT_STORAGE.md` now defines this separate durable approved-execution lifetime. Editing still
+writes the Recovery copy and package changes still use atomic save. The host authority is the only
+exception to package-contained durable project state, and it can authorize only the exact retained
+batch identity on the Mac that consumed the approval.

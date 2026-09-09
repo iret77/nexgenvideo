@@ -5,24 +5,17 @@
   "applicability": {
     "packIDs": [],
     "phases": [
-      "init",
-      "analysis",
-      "brief",
-      "production_design",
-      "treatment",
-      "storyboard",
       "bible",
-      "shotlist",
-      "sanity",
       "frames",
+      "generic",
+      "production_design",
       "render",
-      "review",
-      "assembly",
-      "finish",
-      "generic"
+      "shotlist",
+      "storyboard"
     ],
     "intentTags": [
-      "production-pipeline"
+      "production-pipeline",
+      "assets"
     ],
     "activeProfileIDs": []
   },
@@ -33,24 +26,17 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "production-pipeline"
+          "production-pipeline",
+          "assets"
         ],
         "activeProfileIDs": []
       },
@@ -75,24 +61,17 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "production-pipeline"
+          "production-pipeline",
+          "assets"
         ],
         "activeProfileIDs": []
       },
@@ -117,24 +96,17 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "production-pipeline"
+          "production-pipeline",
+          "assets"
         ],
         "activeProfileIDs": []
       },
@@ -160,24 +132,17 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "production-pipeline"
+          "production-pipeline",
+          "assets"
         ],
         "activeProfileIDs": []
       },
@@ -202,24 +167,17 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "production-pipeline"
+          "production-pipeline",
+          "assets"
         ],
         "activeProfileIDs": []
       },
@@ -246,24 +204,17 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "production-pipeline"
+          "production-pipeline",
+          "assets"
         ],
         "activeProfileIDs": []
       },
@@ -289,24 +240,17 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "production-pipeline"
+          "production-pipeline",
+          "assets"
         ],
         "activeProfileIDs": []
       },
@@ -331,24 +275,17 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "production-pipeline"
+          "production-pipeline",
+          "assets"
         ],
         "activeProfileIDs": []
       },
@@ -373,24 +310,17 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "production-pipeline"
+          "production-pipeline",
+          "assets"
         ],
         "activeProfileIDs": []
       },
@@ -416,24 +346,17 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "production-pipeline"
+          "production-pipeline",
+          "assets"
         ],
         "activeProfileIDs": []
       },
@@ -458,24 +381,17 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "production-pipeline"
+          "production-pipeline",
+          "assets"
         ],
         "activeProfileIDs": []
       },
@@ -500,24 +416,17 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "production-pipeline"
+          "production-pipeline",
+          "assets"
         ],
         "activeProfileIDs": []
       },
@@ -542,24 +451,17 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "production-pipeline"
+          "production-pipeline",
+          "assets"
         ],
         "activeProfileIDs": []
       },
@@ -584,24 +486,17 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "production-pipeline"
+          "production-pipeline",
+          "assets"
         ],
         "activeProfileIDs": []
       },
@@ -626,24 +521,17 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "production-pipeline"
+          "production-pipeline",
+          "assets"
         ],
         "activeProfileIDs": []
       },
@@ -669,24 +557,17 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "production-pipeline"
+          "production-pipeline",
+          "assets"
         ],
         "activeProfileIDs": []
       },
@@ -711,24 +592,17 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "production-pipeline"
+          "production-pipeline",
+          "assets"
         ],
         "activeProfileIDs": []
       },
@@ -753,24 +627,17 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "production-pipeline"
+          "production-pipeline",
+          "assets"
         ],
         "activeProfileIDs": []
       },

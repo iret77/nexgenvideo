@@ -3,242 +3,307 @@
   "files": [
     {
       "path": "LICENSE.source.txt",
+      "bytes": 1063,
       "sha256": "f303d9dd21d9d85d46b01095001baf21ea4eeb2d5662593e4044859acb4dda94"
     },
     {
       "path": "README.md",
+      "bytes": 5456,
       "sha256": "de27ce6bdceace64ad70094077ed4a246f56333d0112789302439b1dae7587dc"
     },
     {
       "path": "application-contracts.json",
-      "sha256": "aafffaf6cffdf79021de3e6ec8c70de7e0dcfc291e17ff90f8354df53454bc9a"
+      "bytes": 20698,
+      "sha256": "87fdb21b733911425080c00b77502a235cd5b757032bfeb07126b369df27792f"
     },
     {
       "path": "blueprint-bindings.md",
+      "bytes": 7507,
       "sha256": "ea2a5adf16a32681c16225ec1a457079d8374095cfcf333eb44480ffce100439"
     },
     {
       "path": "blueprints.json",
+      "bytes": 109443,
       "sha256": "dcb29d6c15945173f5df4e2091b19ad6828e139bfc44570d913e7a47fedf913f"
     },
     {
       "path": "chapters/director-recipes.json",
-      "sha256": "205155d59fdaec937ac03207b21d31393702c413acc65f112d4908811ba8d546"
+      "bytes": 57215,
+      "sha256": "ae2f217c4b437a172b440030ca460c06c65b12651d8dd8d1f8b7e6aa4d1828d5"
     },
     {
       "path": "chapters/film-craft.json",
-      "sha256": "5b6b2be847f49d75093ad4307efac4affcc0f87d65da8aa4599575f1090e06fc"
+      "bytes": 24013,
+      "sha256": "1fec21c82b12ab9992efa9f8b367d091914e58fedb844ffdf53ce8c5fd8de64f"
     },
     {
       "path": "chapters/genre-baselines.json",
-      "sha256": "a04e2af3b287cac78e3920f18a80a5f4c31f555999973974f408f1104fe1a943"
+      "bytes": 58733,
+      "sha256": "e680e8f6b126bfb2c61a90a151ef4ccf33df3af5342f8b63f114b88c99267f57"
     },
     {
       "path": "chapters/glossary.json",
-      "sha256": "b84aba2d45a0f5440641c2aebab1e5161458c8aaec14628c6605bb4b940f7c30"
+      "bytes": 6531,
+      "sha256": "cc13f3e3042517e608eedea3773d76de77ace0ddaf9eaf4a96efecdd02781ccc"
     },
     {
       "path": "chapters/image-model-logic.json",
-      "sha256": "818de1dc63ab1f661f7bbad7252c5a28444a38a51d9671dc6198b8860a663367"
+      "bytes": 28287,
+      "sha256": "b05773c5d67c12ee06c860eefe9df96610d0382a57a978d9b5bd17a94c36d903"
     },
     {
       "path": "chapters/pixar-look.json",
-      "sha256": "39a1b959d47e1eb2e4ac9b8a6ffc9ee916e2e6b00632732357cbe1da160105ba"
+      "bytes": 37603,
+      "sha256": "feb5bdbee6291f6b0696cf5061aac4440631d235c40e731ed5523de0e354fdfe"
     },
     {
       "path": "chapters/platform-ui-workflows.json",
-      "sha256": "178cac1ddc67b06a2ea882b7fa5e3ab25011ded690815d36bc5207b0db6bcb5f"
+      "bytes": 165411,
+      "sha256": "c3e70b532f1f2d469c811f7862eeb92ee3aaf03c8c7d92844123f600f15f357b"
     },
     {
       "path": "chapters/platforms-models.json",
-      "sha256": "a6cf393cc154920d83a82c65b99b3a4edf3b258c6d4fc58312d356bdcdfaf27c"
+      "bytes": 52935,
+      "sha256": "301b227f53c4e3a77b263a2ce7c6f35ce14105ea5a34523cc42dc63cc777c7b0"
     },
     {
       "path": "chapters/post-audio-legal.json",
-      "sha256": "a7919447daf06e911cdc3f621f016a6f41dc93b8cfbaa59842741df352572d0f"
+      "bytes": 24156,
+      "sha256": "5c11cb93dcfdafdf2ff1656893e9fc528c2c6aa6f98aa370a348dfeccf06f6a5"
     },
     {
       "path": "chapters/production-bible.json",
-      "sha256": "ae85d2b58663f744f7dade84c3daafc3465364d2f3733dd7eac7f14b75cebfc8"
+      "bytes": 31058,
+      "sha256": "7b2fa9e4428f4eb026699837aaf297fb7afd1188a9f395bed3caef024388570e"
     },
     {
       "path": "chapters/production-pipeline.json",
-      "sha256": "f65e94bddd3c4d0a6464a8e0e540ec1a798b7bbbbf969215e5d4bb705ac736e7"
+      "bytes": 87144,
+      "sha256": "1fa36b709fde563151512114734317c789e6492860b45ffdc48475dd8b286dde"
     },
     {
       "path": "chapters/readme.json",
-      "sha256": "91dcfdfa37aa6042513dc5f7e909e177355a37ef9b3d2b4b9cfd69a725bc3c67"
+      "bytes": 37392,
+      "sha256": "023451b557a8e2aa835014585382291dc9ff9d6f6da89e2007e46b7f18a58f24"
     },
     {
       "path": "chapters/renderability.json",
-      "sha256": "38263b79665d4dce321c24bb5866fe37743964488a31fcc73e03cd08304c1c24"
+      "bytes": 26570,
+      "sha256": "03d19b9c5abb79c168c6d6fe95a64a79bdac65caab8541e87fcb11c211abefe2"
     },
     {
       "path": "chapters/skill.json",
-      "sha256": "ae43c2f45440c4b4faf94bc3c483de45b3598697f1823b4c818b12896b80a603"
+      "bytes": 90261,
+      "sha256": "77e4407ad89fbbbd0096133f115c403f297679e4b5ad4a3e5d6ceef75cffef78"
     },
     {
       "path": "chapters/sources.json",
-      "sha256": "1c5b1827207eb77393f96a2ed505743f8b80f59b48c878a8f1899758d2767b80"
+      "bytes": 16073,
+      "sha256": "272f291c0ec19ab9822a044ea9591daeb3040e97c605ee5dc713963618744e47"
     },
     {
       "path": "chapters/story-structures.json",
-      "sha256": "603e02e96af1c24cc9d4116974709eb829bd10ecc69b73883bbf0163fa69679a"
+      "bytes": 35247,
+      "sha256": "48b1b8798afa27885bbbc05877427c17dfe162513d5a6bac8e6c5622c1641b8c"
     },
     {
       "path": "chapters/style-control.json",
-      "sha256": "9a8db1a30e8a821c46cb4cd33364d7447dbd90553e20e67280ea2ffc30f38832"
+      "bytes": 62530,
+      "sha256": "f202aa4bc6759f98564701b9c058b4a751a9ca049b5a0248b7ce5e343f168ea4"
     },
     {
       "path": "chapters/video-prompting.json",
-      "sha256": "fd759fce990a9f9398eab93ebd0d561cd4bcfcf9dc00c5ee14c8546d0182dfde"
+      "bytes": 78419,
+      "sha256": "19c74e6932ec4c695c98d49c23aec8982156c53d22bde98cdf318d5a7c06df1b"
     },
     {
       "path": "chapters/worked-example.json",
-      "sha256": "cfa247ae5cdc2b31253c9c213ee92556e306910891dae8575026dc51f1a9ba29"
+      "bytes": 25889,
+      "sha256": "fb6bc698569cd09a948b87b634aa432abe7aed83309a684b4eb49a374c6b712b"
     },
     {
       "path": "chapters/workflows.json",
-      "sha256": "221a56c261e61114a13a377e62af43fca7c1e98cc478fd4cc85e36741fdb0734"
+      "bytes": 46968,
+      "sha256": "55a1236f9bba11eb9fd34b82c1bb69772633aeb0adc59be028a178afa779a9df"
     },
     {
       "path": "coverage.md",
-      "sha256": "80d3f0f319d4b32220e96eae7bb4f379dc5ed55e9403e546a085ba17466041e0"
+      "bytes": 46052,
+      "sha256": "b3ff208871188cf1cd513309ef862426756b62dd9d472f8fa19b82f60b4e3395"
     },
     {
       "path": "formats/future-packs.spec.md",
+      "bytes": 21521,
       "sha256": "9e383f033d42c19a61a841601d30c45d9f8059b811d5a539d5015a270f56d896"
     },
     {
       "path": "formats/musicvideo-coverage.spec.md",
+      "bytes": 5063,
       "sha256": "cea25d8823d5f6212ea0a538d6ceb53034bfec12b5ac7ad3913ca3145e65d2cb"
     },
     {
       "path": "formats/musicvideo-performance-sync.spec.md",
+      "bytes": 5246,
       "sha256": "691e5dc67a65426e345b03595508691401501f30ebdb8dd967325ce2a10205a2"
     },
     {
       "path": "formats/musicvideo-visual-arc.spec.md",
+      "bytes": 5208,
       "sha256": "b5f93bd36c982a39cdd816052086ac8c76fb30dbb2d3cfd36472f128706563a2"
     },
     {
       "path": "handbook/director-recipes.md",
+      "bytes": 50951,
       "sha256": "3572599866a8d0a675096422599601999684f99abe3baf27e91110dbdcd5be83"
     },
     {
       "path": "handbook/film-craft.md",
+      "bytes": 13965,
       "sha256": "5268c371692f3f14161158537a89ae06a5a0f983cc366200f54f0825c5334fba"
     },
     {
       "path": "handbook/genre-baselines.md",
+      "bytes": 19800,
       "sha256": "67687b9acc120e55fab7b63e9097585e2028e4f439ec72846646d1db36874067"
     },
     {
       "path": "handbook/glossary.md",
+      "bytes": 5169,
       "sha256": "bcef8a2b36e5811d832de47266e4968b79e5044650b6aa198def7b32e7b4c156"
     },
     {
       "path": "handbook/image-model-logic.md",
+      "bytes": 19294,
       "sha256": "5013bc59914a7660bae99dfb75beb97a1fd7ed75383c492969530352985af380"
     },
     {
       "path": "handbook/pixar-look.md",
+      "bytes": 24000,
       "sha256": "a44c76f6435a9a4380c15ff68e1c00679e0332cec7ef7b63c78cb89996f9afde"
     },
     {
       "path": "handbook/platform-ui-workflows.md",
+      "bytes": 100833,
       "sha256": "f3c359529494454df71f479e3f89be4a36c167465743deb594bf865fc51f3f27"
     },
     {
       "path": "handbook/platforms-models.md",
+      "bytes": 30448,
       "sha256": "b0e827a4adfe811a8e60286ff7e011d1a5aba28bbaaa21b8fe764d66a964d536"
     },
     {
       "path": "handbook/post-audio-legal.md",
+      "bytes": 19521,
       "sha256": "9d7c1b40f3f3c21f3a547ed3487625e87722fefd34d83c06e8771d049b2aa92c"
     },
     {
       "path": "handbook/production-bible.md",
+      "bytes": 20658,
       "sha256": "3096cfafe3c8371e7035e92e6d5fd65c0a0e471b131ef71800b41200d377e056"
     },
     {
       "path": "handbook/production-pipeline.md",
+      "bytes": 68120,
       "sha256": "88e28bec5b0e09e690d2f90009a5fde51276dd5b8435740f8447296edea5468f"
     },
     {
       "path": "handbook/readme.md",
+      "bytes": 15129,
       "sha256": "6158cbc773fdffe94194a42dc2a774c85df138891b49d24b1f0a917188821850"
     },
     {
       "path": "handbook/renderability.md",
+      "bytes": 15451,
       "sha256": "f58abadd7092005e5631e3eaad98801a4bca9e1b2a8abeec9e9b75bc4a3e2725"
     },
     {
       "path": "handbook/skill.md",
+      "bytes": 51222,
       "sha256": "2907b77955ba368ee5642fefa09cea463027449b8b09125dd1367ec03a3b502b"
     },
     {
       "path": "handbook/sources.md",
+      "bytes": 11577,
       "sha256": "f5fe9e4174fa0b93793aa51443fdec083affe89b2a8428e014063f3c11bcf3c5"
     },
     {
       "path": "handbook/story-structures.md",
+      "bytes": 24452,
       "sha256": "e214993ead4dd9ffdc9616d7426ef99062ccc59119a5dbbfbb43f81e46b29a57"
     },
     {
       "path": "handbook/style-control.md",
+      "bytes": 39308,
       "sha256": "846f57fdfdf91d80395fa6973655f1292ad0031d4b5d69345cfd5834acc57303"
     },
     {
       "path": "handbook/video-prompting.md",
+      "bytes": 60796,
       "sha256": "c12104210fa6545e379f489da05c575974992a33588319ea98bc6d9babf46c55"
     },
     {
       "path": "handbook/worked-example.md",
+      "bytes": 18468,
       "sha256": "47ecbecb47771959c6523da6a93eddddb0ec8db4308cfce649500f9624c8f133"
     },
     {
       "path": "handbook/workflows.md",
+      "bytes": 25988,
       "sha256": "0c3aaf34ed8c7c82fd4f1b929f1ec10959acf3f8e1efeb4fb7d94ae035661146"
     },
     {
       "path": "index.json",
-      "sha256": "41f824a4aab03f9456fa400ec65b9af92679c65fed76984a0e491f9a3bc5efa0"
+      "bytes": 198948,
+      "sha256": "0f5c43d567af96f4db4a08eb9956b16fea4891f865937c093072f3851d929ae0"
     },
     {
       "path": "integration.spec.md",
+      "bytes": 12351,
       "sha256": "ad2700fbc097d1c89013919b390d7cba6b1765517e380b59b16ae64a916b17aa"
     },
     {
       "path": "inventory.json",
+      "bytes": 17263,
       "sha256": "3adaf5e1a11996355085a21ea967f0ff506aa3d611d16ea4e4f3a9e50614fab8"
     },
     {
       "path": "locators.json",
+      "bytes": 11177,
       "sha256": "39b6e48c1ee4d5ba11890da70281a35e5197502b8e13e45d9ed1da603bfd32fa"
     },
     {
       "path": "precedence.json",
+      "bytes": 8548,
       "sha256": "88a6140231736974694998470964188f5ba2251024766f1e5b6e86c118961a01"
     },
     {
       "path": "procedures.json",
+      "bytes": 27193,
       "sha256": "dd3f70ca5d81685a35f54f34938715ee12a18a9d5b75b22151707e0cd7e71643"
     },
     {
+      "path": "runtime-ledger.json",
+      "bytes": 840091,
+      "sha256": "5ccc7167398caa0238553a7bf229ca563359f2c87a1192dc5cd75d6897aacf36"
+    },
+    {
       "path": "tables.json",
+      "bytes": 107340,
       "sha256": "c5d82fd525edc88b0606482c344d901e9ce575efad0204e244848922b5d9b95c"
     },
     {
       "path": "templates.json",
+      "bytes": 36785,
       "sha256": "3fa5df863f1f97bef55ca03e32e0360c9cce3038bc31382728d9f97760aa3eab"
     },
     {
       "path": "units.json",
+      "bytes": 253212,
       "sha256": "9f3571ee9edd08afd83db93c68ea183cb8fe3f0e1c8cf4c85be91d8d24aa504d"
     },
     {
       "path": "validate_corpus.py",
+      "bytes": 4684,
       "sha256": "fd81704b9940ed42a66d5a49c708a0232ba0e9600bc267914548b45d2e5751e0"
     }
   ]

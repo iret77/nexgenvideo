@@ -5,24 +5,25 @@
   "applicability": {
     "packIDs": [],
     "phases": [
-      "init",
       "analysis",
-      "brief",
-      "production_design",
-      "treatment",
-      "storyboard",
+      "assembly",
       "bible",
-      "shotlist",
-      "sanity",
+      "brief",
+      "finish",
       "frames",
+      "generic",
+      "init",
+      "production_design",
       "render",
       "review",
-      "assembly",
-      "finish",
-      "generic"
+      "sanity",
+      "shotlist",
+      "storyboard",
+      "treatment"
     ],
     "intentTags": [
-      "workflows"
+      "workflows",
+      "runbooks"
     ],
     "activeProfileIDs": []
   },
@@ -50,7 +51,8 @@
           "generic"
         ],
         "intentTags": [
-          "workflows"
+          "workflows",
+          "runbooks"
         ],
         "activeProfileIDs": []
       },
@@ -92,7 +94,8 @@
           "generic"
         ],
         "intentTags": [
-          "workflows"
+          "workflows",
+          "runbooks"
         ],
         "activeProfileIDs": []
       },
@@ -118,24 +121,14 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
           "production_design",
-          "treatment",
-          "storyboard",
           "bible",
-          "shotlist",
-          "sanity",
           "frames",
-          "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "workflows"
+          "workflows",
+          "runbooks"
         ],
         "activeProfileIDs": []
       },
@@ -160,24 +153,14 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "workflows"
+          "workflows",
+          "runbooks"
         ],
         "activeProfileIDs": []
       },
@@ -203,24 +186,16 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
           "storyboard",
-          "bible",
           "shotlist",
-          "sanity",
-          "frames",
           "render",
           "review",
           "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "workflows"
+          "workflows",
+          "runbooks"
         ],
         "activeProfileIDs": []
       },
@@ -245,24 +220,13 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
-          "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "workflows"
+          "workflows",
+          "runbooks"
         ],
         "activeProfileIDs": []
       },
@@ -287,24 +251,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
           "storyboard",
-          "bible",
           "shotlist",
-          "sanity",
-          "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "workflows"
+          "workflows",
+          "runbooks"
         ],
         "activeProfileIDs": []
       },
@@ -329,24 +284,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
-          "shotlist",
           "sanity",
-          "frames",
-          "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "workflows"
+          "workflows",
+          "runbooks"
         ],
         "activeProfileIDs": []
       },
@@ -372,24 +318,14 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "workflows"
+          "workflows",
+          "runbooks"
         ],
         "activeProfileIDs": []
       },
@@ -431,7 +367,8 @@
           "generic"
         ],
         "intentTags": [
-          "workflows"
+          "workflows",
+          "runbooks"
         ],
         "activeProfileIDs": []
       },
@@ -457,24 +394,17 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
           "storyboard",
-          "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
           "review",
           "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "workflows"
+          "workflows",
+          "runbooks"
         ],
         "activeProfileIDs": []
       },

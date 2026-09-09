@@ -30,7 +30,12 @@
     ],
     "id": "orchestration",
     "adaptationAuthority": "NGV extraction design, not a quote from the skill",
-    "runtimeStatus": "specified-not-wired"
+    "runtimeStatus": "runtime-active",
+    "runtimeConsumers": [
+      "PipelineAgentHarness",
+      "PromptCompiler",
+      "NativeGateWriter"
+    ]
   },
   {
     "files": [
@@ -69,7 +74,12 @@
     ],
     "id": "blueprints",
     "adaptationAuthority": "NGV extraction design, not a quote from the skill",
-    "runtimeStatus": "specified-not-wired"
+    "runtimeStatus": "runtime-active",
+    "runtimeConsumers": [
+      "ProductionStyleAdvisorV1",
+      "ProductionStyleStoreV1",
+      "TimelineStyleReview"
+    ]
   },
   {
     "files": [
@@ -103,7 +113,12 @@
     ],
     "id": "craft",
     "adaptationAuthority": "NGV extraction design, not a quote from the skill",
-    "runtimeStatus": "specified-not-wired"
+    "runtimeStatus": "runtime-active",
+    "runtimeConsumers": [
+      "SpatialProductionPlanV1",
+      "PipelineShotlistWriter",
+      "TimelineStyleReview"
+    ]
   },
   {
     "files": [
@@ -138,7 +153,11 @@
     ],
     "id": "genres",
     "adaptationAuthority": "NGV extraction design, not a quote from the skill",
-    "runtimeStatus": "specified-not-wired"
+    "runtimeStatus": "runtime-active",
+    "runtimeConsumers": [
+      "ProductionStyleAdvisorV1",
+      "PipelineAgentHarness"
+    ]
   },
   {
     "files": [
@@ -171,7 +190,12 @@
     ],
     "id": "story",
     "adaptationAuthority": "NGV extraction design, not a quote from the skill",
-    "runtimeStatus": "specified-not-wired"
+    "runtimeStatus": "runtime-active",
+    "runtimeConsumers": [
+      "StoryCausalityPlanV1",
+      "TreatmentCausalityWriter",
+      "StoryboardPlanWriter"
+    ]
   },
   {
     "files": [
@@ -214,7 +238,12 @@
     ],
     "id": "assets",
     "adaptationAuthority": "NGV extraction design, not a quote from the skill",
-    "runtimeStatus": "specified-not-wired"
+    "runtimeStatus": "runtime-active",
+    "runtimeConsumers": [
+      "ReferencePlannerV2",
+      "ConfirmedIdentityAssetStoreV1",
+      "SpatialProductionPlanV1"
+    ]
   },
   {
     "files": [
@@ -248,7 +277,12 @@
     ],
     "id": "canon",
     "adaptationAuthority": "NGV extraction design, not a quote from the skill",
-    "runtimeStatus": "specified-not-wired"
+    "runtimeStatus": "runtime-active",
+    "runtimeConsumers": [
+      "PipelineAgentHarness",
+      "PipelineLineageStore",
+      "GenerationPackageV1"
+    ]
   },
   {
     "files": [
@@ -286,7 +320,12 @@
     ],
     "id": "video",
     "adaptationAuthority": "NGV extraction design, not a quote from the skill",
-    "runtimeStatus": "specified-not-wired"
+    "runtimeStatus": "runtime-active",
+    "runtimeConsumers": [
+      "VideoPromptIRV1",
+      "VideoPromptDialectCompilerV1",
+      "PipelineProductionRouting"
+    ]
   },
   {
     "files": [
@@ -321,7 +360,12 @@
     ],
     "id": "image",
     "adaptationAuthority": "NGV extraction design, not a quote from the skill",
-    "runtimeStatus": "specified-not-wired"
+    "runtimeStatus": "runtime-active",
+    "runtimeConsumers": [
+      "PromptCompiler",
+      "ReferencePlannerV2",
+      "FrameAuditAcceptanceStoreV1"
+    ]
   },
   {
     "files": [
@@ -357,7 +401,12 @@
     ],
     "id": "style",
     "adaptationAuthority": "NGV extraction design, not a quote from the skill",
-    "runtimeStatus": "specified-not-wired"
+    "runtimeStatus": "runtime-active",
+    "runtimeConsumers": [
+      "ProductionStyleStoreV1",
+      "PromptCompiler",
+      "TimelineStyleReview"
+    ]
   },
   {
     "files": [
@@ -394,7 +443,12 @@
     ],
     "id": "animation",
     "adaptationAuthority": "NGV extraction design, not a quote from the skill",
-    "runtimeStatus": "specified-not-wired"
+    "runtimeStatus": "runtime-active",
+    "runtimeConsumers": [
+      "PromptCompiler",
+      "ReferencePlannerV2",
+      "FrameAuditAcceptanceStoreV1"
+    ]
   },
   {
     "files": [
@@ -432,7 +486,12 @@
     ],
     "id": "feasibility",
     "adaptationAuthority": "NGV extraction design, not a quote from the skill",
-    "runtimeStatus": "specified-not-wired"
+    "runtimeStatus": "runtime-active",
+    "runtimeConsumers": [
+      "ExecutionPlanValidator",
+      "PipelineProductionRouting",
+      "TakeRepairPlan"
+    ]
   },
   {
     "files": [
@@ -468,7 +527,11 @@
     ],
     "id": "runbooks",
     "adaptationAuthority": "NGV extraction design, not a quote from the skill",
-    "runtimeStatus": "specified-not-wired"
+    "runtimeStatus": "runtime-active",
+    "runtimeConsumers": [
+      "PipelineAgentHarness",
+      "get_production_knowledge"
+    ]
   },
   {
     "files": [
@@ -507,7 +570,12 @@
     ],
     "id": "post",
     "adaptationAuthority": "NGV extraction design, not a quote from the skill",
-    "runtimeStatus": "specified-not-wired"
+    "runtimeStatus": "runtime-active",
+    "runtimeConsumers": [
+      "PipelineRenderTakeStore",
+      "TimelineStyleReview",
+      "MusicAssemblyProofV1"
+    ]
   },
   {
     "files": [
@@ -541,7 +609,11 @@
     ],
     "id": "dialects",
     "adaptationAuthority": "NGV extraction design, not a quote from the skill",
-    "runtimeStatus": "specified-not-wired"
+    "runtimeStatus": "runtime-active",
+    "runtimeConsumers": [
+      "PromptDialectRegistry",
+      "VideoPromptDialectCompilerV1"
+    ]
   },
   {
     "files": [
@@ -576,7 +648,12 @@
     ],
     "id": "routes",
     "adaptationAuthority": "NGV extraction design, not a quote from the skill",
-    "runtimeStatus": "specified-not-wired"
+    "runtimeStatus": "runtime-active",
+    "runtimeConsumers": [
+      "CatalogCapabilityRuntime",
+      "PipelineProductionRouting",
+      "GenerationPackageV1"
+    ]
   },
   {
     "files": [
@@ -603,7 +680,12 @@
     ],
     "id": "evidence",
     "adaptationAuthority": "NGV extraction design, not a quote from the skill",
-    "runtimeStatus": "specified-not-wired"
+    "runtimeStatus": "runtime-active",
+    "runtimeConsumers": [
+      "RouteReceiptV1",
+      "GenerationPackageV1",
+      "get_production_knowledge"
+    ]
   },
   {
     "files": [
@@ -631,7 +713,11 @@
     ],
     "id": "glossary",
     "adaptationAuthority": "NGV extraction design, not a quote from the skill",
-    "runtimeStatus": "specified-not-wired"
+    "runtimeStatus": "runtime-active",
+    "runtimeConsumers": [
+      "get_production_knowledge",
+      "PipelineAgentHarness"
+    ]
   },
   {
     "files": [
@@ -661,7 +747,11 @@
     ],
     "id": "examples",
     "adaptationAuthority": "NGV extraction design, not a quote from the skill",
-    "runtimeStatus": "specified-not-wired"
+    "runtimeStatus": "runtime-active",
+    "runtimeConsumers": [
+      "get_production_knowledge",
+      "semantic acceptance fixtures"
+    ]
   },
   {
     "files": [
@@ -682,6 +772,9 @@
     ],
     "id": "packaging",
     "adaptationAuthority": "NGV extraction design, not a quote from the skill",
-    "runtimeStatus": "specified-not-wired"
+    "runtimeStatus": "provenance-only",
+    "runtimeConsumers": [
+      "get_production_knowledge provenance archive"
+    ]
   }
 ]

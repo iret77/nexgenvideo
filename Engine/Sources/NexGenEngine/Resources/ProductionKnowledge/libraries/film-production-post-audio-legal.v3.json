@@ -5,24 +5,17 @@
   "applicability": {
     "packIDs": [],
     "phases": [
-      "init",
       "analysis",
-      "brief",
-      "production_design",
-      "treatment",
-      "storyboard",
-      "bible",
-      "shotlist",
-      "sanity",
-      "frames",
-      "render",
-      "review",
       "assembly",
       "finish",
-      "generic"
+      "generic",
+      "render",
+      "review",
+      "sanity"
     ],
     "intentTags": [
-      "post-audio-legal"
+      "post-audio-legal",
+      "post"
     ],
     "activeProfileIDs": []
   },
@@ -33,16 +26,8 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
           "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
-          "shotlist",
           "sanity",
-          "frames",
           "render",
           "review",
           "assembly",
@@ -50,7 +35,8 @@
           "generic"
         ],
         "intentTags": [
-          "post-audio-legal"
+          "post-audio-legal",
+          "post"
         ],
         "activeProfileIDs": []
       },
@@ -75,16 +61,8 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
           "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
-          "shotlist",
           "sanity",
-          "frames",
           "render",
           "review",
           "assembly",
@@ -92,7 +70,8 @@
           "generic"
         ],
         "intentTags": [
-          "post-audio-legal"
+          "post-audio-legal",
+          "post"
         ],
         "activeProfileIDs": []
       },
@@ -117,16 +96,8 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
           "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
-          "shotlist",
           "sanity",
-          "frames",
           "render",
           "review",
           "assembly",
@@ -134,7 +105,8 @@
           "generic"
         ],
         "intentTags": [
-          "post-audio-legal"
+          "post-audio-legal",
+          "post"
         ],
         "activeProfileIDs": []
       },
@@ -159,16 +131,8 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
           "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
-          "shotlist",
           "sanity",
-          "frames",
           "render",
           "review",
           "assembly",
@@ -176,7 +140,8 @@
           "generic"
         ],
         "intentTags": [
-          "post-audio-legal"
+          "post-audio-legal",
+          "post"
         ],
         "activeProfileIDs": []
       },
@@ -201,16 +166,8 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
           "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
-          "shotlist",
           "sanity",
-          "frames",
           "render",
           "review",
           "assembly",
@@ -218,7 +175,8 @@
           "generic"
         ],
         "intentTags": [
-          "post-audio-legal"
+          "post-audio-legal",
+          "post"
         ],
         "activeProfileIDs": []
       },

@@ -5,24 +5,20 @@
   "applicability": {
     "packIDs": [],
     "phases": [
-      "init",
-      "analysis",
-      "brief",
-      "production_design",
-      "treatment",
-      "storyboard",
       "bible",
-      "shotlist",
-      "sanity",
+      "brief",
       "frames",
+      "generic",
+      "production_design",
       "render",
       "review",
-      "assembly",
-      "finish",
-      "generic"
+      "sanity",
+      "shotlist",
+      "storyboard"
     ],
     "intentTags": [
-      "style-control"
+      "style-control",
+      "style"
     ],
     "activeProfileIDs": []
   },
@@ -33,11 +29,8 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
@@ -45,12 +38,11 @@
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "style-control"
+          "style-control",
+          "style"
         ],
         "activeProfileIDs": []
       },
@@ -75,11 +67,8 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
@@ -87,12 +76,11 @@
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "style-control"
+          "style-control",
+          "style"
         ],
         "activeProfileIDs": []
       },
@@ -117,11 +105,8 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
@@ -129,12 +114,11 @@
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "style-control"
+          "style-control",
+          "style"
         ],
         "activeProfileIDs": []
       },
@@ -159,11 +143,8 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
@@ -171,12 +152,11 @@
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "style-control"
+          "style-control",
+          "style"
         ],
         "activeProfileIDs": []
       },
@@ -202,11 +182,8 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
@@ -214,12 +191,11 @@
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "style-control"
+          "style-control",
+          "style"
         ],
         "activeProfileIDs": []
       },
@@ -245,11 +221,8 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
@@ -257,12 +230,11 @@
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "style-control"
+          "style-control",
+          "style"
         ],
         "activeProfileIDs": []
       },
@@ -287,11 +259,8 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
@@ -299,12 +268,11 @@
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "style-control"
+          "style-control",
+          "style"
         ],
         "activeProfileIDs": []
       },
@@ -329,11 +297,8 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
@@ -341,12 +306,11 @@
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "style-control"
+          "style-control",
+          "style"
         ],
         "activeProfileIDs": []
       },
@@ -371,11 +335,8 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
@@ -383,12 +344,11 @@
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "style-control"
+          "style-control",
+          "style"
         ],
         "activeProfileIDs": []
       },
@@ -413,11 +373,8 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
@@ -425,12 +382,11 @@
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "style-control"
+          "style-control",
+          "style"
         ],
         "activeProfileIDs": []
       },
@@ -456,11 +412,8 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
@@ -468,12 +421,11 @@
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "style-control"
+          "style-control",
+          "style"
         ],
         "activeProfileIDs": []
       },
@@ -499,11 +451,8 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
@@ -511,12 +460,11 @@
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "style-control"
+          "style-control",
+          "style"
         ],
         "activeProfileIDs": []
       },
@@ -542,11 +490,8 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
@@ -554,12 +499,11 @@
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "style-control"
+          "style-control",
+          "style"
         ],
         "activeProfileIDs": []
       },
@@ -585,11 +529,8 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
@@ -597,12 +538,11 @@
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "style-control"
+          "style-control",
+          "style"
         ],
         "activeProfileIDs": []
       },
@@ -628,11 +568,8 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
@@ -640,12 +577,11 @@
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "style-control"
+          "style-control",
+          "style"
         ],
         "activeProfileIDs": []
       },
@@ -671,11 +607,8 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
@@ -683,12 +616,11 @@
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "style-control"
+          "style-control",
+          "style"
         ],
         "activeProfileIDs": []
       },
@@ -714,11 +646,8 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
@@ -726,12 +655,11 @@
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "style-control"
+          "style-control",
+          "style"
         ],
         "activeProfileIDs": []
       },
@@ -757,11 +685,8 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
@@ -769,12 +694,11 @@
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "style-control"
+          "style-control",
+          "style"
         ],
         "activeProfileIDs": []
       },
@@ -799,11 +723,8 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
@@ -811,12 +732,11 @@
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "style-control"
+          "style-control",
+          "style"
         ],
         "activeProfileIDs": []
       },
@@ -842,11 +762,8 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
@@ -854,12 +771,11 @@
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "style-control"
+          "style-control",
+          "style"
         ],
         "activeProfileIDs": []
       },
@@ -885,11 +801,8 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
@@ -897,12 +810,11 @@
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "style-control"
+          "style-control",
+          "style"
         ],
         "activeProfileIDs": []
       },
@@ -928,11 +840,8 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
-          "treatment",
           "storyboard",
           "bible",
           "shotlist",
@@ -940,12 +849,11 @@
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "style-control"
+          "style-control",
+          "style"
         ],
         "activeProfileIDs": []
       },

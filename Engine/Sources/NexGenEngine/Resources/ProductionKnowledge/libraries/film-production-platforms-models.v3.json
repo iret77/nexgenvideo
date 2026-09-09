@@ -5,24 +5,13 @@
   "applicability": {
     "packIDs": [],
     "phases": [
-      "init",
-      "analysis",
-      "brief",
-      "production_design",
-      "treatment",
-      "storyboard",
-      "bible",
-      "shotlist",
-      "sanity",
       "frames",
-      "render",
-      "review",
-      "assembly",
-      "finish",
-      "generic"
+      "generic",
+      "render"
     ],
     "intentTags": [
-      "platforms-models"
+      "platforms-models",
+      "dialects"
     ],
     "activeProfileIDs": []
   },
@@ -33,24 +22,13 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
           "frames",
           "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "platforms-models"
+          "platforms-models",
+          "dialects"
         ],
         "activeProfileIDs": []
       },
@@ -75,24 +53,13 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
           "frames",
           "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "platforms-models"
+          "platforms-models",
+          "dialects"
         ],
         "activeProfileIDs": []
       },
@@ -118,24 +85,13 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
           "frames",
           "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "platforms-models"
+          "platforms-models",
+          "dialects"
         ],
         "activeProfileIDs": []
       },
@@ -161,24 +117,13 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
           "frames",
           "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "platforms-models"
+          "platforms-models",
+          "dialects"
         ],
         "activeProfileIDs": []
       },
@@ -204,24 +149,13 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
           "frames",
           "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "platforms-models"
+          "platforms-models",
+          "dialects"
         ],
         "activeProfileIDs": []
       },
@@ -248,24 +182,13 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
           "frames",
           "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "platforms-models"
+          "platforms-models",
+          "dialects"
         ],
         "activeProfileIDs": []
       },
@@ -290,24 +213,13 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
           "frames",
           "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "platforms-models"
+          "platforms-models",
+          "dialects"
         ],
         "activeProfileIDs": []
       },
@@ -333,24 +245,13 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
           "frames",
           "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "platforms-models"
+          "platforms-models",
+          "dialects"
         ],
         "activeProfileIDs": []
       },
@@ -375,24 +276,13 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
           "frames",
           "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "platforms-models"
+          "platforms-models",
+          "dialects"
         ],
         "activeProfileIDs": []
       },
@@ -418,24 +308,13 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
           "frames",
           "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "platforms-models"
+          "platforms-models",
+          "dialects"
         ],
         "activeProfileIDs": []
       },
@@ -461,24 +340,13 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
           "frames",
           "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "platforms-models"
+          "platforms-models",
+          "dialects"
         ],
         "activeProfileIDs": []
       },
@@ -504,24 +372,13 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
           "frames",
           "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "platforms-models"
+          "platforms-models",
+          "dialects"
         ],
         "activeProfileIDs": []
       },

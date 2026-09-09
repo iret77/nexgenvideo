@@ -2,6 +2,35 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.5.7",
+      "date": "2026-09-09",
+      "sections": [
+        {
+          "heading": "Reliability",
+          "items": [
+            "The agent transcript uses a stable in-flow layout and reports live execution stages without triggering recursive scroll geometry updates.",
+            "Projects recovered after a Music Video pack upgrade preserve the exact pinned pack and offer a transactional Recovery-copy upgrade.",
+            "Approved generation batches retain their immutable requests, spend authority, provider receipts and completed output bytes across relaunches."
+          ]
+        },
+        {
+          "heading": "Production",
+          "items": [
+            "Music Video pack 0.5.8 applies the complete production-knowledge library through phase-specific planning, prompt, reference, review and assembly contracts.",
+            "Storyboard, Bible, Frames and Render now bind camera setups, state changes, original-song performance, visual arcs, delivery modes and exact conditioning inputs.",
+            "Director and cinematography recipes compile as scoped style dimensions and are reviewed against exact frame, timeline and audio evidence."
+          ]
+        },
+        {
+          "heading": "Workflow",
+          "items": [
+            "Storyboard Review opens the authored storyboard surface, and active agent work exposes the current stage instead of a static Working label.",
+            "Still-image delivery, imported canon assets, cut handles and project spending use explicit executable contracts and matching approval gates."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.5.6",
       "date": "2026-09-08",
       "sections": [

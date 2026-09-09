@@ -42,27 +42,66 @@ public struct MusicvideoPack: Pack {
 
     static let productionKnowledgeDescriptor = ProductionKnowledgeConsumerDescriptorV1(
         id: "musicvideo-production-knowledge",
-        version: "1.0.0",
+        version: "1.1.0",
         packID: "musicvideo",
         profileResourceIDs: ["generative_film", "narrative_storytelling"],
         phaseSelections: [
+            ProductionKnowledgePhaseSelectionV1(
+                phase: "project_init",
+                knowledgePhase: "init",
+                libraryIDs: [
+                    "film-production-skill", "film-production-glossary",
+                    "film-production-workflows",
+                ],
+                intentTags: ["skill", "glossary", "workflows"]
+            ),
+            ProductionKnowledgePhaseSelectionV1(
+                phase: "analysis",
+                libraryIDs: [
+                    "film-production-skill", "film-production-post-audio-legal",
+                    "film-production-sources", "film-production-workflows",
+                ],
+                intentTags: ["skill", "post-audio-legal", "sources", "workflows"]
+            ),
+            ProductionKnowledgePhaseSelectionV1(
+                phase: "brief",
+                libraryIDs: [
+                    "film-production-skill", "film-production-genre-baselines",
+                    "film-production-story-structures", "film-production-director-recipes",
+                    "film-production-workflows",
+                ],
+                intentTags: [
+                    "skill", "genre-baselines", "story-structures", "director-recipes",
+                    "workflows",
+                ]
+            ),
             ProductionKnowledgePhaseSelectionV1(
                 phase: "production_design",
                 libraryIDs: [
                     "film-craft-baseline",
                     "production-sheet-templates", "stylized-3d-animation",
+                    "film-production-film-craft", "film-production-production-bible",
+                    "film-production-style-control", "film-production-image-model-logic",
+                    "film-production-pixar-look", "film-production-director-recipes",
                 ],
                 intentTags: [
                     "camera", "cinematography", "lighting", "color", "visual-strategy",
                     "character-sheet", "location-sheet", "style-sheet",
+                    "film-craft", "production-bible", "style-control", "image-model-logic",
+                    "pixar-look", "director-recipes",
                 ]
             ),
             ProductionKnowledgePhaseSelectionV1(
                 phase: "treatment",
-                libraryIDs: ["film-craft-baseline", "story-containers"],
+                libraryIDs: [
+                    "film-craft-baseline", "story-containers",
+                    "film-production-story-structures", "film-production-film-craft",
+                    "film-production-genre-baselines", "film-production-workflows",
+                ],
                 intentTags: [
                     "craft", "story-development", "structure", "goal-driven", "short-form",
-                    "color", "pacing",
+                    "color", "pacing", "story-structures", "film-craft",
+                    "genre-baselines", "workflows",
                 ]
             ),
             ProductionKnowledgePhaseSelectionV1(
@@ -70,10 +109,13 @@ public struct MusicvideoPack: Pack {
                 libraryIDs: [
                     "continuity-and-coverage", "film-craft-baseline",
                     "stylized-3d-animation",
+                    "film-production-film-craft", "film-production-production-pipeline",
+                    "film-production-renderability", "film-production-workflows",
                 ],
                 intentTags: [
                     "camera", "cinematography", "continuity", "coverage",
                     "editing", "lighting", "pacing", "spatial-clarity", "visual-strategy",
+                    "film-craft", "production-pipeline", "renderability", "workflows",
                 ]
             ),
             ProductionKnowledgePhaseSelectionV1(
@@ -81,17 +123,27 @@ public struct MusicvideoPack: Pack {
                 libraryIDs: [
                     "continuity-and-coverage", "production-sheet-templates",
                     "stylized-3d-animation",
+                    "film-production-production-bible", "film-production-image-model-logic",
+                    "film-production-style-control", "film-production-pixar-look",
                 ],
                 intentTags: [
                     "continuity", "character-sheet", "location-sheet",
                     "style-sheet", "continuity-sheet",
+                    "production-bible", "image-model-logic", "style-control", "pixar-look",
                 ]
             ),
             ProductionKnowledgePhaseSelectionV1(
                 phase: "shotlist",
-                libraryIDs: ["continuity-and-coverage", "film-craft-baseline"],
+                libraryIDs: [
+                    "continuity-and-coverage", "film-craft-baseline",
+                    "film-production-film-craft", "film-production-production-pipeline",
+                    "film-production-renderability", "film-production-video-prompting",
+                    "film-production-workflows",
+                ],
                 intentTags: [
                     "camera", "continuity", "editing", "craft", "spatial-clarity",
+                    "film-craft", "production-pipeline", "renderability", "video-prompting",
+                    "workflows",
                 ]
             ),
             ProductionKnowledgePhaseSelectionV1(
@@ -100,11 +152,40 @@ public struct MusicvideoPack: Pack {
                 libraryIDs: [
                     "continuity-and-coverage", "film-craft-baseline",
                     "stylized-3d-animation",
+                    "film-production-post-audio-legal", "film-production-film-craft",
+                    "film-production-renderability", "film-production-sources",
                 ],
                 intentTags: [
                     "quality-control", "continuity", "craft", "cinematography",
                     "spatial-clarity", "editing", "lighting", "color", "pacing",
-                    "camera", "visual-strategy",
+                    "camera", "visual-strategy", "post-audio-legal", "film-craft",
+                    "renderability", "sources",
+                ]
+            ),
+            ProductionKnowledgePhaseSelectionV1(
+                phase: "frames",
+                libraryIDs: [
+                    "production-sheet-templates", "stylized-3d-animation",
+                    "film-production-image-model-logic", "film-production-style-control",
+                    "film-production-production-bible", "film-production-renderability",
+                    "film-production-workflows",
+                ],
+                intentTags: [
+                    "character-sheet", "location-sheet", "style-sheet", "image-model-logic",
+                    "style-control", "production-bible", "renderability", "workflows",
+                ]
+            ),
+            ProductionKnowledgePhaseSelectionV1(
+                phase: "render",
+                libraryIDs: [
+                    "continuity-and-coverage", "film-craft-baseline",
+                    "film-production-video-prompting", "film-production-style-control",
+                    "film-production-production-pipeline", "film-production-workflows",
+                    "film-production-post-audio-legal",
+                ],
+                intentTags: [
+                    "continuity", "craft", "video-prompting", "style-control",
+                    "production-pipeline", "workflows", "post-audio-legal",
                 ]
             ),
         ],

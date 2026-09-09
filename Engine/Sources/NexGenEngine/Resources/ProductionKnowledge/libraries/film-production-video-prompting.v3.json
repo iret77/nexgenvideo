@@ -5,24 +5,15 @@
   "applicability": {
     "packIDs": [],
     "phases": [
-      "init",
-      "analysis",
-      "brief",
-      "production_design",
-      "treatment",
-      "storyboard",
-      "bible",
-      "shotlist",
-      "sanity",
       "frames",
+      "generic",
       "render",
       "review",
-      "assembly",
-      "finish",
-      "generic"
+      "shotlist"
     ],
     "intentTags": [
-      "video-prompting"
+      "video-prompting",
+      "video"
     ],
     "activeProfileIDs": []
   },
@@ -33,24 +24,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "video-prompting"
+          "video-prompting",
+          "video"
         ],
         "activeProfileIDs": []
       },
@@ -75,24 +57,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "video-prompting"
+          "video-prompting",
+          "video"
         ],
         "activeProfileIDs": []
       },
@@ -117,24 +90,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "video-prompting"
+          "video-prompting",
+          "video"
         ],
         "activeProfileIDs": []
       },
@@ -160,24 +124,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "video-prompting"
+          "video-prompting",
+          "video"
         ],
         "activeProfileIDs": []
       },
@@ -204,24 +159,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "video-prompting"
+          "video-prompting",
+          "video"
         ],
         "activeProfileIDs": []
       },
@@ -247,24 +193,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "video-prompting"
+          "video-prompting",
+          "video"
         ],
         "activeProfileIDs": []
       },
@@ -289,24 +226,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "video-prompting"
+          "video-prompting",
+          "video"
         ],
         "activeProfileIDs": []
       },
@@ -331,24 +259,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "video-prompting"
+          "video-prompting",
+          "video"
         ],
         "activeProfileIDs": []
       },
@@ -373,24 +292,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "video-prompting"
+          "video-prompting",
+          "video"
         ],
         "activeProfileIDs": []
       },
@@ -415,24 +325,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "video-prompting"
+          "video-prompting",
+          "video"
         ],
         "activeProfileIDs": []
       },
@@ -457,24 +358,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "video-prompting"
+          "video-prompting",
+          "video"
         ],
         "activeProfileIDs": []
       },
@@ -499,24 +391,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "video-prompting"
+          "video-prompting",
+          "video"
         ],
         "activeProfileIDs": []
       },
@@ -541,24 +424,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "video-prompting"
+          "video-prompting",
+          "video"
         ],
         "activeProfileIDs": []
       },
@@ -584,24 +458,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "video-prompting"
+          "video-prompting",
+          "video"
         ],
         "activeProfileIDs": []
       },
@@ -627,24 +492,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "video-prompting"
+          "video-prompting",
+          "video"
         ],
         "activeProfileIDs": []
       },
@@ -669,24 +525,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
-          "brief",
-          "production_design",
-          "treatment",
-          "storyboard",
-          "bible",
           "shotlist",
-          "sanity",
           "frames",
           "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "video-prompting"
+          "video-prompting",
+          "video"
         ],
         "activeProfileIDs": []
       },

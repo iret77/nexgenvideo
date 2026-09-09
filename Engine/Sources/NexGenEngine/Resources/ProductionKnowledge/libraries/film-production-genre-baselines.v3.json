@@ -5,24 +5,15 @@
   "applicability": {
     "packIDs": [],
     "phases": [
-      "init",
-      "analysis",
       "brief",
+      "generic",
       "production_design",
-      "treatment",
       "storyboard",
-      "bible",
-      "shotlist",
-      "sanity",
-      "frames",
-      "render",
-      "review",
-      "assembly",
-      "finish",
-      "generic"
+      "treatment"
     ],
     "intentTags": [
-      "genre-baselines"
+      "genre-baselines",
+      "genres"
     ],
     "activeProfileIDs": []
   },
@@ -33,24 +24,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
           "treatment",
           "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
-          "frames",
-          "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "genre-baselines"
+          "genre-baselines",
+          "genres"
         ],
         "activeProfileIDs": []
       },
@@ -74,24 +56,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
           "treatment",
           "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
-          "frames",
-          "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "genre-baselines"
+          "genre-baselines",
+          "genres"
         ],
         "activeProfileIDs": []
       },
@@ -116,24 +89,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
           "treatment",
           "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
-          "frames",
-          "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "genre-baselines"
+          "genre-baselines",
+          "genres"
         ],
         "activeProfileIDs": []
       },
@@ -158,24 +122,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
           "treatment",
           "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
-          "frames",
-          "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "genre-baselines"
+          "genre-baselines",
+          "genres"
         ],
         "activeProfileIDs": []
       },
@@ -200,24 +155,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
           "treatment",
           "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
-          "frames",
-          "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "genre-baselines"
+          "genre-baselines",
+          "genres"
         ],
         "activeProfileIDs": []
       },
@@ -242,24 +188,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
           "treatment",
           "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
-          "frames",
-          "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "genre-baselines"
+          "genre-baselines",
+          "genres"
         ],
         "activeProfileIDs": []
       },
@@ -284,24 +221,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
           "treatment",
           "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
-          "frames",
-          "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "genre-baselines"
+          "genre-baselines",
+          "genres"
         ],
         "activeProfileIDs": []
       },
@@ -326,24 +254,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
           "treatment",
           "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
-          "frames",
-          "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "genre-baselines"
+          "genre-baselines",
+          "genres"
         ],
         "activeProfileIDs": []
       },
@@ -368,24 +287,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
           "treatment",
           "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
-          "frames",
-          "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "genre-baselines"
+          "genre-baselines",
+          "genres"
         ],
         "activeProfileIDs": []
       },
@@ -410,24 +320,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
           "treatment",
           "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
-          "frames",
-          "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "genre-baselines"
+          "genre-baselines",
+          "genres"
         ],
         "activeProfileIDs": []
       },
@@ -452,24 +353,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
           "treatment",
           "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
-          "frames",
-          "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "genre-baselines"
+          "genre-baselines",
+          "genres"
         ],
         "activeProfileIDs": []
       },
@@ -494,24 +386,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
           "treatment",
           "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
-          "frames",
-          "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "genre-baselines"
+          "genre-baselines",
+          "genres"
         ],
         "activeProfileIDs": []
       },
@@ -536,24 +419,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
           "treatment",
           "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
-          "frames",
-          "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "genre-baselines"
+          "genre-baselines",
+          "genres"
         ],
         "activeProfileIDs": []
       },
@@ -578,24 +452,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
           "treatment",
           "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
-          "frames",
-          "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "genre-baselines"
+          "genre-baselines",
+          "genres"
         ],
         "activeProfileIDs": []
       },
@@ -620,24 +485,15 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
           "treatment",
           "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
-          "frames",
-          "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "genre-baselines"
+          "genre-baselines",
+          "genres"
         ],
         "activeProfileIDs": []
       },

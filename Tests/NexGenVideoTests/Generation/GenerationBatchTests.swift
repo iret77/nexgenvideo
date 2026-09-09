@@ -1,4 +1,5 @@
 import Foundation
+import NexGenEngine
 import Testing
 @testable import NexGenVideo
 
@@ -293,7 +294,7 @@ struct GenerationBatchTests {
         let reservation = GenerationSpendEvent(transactionId: "durable-transaction", kind: .reserved,
             model: item.package.payload.target.modelId, provider: item.package.payload.target.provider,
             transport: item.package.payload.target.transport, endpoint: item.package.payload.target.endpoint,
-            money: try #require(item.package.payload.estimate))
+            money: item.package.payload.estimate)
         let submitting = try GenerationBatchStore.update(approved, editor: editor, authority: authority,
             addingSpendEvents: [reservation]) {
             try $0.beginSubmission(itemID: item.id, packageID: item.package.id,

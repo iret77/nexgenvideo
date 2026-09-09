@@ -5,24 +5,16 @@
   "applicability": {
     "packIDs": [],
     "phases": [
-      "init",
-      "analysis",
       "brief",
+      "generic",
       "production_design",
-      "treatment",
-      "storyboard",
-      "bible",
-      "shotlist",
-      "sanity",
-      "frames",
-      "render",
       "review",
-      "assembly",
-      "finish",
-      "generic"
+      "sanity",
+      "storyboard"
     ],
     "intentTags": [
-      "director-recipes"
+      "director-recipes",
+      "blueprints"
     ],
     "activeProfileIDs": []
   },
@@ -33,24 +25,16 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
-          "treatment",
           "storyboard",
-          "bible",
-          "shotlist",
           "sanity",
-          "frames",
-          "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "director-recipes"
+          "director-recipes",
+          "blueprints"
         ],
         "activeProfileIDs": []
       },
@@ -75,24 +59,16 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
-          "treatment",
           "storyboard",
-          "bible",
-          "shotlist",
           "sanity",
-          "frames",
-          "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "director-recipes"
+          "director-recipes",
+          "blueprints"
         ],
         "activeProfileIDs": []
       },
@@ -118,24 +94,16 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
-          "treatment",
           "storyboard",
-          "bible",
-          "shotlist",
           "sanity",
-          "frames",
-          "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "director-recipes"
+          "director-recipes",
+          "blueprints"
         ],
         "activeProfileIDs": []
       },
@@ -160,24 +128,16 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
           "production_design",
-          "treatment",
           "storyboard",
-          "bible",
-          "shotlist",
           "sanity",
-          "frames",
-          "render",
           "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "director-recipes"
+          "director-recipes",
+          "blueprints"
         ],
         "activeProfileIDs": []
       },

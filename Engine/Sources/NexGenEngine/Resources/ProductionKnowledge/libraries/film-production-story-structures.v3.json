@@ -5,24 +5,14 @@
   "applicability": {
     "packIDs": [],
     "phases": [
-      "init",
-      "analysis",
       "brief",
-      "production_design",
-      "treatment",
+      "generic",
       "storyboard",
-      "bible",
-      "shotlist",
-      "sanity",
-      "frames",
-      "render",
-      "review",
-      "assembly",
-      "finish",
-      "generic"
+      "treatment"
     ],
     "intentTags": [
-      "story-structures"
+      "story-structures",
+      "story"
     ],
     "activeProfileIDs": []
   },
@@ -33,24 +23,14 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
-          "production_design",
           "treatment",
           "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
-          "frames",
-          "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "story-structures"
+          "story-structures",
+          "story"
         ],
         "activeProfileIDs": []
       },
@@ -75,24 +55,14 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
-          "production_design",
           "treatment",
           "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
-          "frames",
-          "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "story-structures"
+          "story-structures",
+          "story"
         ],
         "activeProfileIDs": []
       },
@@ -118,24 +88,14 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
-          "production_design",
           "treatment",
           "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
-          "frames",
-          "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "story-structures"
+          "story-structures",
+          "story"
         ],
         "activeProfileIDs": []
       },
@@ -160,24 +120,14 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
-          "production_design",
           "treatment",
           "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
-          "frames",
-          "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "story-structures"
+          "story-structures",
+          "story"
         ],
         "activeProfileIDs": []
       },
@@ -202,24 +152,14 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
-          "production_design",
           "treatment",
           "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
-          "frames",
-          "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "story-structures"
+          "story-structures",
+          "story"
         ],
         "activeProfileIDs": []
       },
@@ -245,24 +185,14 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
-          "production_design",
           "treatment",
           "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
-          "frames",
-          "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "story-structures"
+          "story-structures",
+          "story"
         ],
         "activeProfileIDs": []
       },
@@ -287,24 +217,14 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
-          "production_design",
           "treatment",
           "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
-          "frames",
-          "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "story-structures"
+          "story-structures",
+          "story"
         ],
         "activeProfileIDs": []
       },
@@ -329,24 +249,14 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
-          "production_design",
           "treatment",
           "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
-          "frames",
-          "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "story-structures"
+          "story-structures",
+          "story"
         ],
         "activeProfileIDs": []
       },
@@ -371,24 +281,14 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
-          "production_design",
           "treatment",
           "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
-          "frames",
-          "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "story-structures"
+          "story-structures",
+          "story"
         ],
         "activeProfileIDs": []
       },
@@ -414,24 +314,14 @@
       "applicability": {
         "packIDs": [],
         "phases": [
-          "init",
-          "analysis",
           "brief",
-          "production_design",
           "treatment",
           "storyboard",
-          "bible",
-          "shotlist",
-          "sanity",
-          "frames",
-          "render",
-          "review",
-          "assembly",
-          "finish",
           "generic"
         ],
         "intentTags": [
-          "story-structures"
+          "story-structures",
+          "story"
         ],
         "activeProfileIDs": []
       },

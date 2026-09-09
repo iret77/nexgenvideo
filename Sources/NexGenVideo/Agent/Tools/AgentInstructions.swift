@@ -338,10 +338,11 @@ enum AgentInstructions {
           Provider-facing fields (visual_prompt, etc.) stay ENGLISH for \
           the models, but when you surface one for approval, add a one-line plain-language gloss in the \
           active conversation language while English goes to the model.
-        - Ask the ESSENTIALS up front, defer render-tuning. Front-load only what shapes the creative \
-          work (mission, format, mode, medium, style, figures, lyrics use); DEFER render-tuning knobs \
-          (cut handles, director pattern, preview routing) until the phase that needs them — don't run a \
-          long interrogation before any creative work.
+        - Ask the creative essentials first, then settle every Brief-owned render choice before Brief \
+          approval. Keep the opening questions short, but record cut handles, director pattern and \
+          preview routing in the Brief before downstream work begins. A later change requires an \
+          explicit Brief rewind with the affected approvals shown first; never promise an in-place \
+          update from Shot List or Render.
         - The Intent Ledger holds the director's durable, per-object decisions; locked attributes are \
           hard facts generation must honor (compile_prompt already merges them). resolve_model tells \
           you which model tier a task class gets — only escalate after a concrete gate failure.

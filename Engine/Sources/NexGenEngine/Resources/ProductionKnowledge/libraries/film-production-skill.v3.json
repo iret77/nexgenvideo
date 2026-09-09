@@ -5,24 +5,25 @@
   "applicability": {
     "packIDs": [],
     "phases": [
-      "init",
       "analysis",
-      "brief",
-      "production_design",
-      "treatment",
-      "storyboard",
+      "assembly",
       "bible",
-      "shotlist",
-      "sanity",
+      "brief",
+      "finish",
       "frames",
+      "generic",
+      "init",
+      "production_design",
       "render",
       "review",
-      "assembly",
-      "finish",
-      "generic"
+      "sanity",
+      "shotlist",
+      "storyboard",
+      "treatment"
     ],
     "intentTags": [
-      "skill"
+      "skill",
+      "orchestration"
     ],
     "activeProfileIDs": []
   },
@@ -50,7 +51,8 @@
           "generic"
         ],
         "intentTags": [
-          "skill"
+          "skill",
+          "orchestration"
         ],
         "activeProfileIDs": []
       },
@@ -91,7 +93,8 @@
           "generic"
         ],
         "intentTags": [
-          "skill"
+          "skill",
+          "orchestration"
         ],
         "activeProfileIDs": []
       },
@@ -134,7 +137,8 @@
           "generic"
         ],
         "intentTags": [
-          "skill"
+          "skill",
+          "orchestration"
         ],
         "activeProfileIDs": []
       },
@@ -178,7 +182,8 @@
           "generic"
         ],
         "intentTags": [
-          "skill"
+          "skill",
+          "orchestration"
         ],
         "activeProfileIDs": []
       },
@@ -221,7 +226,8 @@
           "generic"
         ],
         "intentTags": [
-          "skill"
+          "skill",
+          "orchestration"
         ],
         "activeProfileIDs": []
       },
@@ -265,7 +271,8 @@
           "generic"
         ],
         "intentTags": [
-          "skill"
+          "skill",
+          "orchestration"
         ],
         "activeProfileIDs": []
       },
@@ -309,7 +316,8 @@
           "generic"
         ],
         "intentTags": [
-          "skill"
+          "skill",
+          "orchestration"
         ],
         "activeProfileIDs": []
       },
@@ -352,7 +360,8 @@
           "generic"
         ],
         "intentTags": [
-          "skill"
+          "skill",
+          "orchestration"
         ],
         "activeProfileIDs": []
       },
@@ -395,7 +404,8 @@
           "generic"
         ],
         "intentTags": [
-          "skill"
+          "skill",
+          "orchestration"
         ],
         "activeProfileIDs": []
       },
@@ -439,7 +449,8 @@
           "generic"
         ],
         "intentTags": [
-          "skill"
+          "skill",
+          "orchestration"
         ],
         "activeProfileIDs": []
       },
@@ -483,7 +494,8 @@
           "generic"
         ],
         "intentTags": [
-          "skill"
+          "skill",
+          "orchestration"
         ],
         "activeProfileIDs": []
       },
@@ -527,7 +539,8 @@
           "generic"
         ],
         "intentTags": [
-          "skill"
+          "skill",
+          "orchestration"
         ],
         "activeProfileIDs": []
       },

@@ -1,6 +1,6 @@
 # Complete knowledge migration into NexGenVideo
 
-Status: materialized knowledge and implementation contract; runtime wiring is pending. This document does not alter any locked host/pack contract. Source is ai-film-production **3.1.1-en**, commit `0333751214c7af17977dd33f0ba88ba9c352421e`; the new source supersedes the earlier `d07a1ce` extraction wherever its applicable doctrine differs.
+Status: materialized and wired into the generic agent runtime, the Musicvideo phase harness and typed production consumers for NexGenVideo 1.5.7. Locked host/pack changes are recorded in their authoritative contracts. Source is ai-film-production **3.1.1-en**, commit `0333751214c7af17977dd33f0ba88ba9c352421e`; the new source supersedes the earlier `d07a1ce` extraction wherever its applicable doctrine differs.
 
 ## Delivery, not a summary
 
@@ -8,13 +8,13 @@ All 20 source Markdown documents are preserved as 254 independently addressable,
 
 The exact-text layer deliberately preserves exceptions, examples, rationale, evidence labels and numerical qualifiers. It is accompanied by NGV application contracts and precedence overrides; copying its imperatives wholesale into an agent system prompt would ignore those adaptations. Installation instructions are provenance-only. Provider/UI claims remain dated evidence. The decorative hero image is explicitly excluded; nothing actionable is excluded to fit a short initial library.
 
-Content conservation proves that the extraction did not lose source text. It does not prove that the app can execute the knowledge, that each source claim is correct, or that a given section is applicable to every project. Those are different acceptance requirements below.
+Content conservation proves that the extraction did not lose source text. The runtime ledger separately names each activation, consumer and verification rule. Dated provider claims remain evidence for a live route check rather than executable capability declarations.
 
 ## Existing infrastructure to reuse
 
-The existing `ProductionKnowledgeV1`, `ProductionKnowledgeLoaderV1`, `ProductionKnowledgeContextV1`, `Resources/ProductionKnowledge/manifest.json`, creative libraries and production profiles provide registration, provenance and selective context. #446 already delivered the infrastructure; do not reopen it to create a second loader. The current v1 resources cite the old skill and include only a small selection of recipes/baselines. #482 owns full content migration and selection through that infrastructure.
+`ProductionKnowledgeV1`, `ProductionKnowledgeLoaderV1`, `ProductionKnowledgeContextV1`, `Resources/ProductionKnowledge/manifest.json`, creative libraries and production profiles provide registration, provenance and selective context. The generic runtime exposes complete indexed reads through `get_production_knowledge`. The Musicvideo descriptor selects phase-relevant libraries for project start, Analysis, Brief, Production Design, Treatment, Storyboard, Bible, Shot List, Sanity, Frames and Render; content beyond the bounded initial context is returned as exact entry IDs for complete follow-up reads.
 
-This dossier's JSON schema is an authoring/interchange schema, **not** a drop-in current manifest entry. During implementation, adapt entries to compatible versioned production resources and add dedicated typed artifacts only where a real consumer requires them. Preserve public pack ABI and exact project pins. Do not append stored fields to a compatible public V1 struct. Do not migrate old projects on open.
+This dossier's JSON schema remains the lossless authoring/interchange layer. The materializer adapts it deterministically into 21 compatible `creative-library.v1` resources while preserving source provenance and exact project pins. Dedicated typed artifacts carry executable project truth without changing stored layouts of compatible public V1 types.
 
 ## Record and selection contract
 
@@ -52,7 +52,7 @@ The selector must work in both Anthropic API and embedded CLI paths, on fresh st
 
 - Separate technical attachment capacity from quality/stability budgets and distinct identities. Preserve the ≤8 default, 9–12 stretch/large-cast path, >5 single-view condition and video/audio selection guidance in their source scopes. Do not hardcode them as universal model API limits.
 - Preserve one main action/one camera move, calm single-shot default, action/dialogue internal-cut planning and the scoped montage exception. A shot, a multi-shot take, a prompt revision and a returned result are separate objects.
-- Keep the two permitted literal keyframe use cases distinct from a reference anchor; native video extension is a different operation and source binding. #485 owns the open decision against NGV's current locked chain behavior.
+- Keep the two permitted literal keyframe use cases distinct from a reference anchor; native video extension is a different operation and source binding. The accepted #485 contract preserves predecessor-last-frame chaining while treating approved reference anchors, two-state interpolation, frame continuation and native extension as distinct strategies.
 - Draft at a diagnostic duration/tier is not the production take. Production is a new full-duration generation after beat lock; local production faults use supported scoped edits before wholesale regeneration.
 - Negative instructions depend on model/channel and object/style/audio class. Preserve the two-failed-takes music-bleed exception and logged last-resort literal once; never turn it into repeated global negative prompting.
 - H3 exact fields, Seedance mandatory blocks, Kling/Veo camera-first and Grok style-first stay separately selectable. Vendor/model version evidence is retained, not presented as freshly verified syntax.
@@ -72,4 +72,4 @@ The selector must work in both Anthropic API and embedded CLI paths, on fresh st
 3. Verify exception-sensitive counterexamples: bright figureless vs dark scene, reflection texture vs mirror acting, short hand action vs fine manipulation, source still canvas vs video control, native extension vs draft promotion, nonnarrative song arc vs causal story, Ozu assembly vs within-take axis.
 4. Verify selective context on start/resume/transition for both backends, including complete dependencies, budget behavior and provenance. No external skill file is consulted.
 5. Exercise writer/gate/lineage boundaries and pinned-version migration using GitHub Actions for app verification. This documentation extraction authorizes no local app execution, main merge or release dispatch.
-6. Keep #482 and consumer issues open until their runtime acceptance passes. “Knowledge extracted”, “pack spec prepared”, “runtime wired” and “verified in app” are separate states.
+6. Close #482 and its completed consumer issues only after the CI build, semantic test suite, external-pack load test and release preflight all pass for the same commit.
