@@ -194,13 +194,19 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
         try validate()
         guard let home = editor.workingRoot else { return }
         let scope = try GenerationProjectMutationScope(projectHome: home, editor: editor)
-        let directory = home.appendingPathComponent("generation-packages", isDirectory: true)
-        guard directory.resolvingSymlinksInPath() == home.resolvingSymlinksInPath().appendingPathComponent("generation-packages") else {
-            throw GenerationRequestError.storage("Generation package storage cannot traverse a symbolic link.")
-        }
         try scope.requireCurrent(editor: editor)
         if let key = editor.openWorkingCopyKey { try ProjectWorkingCopy.markDirty(key: key) }
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory: URL
+        do {
+            directory = try ProjectLocalFile.ensureDirectory(
+                "generation-packages",
+                dataRoot: home
+            )
+        } catch {
+            throw GenerationRequestError.storage(
+                "Generation package storage is not a safe project-local directory."
+            )
+        }
         let file = directory.appendingPathComponent(id + ".json")
         let bytes = try Self.canonicalData(self)
         if FileManager.default.fileExists(atPath: file.path) {

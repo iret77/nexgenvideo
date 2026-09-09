@@ -373,6 +373,13 @@ struct ToolDefinitionContractTests {
             #expect(properties["hard_recognition_trait"] == nil)
             #expect(!required.contains("hard_recognition_trait"))
         }
+        let variants = try #require(root["identity_variants"])
+        let item = try #require(variants["items"] as? [String: Any])
+        let properties = try #require(schemaProperties(item["properties"]))
+        #expect(properties["base_entity_id"] != nil)
+        #expect(properties["variant_entity_id"] != nil)
+        #expect(properties["changed_attributes"] != nil)
+        #expect(properties["inherited_identity_paths"] != nil)
     }
 
     @Test("agent dialogs cannot claim or replace host workflow intake")

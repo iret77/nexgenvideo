@@ -119,12 +119,20 @@ the current phase's capability set is rejected before it can spend money or muta
   slots. Frames owns the required still approvals; no new phase is introduced. Missing capability,
   changed input bytes, substituted slots, or unapproved states block before spend and at Render
   approval. Imported and AI-enhanced source ownership remains unchanged.
-- Every Bible sheet and Scene3D panorama must be staged from a ready generated media asset. The Bible
-  gate binds its exact bytes to the host-recorded compiled prompt and generation model; user uploads
-  remain valid only as `reference_images`.
+- Every Bible sheet and Scene3D panorama binds exact current bytes to one of two host-recorded
+  provenance classes: a completed generation with compiled prompt/model, or an identity image the
+  user explicitly confirmed in the host-owned prepared-character/location intake. A confirmed image
+  may be adopted as the demanded canonical view without generation; an arbitrary library import may
+  not. Only a demanded view lacking either proof is generated.
+- A real outfit or persistent identity-state change is a distinct Bible entity plus the versioned
+  `bible/identity-variants.v1.json` inheritance artifact. Its changed attributes are exhaustive;
+  every undeclared attribute remains byte-identical to the base entity, inherited paths must be
+  actual base Canon images, and the derived entity owns distinct proven sheets. Storyboard and Shot
+  List select the derived entity id, so the normal reference planner consumes its Canon directly.
 - `source_mode=imported` is deliberately outside provider rendering. Therefore empty Frames/Render
   manifests are valid only when the current shot list requires no provider-generated assets.
-- Timeline assembly completes the Render artifact. `assemble_timeline` writes the exact clip, source,
+- Timeline assembly completes the Render artifact and covers provider outputs plus every imported
+  Shot List source. `assemble_timeline` writes the exact clip, source,
   placement, duration, and motion proof; the Render gate rejects missing, stale, substituted, or
   incomplete assembly. Provider videos retain their source motion. Animated stills receive the
   deterministic host-owned motion declared by their execution plan.

@@ -140,6 +140,7 @@ enum MusicvideoPipelineLineage {
         selectors += storyboardSelectors(dataRoot: dataRoot)
         guard phase != "bible" else { return selectors }
         selectors.append(PipelineLayout.bibleFile)
+        selectors.append(PipelineLayout.bibleIdentityVariantsFile)
         guard phase != "shotlist" else { return selectors }
         if let version = latestShotlistVersion(dataRoot: dataRoot) {
             selectors.append(PipelineLayout.shotlistVersionFile(version))
@@ -182,6 +183,7 @@ enum MusicvideoPipelineLineage {
         case "bible":
             return [
                 PipelineLayout.bibleFile,
+                PipelineLayout.bibleIdentityVariantsFile,
                 PipelineLayout.assetProofFile(scope: "bible"),
             ]
         case "shotlist":

@@ -1082,12 +1082,12 @@ struct MCPModelDiscoveryTests {
         #expect(b.providerRef == "generate_video")
         #expect(b.modelParam == "cinematic_studio_3_0")
 
-        // The gate itself rejects a raw prompt for this discovered model, and accepts only a valid token.
+        // Discovery does not invent a prompt dialect for an historical or unknown model identity.
         await #expect(throws: (any Error).self) {
             try await PromptCompiler.enforceGate(args: [:], prompt: "a neon skyline", modelId: "cinematic_studio_3_0")
         }
         let token = PromptCompiler.token(for: "a neon skyline", modelId: "cinematic_studio_3_0")
-        await #expect(throws: Never.self) {
+        await #expect(throws: PromptDialectRegistryError.self) {
             try await PromptCompiler.enforceGate(
                 args: ["compileToken": token], prompt: "a neon skyline", modelId: "cinematic_studio_3_0")
         }

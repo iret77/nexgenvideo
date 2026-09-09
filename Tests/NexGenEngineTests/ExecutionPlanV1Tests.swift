@@ -543,6 +543,34 @@ struct ExecutionPlanV1Tests {
         }
     }
 
+    @Test("project-local directory creation is component-safe and rejects links")
+    func createsSafeDirectories() throws {
+        let projectRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        let dataRoot = projectRoot.appendingPathComponent("pipeline")
+        let outside = projectRoot.appendingPathComponent("outside")
+        try FileManager.default.createDirectory(at: dataRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: projectRoot) }
+
+        let created = try ProjectLocalFile.ensureDirectory(
+            "generation/input",
+            dataRoot: dataRoot
+        )
+        #expect(created.standardizedFileURL.path == dataRoot
+            .appendingPathComponent("generation/input", isDirectory: true)
+            .standardizedFileURL.path)
+        #expect(try created.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true)
+
+        try FileManager.default.createSymbolicLink(
+            at: dataRoot.appendingPathComponent("linked"),
+            withDestinationURL: outside
+        )
+        #expect(throws: ProjectLocalFileError.symbolicLink("linked/input")) {
+            _ = try ProjectLocalFile.ensureDirectory("linked/input", dataRoot: dataRoot)
+        }
+    }
+
     private func makePlan(
         shots: [ExecutionShotV1],
         contextSHA256: String? = nil

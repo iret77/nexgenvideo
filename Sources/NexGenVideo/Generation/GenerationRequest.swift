@@ -97,15 +97,14 @@ struct GenerationRequest {
         self.submission = submission
     }
 
-    /// Only meaningful for compiled modalities. Upscale never composes (the controller skips its
-    /// compile stage), so it maps arbitrarily to `.video` and is never consulted.
+    /// Upscale is promptless but still receives an image-safe project binding before submission.
     var composerModality: PromptComposer.Modality {
         switch modality {
         case .video: return .video
         case .image: return .image
         case .audio: return .audio
         case .music: return .music
-        case .upscale: return .video
+        case .upscale: return .image
         }
     }
 }

@@ -226,4 +226,75 @@ struct ReferencePlannerTests {
                 && $0.shotId == "s001"
         })
     }
+
+    @Test("a selected outfit variant consumes its derived Canon")
+    func outfitVariantUsesDerivedCanon() throws {
+        let dir = try Self.fixtureDir([
+            "characters/mouse.png",
+            "characters/mouse-red.png",
+        ])
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try YAMLArtifactStore(dataRoot: dir).save(
+            ProjectMeta(project: "p", mode: .section),
+            to: PipelineLayout.projectFile
+        )
+        let base = try Character(
+            id: "mouse",
+            name: "Mouse",
+            visualPrompt: "A grey mouse in a purple waistcoat.",
+            attributes: [
+                "species": "grey mouse",
+                "wardrobe": "purple waistcoat",
+            ],
+            sheets: ["front": "characters/mouse.png"]
+        )
+        let variant = try Character(
+            id: "mouse_red",
+            name: "Mouse — red outfit",
+            visualPrompt: "The same grey mouse in a red waistcoat.",
+            attributes: [
+                "species": "grey mouse",
+                "wardrobe": "red waistcoat",
+            ],
+            sheets: ["front": "characters/mouse-red.png"]
+        )
+        let bible = try Bible(
+            project: "p",
+            generated: "t",
+            generator: "g",
+            characters: [base, variant]
+        )
+        try BibleIdentityVariantStoreV1.validate(
+            BibleIdentityVariantsV1(
+                project: "p",
+                revision: 1,
+                variants: [
+                    BibleIdentityVariantV1(
+                        baseEntityID: "mouse",
+                        variantEntityID: "mouse_red",
+                        changedAttributes: ["wardrobe": "red waistcoat"],
+                        inheritedIdentityPaths: ["characters/mouse.png"]
+                    ),
+                ]
+            ),
+            bible: bible,
+            dataRoot: dir
+        )
+        let plan = ReferencePlanner.planShotRefs(
+            projectDir: dir,
+            bible: bible,
+            characterRefs: ["mouse_red"],
+            locationRef: nil,
+            propRefs: [],
+            characterViews: ["mouse_red": "front"],
+            locationView: nil,
+            propViews: [:],
+            maxRefs: 1,
+            includeLightingAnchor: false
+        )
+
+        #expect(plan.deficits.isEmpty)
+        #expect(plan.refs.map(\.path) == ["characters/mouse-red.png"])
+        #expect(plan.refs.first?.entityId == "mouse_red")
+    }
 }

@@ -469,6 +469,56 @@ enum MusicvideoGateChecks {
         }
     }
 
+    private static func requireBibleProjectFiles(
+        _ requirements: [BibleViewProvenanceRequirementV1],
+        phase: String,
+        dataRoot: URL
+    ) throws {
+        let proof = try assetProof(
+            scope: "bible",
+            phase: phase,
+            dataRoot: dataRoot
+        )
+        let invalid = try requirements.filter { requirement in
+            let path = requirement.path
+            if let entry = proof.entries[path],
+               entry.path == path,
+               !entry.providerPrompt.trimmingCharacters(
+                in: .whitespacesAndNewlines
+               ).isEmpty,
+               !entry.generationModel.trimmingCharacters(
+                in: .whitespacesAndNewlines
+               ).isEmpty,
+               !entry.sourceMediaId.trimmingCharacters(
+                in: .whitespacesAndNewlines
+               ).isEmpty,
+               let url = existingProjectFile(path, dataRoot: dataRoot),
+               sha256(url) == entry.sha256 {
+                return false
+            }
+            guard let confirmedRole = requirement.confirmedRole,
+                  let identityID = requirement.identityID,
+                  let identityName = requirement.identityName else {
+                return true
+            }
+            return try !ConfirmedIdentityAssetStoreV1.matchesCurrent(
+                path,
+                role: confirmedRole,
+                identityID: identityID,
+                identityName: identityName,
+                dataRoot: dataRoot
+            )
+        }
+        guard invalid.isEmpty else {
+            throw GateBlocked(
+                "Can't approve \"\(phase)\": \(invalid.count) Bible view asset(s) "
+                    + "lack current generated provenance or explicit host-recorded "
+                    + "identity confirmation (e.g. "
+                    + "\(invalid.prefix(3).map { $0.path }.joined(separator: ", ")))."
+            )
+        }
+    }
+
     private static func analysisObject(dataRoot: URL, phase: String) throws -> [String: Any] {
         guard let url = AudioProjectLayout.expectedAnalysisArtifactURL(dataRoot: dataRoot),
               let data = try? Data(contentsOf: url),
@@ -2136,27 +2186,26 @@ enum MusicvideoGateChecks {
             label: "reference",
             dataRoot: dataRoot
         )
-        var generated = bible.characters.flatMap {
-            Array($0.sheets.values)
-        }
-        generated += bible.ensembles.flatMap {
-            Array($0.sheets.values)
-        }
-        generated += bible.props.flatMap {
-            Array($0.sheets.values)
-        }
-        generated += bible.locations.flatMap {
-            Array($0.sheets.values)
-                + ($0.scene3d.panorama.isEmpty
-                    ? []
-                    : [$0.scene3d.panorama])
-        }
-        try requireGeneratedProjectFiles(
-            generated,
-            scope: "bible",
+        try requireBibleProjectFiles(
+            BibleViewProvenanceRequirementsV1.make(bible: bible),
             phase: "bible",
             dataRoot: dataRoot
         )
+        do {
+            if let variants = try BibleIdentityVariantStoreV1.loadIfPresent(
+                dataRoot: dataRoot
+            ) {
+                try BibleIdentityVariantStoreV1.validate(
+                    variants,
+                    bible: bible,
+                    dataRoot: dataRoot
+                )
+            }
+        } catch {
+            throw GateBlocked(
+                "Can't approve \"bible\": the identity-variant inheritance contract is invalid (\(error))."
+            )
+        }
 
         guard let storyboard = try? StoryboardStore.load(dataRoot: dataRoot, version: .current) else {
             throw GateBlocked("Can't approve \"bible\": the approved storyboard is missing or invalid.")
@@ -2628,6 +2677,24 @@ enum MusicvideoGateChecks {
             phase: "render",
             dataRoot: dataRoot
         )
+        let creativeContext: ProjectCreativeContextV1
+        do {
+            let contextData = try Data(contentsOf: ProjectLocalFile.resolve(
+                PipelineLayout.creativeContextFile,
+                dataRoot: dataRoot
+            ))
+            creativeContext = try ExecutionPlanCanonicalCodec.decodeContext(
+                contextData
+            )
+            try ExecutionPlanValidator.validate(
+                executionPlan,
+                against: creativeContext
+            )
+        } catch {
+            throw GateBlocked(
+                "Can't approve \"render\": the canonical creative context is missing, stale, or invalid."
+            )
+        }
         guard executionPlan.shots.map(\.id) == shotlist.shots.map(\.id) else {
             throw GateBlocked(
                 "Can't approve \"render\": the execution plan does not match the current Shot List."
@@ -2789,14 +2856,45 @@ enum MusicvideoGateChecks {
                 "Can't approve \"render\": assemble the current final outputs on the timeline first."
             )
         }
+        let allShotSet = Set(shotlist.shots.map(\.id))
         guard assembly.project == shotlist.project,
               assembly.phase == "final",
-              Set(assembly.placements.map(\.shotID)) == requiredSet else {
+              Set(assembly.placements.map(\.shotID)) == allShotSet else {
             throw GateBlocked(
-                "Can't approve \"render\": the timeline assembly does not cover the current final outputs."
+                "Can't approve \"render\": the timeline assembly does not cover every current Shot List source."
             )
         }
+        let executionShotsByID = Dictionary(uniqueKeysWithValues:
+            executionPlan.shots.map { ($0.id, $0) }
+        )
+        let shotsByID = Dictionary(uniqueKeysWithValues:
+            shotlist.shots.map { ($0.id, $0) }
+        )
+        let mediaByID = Dictionary(uniqueKeysWithValues:
+            creativeContext.media.map { ($0.id, $0) }
+        )
         for placement in assembly.placements {
+            if let executionShot = executionShotsByID[placement.shotID],
+               executionShot.sourceMode == .imported {
+                guard let sourceAssetID = executionShot.sourceAssetID,
+                      let source = mediaByID[sourceAssetID],
+                      source.role == "core.project-media",
+                      shotsByID[placement.shotID]?.sourcePath == source.path,
+                      placement.sourcePath == source.path,
+                      placement.sourceSHA256 == source.sha256,
+                      placement.sourceKind == .video,
+                      placement.motion == nil,
+                      (try? ProjectLocalFile.requireHash(
+                        source.sha256,
+                        at: source.path,
+                        dataRoot: dataRoot
+                      )) != nil else {
+                    throw GateBlocked(
+                        "Can't approve \"render\": the timeline assembly uses a stale imported source for \(placement.shotID)."
+                    )
+                }
+                continue
+            }
             guard let entry = manifest.entries[placement.shotID],
                   let output = entry.output,
                   let outputSHA256 = proof.entries[placement.shotID]?.outputSha256,

@@ -713,11 +713,21 @@ extension ToolExecutor {
             destinationURL: to,
             dataRoot: root
         )
+        let confirmedIdentityProvenance = if let fromRel {
+            try ConfirmedIdentityAssetStoreV1.adopt(
+                from: fromRel,
+                to: toRel,
+                dataRoot: root
+            )
+        } else {
+            false
+        }
         return try jsonResult([
             "from": fromRel.map { $0 as Any } ?? NSNull(),
             "media": mediaID.map { $0 as Any } ?? NSNull(),
             "to": toRel,
             "generated_provenance": proofRecorded,
+            "confirmed_identity_provenance": confirmedIdentityProvenance,
         ])
     }
 
@@ -3058,6 +3068,36 @@ extension ToolExecutor {
             throw ToolError("No shotlist yet. Plan the shots before assembling.")
         }
         let manifest = try readRenderManifest(dataRoot: root, phase: phase)
+        let execution: (ExecutionPlanV1, ProjectCreativeContextV1)?
+        let executionPlanURL = PipelineLayout.url(
+            PipelineLayout.executionPlanFile,
+            in: root
+        )
+        if FileManager.default.fileExists(atPath: executionPlanURL.path) {
+            do {
+                execution = try PipelineExecutionPlanWriter.load(dataRoot: root)
+            } catch {
+                throw ToolError(
+                    "The current execution plan cannot be assembled: "
+                        + error.localizedDescription
+                )
+            }
+        } else {
+            execution = nil
+        }
+        let executionShots: [String: ExecutionShotV1]
+        let executionMedia: [String: ProjectMediaReferenceV1]
+        if let execution {
+            executionShots = Dictionary(uniqueKeysWithValues:
+                execution.0.shots.map { ($0.id, $0) }
+            )
+            executionMedia = Dictionary(uniqueKeysWithValues:
+                execution.1.media.map { ($0.id, $0) }
+            )
+        } else {
+            executionShots = [:]
+            executionMedia = [:]
+        }
         let deliveryModes = try renderDeliveryModes(
             phase: phase,
             shotlist: shotlist,
@@ -3071,6 +3111,7 @@ extension ToolExecutor {
         let shots = shotlist.shots
         var planInputs: [BeatAssembly.ShotInput] = []
         var assetForShot: [String: MediaAsset] = [:]
+        var sourcePathForShot: [String: String] = [:]
         var skipped: [(id: String, reason: String)] = []
         for (i, shot) in shots.enumerated() {
             let startsSection = i == 0
@@ -3080,10 +3121,39 @@ extension ToolExecutor {
                 || shots[i + 1].section != shot.section
                 || BeatAssembly.nearSectionBoundary(shot.timeEnd, sectionStarts: grid.sectionStarts, tolerance: tolerance)
 
-            guard let entry = manifest.entries[shot.id], entry.status == .rendered,
-                  let output = entry.output, !output.isEmpty else {
-                skipped.append((shot.id, "not rendered yet"))
-                continue
+            let output: String
+            if shot.sourceMode == .imported {
+                guard let executionShot = executionShots[shot.id],
+                      executionShot.sourceMode == .imported,
+                      let sourceAssetID = executionShot.sourceAssetID,
+                      let source = executionMedia[sourceAssetID],
+                      source.role == "core.project-media",
+                      shot.sourcePath == source.path else {
+                    throw ToolError(
+                        "Imported shot '\(shot.id)' has no exact current execution-plan source binding."
+                    )
+                }
+                do {
+                    _ = try ProjectLocalFile.requireHash(
+                        source.sha256,
+                        at: source.path,
+                        dataRoot: root
+                    )
+                } catch {
+                    throw ToolError(
+                        "Imported shot '\(shot.id)' no longer matches its approved source bytes."
+                    )
+                }
+                output = source.path
+            } else {
+                guard let entry = manifest.entries[shot.id],
+                      entry.status == .rendered,
+                      let renderedOutput = entry.output,
+                      !renderedOutput.isEmpty else {
+                    skipped.append((shot.id, "not rendered yet"))
+                    continue
+                }
+                output = renderedOutput
             }
             guard let asset = try await requiredRenderedAsset(
                 output,
@@ -3094,13 +3164,17 @@ extension ToolExecutor {
                 continue
             }
             assetForShot[shot.id] = asset
+            sourcePathForShot[shot.id] = output
             planInputs.append(.init(
                 id: shot.id, timeStart: shot.timeStart, timeEnd: shot.timeEnd,
                 startsSection: startsSection, endsSection: endsSection
             ))
         }
         guard !planInputs.isEmpty else {
-            throw ToolError("No rendered shots yet for phase \"\(phase)\". Render shots and record_render them first, then assemble.")
+            throw ToolError(
+                "No current rendered or imported shot sources are available "
+                    + "for phase \"\(phase)\"."
+            )
         }
 
         let placements = BeatAssembly.plan(beats: grid.beats, downbeats: grid.downbeats, fps: fps, shots: planInputs)
@@ -3134,7 +3208,7 @@ extension ToolExecutor {
                       let clipIndex = editor.timeline.tracks[vi].clips.firstIndex(where: {
                         $0.id == clipID
                       }),
-                      let output = manifest.entries[placement.shotId]?.output else {
+                      let output = sourcePathForShot[placement.shotId] else {
                     throw ToolError(
                         "The assembled clip for shot '\(placement.shotId)' could not be identified."
                     )

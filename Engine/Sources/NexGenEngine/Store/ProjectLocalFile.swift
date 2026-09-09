@@ -9,16 +9,57 @@ public enum ProjectLocalFileError: Error, Sendable, Equatable {
 }
 
 public enum ProjectLocalFile {
-    public static func resolve(_ relativePath: String, dataRoot: URL) throws -> URL {
-        let trimmed = relativePath.trimmingCharacters(in: .whitespacesAndNewlines)
-        let components = trimmed.split(separator: "/", omittingEmptySubsequences: false)
-        guard !trimmed.isEmpty,
-              trimmed == relativePath,
-              !NSString(string: trimmed).isAbsolutePath,
-              !components.isEmpty,
-              components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else {
-            throw ProjectLocalFileError.invalidPath(relativePath)
+    public static func ensureDirectory(
+        _ relativePath: String,
+        dataRoot: URL
+    ) throws -> URL {
+        let components = try validatedComponents(relativePath)
+        let projectRoot = FrameInventory.projectHome(of: dataRoot).standardizedFileURL
+        let normalizedDataRoot = dataRoot.standardizedFileURL
+        guard !isSymbolicLink(projectRoot),
+              !isSymbolicLink(normalizedDataRoot),
+              contains(normalizedDataRoot, in: projectRoot) else {
+            throw ProjectLocalFileError.symbolicLink(relativePath)
         }
+
+        var current = normalizedDataRoot
+        for component in components {
+            current.appendPathComponent(component, isDirectory: true)
+            guard contains(current.standardizedFileURL, in: projectRoot) else {
+                throw ProjectLocalFileError.escapedProject(relativePath)
+            }
+            if isSymbolicLink(current) {
+                throw ProjectLocalFileError.symbolicLink(relativePath)
+            }
+            if !FileManager.default.fileExists(atPath: current.path) {
+                do {
+                    try FileManager.default.createDirectory(
+                        at: current,
+                        withIntermediateDirectories: false
+                    )
+                } catch {
+                    guard FileManager.default.fileExists(atPath: current.path) else {
+                        throw error
+                    }
+                }
+            }
+            let values = try current.resourceValues(forKeys: [
+                .isDirectoryKey,
+                .isSymbolicLinkKey,
+            ])
+            guard values.isSymbolicLink != true else {
+                throw ProjectLocalFileError.symbolicLink(relativePath)
+            }
+            guard values.isDirectory == true else {
+                throw ProjectLocalFileError.missingOrNonRegularFile(relativePath)
+            }
+        }
+        return current
+    }
+
+    public static func resolve(_ relativePath: String, dataRoot: URL) throws -> URL {
+        _ = try validatedComponents(relativePath)
+        let trimmed = relativePath
 
         let projectRoot = FrameInventory.projectHome(of: dataRoot)
             .standardizedFileURL
@@ -113,6 +154,19 @@ public enum ProjectLocalFile {
     private static func contains(_ candidate: URL, in projectRoot: URL) -> Bool {
         candidate.path == projectRoot.path
             || candidate.path.hasPrefix(projectRoot.path + "/")
+    }
+
+    private static func validatedComponents(_ relativePath: String) throws -> [String] {
+        let trimmed = relativePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let components = trimmed.split(separator: "/", omittingEmptySubsequences: false)
+        guard !trimmed.isEmpty,
+              trimmed == relativePath,
+              !NSString(string: trimmed).isAbsolutePath,
+              !components.isEmpty,
+              components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else {
+            throw ProjectLocalFileError.invalidPath(relativePath)
+        }
+        return components.map(String.init)
     }
 
     private static func isSymbolicLink(_ url: URL) -> Bool {

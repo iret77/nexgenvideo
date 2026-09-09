@@ -647,6 +647,15 @@ final class AgentService {
                         preferredFilenames: preferred
                     )
                 }.value
+                try ConfirmedIdentityAssetStoreV1.recordIntake(
+                    role: kind == "location" ? .location : .character,
+                    identityName: name,
+                    identitySlug: slug,
+                    paths: copied.map {
+                        "import/\(category)/\(slug)/\($0)"
+                    },
+                    dataRoot: dataRoot
+                )
                 self.assignIntakeRole(kind, urls: urls)
                 editor.onPipelineChanged?()
                 let noun = kind == "location" ? "Location" : "Character"

@@ -392,6 +392,9 @@ extension ToolExecutor {
         let root = try resolveDataRoot(args, editor: editor)
         var payload = args
         payload.removeValue(forKey: "project_dir")
+        let identityVariantPayload = payload.removeValue(
+            forKey: "identity_variants"
+        )
         payload["schema"] = bibleSchemaVersion
         payload["project"] = projectName(dataRoot: root)
         payload["generated"] = currentTimestamp()
@@ -428,18 +431,80 @@ extension ToolExecutor {
                 field: "bible anchor"
             )
         }
-        try requireGeneratedPipelineAssets(
-            bibleGeneratedPaths(bible),
-            scope: "bible",
+        try requireBibleAssetProvenance(
+            BibleViewProvenanceRequirementsV1.make(bible: bible),
             dataRoot: root
         )
+        let existingVariants = try BibleIdentityVariantStoreV1.loadIfPresent(
+            dataRoot: root
+        )
+        let variants: BibleIdentityVariantsV1
+        if let identityVariantPayload {
+            guard let raw = identityVariantPayload as? [[String: Any]] else {
+                throw ToolError(
+                    "write_bible.identity_variants must be an array."
+                )
+            }
+            var normalized: [[String: Any]] = []
+            for (index, item) in raw.enumerated() {
+                var entry = item
+                entry["changed_attributes"] = try keyedStrings(
+                    entry["changed_attributes"],
+                    key: "attribute",
+                    value: "value",
+                    path: "write_bible.identity_variants[\(index)].changed_attributes"
+                )
+                normalized.append(entry)
+            }
+            variants = try decodeArtifact(
+                [
+                    "schema": BibleIdentityVariantsV1.schemaVersion,
+                    "project": bible.project,
+                    "revision": (existingVariants?.revision ?? 0) + 1,
+                    "variants": normalized,
+                ],
+                as: BibleIdentityVariantsV1.self,
+                label: "bible identity variants"
+            )
+        } else if let existingVariants {
+            variants = existingVariants
+        } else {
+            variants = BibleIdentityVariantsV1(
+                project: bible.project,
+                revision: 1,
+                variants: []
+            )
+        }
+        try BibleIdentityVariantStoreV1.validate(
+            variants,
+            bible: bible,
+            dataRoot: root
+        )
+        let bibleURL = PipelineLayout.url(PipelineLayout.bibleFile, in: root)
+        let variantsURL = PipelineLayout.url(
+            PipelineLayout.bibleIdentityVariantsFile,
+            in: root
+        )
+        let previousBible = try? Data(contentsOf: bibleURL)
+        let previousVariants = try? Data(contentsOf: variantsURL)
         try archiveExisting(PipelineLayout.bibleFile, dataRoot: root)
+        try archiveExisting(
+            PipelineLayout.bibleIdentityVariantsFile,
+            dataRoot: root
+        )
         do {
             try YAMLArtifactStore(dataRoot: root).save(
                 bible,
                 to: PipelineLayout.bibleFile
             )
+            try BibleIdentityVariantStoreV1.save(
+                variants,
+                bible: bible,
+                dataRoot: root
+            )
         } catch {
+            try? restoreArtifact(previousBible, at: bibleURL)
+            try? restoreArtifact(previousVariants, at: variantsURL)
             throw ToolError("Couldn't write bible: \(error)")
         }
         return try jsonResult([
@@ -449,6 +514,8 @@ extension ToolExecutor {
             "ensembles": bible.ensembles.count,
             "props": bible.props.count,
             "locations": bible.locations.count,
+            "identity_variants": variants.variants.count,
+            "identity_variant_revision": variants.revision,
         ])
     }
 
@@ -835,6 +902,65 @@ extension ToolExecutor {
         }
     }
 
+    private func requireBibleAssetProvenance(
+        _ requirements: [BibleViewProvenanceRequirementV1],
+        dataRoot: URL
+    ) throws {
+        let proof: PipelineAssetProof
+        do {
+            proof = try loadPipelineAssetProof(
+                dataRoot: dataRoot,
+                scope: "bible"
+            )
+        } catch {
+            throw ToolError("bible generation provenance is invalid: \(error)")
+        }
+        guard proof.schema == pipelineAssetProofSchemaVersion,
+              proof.scope == "bible",
+              proof.project == projectName(dataRoot: dataRoot) else {
+            throw ToolError(
+                "bible generation provenance has the wrong project, scope, or schema."
+            )
+        }
+        let invalid = try requirements.filter { requirement in
+            let path = requirement.path
+            if let entry = proof.entries[path],
+               entry.path == path,
+               !entry.providerPrompt.trimmingCharacters(
+                in: .whitespacesAndNewlines
+               ).isEmpty,
+               !entry.generationModel.trimmingCharacters(
+                in: .whitespacesAndNewlines
+               ).isEmpty,
+               !entry.sourceMediaId.trimmingCharacters(
+                in: .whitespacesAndNewlines
+               ).isEmpty,
+               let url = projectFileURL(path, dataRoot: dataRoot),
+               (try? FileDigest.sha256(of: url)) == entry.sha256 {
+                return false
+            }
+            guard let confirmedRole = requirement.confirmedRole,
+                  let identityID = requirement.identityID,
+                  let identityName = requirement.identityName else {
+                return true
+            }
+            return try !ConfirmedIdentityAssetStoreV1.matchesCurrent(
+                path,
+                role: confirmedRole,
+                identityID: identityID,
+                identityName: identityName,
+                dataRoot: dataRoot
+            )
+        }
+        guard invalid.isEmpty else {
+            throw ToolError(
+                "\(invalid.count) Bible view asset(s) lack current generated provenance "
+                    + "or explicit host-recorded identity confirmation (e.g. "
+                    + "\(invalid.prefix(3).map { $0.path }.joined(separator: ", ")))."
+            )
+        }
+    }
+
     private func bibleReferencePaths(_ bible: Bible) -> [String] {
         var paths: [String] = []
         for entity in bible.characters {
@@ -862,25 +988,6 @@ extension ToolExecutor {
         return paths
     }
 
-    private func bibleGeneratedPaths(_ bible: Bible) -> [String] {
-        var paths = bible.characters.flatMap {
-            Array($0.sheets.values)
-        }
-        paths += bible.ensembles.flatMap {
-            Array($0.sheets.values)
-        }
-        paths += bible.props.flatMap {
-            Array($0.sheets.values)
-        }
-        paths += bible.locations.flatMap {
-            Array($0.sheets.values)
-                + ($0.scene3d.panorama.isEmpty
-                    ? []
-                    : [$0.scene3d.panorama])
-        }
-        return paths
-    }
-
     func archiveExisting(_ relative: String, dataRoot: URL) throws {
         let source = PipelineLayout.url(relative, in: dataRoot)
         guard FileManager.default.fileExists(atPath: source.path) else { return }
@@ -899,6 +1006,18 @@ extension ToolExecutor {
             try FileManager.default.copyItem(at: source, to: destination)
         } catch {
             throw ToolError("Couldn't preserve the previous \(relative): \(error)")
+        }
+    }
+
+    private func restoreArtifact(_ data: Data?, at url: URL) throws {
+        if let data {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try data.write(to: url, options: .atomic)
+        } else if FileManager.default.fileExists(atPath: url.path) {
+            try FileManager.default.removeItem(at: url)
         }
     }
 }

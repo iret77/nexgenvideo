@@ -146,6 +146,23 @@ enum PipelineArtifactWriteContract {
             "ensembles": array(ensemble),
             "props": array(prop),
             "locations": array(location),
+            "identity_variants": array(object(
+                [
+                    "base_entity_id": nonEmptyString,
+                    "variant_entity_id": nonEmptyString,
+                    "changed_attributes": keyValueArray(
+                        key: "attribute",
+                        value: "value"
+                    ),
+                    "inherited_identity_paths": stringArray,
+                ],
+                required: [
+                    "base_entity_id",
+                    "variant_entity_id",
+                    "changed_attributes",
+                    "inherited_identity_paths",
+                ]
+            )),
             "notes": string,
         ],
         required: ["look", "characters", "ensembles", "props", "locations"]

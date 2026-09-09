@@ -316,7 +316,28 @@ enum NativeCockpitReader {
         }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        return try encoder.encode(bible)
+        let bibleData = try encoder.encode(bible)
+        guard var object = try JSONSerialization.jsonObject(
+            with: bibleData
+        ) as? [String: Any] else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        if let variants = try BibleIdentityVariantStoreV1.loadIfPresent(
+            dataRoot: dataRoot
+        ) {
+            let variantData = try encoder.encode(variants)
+            guard let variantObject = try JSONSerialization.jsonObject(
+                with: variantData
+            ) as? [String: Any] else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            object["identity_variants"] = variantObject["variants"] ?? []
+            object["identity_variant_revision"] = variants.revision
+        } else {
+            object["identity_variants"] = []
+            object["identity_variant_revision"] = 0
+        }
+        return try serialize(object)
     }
 
     /// `read.py` "shotlist": the latest shotlist `model_dump(by_alias=True, mode="json")`, or literal

@@ -115,11 +115,18 @@ enum GenerationBatchStore {
     }
 
     nonisolated private static func directory(home: URL, create: Bool) throws -> URL {
-        let directory = home.appendingPathComponent("generation-batches", isDirectory: true)
-        guard directory.resolvingSymlinksInPath() == home.resolvingSymlinksInPath().appendingPathComponent("generation-batches") else {
-            throw GenerationRequestError.storage("Generation batches cannot traverse symbolic links.")
+        if create {
+            do {
+                return try ProjectLocalFile.ensureDirectory(
+                    "generation-batches",
+                    dataRoot: home
+                )
+            } catch {
+                throw GenerationRequestError.storage(
+                    "Generation batch storage is not a safe project-local directory."
+                )
+            }
         }
-        if create { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
-        return directory
+        return home.appendingPathComponent("generation-batches", isDirectory: true)
     }
 }

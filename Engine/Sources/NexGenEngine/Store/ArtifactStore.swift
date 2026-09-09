@@ -23,6 +23,10 @@ public enum PipelineLayout {
     public static let productionDesignFile = "production_design/production_design.yaml"
     public static let ledgerFile = "ledger.yaml"
     public static let bibleFile = "bible/bible.yaml"
+    public static let confirmedIdentityAssetsFile =
+        "import/confirmed-identity-assets.v1.json"
+    public static let bibleIdentityVariantsFile =
+        "bible/identity-variants.v1.json"
 
     // MARK: Directories (relative to the data root)
 

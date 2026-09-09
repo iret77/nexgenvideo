@@ -1567,19 +1567,105 @@ struct WorkflowToolsTests {
         let importDir = dataRoot.appendingPathComponent("import/characters/mouse", isDirectory: true)
         try FileManager.default.createDirectory(at: importDir, withIntermediateDirectories: true)
         try Data("x".utf8).write(to: importDir.appendingPathComponent("face.png"))
+        try ConfirmedIdentityAssetStoreV1.recordIntake(
+            role: .character,
+            identityName: "Mouse",
+            identitySlug: "mouse",
+            paths: ["import/characters/mouse/face.png"],
+            dataRoot: dataRoot,
+            confirmedAt: "2026-09-09T00:00:00Z"
+        )
 
         let list = try #require(try await h.runOK("list_project_files", args: [
             "project_dir": dataRoot.path, "subdir": "import",
         ]) as? [String: Any])
         #expect((list["files"] as? [String])?.contains("import/characters/mouse/face.png") == true)
 
-        _ = try await h.runOK("copy_project_file", args: [
+        let copy = try #require(try await h.runOK("copy_project_file", args: [
             "project_dir": dataRoot.path,
             "from": "import/characters/mouse/face.png", "to": "bible/refs/mouse/face.png",
-        ])
+        ]) as? [String: Any])
+        #expect(copy["confirmed_identity_provenance"] as? Bool == true)
         let copiedURL = dataRoot.appendingPathComponent("bible/refs/mouse/face.png")
         #expect(try String(contentsOf: copiedURL, encoding: .utf8) == "x")                 // bytes copied
         #expect(try String(contentsOf: importDir.appendingPathComponent("face.png"), encoding: .utf8) == "x")  // source intact (copy)
+        #expect(try ConfirmedIdentityAssetStoreV1.isCurrent(
+            "bible/refs/mouse/face.png",
+            dataRoot: dataRoot
+        ))
+        let variantImport = dataRoot.appendingPathComponent(
+            "import/characters/mouse-red/front.png"
+        )
+        try FileManager.default.createDirectory(
+            at: variantImport.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("red-outfit".utf8).write(to: variantImport)
+        try ConfirmedIdentityAssetStoreV1.recordIntake(
+            role: .character,
+            identityName: "Mouse — red outfit",
+            identitySlug: "mouse-red",
+            paths: ["import/characters/mouse-red/front.png"],
+            dataRoot: dataRoot,
+            confirmedAt: "2026-09-09T00:00:00Z"
+        )
+        _ = try await h.runOK("copy_project_file", args: [
+            "project_dir": dataRoot.path,
+            "from": "import/characters/mouse-red/front.png",
+            "to": "bible/mouse-red/front.png",
+        ])
+        _ = try await h.runOK("write_bible", args: [
+            "project_dir": dataRoot.path,
+            "look": ["style": "restrained hand-drawn animation"],
+            "characters": [[
+                "id": "mouse",
+                "name": "Mouse",
+                "visual_prompt": "A small grey mouse in a magenta waistcoat.",
+                "attributes": [
+                    ["key": "species", "value": "grey mouse"],
+                    ["key": "wardrobe", "value": "purple waistcoat"],
+                ],
+                "reference_images": [],
+                "sheets": [[
+                    "view": "front",
+                    "path": "bible/refs/mouse/face.png",
+                ]],
+            ], [
+                "id": "mouse_red",
+                "name": "Mouse — red outfit",
+                "visual_prompt": "The same small grey mouse in a red waistcoat.",
+                "attributes": [
+                    ["key": "species", "value": "grey mouse"],
+                    ["key": "wardrobe", "value": "red waistcoat"],
+                ],
+                "reference_images": [],
+                "sheets": [[
+                    "view": "front",
+                    "path": "bible/mouse-red/front.png",
+                ]],
+            ]],
+            "ensembles": [],
+            "props": [],
+            "locations": [],
+            "identity_variants": [[
+                "base_entity_id": "mouse",
+                "variant_entity_id": "mouse_red",
+                "changed_attributes": [[
+                    "attribute": "wardrobe",
+                    "value": "red waistcoat",
+                ]],
+                "inherited_identity_paths": [
+                    "bible/refs/mouse/face.png",
+                ],
+            ]],
+        ])
+        #expect(try loadBible(dataRoot: dataRoot)?.characters.first?
+            .sheets["front"] == "bible/refs/mouse/face.png")
+        let variants = try #require(
+            try BibleIdentityVariantStoreV1.loadIfPresent(dataRoot: dataRoot)
+        )
+        #expect(variants.revision == 1)
+        #expect(variants.variants.first?.variantEntityID == "mouse_red")
 
         // A lexically escaping path is refused.
         let escape = await h.runRaw("copy_project_file", args: [
@@ -3859,11 +3945,6 @@ struct WorkflowToolsTests {
             try hybridShotlist(),
             dataRoot: dataRoot
         )
-        try FileManager.default.removeItem(at: source)
-        try FileManager.default.createSymbolicLink(
-            at: source,
-            withDestinationURL: outside
-        )
         try addGeneratedVideo(
             "s002-video",
             at: home.appendingPathComponent("s002.mp4"),
@@ -3877,6 +3958,11 @@ struct WorkflowToolsTests {
             "shot_id": "s002",
             "output": "s002-video",
         ])
+        try FileManager.default.removeItem(at: source)
+        try FileManager.default.createSymbolicLink(
+            at: source,
+            withDestinationURL: outside
+        )
 
         let result = await h.runRaw("next_render_shot", args: [
             "project_dir": dataRoot.path,

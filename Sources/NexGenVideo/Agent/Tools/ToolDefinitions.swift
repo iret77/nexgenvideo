@@ -1230,7 +1230,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .writeBible,
-            description: "Write bible/bible.yaml through the engine Bible model. Use this instead of authoring YAML. The host owns schema/project/generated/generator, validates globally unique ids, exact generated-asset provenance, every Storyboard-requested entity/view, and synchronized Production Design style/lighting. The previous manifest is preserved in history.",
+            description: "Write bible/bible.yaml and its versioned identity-variant contract through the engine models. Use this instead of authoring YAML or JSON. The host owns schema/project/generated/generator and variant revision; validates globally unique ids, exact generated or explicitly user-confirmed Canon provenance, every Storyboard-requested entity/view, synchronized Production Design style/lighting, and variant inheritance. Represent a real outfit/state variant as its own Bible entity plus identity_variants entry; unchanged attributes must equal the base and inherited_identity_paths must name the base Canon inherited by the variant. The previous artifacts are preserved in history.",
             inputSchema: PipelineArtifactWriteContract.bibleSchema
         ),
         AgentTool(

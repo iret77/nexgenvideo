@@ -442,6 +442,7 @@ struct PromptComposerShotTests {
             projectMode: "section",
             conceptType: .narrative,
             visualMedium: .liveActionStylized,
+            visualMediumNotes: "A theatrical practical-light treatment with restrained color separation.",
             figures: .artistOnly,
             lyricsIntegration: .metaphorical,
             directorPattern: "one-shot-ok-go-precision"

@@ -64,7 +64,9 @@ struct StoryCausalityTests {
         defer { try? FileManager.default.removeItem(at: home) }
         let brief = try Brief(project: "causality", generated: "2026-09-08T12:00:00Z", mission: .demo,
             targetPlatform: "YouTube", aspectRatio: .landscape16x9, projectMode: "section", budgetEur: 50,
-            conceptType: .narrative, visualMedium: .animation2d, figures: .none, lyricsIntegration: .metaphorical)
+            conceptType: .narrative, visualMedium: .animation2d,
+            visualMediumNotes: "Restrained hand-drawn animation.",
+            figures: .none, lyricsIntegration: .metaphorical)
         try YAMLArtifactStore(dataRoot: root).save(brief, to: PipelineLayout.briefFile)
         let treatment = Treatment(meta: try .init(project: "causality", version: 1, generated: "2026-09-08T12:00:00Z",
             origin: .agentProposal, generator: "test", summaryOneline: "The key permits entry."), bodyMarkdown: body)

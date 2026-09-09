@@ -729,6 +729,8 @@ enum PipelineExecutionPlanComposer {
             PipelineLayout.treatmentCurrentFile,
             PipelineLayout.storyboardCurrentFile,
             PipelineLayout.bibleFile,
+            PipelineLayout.confirmedIdentityAssetsFile,
+            PipelineLayout.bibleIdentityVariantsFile,
             PipelineLayout.assetProofFile(scope: "bible"),
         ]
         if let analysisURL = AudioProjectLayout.expectedAnalysisArtifactURL(

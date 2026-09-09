@@ -103,6 +103,9 @@ public enum SanityArtifactStore {
         let fixedFiles = [
             PipelineLayout.briefFile,
             PipelineLayout.bibleFile,
+            PipelineLayout.confirmedIdentityAssetsFile,
+            PipelineLayout.bibleIdentityVariantsFile,
+            PipelineLayout.assetProofFile(scope: "bible"),
             PipelineLayout.treatmentCurrentFile,
             PipelineLayout.storyboardCurrentFile,
             PipelineLayout.executionShotInputsFile,

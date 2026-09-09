@@ -22,11 +22,13 @@ struct GenerationPackageInputs: Codable, Sendable, Equatable {
         }
         let record = Self(packageID: package.id, paths: paths)
         try await Task.detached(priority: .utility) {
-            let directory = home.appendingPathComponent(directoryPath, isDirectory: true)
-            guard directory.resolvingSymlinksInPath() == home.resolvingSymlinksInPath().appendingPathComponent(directoryPath) else {
-                throw GenerationRequestError.storage("Generation input storage cannot traverse symbolic links.")
+            do {
+                _ = try ProjectLocalFile.ensureDirectory(directoryPath, dataRoot: home)
+            } catch {
+                throw GenerationRequestError.storage(
+                    "Generation input storage is not a safe project-local directory."
+                )
             }
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             for (index, path) in paths.enumerated() {
                 let destination = home.appendingPathComponent(path)
                 if !FileManager.default.fileExists(atPath: destination.path) {

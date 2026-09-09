@@ -171,7 +171,7 @@ struct PipelineAgentContractTests {
     func briefOwnsDeferredDecisions() throws {
         let document = try PackKnowledge.phaseDoc(name: "brief")
         #expect(document.contains("finish before Brief approval"))
-        #expect(document.contains("later phases cannot update an approved Brief in place"))
+        #expect(document.contains("A later change requires an explicit Brief rewind"))
         #expect(document.contains("budget_stop_eur"))
         #expect(document.contains("A 4-second net shot therefore"))
         #expect(document.contains("orders 6 gross seconds"))

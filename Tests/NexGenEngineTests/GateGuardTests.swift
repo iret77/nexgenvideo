@@ -558,6 +558,18 @@ struct GateGuardTests {
             )
         )
         let plan = try ExecutionPlanCanonicalCodec.decodePlan(planData)
+        let contextData = try Data(
+            contentsOf: dataRoot.appendingPathComponent(
+                PipelineLayout.creativeContextFile
+            )
+        )
+        let context = try ExecutionPlanCanonicalCodec.decodeContext(contextData)
+        let executionShots = Dictionary(uniqueKeysWithValues:
+            plan.shots.map { ($0.id, $0) }
+        )
+        let media = Dictionary(uniqueKeysWithValues:
+            context.media.map { ($0.id, $0) }
+        )
         let modes = Dictionary(uniqueKeysWithValues: plan.shots.compactMap {
             shot -> (String, ShotDeliveryModeV1)? in
             ShotDeliveryModeResolverV1.resolve(shot).map { (shot.id, $0) }
@@ -567,10 +579,21 @@ struct GateGuardTests {
         var cursor = 0
         let placements = try shotlist.shots.compactMap {
             shot -> TimelineAssemblyProofV1.Placement? in
-            guard let entry = manifest.entries[shot.id],
-                  let output = entry.output,
-                  let outputSHA256 = proof.entries[shot.id]?.outputSha256 else {
-                return nil
+            let output: String
+            let outputSHA256: String
+            if shot.sourceMode == .imported {
+                guard let sourceAssetID = executionShots[shot.id]?.sourceAssetID,
+                      let source = media[sourceAssetID] else { return nil }
+                output = source.path
+                outputSHA256 = source.sha256
+            } else {
+                guard let entry = manifest.entries[shot.id],
+                      let renderedOutput = entry.output,
+                      let renderedSHA256 = proof.entries[shot.id]?.outputSha256 else {
+                    return nil
+                }
+                output = renderedOutput
+                outputSHA256 = renderedSHA256
             }
             let durationFrames = max(1, Int((shot.durationS * 30).rounded()))
             defer { cursor += durationFrames }
@@ -621,6 +644,55 @@ struct GateGuardTests {
             tone: [.quiet],
             figures: .none,
             lyricsIntegration: .metaphorical
+        )
+    }
+
+    private func writeFrameReferenceUsage(
+        root: URL,
+        shotID: String,
+        role: String,
+        outputPath: String,
+        outputSHA256: String,
+        modelID: String
+    ) throws {
+        let store = YAMLArtifactStore(dataRoot: root)
+        if (try? loadBible(dataRoot: root)) == nil {
+            try store.save(
+                try Bible(
+                    project: "demo",
+                    generated: "2026-07-26T00:00:00Z",
+                    generator: "test"
+                ),
+                to: PipelineLayout.bibleFile
+            )
+        }
+        let maxReferenceImages = 14
+        let plan = try #require(
+            MusicvideoReferencePlanProvider().planFrameReferences(
+                dataRoot: root,
+                shotID: shotID,
+                maxReferenceImages: maxReferenceImages
+            )
+        )
+        let usage = FrameReferenceUsageV1(
+            shotID: shotID,
+            role: role,
+            outputPath: outputPath,
+            outputSHA256: outputSHA256,
+            modelID: modelID,
+            generationPackageID: String(repeating: "a", count: 64),
+            plan: plan
+        )
+        let url = root.appendingPathComponent(
+            FrameReferenceUsageStoreV1.path(shotID: shotID, role: role)
+        )
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try FrameReferenceUsageStoreV1.encode(usage).write(
+            to: url,
+            options: .atomic
         )
     }
 
@@ -1752,6 +1824,107 @@ struct GateGuardTests {
         }
     }
 
+    @Test("bible gate accepts an explicitly confirmed existing Canon view")
+    func bibleAcceptsConfirmedCanonView() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try writePlanningStyle(root)
+        try StoryboardStore.save(
+            try Storyboard(
+                meta: try StoryboardMeta(
+                    project: "demo",
+                    version: 1,
+                    generated: "2026-07-26T00:00:00Z",
+                    summaryOneline: "The yard establishes the film."
+                ),
+                sections: [
+                    try Section(
+                        id: "intro",
+                        label: "intro",
+                        timeStart: 0,
+                        timeEnd: 12,
+                        energy: "low",
+                        function: "aufbau",
+                        steps: try storyboardSteps()
+                    ),
+                ]
+            ),
+            to: root
+        )
+        let path = "import/locations/yard/wide.png"
+        let image = root.appendingPathComponent(path)
+        try FileManager.default.createDirectory(
+            at: image.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("confirmed-canon".utf8).write(to: image)
+        try ConfirmedIdentityAssetStoreV1.recordIntake(
+            role: .character,
+            identityName: "Schoolyard",
+            identitySlug: "yard",
+            paths: [path],
+            dataRoot: root,
+            confirmedAt: "2026-07-26T00:00:00Z"
+        )
+        try YAMLArtifactStore(dataRoot: root).save(
+            try Bible(
+                project: "demo",
+                generated: "2026-07-26T00:00:00Z",
+                generator: "test",
+                look: LookGuide(style: "restrained hand-drawn animation"),
+                locations: [
+                    try Location(
+                        id: "yard",
+                        name: "Schoolyard",
+                        visualPrompt: "A quiet schoolyard at blue hour.",
+                        sheets: ["wide": path]
+                    ),
+                ]
+            ),
+            to: PipelineLayout.bibleFile
+        )
+
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealBible(dataRoot: root)
+        }
+        try ConfirmedIdentityAssetStoreV1.recordIntake(
+            role: .location,
+            identityName: "Different location",
+            identitySlug: "other-yard",
+            paths: [path],
+            dataRoot: root,
+            confirmedAt: "2026-07-26T00:00:00Z"
+        )
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealBible(dataRoot: root)
+        }
+        try ConfirmedIdentityAssetStoreV1.recordIntake(
+            role: .location,
+            identityName: "Schoolyard",
+            identitySlug: "other-yard",
+            paths: [path],
+            dataRoot: root,
+            confirmedAt: "2026-07-26T00:00:00Z"
+        )
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealBible(dataRoot: root)
+        }
+        try ConfirmedIdentityAssetStoreV1.recordIntake(
+            role: .location,
+            identityName: "Schoolyard",
+            identitySlug: "yard",
+            paths: [path],
+            dataRoot: root,
+            confirmedAt: "2026-07-26T00:00:00Z"
+        )
+        try MusicvideoGateChecks.requireRealBible(dataRoot: root)
+
+        try Data("changed-after-confirmation".utf8).write(to: image)
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealBible(dataRoot: root)
+        }
+    }
+
     @Test("frames gate requires every role, compiled prompt, complete current audit, and exact hash")
     func framesRequirement() throws {
         let root = try tempRoot()
@@ -1811,6 +1984,14 @@ struct GateGuardTests {
                 overall: .clean
             ),
             dataRoot: root
+        )
+        try writeFrameReferenceUsage(
+            root: root,
+            shotID: "s001",
+            role: "start",
+            outputPath: "media/s001-start.png",
+            outputSHA256: digest,
+            modelID: "image-model"
         )
         try MusicvideoGateChecks.requireRealFrames(dataRoot: root)
 
@@ -1935,6 +2116,14 @@ struct GateGuardTests {
                 overall: .clean
             ),
             dataRoot: root
+        )
+        try writeFrameReferenceUsage(
+            root: root,
+            shotID: "s001",
+            role: "start",
+            outputPath: "media/s001-start.png",
+            outputSHA256: outputSHA256,
+            modelID: "image-model"
         )
         var manifest = RenderManifest(project: "demo", phase: "final")
         record(
@@ -2622,8 +2811,15 @@ struct GateGuardTests {
             description: "An imported performance clip.",
             visualPrompt: "The imported performance.",
             mood: "restrained",
-            keyframeStrategy: .none
+            keyframeStrategy: .none,
+            sourcePath: "media/imported.mp4"
         )
+        let importedURL = root.appendingPathComponent("media/imported.mp4")
+        try FileManager.default.createDirectory(
+            at: importedURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("imported-video".utf8).write(to: importedURL)
         _ = try saveShotlistWithExecutionPlan(
             try Shotlist(
                 schema_: shotlistSchemaVersion,
@@ -2663,6 +2859,11 @@ struct GateGuardTests {
         #expect(render.entries.isEmpty)
         #expect(proof.entries.isEmpty)
         try requireRealRenderWithAssembly(dataRoot: root)
+
+        try Data("changed-imported-video".utf8).write(to: importedURL)
+        #expect(throws: GateBlocked.self) {
+            try requireRealRenderWithAssembly(dataRoot: root)
+        }
     }
 
     @Test("checkApprovable passes with no requirement and rethrows a blocked one")

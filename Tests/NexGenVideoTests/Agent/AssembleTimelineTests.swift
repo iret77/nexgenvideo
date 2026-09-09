@@ -154,6 +154,85 @@ struct AssembleTimelineTests {
         try store.save(gates, to: PipelineLayout.gatesFile)
     }
 
+    private func publishImportedExecutionPlan(
+        shotlist: Shotlist,
+        sourcePath: String,
+        dataRoot: URL
+    ) throws {
+        let sourceURL = try ProjectLocalFile.resolve(
+            sourcePath,
+            dataRoot: dataRoot
+        )
+        let media = ProjectMediaReferenceV1(
+            id: "source-s001",
+            role: "core.project-media",
+            path: sourcePath,
+            sha256: try FileDigest.sha256(of: sourceURL)
+        )
+        let context = ProjectCreativeContextV1(
+            projectID: shotlist.project,
+            artifacts: [],
+            media: [media]
+        )
+        let contextData = try ExecutionPlanCanonicalCodec.encode(context)
+        let plan = ExecutionPlanV1(
+            id: "import-only-plan",
+            projectID: shotlist.project,
+            creativeContext: CanonicalArtifactReferenceV1(
+                id: ExecutionPlanV1.creativeContextArtifactID,
+                role: ExecutionPlanV1.creativeContextArtifactRole,
+                path: PipelineLayout.creativeContextFile,
+                sha256: FileDigest.sha256(of: contextData)
+            ),
+            shots: [
+                ExecutionShotV1(
+                    id: "s001",
+                    sourceMode: .imported,
+                    sourceAssetID: media.id,
+                    startState: ExecutionStateV1(
+                        summary: "The source clip begins."
+                    ),
+                    endState: ExecutionStateV1(
+                        summary: "The source clip ends."
+                    ),
+                    primaryAction: "Use the selected source performance.",
+                    camera: ExecutionCameraPlanV1(movementID: "static"),
+                    continuityLocks: [],
+                    renderability: .green,
+                    acceptance: [
+                        ExecutionAcceptanceCriterionV1(
+                            id: "source-current",
+                            requirement: "Use the exact approved imported source.",
+                            severity: "required"
+                        ),
+                    ]
+                ),
+            ]
+        )
+        try ExecutionPlanValidator.validate(plan, against: context)
+        let planData = try ExecutionPlanCanonicalCodec.encode(plan)
+        let publication = ExecutionPlanPublication(
+            schema: "execution-plan-publication/v1",
+            contextSHA256: FileDigest.sha256(of: contextData),
+            planSHA256: FileDigest.sha256(of: planData)
+        )
+        for (data, path) in [
+            (contextData, PipelineLayout.creativeContextFile),
+            (planData, PipelineLayout.executionPlanFile),
+            (
+                try JSONEncoder().encode(publication),
+                ExecutionPlanV1.publicationArtifactPath
+            ),
+        ] {
+            let url = dataRoot.appendingPathComponent(path)
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try data.write(to: url, options: .atomic)
+        }
+    }
+
     /// Record s001 and s002 as rendered for `phase`; s003 stays unrendered.
     private func recordTwoRenders(_ h: ToolHarness, dataRoot: URL, outputs: [String], phase: String = "final") async throws {
         _ = try await h.runOK("record_render", args: [
@@ -295,5 +374,79 @@ struct AssembleTimelineTests {
         let result = await h.runRaw("assemble_timeline", args: ["project_dir": dataRoot.path, "phase": "final"])
         #expect(result.isError)
         #expect(ToolHarness.textOf(result).contains("analysis"))
+    }
+
+    @Test("an imported-only plan assembles without a provider render")
+    func assemblesImportedSourceWithoutGeneration() async throws {
+        let (h, dataRoot, cleanup, _) = try setup()
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let sourcePath = "media/imported.mp4"
+        let sourceURL = dataRoot.appendingPathComponent(sourcePath)
+        try FileManager.default.createDirectory(
+            at: sourceURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("approved-import".utf8).write(to: sourceURL)
+        h.editor.mediaAssets.append(MediaAsset(
+            id: "imported-source",
+            url: sourceURL,
+            type: .video,
+            name: "approved-import"
+        ))
+        let song = try Song(
+            title: "t",
+            audioPath: "audio/song.wav",
+            analysisPath: "analysis/song.json",
+            bpm: 120,
+            durationS: 4
+        )
+        let imported = try Shot(
+            id: "s001",
+            section: "verse",
+            timeStart: 0,
+            timeEnd: 4,
+            durationS: 4,
+            type: .performance,
+            sourceMode: .imported,
+            description: "Use the approved performance.",
+            visualPrompt: "The approved performance fills the frame.",
+            mood: "restrained",
+            keyframeStrategy: .none,
+            sourcePath: sourcePath
+        )
+        let shotlist = try Shotlist(
+            schema_: shotlistSchemaVersion,
+            mode: .section,
+            project: "demo",
+            song: song,
+            generated: "2026-09-09T00:00:00Z",
+            generator: "test",
+            shots: [imported]
+        )
+        _ = try saveShotlist(shotlist, to: dataRoot)
+        try publishImportedExecutionPlan(
+            shotlist: shotlist,
+            sourcePath: sourcePath,
+            dataRoot: dataRoot
+        )
+
+        let result = try #require(try await h.runOK(
+            "assemble_timeline",
+            args: ["project_dir": dataRoot.path, "phase": "final"]
+        ) as? [String: Any])
+        #expect(result["shots_placed"] as? Int == 1)
+        #expect((result["skipped"] as? [[String: Any]])?.isEmpty == true)
+        let proof = try JSONDecoder().decode(
+            TimelineAssemblyProofV1.self,
+            from: Data(contentsOf: dataRoot.appendingPathComponent("assembly.json"))
+        )
+        #expect(proof.placements.first?.sourcePath == sourcePath)
+        #expect(proof.placements.first?.sourceKind == .video)
+        let sourceData = try Data(contentsOf: sourceURL)
+        #expect(proof.placements.first?.sourceSHA256
+            == FileDigest.sha256(of: sourceData))
     }
 }
