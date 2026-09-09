@@ -286,7 +286,7 @@ struct WorkflowToolsTests {
         duration: Double = 12,
         firstFrame: Bool = true
     ) -> [String: Any] {
-        [
+        var input: [String: Any] = [
             "id": id,
             "source_mode": ExecutionSourceModeV1.generated.rawValue,
             "start_state": [
@@ -319,6 +319,14 @@ struct WorkflowToolsTests {
                 : [:],
             "reference_demands": [],
         ]
+        if firstFrame {
+            input["conditioning"] = [
+                "strategy": ConditioningStrategyKindV1.firstFrame.rawValue,
+                "rationale": "Start from the approved first frame.",
+                "mode_ids": ["image-to-video"],
+            ]
+        }
+        return input
     }
 
     private func importedExecutionShotInput(id: String = "s001") -> [String: Any] {
@@ -4040,7 +4048,7 @@ struct WorkflowToolsTests {
         let result = await h.runRaw("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [shot],
-            "execution_shots": [generatedExecutionShotInput(firstFrame: false)],
+            "execution_shots": [generatedExecutionShotInput()],
         ])
 
         #expect(result.isError)

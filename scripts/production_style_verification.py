@@ -27,7 +27,7 @@ SCOPES = {
     "alfred-hitchcock": "editing:sequence composition:frame camera:shot timing:sequence lighting:frame",
     "wim-wenders": "composition:shot lighting:frame color:sequence camera:shot timing:sequence",
     "andrei-tarkovsky": "camera:shot composition:frame lighting:frame color:frame camera:shot",
-    "yasujir-ozu": "camera:frame camera:shot editing:sequence editing:sequence color:sequence",
+    "yasujir-ozu": "camera:frame camera:shot editing:sequence timing:sequence color:sequence",
     "ingmar-bergman": "composition:frame composition:sequence lighting:frame color:sequence timing:shot",
     "terrence-malick": "lighting:frame camera:shot editing:sequence color:frame sound:sequence",
     "david-lynch": "composition:shot lighting:frame color:frame sound:sequence character:sequence",

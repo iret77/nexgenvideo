@@ -1,10 +1,10 @@
 {
   "schemaVersion": "creative-library.v1",
   "id": "production-sheet-templates",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "applicability": {
     "packIDs": [],
-    "phases": ["production_design", "bible", "storyboard", "shotlist", "review"],
+    "phases": ["production_design", "bible", "storyboard", "shotlist", "frames", "review"],
     "intentTags": ["character-sheet", "location-sheet", "style-sheet", "continuity-sheet"],
     "activeProfileIDs": []
   },
@@ -14,7 +14,7 @@
       "title": "Character identity sheet",
       "applicability": {
         "packIDs": [],
-        "phases": ["production_design", "bible", "review"],
+        "phases": ["production_design", "bible", "frames", "review"],
         "intentTags": ["character-sheet", "identity"],
         "activeProfileIDs": []
       },
@@ -35,7 +35,7 @@
       "title": "Location and prop sheet",
       "applicability": {
         "packIDs": [],
-        "phases": ["production_design", "bible", "storyboard", "review"],
+        "phases": ["production_design", "bible", "storyboard", "frames", "review"],
         "intentTags": ["location-sheet", "prop-sheet", "geography"],
         "activeProfileIDs": []
       },
@@ -56,7 +56,7 @@
       "title": "Style contract sheet",
       "applicability": {
         "packIDs": [],
-        "phases": ["production_design", "bible", "review"],
+        "phases": ["production_design", "bible", "frames", "review"],
         "intentTags": ["style-sheet", "look-contract"],
         "activeProfileIDs": []
       },

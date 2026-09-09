@@ -241,17 +241,18 @@ final class ExportService {
         }
         session.audioMix = result.audioMix
 
-        // Bake text clips into the export via AVVideoCompositionCoreAnimationTool
-        let (parent, videoLayer) = TextLayerController.buildForExport(
-            timeline: timeline,
-            fps: timeline.fps,
-            renderSize: renderSize
-        )
         let mutableVC = result.videoComposition.mutableCopy() as! AVMutableVideoComposition
-        mutableVC.animationTool = AVVideoCompositionCoreAnimationTool(
-            postProcessingAsVideoLayer: videoLayer,
-            in: parent
-        )
+        if TextLayerController.hasVisibleText(in: timeline) {
+            let (parent, videoLayer) = TextLayerController.buildForExport(
+                timeline: timeline,
+                fps: timeline.fps,
+                renderSize: renderSize
+            )
+            mutableVC.animationTool = AVVideoCompositionCoreAnimationTool(
+                postProcessingAsVideoLayer: videoLayer,
+                in: parent
+            )
+        }
         session.videoComposition = mutableVC
         return (session, result, renderSize)
     }

@@ -1,10 +1,10 @@
 {
   "schemaVersion": "creative-library.v1",
   "id": "film-craft-baseline",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "applicability": {
     "packIDs": [],
-    "phases": ["production_design", "treatment", "storyboard", "shotlist", "review", "assembly"],
+    "phases": ["production_design", "treatment", "storyboard", "shotlist", "review", "assembly", "render"],
     "intentTags": ["craft", "cinematography", "editing", "lighting", "color", "pacing"],
     "activeProfileIDs": []
   },
@@ -12,7 +12,7 @@
     {
       "id": "dominant-visual-device",
       "title": "One dominant visual device",
-      "applicability": {"packIDs": [], "phases": ["production_design", "storyboard"], "intentTags": ["visual-strategy"], "activeProfileIDs": []},
+      "applicability": {"packIDs": [], "phases": ["production_design", "storyboard", "render"], "intentTags": ["visual-strategy"], "activeProfileIDs": []},
       "inputs": [
         {"role": "audience_effect", "purpose": "The intended feeling and attention target.", "required": true},
         {"role": "scene_turn", "purpose": "The change that the visual strategy must carry.", "required": true}
@@ -31,7 +31,7 @@
     {
       "id": "motivated-camera",
       "title": "Motivated camera grammar",
-      "applicability": {"packIDs": [], "phases": ["storyboard", "shotlist"], "intentTags": ["camera"], "activeProfileIDs": []},
+      "applicability": {"packIDs": [], "phases": ["storyboard", "shotlist", "render"], "intentTags": ["camera"], "activeProfileIDs": []},
       "inputs": [
         {"role": "subject_attention", "purpose": "What changes in the subject or audience attention.", "required": true},
         {"role": "space", "purpose": "Known scene geography and blocking.", "required": true}
@@ -68,7 +68,7 @@
     {
       "id": "motivated-light",
       "title": "Motivated light with emotional purpose",
-      "applicability": {"packIDs": [], "phases": ["production_design", "storyboard", "review"], "intentTags": ["lighting"], "activeProfileIDs": []},
+      "applicability": {"packIDs": [], "phases": ["production_design", "storyboard", "review", "render"], "intentTags": ["lighting"], "activeProfileIDs": []},
       "inputs": [
         {"role": "world_sources", "purpose": "Light sources that exist in the scene world.", "required": true},
         {"role": "audience_effect", "purpose": "The emotional and attention purpose of the light.", "required": true}
@@ -87,7 +87,7 @@
     {
       "id": "color-as-arc",
       "title": "Color as story arc",
-      "applicability": {"packIDs": [], "phases": ["production_design", "treatment", "assembly"], "intentTags": ["color"], "activeProfileIDs": []},
+      "applicability": {"packIDs": [], "phases": ["production_design", "treatment", "assembly", "render"], "intentTags": ["color"], "activeProfileIDs": []},
       "inputs": [
         {"role": "story_blocks", "purpose": "Approved sections or sequences and their emotional changes.", "required": true}
       ],
@@ -105,7 +105,7 @@
     {
       "id": "pacing-through-duration",
       "title": "Pacing through duration and processing",
-      "applicability": {"packIDs": [], "phases": ["treatment", "storyboard", "assembly", "review"], "intentTags": ["pacing"], "activeProfileIDs": []},
+      "applicability": {"packIDs": [], "phases": ["treatment", "storyboard", "assembly", "review", "render"], "intentTags": ["pacing"], "activeProfileIDs": []},
       "inputs": [
         {"role": "beat_weight", "purpose": "Relative emotional and informational weight of each beat.", "required": true}
       ],

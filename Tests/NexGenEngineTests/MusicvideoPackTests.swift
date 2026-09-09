@@ -45,7 +45,7 @@ struct MusicvideoPackTests {
         #expect(descriptor.profileResourceIDs == [
             "generative_film", "narrative_storytelling",
         ])
-        #expect(descriptor.version == "1.1.0")
+        #expect(descriptor.version == "1.2.0")
         #expect(descriptor.phaseSelections.map(\.phase) == [
             "project_init", "analysis", "brief", "production_design", "treatment",
             "storyboard", "bible", "shotlist", "sanity", "frames", "render",
@@ -102,7 +102,8 @@ struct MusicvideoPackTests {
                     ],
                     activeLibraryIDs: Set(selection.libraryIDs),
                     budget: registration.descriptor.budget
-                )
+                ),
+                preferredLibraryOrder: selection.libraryIDs
             ).libraryEntryIDs)
         }
 

@@ -188,6 +188,14 @@ def materialize():
     (DESTINATION / relative).write_bytes(data)
     manifest["resources"].append({"kind": "library", "id": blueprint_library["id"], "version": "3.1.1",
                                   "path": relative, "sha256": hashlib.sha256(data).hexdigest()})
+    for resource in manifest["resources"]:
+        resource_path = DESTINATION / resource["path"]
+        resource_data = resource_path.read_bytes()
+        identity = json.loads(resource_data)
+        if identity["id"] != resource["id"]:
+            raise ValueError("Manifest identity mismatch: " + resource["path"])
+        resource["version"] = identity["version"]
+        resource["sha256"] = hashlib.sha256(resource_data).hexdigest()
     manifest_path.write_bytes(encoded(manifest))
     (SOURCE / "runtime-ledger.json").write_bytes(encoded({"schemaVersion": 1, "sections": ledger}))
     index = json.loads((SOURCE / "index.json").read_text())

@@ -261,6 +261,9 @@ final class PipelineAgentHarness {
             } else {
                 activeLibraries = declaredLibraries
             }
+            let preferredLibraryOrder = (selection?.libraryIDs ?? []).filter {
+                activeLibraries.contains($0)
+            }
             let assembly = try ProductionKnowledgeContextAssemblerV1(
                 catalog: productionKnowledgeCatalog,
                 predicates: ProductionMachinePredicateRegistryV1.standard()
@@ -272,7 +275,8 @@ final class PipelineAgentHarness {
                     activeProfileIDs: activeProfiles,
                     activeLibraryIDs: activeLibraries,
                     budget: descriptor.budget
-                )
+                ),
+                preferredLibraryOrder: preferredLibraryOrder
             )
             if !assembly.prompt.isEmpty {
                 prompt += "\n\nFollow this selected core production knowledge:\n\n\(assembly.prompt)"

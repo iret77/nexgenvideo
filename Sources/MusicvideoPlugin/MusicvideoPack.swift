@@ -42,7 +42,7 @@ public struct MusicvideoPack: Pack {
 
     static let productionKnowledgeDescriptor = ProductionKnowledgeConsumerDescriptorV1(
         id: "musicvideo-production-knowledge",
-        version: "1.1.0",
+        version: "1.2.0",
         packID: "musicvideo",
         profileResourceIDs: ["generative_film", "narrative_storytelling"],
         phaseSelections: [

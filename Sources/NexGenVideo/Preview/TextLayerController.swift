@@ -117,6 +117,10 @@ final class TextLayerController {
         return host
     }
 
+    static func hasVisibleText(in timeline: Timeline) -> Bool {
+        !visibleTextClips(in: timeline).isEmpty
+    }
+
     // MARK: - Private
 
     private static func visibleTextClips(in timeline: Timeline) -> [Clip] {
