@@ -3286,7 +3286,17 @@ extension ToolExecutor {
                     PipelineAssemblyStore.DriftAction(rawValue: $0)
                 }
                 if action == .adopt {
-                    throw ToolError("Adopt the manually edited timeline as the Finish source. Assembly cannot claim unplanned placements as an applied plan.")
+                    let finished = try PipelineDeliveryStore.adoptCurrentTimeline(
+                        editor: editor,
+                        requireSequenceReview: false
+                    )
+                    return try jsonResult([
+                        "status": "adopted_for_finish",
+                        "timeline_sha256": finished.manifest.timelineSHA256,
+                        "finish_plan": FinishPlanV1.relativePath,
+                        "finished_timeline": FinishedTimelineManifestV1.relativePath,
+                        "assembly_manifest": NSNull(),
+                    ])
                 }
                 guard action == .rebuild else {
                     throw ToolError("The previously assembled timeline region changed. Choose drift_action \"adopt\" to finish the current cut or \"rebuild\" to replace it from the canonical plan.")
@@ -4272,8 +4282,16 @@ extension ToolExecutor {
             if let rangeID = reviewedRangeIDs[placement.shotId] {
                 let range = try ReviewedTakeRange.load(id: rangeID, dataRoot: dataRoot)
                 let take = try PipelineRenderTakeStore.take(id: range.takeID, dataRoot: dataRoot)
-                let coversShot = take.shotID == placement.shotId
-                    || (try assemblyTake(take.shotID, covers: placement.shotId, dataRoot: dataRoot))
+                let coversShot: Bool
+                if take.shotID == placement.shotId {
+                    coversShot = true
+                } else {
+                    coversShot = try assemblyTake(
+                        take.shotID,
+                        covers: placement.shotId,
+                        dataRoot: dataRoot
+                    )
+                }
                 guard range.range.fps == fps,
                       range.source.path == sourcePath,
                       range.source.sha256 == sourceSHA256,

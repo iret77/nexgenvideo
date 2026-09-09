@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NexGenVideo — Finish and delivery</title>
+  <style>
+    :root { color-scheme: dark; font: 13px -apple-system, BlinkMacSystemFont, sans-serif; }
+    body { margin: 0; background: #171717; color: #f4f4f4; }
+    main { width: 390px; padding: 18px; box-sizing: border-box; }
+    h1 { margin: 0 0 5px; font-size: 16px; }
+    p { margin: 0 0 14px; color: #aaa; line-height: 1.4; }
+    section { padding: 12px; margin: 10px 0; border: 1px solid #3b3b3b; border-radius: 8px; background: #202020; }
+    section b { display: block; margin-bottom: 6px; }
+    dl { display: grid; grid-template-columns: 1fr auto; gap: 6px; margin: 0; }
+    dt { color: #aaa; } dd { margin: 0; }
+    label { display: block; margin-top: 8px; }
+    button { color: white; border: 0; border-radius: 7px; padding: 8px 12px; background: #d83c68; }
+    button.secondary { background: #333; color: #ddd; }
+    footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Finish and delivery</h1>
+  <p>Adopt the current cut as the exact finish source, then export and probe the written bytes.</p>
+  <section><b>Finish source</b><dl><dt>Timeline</dt><dd>current · changed</dd><dt>Assembly</dt><dd>manual edits detected</dd><dt>Sequence review</dt><dd>current</dd><dt>Media</dt><dd>12 of 12 online</dd></dl></section>
+  <button class="secondary">Adopt current timeline</button>
+  <section><b>Delivery spec</b><dl><dt>Target</dt><dd>Master</dd><dt>Codec</dt><dd>ProRes 422</dd><dt>Raster</dt><dd>3840×2160</dd><dt>Frame rate</dt><dd>30 fps</dd><dt>Audio</dt><dd>Present</dd><dt>Captions</dt><dd>Burned in</dd></dl><label><input type="checkbox" checked> Require current sequence review</label></section>
+  <section><b>Last QC</b><dl><dt>Status</dt><dd>Passed</dd><dt>Output hash</dt><dd>1e87…3b42</dd><dt>Duration</dt><dd>00:03:19:08</dd></dl></section>
+  <footer><button class="secondary">Save derivative</button><button>Export master</button></footer>
+</main>
+</body>
+</html>

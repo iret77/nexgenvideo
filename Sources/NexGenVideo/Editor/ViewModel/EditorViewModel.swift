@@ -506,6 +506,17 @@ final class EditorViewModel {
         // (package only, before the working copy materializes).
         let roots = [workingCopyHome, projectURL].compactMap { $0 }
         hasProductionPipeline = roots.contains { DataRootResolver.dataRoot(of: $0) != nil }
+        if let dataRoot = workingCopyHome.flatMap({ DataRootResolver.dataRoot(of: $0) }) {
+            do {
+                if try PipelineDeliveryStore.recoverInterruptedJobs(dataRoot: dataRoot),
+                   let key = openWorkingCopyKey {
+                    try ProjectWorkingCopy.markDirty(key: key)
+                    onPipelineChanged?()
+                }
+            } catch {
+                Log.export.error("delivery recovery failed: \(error.localizedDescription)")
+            }
+        }
     }
 
     /// The format may change only until production starts — after that its pipeline artifacts

@@ -27,6 +27,11 @@ final class ExportService {
     var error: String?
     var lastReport: ExportRunReport?
 
+    func cancel() {
+        cancelRequested = true
+        activeExportSession?.cancelExport()
+    }
+
     func export(
         timeline: Timeline,
         resolver liveResolver: MediaResolver,
@@ -37,6 +42,7 @@ final class ExportService {
     ) async {
         error = nil
         lastReport = nil
+        cancelRequested = false
         isExporting = true
         progress = 0
         defer { isExporting = false }
@@ -94,6 +100,9 @@ final class ExportService {
             }
             let session = prepared.session
             guard let fileType = format.utType else { throw ExportError.invalidFormat }
+            if cancelRequested { throw CancellationError() }
+            activeExportSession = session
+            defer { activeExportSession = nil }
 
             // AVAssetExportSession fails if the file already exists
             try? FileManager.default.removeItem(at: outputURL)
@@ -123,7 +132,9 @@ final class ExportService {
                     data: ["format": String(describing: format), "resolution": resolution.rawValue]
                 )
             } catch {
-                if (error as NSError).domain == NSCocoaErrorDomain && (error as NSError).code == NSUserCancelledError {
+                if cancelRequested || error is CancellationError
+                    || ((error as NSError).domain == NSCocoaErrorDomain
+                        && (error as NSError).code == NSUserCancelledError) {
                     self.error = "Export was cancelled"
                     Log.export.notice(
                         "export cancelled",
@@ -142,12 +153,21 @@ final class ExportService {
 
             progressTask.cancel()
         } catch {
-            self.error = Log.detail(error)
-            Log.export.error(
-                "export setup failed: \(Log.detail(error))",
-                telemetry: "Export setup failed",
-                data: ["format": String(describing: format), "resolution": resolution.rawValue, "error": Log.detail(error)]
-            )
+            if cancelRequested || error is CancellationError {
+                self.error = "Export was cancelled"
+                Log.export.notice(
+                    "export cancelled during setup",
+                    telemetry: "Export cancelled",
+                    data: ["format": String(describing: format), "resolution": resolution.rawValue]
+                )
+            } else {
+                self.error = Log.detail(error)
+                Log.export.error(
+                    "export setup failed: \(Log.detail(error))",
+                    telemetry: "Export setup failed",
+                    data: ["format": String(describing: format), "resolution": resolution.rawValue, "error": Log.detail(error)]
+                )
+            }
         }
 
     }
@@ -283,4 +303,7 @@ final class ExportService {
             AVAssetExportPresetPassthrough // unreachable — XML returns early
         }
     }
+
+    private var activeExportSession: AVAssetExportSession?
+    private var cancelRequested = false
 }

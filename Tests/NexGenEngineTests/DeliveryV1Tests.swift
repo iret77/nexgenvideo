@@ -44,5 +44,30 @@ struct DeliveryV1Tests {
         }
     }
 
+    @Test("nonterminal and terminal delivery jobs have distinct durable shapes")
+    func jobStateShapes() throws {
+        let spec = DeliverySpecV1(id: "master-h264", targetKind: .master,
+            container: "mp4", videoCodec: "avc1", width: 1280, height: 720,
+            fpsNumerator: 30, colorSpace: "rec709-sdr", hdr: false,
+            audioLayout: "none", captionMode: "none", disclosureMode: "project-record")
+        let running = DeliveryAttemptV1(id: "attempt-1", spec: spec,
+            finishedTimelineSHA256: hash("finish"), status: .running,
+            createdAt: "2026-09-09T00:00:00Z")
+        try DeliveryValidatorV1.validate(attempt: running)
+
+        let interrupted = DeliveryAttemptV1(id: "attempt-1", spec: spec,
+            finishedTimelineSHA256: hash("finish"), status: .interrupted,
+            failures: ["Export interrupted before completion."],
+            createdAt: "2026-09-09T00:00:00Z", completedAt: "2026-09-09T00:01:00Z")
+        try DeliveryValidatorV1.validate(attempt: interrupted)
+
+        let malformed = DeliveryAttemptV1(id: "attempt-2", spec: spec,
+            finishedTimelineSHA256: hash("finish"), status: .failed,
+            createdAt: "2026-09-09T00:00:00Z", completedAt: "2026-09-09T00:01:00Z")
+        #expect(throws: DeliveryValidationErrorV1.self) {
+            try DeliveryValidatorV1.validate(attempt: malformed)
+        }
+    }
+
     private func hash(_ value: String) -> String { FileDigest.sha256(of: Data(value.utf8)) }
 }

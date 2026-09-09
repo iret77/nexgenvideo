@@ -137,7 +137,7 @@ public struct DeliveryRequirementV1: Codable, Sendable, Equatable {
     }
 }
 
-public enum DeliveryTargetKindV1: String, Codable, Sendable, Equatable {
+public enum DeliveryTargetKindV1: String, Codable, Sendable, Equatable, Hashable {
     case master, derivative
 }
 
@@ -372,7 +372,9 @@ public enum DeliveryValidatorV1 {
               spec.fpsNumerator > 0, spec.fpsDenominator > 0,
               text(spec.colorSpace), text(spec.audioLayout),
               text(spec.captionMode), text(spec.disclosureMode),
+              spec.requirements.allSatisfy({ text($0.id) && text($0.value) }),
               Set(spec.requirements.map(\.id)).count == spec.requirements.count,
+              spec.extensionRefs.allSatisfy(text),
               Set(spec.extensionRefs).count == spec.extensionRefs.count else {
             throw DeliveryValidationErrorV1.invalidIdentity
         }
@@ -424,9 +426,8 @@ public enum DeliveryValidatorV1 {
         finishedTimelineSHA256: String,
         requiredSequenceReviewSHA256: String?
     ) throws {
-        try validate(spec: attempt.spec)
+        try validate(attempt: attempt)
         guard attempt.schema == DeliveryAttemptV1.schemaVersion,
-              text(attempt.id), digest(attempt.finishedTimelineSHA256),
               attempt.finishedTimelineSHA256 == finishedTimelineSHA256,
               attempt.sequenceReviewSHA256 == requiredSequenceReviewSHA256,
               !attempt.createdAt.isEmpty else {
@@ -448,6 +449,46 @@ public enum DeliveryValidatorV1 {
               qc.fpsDenominator == attempt.spec.fpsDenominator,
               qc.videoCodec == attempt.spec.videoCodec else {
             throw DeliveryValidationErrorV1.unsuccessfulOutput
+        }
+    }
+
+    public static func validate(attempt: DeliveryAttemptV1) throws {
+        try validate(spec: attempt.spec)
+        guard attempt.schema == DeliveryAttemptV1.schemaVersion,
+              text(attempt.id), digest(attempt.finishedTimelineSHA256),
+              attempt.sequenceReviewSHA256.map(digest) ?? true,
+              text(attempt.createdAt),
+              attempt.warnings.allSatisfy(text),
+              attempt.failures.allSatisfy(text) else {
+            throw DeliveryValidationErrorV1.invalidAttempt
+        }
+        switch attempt.status {
+        case .queued, .running:
+            guard attempt.outputPath == nil,
+                  attempt.outputSHA256 == nil,
+                  attempt.outputByteCount == nil,
+                  attempt.probeQC == nil,
+                  attempt.failures.isEmpty,
+                  attempt.completedAt == nil else {
+                throw DeliveryValidationErrorV1.invalidAttempt
+            }
+        case .succeeded:
+            guard attempt.outputPath.map(text) == true,
+                  attempt.outputSHA256.map(digest) == true,
+                  attempt.outputByteCount.map({ $0 > 0 }) == true,
+                  attempt.probeQC?.passed == true,
+                  attempt.failures.isEmpty,
+                  attempt.completedAt.map(text) == true else {
+                throw DeliveryValidationErrorV1.invalidAttempt
+            }
+        case .failed, .cancelled, .interrupted:
+            guard attempt.outputSHA256 == nil,
+                  attempt.outputByteCount == nil,
+                  attempt.probeQC == nil,
+                  !attempt.failures.isEmpty,
+                  attempt.completedAt.map(text) == true else {
+                throw DeliveryValidationErrorV1.invalidAttempt
+            }
         }
     }
 
