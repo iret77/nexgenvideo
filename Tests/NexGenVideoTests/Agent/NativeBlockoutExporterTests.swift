@@ -52,7 +52,7 @@ struct NativeBlockoutExporterTests {
                 ),
             ]
         )
-        NativeBlockoutExporter.export(
+        try NativeBlockoutExporter.export(
             setups: [setup],
             layouts: [layout],
             shapes: [shape],

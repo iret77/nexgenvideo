@@ -1484,11 +1484,27 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .assembleTimeline,
-            description: "Lay the rendered shots onto the timeline cut to the beat. WRITES.\n\nBuilds the final cut for the render `phase`: reads the analysis, Shot List, execution plan, and render manifest, then places every current output on a dedicated assembly video track. Cuts snap to a downbeat at section boundaries and a regular beat otherwise. A `timeline_animated_still` output receives a deterministic linear Ken Burns zoom; provider videos remain unmodified. The song is laid on an audio track at frame 0 as the sync anchor if it isn't already there. The tool persists `assembly.json` with every clip id, exact source hash, frame placement, duration, source kind, and motion proof for the Render gate. Current Music Video projects additionally prove the exact original-song bytes, suppress provider audio, reject unapproved audio layers, and verify every required performance-coverage role against the placed clips and continuous duration. Re-running rebuilds the same tracks. Shots with no current output are skipped and named, so terminal approval remains closed until coverage is complete. Returns `{shots_placed, total_frames, video_track_index, song_track, placements, skipped}`. `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            description: "Apply the current reviewed shot selections to the timeline. WRITES.\n\nBuilds a canonical AssemblyPlan and applies it through the generic timeline assembler. Every required source must be present and exact-byte current before the timeline changes. Use `reviewed_ranges` to assign separately reviewed frame ranges from a multi-shot take; the original take remains untrimmed. Music Video projects resolve their pack policy to beat/downbeat cuts and place the approved song at frame 0. Generic and fixture projects use their shot timings without requiring Song, BPM or analysis. Re-running the same plan is idempotent. If the previously assembled region was edited, choose `drift_action` explicitly: `rebuild` replaces it from the canonical plan; `adopt` preserves it for explicit Finish-source adoption and does not misreport it as an applied AssemblyPlan. Returns exact source ranges, placements and the AssemblyManifest path. `project_dir` is the `pipeline/` data root; omit to use the open project.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,
                     "phase": ["type": "string", "enum": ["preview", "final"], "description": "The render phase to assemble (default \"final\")."],
+                    "reviewed_ranges": [
+                        "type": "array",
+                        "description": "Optional exact reviewed take range for each shot in a multi-shot generation.",
+                        "items": objectSchema(
+                            properties: [
+                                "shot_id": ["type": "string"],
+                                "review_id": ["type": "string", "pattern": "^[0-9a-f]{64}$"],
+                            ],
+                            required: ["shot_id", "review_id"]
+                        ),
+                    ],
+                    "drift_action": [
+                        "type": "string",
+                        "enum": ["adopt", "rebuild"],
+                        "description": "Required only after edits to the previously assembled region.",
+                    ],
                 ]
             )
         ),

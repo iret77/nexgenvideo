@@ -44,6 +44,22 @@ public enum BeatAssembly {
         public let cutSeconds: Double
         public let onDownbeat: Bool
         public let atSectionBoundary: Bool
+
+        public init(
+            shotId: String,
+            startFrame: Int,
+            durationFrames: Int,
+            cutSeconds: Double,
+            onDownbeat: Bool,
+            atSectionBoundary: Bool
+        ) {
+            self.shotId = shotId
+            self.startFrame = startFrame
+            self.durationFrames = durationFrames
+            self.cutSeconds = cutSeconds
+            self.onDownbeat = onDownbeat
+            self.atSectionBoundary = atSectionBoundary
+        }
     }
 
     /// The beat grid an analysis artifact carries — the assembly input the host
