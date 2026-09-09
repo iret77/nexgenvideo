@@ -3,13 +3,12 @@ import NexGenEngine
 
 /// Engine-backed prompt composition (concept §5: "the Prompt Generator composes from the Intent
 /// Ledger"). This is the COMPILE half of the loop; `PromptCompiler` is only the gate (token mint +
-/// enforcement). Free-intent surfaces (panel, music tab, agent, rerun) carry no shot, so the ledger's
-/// project-wide directives are composed in and the whole thing runs the engine's pre-generation
+/// enforcement). Free visual intent receives only film/look directives; shot-bound visual intent also
+/// receives the exact referenced objects. The result runs the engine's pre-generation
 /// `PromptLinter` — a lint ERROR blocks before money is spent; warnings pass as notes.
 ///
 /// Video/image compose through the real engine builders (`PromptGenerator`); audio has no engine
-/// builder (Seedance/image only), so it keeps the deterministic intent + locked-directive merge the
-/// old `PromptCompiler.compile` did — see `composeAudio`.
+/// builder (Seedance/image only), so it keeps the deterministic intent path without visual directives.
 enum PromptComposer {
 
     struct Composition: Sendable {
@@ -61,6 +60,7 @@ enum PromptComposer {
         let videoDirectives: [String]
         let imageDirectives: [String]
         let spec: ComplianceLinter.ShotSpec
+        let ledgerReferences: LedgerDirectives.ShotRefs
         /// The deterministic cut-handle timing for this shot (#213), empty when it carries no handle.
         /// `forceHandles` is the project-wide override (brief.cut_handles_mode == with_overlap).
         let temporalStructure: String
@@ -80,6 +80,12 @@ enum PromptComposer {
                 + shot.productionBlockingDirectives
             imageDirectives = (productionPlan?.stillProviderDirectives ?? [])
                 + shot.productionBlockingDirectives
+            ledgerReferences = LedgerDirectives.ShotRefs(
+                id: shot.id,
+                characterRefs: shot.characterRefs,
+                locationRef: shot.locationRef,
+                propRefs: shot.propRefs
+            )
             spec = ComplianceLinter.ShotSpec(
                 framing: shot.framing?.rawValue,
                 cameraHeight: shot.cameraSetup?.height.rawValue,
@@ -118,7 +124,11 @@ enum PromptComposer {
             throw ComposeError.lintBlocked(code: violation.code, message: violation.message)
         }
 
-        var directives = await lockedProjectDirectives(projectDir: projectDir)
+        var directives = await lockedProjectDirectives(
+            projectDir: projectDir,
+            modality: modality,
+            shot: shot
+        )
         // The preservation clause is COMPOSED IN, not asked for: it rides as a directive so it survives
         // into the built prompt deterministically, exactly like a locked ledger directive.
         if preserveComposition {
@@ -194,8 +204,7 @@ enum PromptComposer {
             }
             notes.append(contentsOf: try lint(composed, lockedDirectives: directives.locked))
         case .audio, .music:
-            // No engine audio builder — merge locked directives into the intent (the historical
-            // deterministic path), then run the linter's text checks on the result.
+            // The ledger has no audio-typed directives, so audio keeps the caller's compiled intent.
             composed = composeAudio(intent: trimmed, directives: directives)
             let mergedCount = directives.locked.filter { !trimmed.localizedCaseInsensitiveContains($0) }.count
             if mergedCount > 0 {
@@ -247,16 +256,24 @@ enum PromptComposer {
         let locked: [String]
     }
 
-    /// Every ledger directive in the project, with the locked subset kept apart — there is no shot to
-    /// scope by here, so the whole ledger applies. Faithful to the old compiler, which merged every
-    /// locked directive. A missing/invalid ledger is a normal empty state, not an error. The ledger
-    /// YAML is read off the main thread — composition can run on a `submit` that started on `@MainActor`.
-    private static func lockedProjectDirectives(projectDir: URL?) async -> ProjectDirectives {
-        guard let projectDir, let root = DataRootResolver.dataRoot(of: projectDir) else {
+    private static func lockedProjectDirectives(
+        projectDir: URL?,
+        modality: Modality,
+        shot: ShotProjection?
+    ) async -> ProjectDirectives {
+        guard modality.usesVisualStyle,
+              let projectDir,
+              let root = DataRootResolver.dataRoot(of: projectDir) else {
             return ProjectDirectives(all: [], locked: [])
         }
+        let references = shot?.ledgerReferences ?? LedgerDirectives.ShotRefs(
+            id: nil,
+            characterRefs: [],
+            locationRef: nil,
+            propRefs: []
+        )
         return await Task.detached {
-            loadDirectives(dataRoot: root)
+            loadDirectives(dataRoot: root, references: references)
         }.value
     }
 
@@ -274,13 +291,24 @@ enum PromptComposer {
                     hashes[path] = try FileDigest.sha256(of: ProjectLocalFile.resolve(path, dataRoot: root))
                 } else { hashes[path] = "absent" }
             }
-            let values = loadDirectives(dataRoot: root)
+            let values = loadDirectives(
+                dataRoot: root,
+                references: LedgerDirectives.ShotRefs(
+                    id: nil,
+                    characterRefs: [],
+                    locationRef: nil,
+                    propRefs: []
+                )
+            )
             return FileDigest.sha256(of: try GenerationPackageV1.encode(Inputs(artifactHashes: hashes,
                 directives: values.all, locked: values.locked)))
         }.value
     }
 
-    private static func loadDirectives(dataRoot root: URL) -> ProjectDirectives {
+    private static func loadDirectives(
+        dataRoot root: URL,
+        references: LedgerDirectives.ShotRefs
+    ) -> ProjectDirectives {
         let store = YAMLArtifactStore(dataRoot: root)
         var all: [String] = []
         var locked: [String] = []
@@ -293,37 +321,28 @@ enum PromptComposer {
             if isLocked { locked.append(directive) }
         }
         if let ledger = try? store.load(Ledger.self, at: PipelineLayout.ledgerFile) {
-            for objectKey in ledger.objects.keys.sorted() {
-                guard let attributes = ledger.objects[objectKey] else { continue }
-                for attrName in attributes.keys.sorted() {
-                    let attribute = attributes[attrName]!
-                    add(attribute.directive.isEmpty ? attribute.tag : attribute.directive, locked: attribute.locked)
-                }
+            let selected = LedgerDirectives.directivesForShot(
+                ledger: ledger,
+                shot: references
+            )
+            let lockedSet = Set(selected.locked.map { $0.lowercased() })
+            for directive in selected.directives {
+                add(directive, locked: lockedSet.contains(directive.lowercased()))
             }
         }
-        // Director-pattern style injection (#185, the strongest lever): the chosen pattern's craft tokens
-        // (lighting signature + camera vocabulary) flow into EVERY compiled prompt so each rendered frame
-        // inherits the style, not just the storyboard. Additive, not locked; no pattern/brief = empty.
-        for token in patternStyleTokens(dataRoot: root, store: store) { add(token, locked: false) }
+        for token in patternLightingTokens(dataRoot: root, store: store) { add(token, locked: false) }
         return ProjectDirectives(all: all, locked: locked)
     }
 
-    /// The active director pattern's style tokens (lighting signature + camera vocabulary), resolved
-    /// through the pack's `PatternProviding` seam from `brief.director_pattern`. Empty when no pattern is
-    /// chosen, no provider is registered, or anything is unreadable — a normal state, never an error.
-    private static func patternStyleTokens(dataRoot root: URL, store: YAMLArtifactStore) -> [String] {
+    private static func patternLightingTokens(dataRoot root: URL, store: YAMLArtifactStore) -> [String] {
         guard let brief = try? store.load(Brief.self, at: PipelineLayout.briefFile),
             let id = brief.directorPattern?.trimmingCharacters(in: .whitespaces), !id.isEmpty else { return [] }
         let activePack = ProjectPluginSettings.activePlugin(projectURL: FrameInventory.projectHome(of: root))
         guard let provider = PackCatalog.registry(activePack: activePack).patternProvider,
             let data = try? provider.get(id: id),
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
-        var tokens: [String] = []
-        if let lighting = object["lighting_signature"] as? String { tokens.append(lighting) }
-        if let camera = object["camera_vocabulary"] as? [Any] {
-            tokens.append(contentsOf: camera.compactMap { $0 as? String })
-        }
-        return tokens
+        guard let lighting = object["lighting_signature"] as? String else { return [] }
+        return [lighting]
     }
 
     // MARK: - Audio composition (no engine builder)
