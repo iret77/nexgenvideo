@@ -94,7 +94,7 @@ struct MusicAssemblyProofTests {
         )
     }
 
-    private func hash(_ character: Character) -> String {
-        String(repeating: String(character), count: 64)
+    private func hash(_ value: String) -> String {
+        String(repeating: value, count: 64)
     }
 }

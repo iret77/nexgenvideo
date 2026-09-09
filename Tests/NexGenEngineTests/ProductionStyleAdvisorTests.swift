@@ -24,6 +24,20 @@ struct ProductionStyleAdvisorTests {
         #expect(result.candidates.flatMap(\.constraintTradeoffs).contains { $0.contains("action") || $0.contains("geography") })
     }
 
+    @Test("genre selection precedes an explicitly named style")
+    func genrePrecedesName() throws {
+        let result = try ProductionStyleAdvisorV1.recommend(
+            genre: "action",
+            namedStyles: ["Fincher"],
+            catalog: catalog
+        )
+        #expect(result.candidates.allSatisfy { $0.kind == .genre })
+        #expect(result.candidates.map(\.directorID) == [
+            "director-akira-kurosawa-motion-and-weather",
+            "director-paul-greengrass-chaos-verit",
+        ])
+    }
+
     @Test("two directors become alternative dominant bases with scoped synthesis")
     func directorSynthesis() throws {
         let result = try ProductionStyleAdvisorV1.recommend(
@@ -80,6 +94,38 @@ struct ProductionStyleAdvisorTests {
             ]
         )
         #expect(try ResolvedProductionStyleV1.resolve(accepted, catalog: catalog).selection == accepted)
+    }
+
+    @Test("Anderson with Storaro can replace color without replacing camera")
+    func andersonStoraroColorOnly() throws {
+        let recommendation = try ProductionStyleAdvisorV1.recommend(
+            namedStyles: ["Wes Anderson", "Vittorio Storaro"],
+            catalog: catalog
+        )
+        #expect(recommendation.candidates.first?.recommendedSignatureDimensions == [.color])
+        let selection = ProductionStyleSelectionV1(
+            directorID: "director-wes-anderson-symmetry-deadpan",
+            signatureID: "dop-vittorio-storaro",
+            signatureDimensions: [.color],
+            overrides: [
+                .init(
+                    dimension: .color,
+                    value: "Color changes carry the dramatic arc.",
+                    reason: "Use Storaro only for the explicitly accepted color dimension.",
+                    sourceEntryID: "dop-vittorio-storaro",
+                    verification: .init(
+                        scope: .sequence,
+                        evidenceKind: .video,
+                        criterion: "The planned color change is visible across the sequence."
+                    )
+                ),
+            ]
+        )
+        let resolved = try ResolvedProductionStyleV1.resolve(selection, catalog: catalog)
+        #expect(resolved.value(.color) == selection.overrides[0].value)
+        #expect(resolved.value(.camera)?.contains("locked-off") == true)
+        #expect(resolved.dimensions.first(where: { $0.dimension == .camera })?.sourceEntryID
+            == selection.directorID)
     }
 
     @Test("known source gaps remain explicit gaps")

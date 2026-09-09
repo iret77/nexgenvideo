@@ -234,6 +234,13 @@ public enum ProductionStyleAdvisorV1 {
             throw ProductionKnowledgeErrorV1.missingResource("film-production-blueprints")
         }
         let directors = library.entries.filter { $0.id.rawValue.hasPrefix("director-") }
+        if let genre, let ids = matchedValues(normalize(genre), table: genreShortlists) {
+            return result(library: library, candidates: try ids.prefix(2).map {
+                try makeCandidate(kind: .genre, directorID: $0, signatureID: defaultSignatures[$0],
+                                  rationale: "Source genre-baseline shortlist for \(genre).", constraints: constraints,
+                                  synthesisSources: [], proposedSelection: nil, library: library)
+            }, clarification: [], disclosure: [])
+        }
         let names = namedStyles.map(normalize).filter { !$0.isEmpty }
         let joinedNames = names.joined(separator: " ")
         if let gap = unresolvedSourceGaps.first(where: { joinedNames.contains($0) }) {
@@ -311,13 +318,6 @@ public enum ProductionStyleAdvisorV1 {
                                               rationale: "No exact recipe was found. This is the disclosed nearest local package; confirm it or request dimension synthesis.",
                                               constraints: constraints, synthesisSources: [], proposedSelection: nil, library: library)
             return result(library: library, candidates: [candidate], clarification: ["Confirm the disclosed nearest match."], disclosure: [])
-        }
-        if let genre, let ids = matchedValues(normalize(genre), table: genreShortlists) {
-            return result(library: library, candidates: try ids.prefix(2).map {
-                try makeCandidate(kind: .genre, directorID: $0, signatureID: defaultSignatures[$0],
-                                  rationale: "Source genre-baseline shortlist for \(genre).", constraints: constraints,
-                                  synthesisSources: [], proposedSelection: nil, library: library)
-            }, clarification: [], disclosure: [])
         }
         let moodText = normalize(moods.joined(separator: " "))
         if !moodText.isEmpty,
@@ -400,12 +400,27 @@ public enum ProductionStyleAdvisorV1 {
             .replacingOccurrences(of: "Blueprint dimension character:", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? entry.title
         return .init(kind: kind, directorID: directorID, recommendedSignatureID: signatureID,
-                     recommendedSignatureDimensions: signatureID == nil ? [] : [.lighting, .color],
+                     recommendedSignatureDimensions: recommendedSignatureDimensions(
+                        directorID: directorID,
+                        signatureID: signatureID
+                     ),
                      pairing: pairing(directorID: directorID, signatureID: signatureID),
                      feelsLike: character, rationale: rationale,
                      constraintTradeoffs: constraints.compactMap { tradeoff($0, directorID: directorID, signatureID: signatureID) },
                      synthesisSourceIDs: uniqueStrings(synthesisSources), proposedSelection: proposedSelection,
                      requiresDimensionChoice: requiresDimensionChoice)
+    }
+
+    private static func recommendedSignatureDimensions(
+        directorID: String,
+        signatureID: String?
+    ) -> [ProductionStyleDimensionV1] {
+        guard let signatureID else { return [] }
+        if directorID == "director-wes-anderson-symmetry-deadpan",
+           signatureID == "dop-vittorio-storaro" {
+            return [.color]
+        }
+        return [.lighting, .color]
     }
 
     private static func tradeoff(_ constraint: ProductionStyleConstraintV1, directorID: String, signatureID: String?) -> String? {
