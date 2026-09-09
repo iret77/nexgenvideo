@@ -12,7 +12,9 @@ Before implementation, answer these ownership questions:
 6. Which source modes enter Frames and Render?
 7. Does a schema change require a declared project migration?
 
-Declare the complete ordered graph in `pipeline-contract.json`. Every phase needs packaged runtime instructions, one schema-validated writer, one structural approval gate, and exact cumulative lineage. Use `host.generic_json_extension` only with an `extensions/*.json` artifact and a closed JSON schema. Keep the schema small and format-specific; use core artifacts for canon, asset graphs, execution plans, requirements, routing, PromptIR, frames, and render render records.
+Declare the complete ordered graph in `pipeline-contract.json`. Every phase needs packaged runtime instructions, one schema-validated writer, one structural approval gate, and exact cumulative lineage. Use `host.generic_json_extension` only with an `extensions/*.json` artifact and a closed JSON schema. Keep the schema small and format-specific; use core artifacts for canon, asset graphs, execution plans, requirements, routing, PromptIR, frames, and render records.
+
+Mark a schema string that names a project file with `x-ngvProjectFile`. Its `kind` is `any`, `image`, `json`, `text`, or `video`; `sha256Property` may name a sibling field that carries the expected digest. The host then rejects missing files, symlink escapes, wrong media kinds, and hash drift in both the writer and approval gate.
 
 Pack versions install side by side. `ngv.json` pins pack ID, pack version, and project schema. Never edit an existing project under a different pack version without an explicit transactional upgrade. A first version has no invented migration.
 

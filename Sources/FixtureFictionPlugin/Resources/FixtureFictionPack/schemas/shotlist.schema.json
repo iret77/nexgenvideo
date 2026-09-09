@@ -68,7 +68,10 @@
           "generation_requirement_path": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 500
+            "maxLength": 500,
+            "x-ngvProjectFile": {
+              "kind": "json"
+            }
           }
         },
         "required": [
@@ -147,12 +150,18 @@
           "source_path": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 500
+            "maxLength": 500,
+            "x-ngvProjectFile": {
+              "kind": "video"
+            }
           },
           "generation_requirement_path": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 500
+            "maxLength": 500,
+            "x-ngvProjectFile": {
+              "kind": "json"
+            }
           }
         },
         "required": [
@@ -231,7 +240,10 @@
           "source_path": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 500
+            "maxLength": 500,
+            "x-ngvProjectFile": {
+              "kind": "video"
+            }
           }
         },
         "required": [

@@ -39,6 +39,7 @@ EXTENSION_SCHEMA_KEYWORDS = {
     "required",
     "title",
     "type",
+    "x-ngvProjectFile",
 }
 HARD_STEP_KINDS = {"script", "character", "location", "style", "song", "lyrics"}
 HARD_STEP_BOOLEAN_FIELDS = {"multiple", "required", "repeatable"}
@@ -286,6 +287,32 @@ def validate_extension_schema_node(value: Any, context: str, *, root: bool = Fal
             raise PipelineContractValidationError(f"{context}.minLength exceeds maxLength")
     elif string_keywords & value.keys():
         raise PipelineContractValidationError(f"{context} uses string-only keywords")
+
+    if "x-ngvProjectFile" in value:
+        if schema_type != "string":
+            raise PipelineContractValidationError(
+                f"{context}.x-ngvProjectFile requires type string"
+            )
+        rule = require_object(
+            value["x-ngvProjectFile"],
+            required={"kind"},
+            optional={"sha256Property"},
+            context=f"{context}.x-ngvProjectFile",
+        )
+        kind = nonempty_string(rule["kind"], f"{context}.x-ngvProjectFile.kind")
+        if kind not in {"any", "image", "json", "text", "video"}:
+            raise PipelineContractValidationError(
+                f"{context}.x-ngvProjectFile.kind is unsupported"
+            )
+        if "sha256Property" in rule:
+            property_name = nonempty_string(
+                rule["sha256Property"],
+                f"{context}.x-ngvProjectFile.sha256Property",
+            )
+            if "." in property_name or "/" in property_name:
+                raise PipelineContractValidationError(
+                    f"{context}.x-ngvProjectFile.sha256Property is invalid"
+                )
 
     if "enum" in value:
         enum_values = value["enum"]

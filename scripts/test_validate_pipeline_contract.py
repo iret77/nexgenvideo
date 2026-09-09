@@ -260,6 +260,47 @@ class PipelineContractValidatorTests(unittest.TestCase):
         schema_path.write_text(json.dumps(schema))
         self.assert_invalid("unsupported keyword")
 
+    def test_extension_schema_accepts_typed_project_files(self):
+        schema_path = self.resource_root / "schemas/compose.schema.json"
+        schema_path.parent.mkdir()
+        schema = {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "source_path": {
+                    "type": "string",
+                    "minLength": 1,
+                    "x-ngvProjectFile": {
+                        "kind": "video",
+                        "sha256Property": "source_sha256",
+                    },
+                },
+                "source_sha256": {"type": "string", "minLength": 64, "maxLength": 64},
+            },
+            "required": ["source_path", "source_sha256"],
+        }
+        schema_path.write_text(json.dumps(schema))
+        phase = self.contract["phases"][1]
+        phase["selectors"] = {
+            "artifact": "host.generic_json_extension",
+            "writer": "host.generic_json_extension",
+            "gate": "host.generic_json_extension",
+            "lineage": "host.generic_json_extension",
+        }
+        phase["extensionArtifact"] = {
+            "relativePath": "extensions/compose.json",
+            "schemaResource": "schemas/compose.schema.json",
+        }
+        self.write_fixture()
+        validate_pipeline_contract.validate_pack_manifest(
+            self.pack_manifest,
+            self.repository,
+        )
+
+        schema["properties"]["source_path"]["x-ngvProjectFile"]["kind"] = "movie-ish"
+        schema_path.write_text(json.dumps(schema))
+        self.assert_invalid("kind is unsupported")
+
     def test_extension_artifact_paths_use_macos_collision_rules(self):
         schemas = self.resource_root / "schemas"
         schemas.mkdir()

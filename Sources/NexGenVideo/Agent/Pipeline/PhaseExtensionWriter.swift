@@ -186,18 +186,19 @@ struct PhaseExtensionSchema: Sendable {
         return PhaseExtensionSchema(root: root)
     }
 
-    func validate(_ value: Any) throws {
+    func validate(_ value: Any, dataRoot: URL? = nil) throws {
         try Self.validateValue(
             AnySendable.wrap(value),
             against: root,
-            path: "payload"
+            path: "payload",
+            dataRoot: dataRoot
         )
     }
 
     private static let supportedKeywords: Set<String> = [
         "$id", "$schema", "additionalProperties", "description", "enum", "items",
         "maxItems", "maxLength", "minItems", "minLength", "properties", "required",
-        "title", "type",
+        "title", "type", "x-ngvProjectFile",
     ]
 
     private static func validateSchemaNode(
@@ -278,6 +279,14 @@ struct PhaseExtensionSchema: Sendable {
                 "\(path) uses string-only schema keywords for type \(type)"
             )
         }
+        if let value = node["x-ngvProjectFile"] {
+            guard type == "string" else {
+                throw PhaseContractError.malformed(
+                    "\(path).x-ngvProjectFile requires type string"
+                )
+            }
+            _ = try projectFileRule(value, path: path)
+        }
     }
 
     private static func validateBounds(
@@ -313,7 +322,8 @@ struct PhaseExtensionSchema: Sendable {
     private static func validateValue(
         _ value: AnySendable,
         against schema: [String: AnySendable],
-        path: String
+        path: String,
+        dataRoot: URL?
     ) throws {
         guard case .string(let type) = schema["type"] else {
             throw PhaseContractError.malformed("schema type is unavailable at \(path)")
@@ -341,7 +351,26 @@ struct PhaseExtensionSchema: Sendable {
             }
             for (name, child) in object {
                 guard case .object(let childSchema)? = properties[name] else { continue }
-                try validateValue(child, against: childSchema, path: "\(path).\(name)")
+                if let ruleValue = childSchema["x-ngvProjectFile"] {
+                    guard let dataRoot else {
+                        throw PhaseContractError.malformed(
+                            "\(path).\(name) requires project-root validation"
+                        )
+                    }
+                    try validateProjectFile(
+                        child,
+                        rule: try projectFileRule(ruleValue, path: "\(path).\(name)"),
+                        siblings: object,
+                        dataRoot: dataRoot,
+                        path: "\(path).\(name)"
+                    )
+                }
+                try validateValue(
+                    child,
+                    against: childSchema,
+                    path: "\(path).\(name)",
+                    dataRoot: dataRoot
+                )
             }
         case .array(let values):
             if let minimum = schema["minItems"]?.nonnegativeInteger, values.count < minimum {
@@ -354,7 +383,12 @@ struct PhaseExtensionSchema: Sendable {
                 throw PhaseContractError.malformed("array schema is incomplete at \(path)")
             }
             for (index, child) in values.enumerated() {
-                try validateValue(child, against: itemSchema, path: "\(path)[\(index)]")
+                try validateValue(
+                    child,
+                    against: itemSchema,
+                    path: "\(path)[\(index)]",
+                    dataRoot: dataRoot
+                )
             }
         case .string(let string):
             if let minimum = schema["minLength"]?.nonnegativeInteger, string.count < minimum {
@@ -365,6 +399,80 @@ struct PhaseExtensionSchema: Sendable {
             }
         default:
             break
+        }
+    }
+
+    private struct ProjectFileRule {
+        let kind: String
+        let sha256Property: String?
+    }
+
+    private static func projectFileRule(
+        _ value: AnySendable,
+        path: String
+    ) throws -> ProjectFileRule {
+        guard case .object(let object) = value,
+              Set(object.keys).isSubset(of: ["kind", "sha256Property"]),
+              let kind = object["kind"]?.nonemptyString,
+              ["any", "image", "json", "text", "video"].contains(kind) else {
+            throw PhaseContractError.malformed(
+                "\(path).x-ngvProjectFile must declare a supported kind"
+            )
+        }
+        let sha256Property: String?
+        if let value = object["sha256Property"] {
+            guard let property = value.nonemptyString,
+                  validPropertyName(property) else {
+                throw PhaseContractError.malformed(
+                    "\(path).x-ngvProjectFile.sha256Property is invalid"
+                )
+            }
+            sha256Property = property
+        } else {
+            sha256Property = nil
+        }
+        return ProjectFileRule(kind: kind, sha256Property: sha256Property)
+    }
+
+    private static func validateProjectFile(
+        _ value: AnySendable,
+        rule: ProjectFileRule,
+        siblings: [String: AnySendable],
+        dataRoot: URL,
+        path: String
+    ) throws {
+        guard case .string(let relativePath) = value else { return }
+        let fileURL: URL
+        do {
+            if let property = rule.sha256Property {
+                guard let expected = siblings[property]?.nonemptyString,
+                      expected.count == 64 else {
+                    throw ToolError("\(path) requires a 64-character \(property).")
+                }
+                fileURL = try ProjectLocalFile.requireHash(
+                    expected,
+                    at: relativePath,
+                    dataRoot: dataRoot
+                )
+            } else {
+                fileURL = try ProjectLocalFile.resolve(relativePath, dataRoot: dataRoot)
+            }
+        } catch let error as ToolError {
+            throw error
+        } catch {
+            throw ToolError("\(path) must reference a current project-local file.")
+        }
+        let ext = fileURL.pathExtension.lowercased()
+        let allowed: Set<String>
+        switch rule.kind {
+        case "image": allowed = ["heic", "heif", "jpeg", "jpg", "png", "tif", "tiff", "webp"]
+        case "json": allowed = ["json"]
+        case "text": allowed = ["md", "txt"]
+        case "video": allowed = ["m4v", "mov", "mp4"]
+        default: return
+        }
+        guard allowed.contains(ext) else {
+            throw ToolError("\(path) must reference a project-local \(rule.kind) file.")
         }
     }
 
@@ -451,7 +559,7 @@ enum GenericPhaseExtensionWriter {
             extensionArtifact.schemaResource,
             inside: contract.resourceRoot
         )
-        try PhaseExtensionSchema.load(from: schemaURL).validate(payload)
+        try PhaseExtensionSchema.load(from: schemaURL).validate(payload, dataRoot: dataRoot)
         let destination = try projectFile(
             extensionArtifact.relativePath,
             dataRoot: dataRoot
@@ -487,7 +595,7 @@ enum GenericPhaseExtensionWriter {
             inside: contract.resourceRoot
         )
         let object = try JSONSerialization.jsonObject(with: Data(contentsOf: artifactURL))
-        try PhaseExtensionSchema.load(from: schemaURL).validate(object)
+        try PhaseExtensionSchema.load(from: schemaURL).validate(object, dataRoot: dataRoot)
         try PipelineLineageStore.requireCurrent(
             phase: phase,
             snapshot: try lineageSnapshot(
