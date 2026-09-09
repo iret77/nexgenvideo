@@ -2013,7 +2013,6 @@ extension ToolExecutor {
             shotlist: shotlist,
             dataRoot: root
         )
-        let reviewedRangeIDs = try assemblyReviewedRangeIDs(args)
         let deliveryMode = deliveryModes[shotId]
         if args.string("expected_take_id") != nil,
            status != .rendered
@@ -3058,6 +3057,7 @@ extension ToolExecutor {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = args.string("phase") ?? "final"
         let declaration = try mutationPackDeclaration(editor, dataRoot: root)
+        let reviewedRangeIDs = try assemblyReviewedRangeIDs(args)
 
         // Hard gate (terminal backstop): no assembly on an unapproved plan. Every phase up to and
         // including shotlist — which, for musicvideo, includes the analysis gate that itself requires
@@ -3252,20 +3252,23 @@ extension ToolExecutor {
         )
         let policyData = try PipelineAssemblyStore.canonical(policy)
         let previousAssembly = try PipelineAssemblyStore.load(dataRoot: root)
+        var plannedPlacements: [AssemblyPlacementV1] = []
+        for index in placements.indices {
+            let selected = selectedMedia[index]
+            let placement = placements[index]
+            plannedPlacements.append(AssemblyPlacementV1(
+                shotID: selected.shotID,
+                trackID: sidecar.videoTrackId ?? "ngv-assembly-video-v1",
+                timelineStartFrame: placement.startFrame,
+                sourceStartFrame: selected.sourceStartFrame,
+                sourceEndFrame: selected.sourceEndFrame
+            ))
+        }
         let plan = AssemblyPlanV1(
             projectID: shotlist.project,
             phase: phase,
             selectedMedia: selectedMedia,
-            placements: zip(selectedMedia, placements).map { pair in
-                let (selected, placement) = pair
-                return AssemblyPlacementV1(
-                    shotID: selected.shotID,
-                    trackID: sidecar.videoTrackId ?? "ngv-assembly-video-v1",
-                    timelineStartFrame: placement.startFrame,
-                    sourceStartFrame: selected.sourceStartFrame,
-                    sourceEndFrame: selected.sourceEndFrame
-                )
-            },
+            placements: plannedPlacements,
             existingRegionFingerprint: previousAssembly?.plan.existingRegionFingerprint
                 ?? priorRegionFingerprint,
             policyPath: PipelineAssemblyStore.policyPath,
@@ -4269,11 +4272,12 @@ extension ToolExecutor {
             if let rangeID = reviewedRangeIDs[placement.shotId] {
                 let range = try ReviewedTakeRange.load(id: rangeID, dataRoot: dataRoot)
                 let take = try PipelineRenderTakeStore.take(id: range.takeID, dataRoot: dataRoot)
+                let coversShot = take.shotID == placement.shotId
+                    || (try assemblyTake(take.shotID, covers: placement.shotId, dataRoot: dataRoot))
                 guard range.range.fps == fps,
                       range.source.path == sourcePath,
                       range.source.sha256 == sourceSHA256,
-                      take.shotID == placement.shotId
-                        || try assemblyTake(take.shotID, covers: placement.shotId, dataRoot: dataRoot) else {
+                      coversShot else {
                     throw ToolError("Reviewed range '\(rangeID)' does not cover shot '\(placement.shotId)' at the current timeline rate.")
                 }
                 return SelectedShotMediaV1(

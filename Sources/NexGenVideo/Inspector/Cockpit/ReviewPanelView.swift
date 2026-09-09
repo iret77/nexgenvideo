@@ -65,6 +65,7 @@ struct ReviewPanelView: View {
                 ProductionStyleReviewView()
                 FrameFindingsReviewView()
                 TakeReviewView()
+                SequenceReviewView()
                 content
                     .frame(minHeight: AppTheme.Spacing.none)
                     .clipped()

@@ -42,6 +42,19 @@ public struct ReviewReelEDLEntryV1: Codable, Sendable, Equatable {
     }
 }
 
+public struct ReviewReelEDLV1: Codable, Sendable, Equatable {
+    public static let schemaVersion = "review-reel-edl/v1"
+    public let schema: String
+    public let fps: Int
+    public let entries: [ReviewReelEDLEntryV1]
+
+    public init(fps: Int, entries: [ReviewReelEDLEntryV1]) {
+        schema = Self.schemaVersion
+        self.fps = fps
+        self.entries = entries
+    }
+}
+
 public struct ReviewReelV1: Codable, Sendable, Equatable {
     public static let schemaVersion = "review-reel/v1"
     public let schema: String
@@ -294,6 +307,12 @@ public enum SequenceReviewValidatorV1 {
             throw SequenceReviewValidationErrorV1.incompleteReview
         }
         let selectedIDs = Set(selectedMedia.map(\.shotID))
+        let selectedIndex = Dictionary(uniqueKeysWithValues:
+            selectedMedia.enumerated().map { ($0.element.shotID, $0.offset) }
+        )
+        let reelEntryByShot = Dictionary(uniqueKeysWithValues:
+            review.reviewReel.entries.map { ($0.shotID, $0) }
+        )
         guard Set(review.findings.map(\.id)).count == review.findings.count else {
             throw SequenceReviewValidationErrorV1.invalidIdentity
         }
@@ -303,8 +322,20 @@ public enum SequenceReviewValidatorV1 {
                   finding.startFrame >= 0, finding.endFrame > finding.startFrame,
                   finding.endFrame <= review.reviewReel.durationFrames,
                   !finding.evidence.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  !finding.provenance.reviewerID.isEmpty else {
+                  !finding.provenance.reviewerID.isEmpty,
+                  finding.severity != .blocking || finding.recommendedAction != .accept else {
                 throw SequenceReviewValidationErrorV1.invalidFinding(finding.id)
+            }
+            if finding.scope == .adjacentPair {
+                guard finding.shotIDs.count == 2,
+                      let first = selectedIndex[finding.shotIDs[0]],
+                      let second = selectedIndex[finding.shotIDs[1]],
+                      second == first + 1,
+                      let cut = reelEntryByShot[finding.shotIDs[1]]?.reelStartFrame,
+                      finding.startFrame <= cut,
+                      finding.endFrame > cut else {
+                    throw SequenceReviewValidationErrorV1.invalidFinding(finding.id)
+                }
             }
             try validate(provenance: finding.provenance)
             if finding.provenance.kind == .deterministicEngine,
@@ -322,21 +353,21 @@ public enum SequenceReviewValidatorV1 {
               reel.entries.map(\.shotID) == selectedMedia.map(\.shotID) else {
             throw SequenceReviewValidationErrorV1.invalidReel
         }
-        var expectedStart = 0
+        var previousEnd = 0
         for (entry, selected) in zip(reel.entries, selectedMedia) {
             guard entry.shotID == selected.shotID,
                   entry.sourcePath == selected.sourcePath,
                   entry.sourceSHA256 == selected.sourceSHA256,
                   entry.sourceStartFrame == selected.sourceStartFrame,
                   entry.sourceEndFrame == selected.sourceEndFrame,
-                  entry.reelStartFrame == expectedStart,
+                  entry.reelStartFrame >= previousEnd,
                   entry.reelEndFrame > entry.reelStartFrame,
                   entry.reelEndFrame - entry.reelStartFrame == entry.sourceEndFrame - entry.sourceStartFrame else {
                 throw SequenceReviewValidationErrorV1.invalidReel
             }
-            expectedStart = entry.reelEndFrame
+            previousEnd = entry.reelEndFrame
         }
-        guard expectedStart == reel.durationFrames else {
+        guard previousEnd == reel.durationFrames else {
             throw SequenceReviewValidationErrorV1.invalidReel
         }
     }

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NexGenVideo — Sequence review</title>
+  <style>
+    :root { color-scheme: dark; font: 13px -apple-system, BlinkMacSystemFont, sans-serif; }
+    body { margin: 0; background: #171717; color: #f4f4f4; }
+    main { width: 430px; min-height: 720px; padding: 16px; box-sizing: border-box; }
+    h1 { margin: 0 0 4px; font-size: 15px; }
+    p { margin: 0 0 14px; color: #aaa; line-height: 1.4; }
+    .reel { aspect-ratio: 16/9; display: grid; place-items: center; background: #050505;
+      border: 1px solid #393939; border-radius: 8px; margin-bottom: 14px; }
+    .proof, .finding { padding: 12px; background: #202020; border: 1px solid #383838;
+      border-radius: 8px; margin-bottom: 10px; }
+    .proof b { display: block; margin-bottom: 7px; }
+    label { display: block; margin: 7px 0; }
+    input[type=text], select { width: 100%; box-sizing: border-box; color: #eee; background: #161616;
+      border: 1px solid #444; border-radius: 6px; padding: 7px; margin-top: 5px; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    button { border: 0; border-radius: 7px; padding: 8px 12px; color: white; background: #d83c68; }
+    button.secondary { color: #ddd; background: #333; }
+    footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Sequence review</h1>
+  <p>The reel is generated from the exact selected sources, trims and cut order. Changing any bound byte makes this review stale.</p>
+  <div class="reel">Canonical review reel · 00:34:12</div>
+  <section class="proof">
+    <b>Playback checks</b>
+    <label><input type="checkbox"> I reviewed every adjacent cut</label>
+    <label><input type="checkbox"> I watched the complete reel with audio</label>
+  </section>
+  <section class="finding">
+    <b>Add finding</b>
+    <div class="row">
+      <label>Scope<select><option>Adjacent pair</option><option>Whole playback</option></select></label>
+      <label>Category<select><option>State and props</option><option>Screen direction</option><option>Timing and pacing</option><option>Audio</option></select></label>
+    </div>
+    <label>Shots<input type="text" value="S012, S013"></label>
+    <div class="row"><label>First frame<input type="text" value="287"></label><label>End frame<input type="text" value="319"></label></div>
+    <label>Observed evidence<input type="text" value="Cup changes hands across the cut"></label>
+    <label>Action<select><option>Local repair</option><option>Reroll</option><option>Rescue</option><option>Rewind</option></select></label>
+    <button class="secondary">Add finding</button>
+  </section>
+  <footer><button class="secondary">Rebuild reel</button><button>Record review</button></footer>
+</main>
+</body>
+</html>
