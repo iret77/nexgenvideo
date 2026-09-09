@@ -392,8 +392,7 @@ master, but render sheets in an illustrated style (see the bible phase).
 (There is no solution (b) — the labels (a)/(c) are kept as in the
 original registry.)
 
-**Mandatory conditions for workaround (c)** (the user animates every
-still-only shot manually in the NLE, hence strict rules):
+**Mandatory conditions for workaround (c):**
 
 1. **User approval is mandatory.** The skill must **never
    unilaterally** switch a shot to still-only. Before every proposal,
@@ -416,11 +415,15 @@ still-only shot manually in the NLE, hence strict rules):
    "standing still", "sitting", "leaning against …", "looking at …".
    Motion is invented by the Ken Burns cut, not by the model.
 
-**Markers in the shot** (NOT optional):
-- `Shot.notes` must contain `still_only_approved: <justification + user
-  quote>` as soon as (c) is chosen. The render phase skips still-only
-  shots; the user produces the still via `generate_image` and animates it
-  in the NLE.
+**Canonical execution contract:** after the user's decision, write this
+shot's execution input with `generation_requirement.modality_id=image`
+and the sole `mode_id=timeline_animated_still`. Keep
+`source_mode=generated`, use `keyframe_strategy=start`, disable chaining
+and every video core input, and keep output audio false. The approval view
+shows “animated still” for that shot. Frames generates and audits the
+image; Render reuses those exact bytes without calling a video provider;
+timeline assembly applies the deterministic Ken Burns zoom and records its
+proof.
 
 **NOT recommended:**
 
@@ -613,9 +616,9 @@ not reflexively write pose+vector into figure-less shots.
   token linter sees. The mandatory test-shot-before-batch process is
   defined in the render phase (`phases/render.md`) — do not
   promise the user a safe batch from a clean linter (Rule 3).
-- **Still-only workaround (c)** → never without explicit user approval
+- **Animated-still delivery (c)** → never without explicit user approval
   via `show_dialog`; minimum deployment; medium restriction; rest
-  positions; `still_only_approved:` marker in `Shot.notes` (Rule 3).
+  positions; encode the image delivery mode in the execution plan (Rule 3).
 - **Out of scope for this phase:**
   - No frame rendering (that is the frame agent's job).
   - No video render calls (`generate_video`).

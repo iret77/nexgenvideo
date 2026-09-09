@@ -137,32 +137,34 @@ public enum MusicvideoChecks {
 
     private static let motionTokensPattern = #"\b(running|runs|ran|flying|flies|flew|leaping|leaps|leapt|jumping|jumps|jumped|falling|falls|fell|mid[\s-]?stride|sprinting|sprints|dashing|dashes|galloping|gallops|rushing|rushes|rushed|dancing|dances|danced|twirling|twirls|twirled|twisting|twists|twisted|spinning|spins|spun|skipping|skips|skipped|swinging|swings|swung|diving|dives|dove)\b"#
 
-    /// Still-only discipline. Port of `sanity/checks/still_only_discipline.py`:
-    ///  - STILL_ONLY_FORBIDDEN_LIVE_ACTION_WITH_CHARS (error): the still-only workaround is used on a
-    ///    live-action shot that has characters.
-    ///  - STILL_ONLY_MOTION_TOKEN (warn): a still-only shot's prompt still describes motion (unless
-    ///    `still_only_motion_ok:` escapes it).
     public static let stillOnlyDisciplineCheck: SanityCheck = { ctx in
         var out: [Finding] = []
         let liveAction: Set<String> = ["live_action_realistic", "live_action_stylized"]
         let vm = ctx.brief?.visualMedium.rawValue
-        for shot in ctx.shotlist.shots {
-            let notes = shot.notes ?? ""
-            guard notes.range(of: #"\bstill_only_approved\s*:"#,
-                              options: [.regularExpression, .caseInsensitive]) != nil else { continue }
+        let stillShotIDs: Set<String>
+        if let rootPath = ctx.extra?["data_root"], !rootPath.isEmpty {
+            let url = URL(fileURLWithPath: rootPath)
+                .appendingPathComponent(PipelineLayout.executionPlanFile)
+            if let data = try? Data(contentsOf: url),
+               let plan = try? ExecutionPlanCanonicalCodec.decodePlan(data) {
+                stillShotIDs = ShotDeliveryModeResolverV1.stillShotIDs(in: plan)
+            } else {
+                stillShotIDs = []
+            }
+        } else {
+            stillShotIDs = []
+        }
+        for shot in ctx.shotlist.shots where stillShotIDs.contains(shot.id) {
             if let vm, liveAction.contains(vm), !shot.characterRefs.isEmpty {
                 out.append(Finding(level: .error, code: "STILL_ONLY_FORBIDDEN_LIVE_ACTION_WITH_CHARS",
                     shotId: shot.id,
-                    message: "shot \(shot.id): the still-only workaround is forbidden for live-action shots "
+                    message: "shot \(shot.id): animated still delivery is forbidden for live-action shots "
                         + "with characters."))
             }
-            let motionOK = notes.range(of: #"\bstill_only_motion_ok\s*:"#,
-                                       options: [.regularExpression, .caseInsensitive]) != nil
-            if !motionOK,
-               shot.visualPrompt.range(of: motionTokensPattern,
+            if shot.visualPrompt.range(of: motionTokensPattern,
                                        options: [.regularExpression, .caseInsensitive]) != nil {
                 out.append(Finding(level: .warn, code: "STILL_ONLY_MOTION_TOKEN", shotId: shot.id,
-                    message: "shot \(shot.id): a still-only shot describes motion — still-only frames must "
+                    message: "shot \(shot.id): an animated still describes subject motion — its frame must "
                         + "show rest positions."))
             }
         }

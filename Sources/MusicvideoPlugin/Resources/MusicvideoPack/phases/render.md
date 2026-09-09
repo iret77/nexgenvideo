@@ -385,10 +385,9 @@ the cut with the song over it.
 ### 11. Reporting after R1/R2
 
 Explicitly list to the user, at the end: which shots rendered, which
-failed, total spend (`estimate_cost`), and any still-only shots (marked
-`still_only_approved:` in `Shot.notes`) — the user produces those stills
-via `generate_image` and animates them on the timeline (Ken Burns /
-pan-zoom).
+failed, total spend (`estimate_cost`), and any shots delivered as
+`timeline_animated_still`. Those reuse their exact accepted Frames image;
+`assemble_timeline` applies and records the deterministic Ken Burns zoom.
 
 ## Mandatory rules
 
@@ -398,15 +397,20 @@ pan-zoom).
   expected frame is a hard stop, not a fallback.
 - Videos are never presented bare for approval: spec block + anchor
   frames + clip, always together (step 8).
-- The render loop is driven by `next_render_shot` →
-  build prompt → `generate_video` → `record_render`, repeated until
-  `done`. `done` means current file hash plus generation provenance, not
-  merely `status=rendered`. Budget is checked via `estimate_cost` after
-  every shot; the terminal gate is `render` (closed after the final pass)
-  via `approve_gate`.
+- The render loop is driven by `next_render_shot`. For
+  `delivery_mode=provider_video`, build the prompt, call `generate_video`,
+  then `record_render`. For `delivery_mode=timeline_animated_still`, do
+  not call a video provider; pass the returned exact `output_media_ref`
+  straight to `record_render`. Repeat until `done`, then call
+  `assemble_timeline`. `done` means current file hash plus generation
+  provenance, not merely `status=rendered`. Budget is checked via
+  `estimate_cost` after every paid generation; the terminal gate is
+  `render` via `approve_gate`.
 - **What you do NOT do:**
-  - No final cut. The user does the editing on the host timeline.
-  - No audio rendering (clips come mute). The user lays the song over it.
+  - No unplanned editorial changes. `assemble_timeline` executes the
+    approved placements and deterministic still motion.
+  - No generated audio (video clips come mute); assembly places the song
+    as the sync anchor.
   - No shotlist changes (that is the shotlist agent's job).
   - No shell calls. `record_render` performs durable registration and
     the host extracts any chain-continuity frame it needs.
@@ -427,15 +431,15 @@ pan-zoom).
   `phases/shotlist.md` rule 3, call
   `rewind(target_phase="shotlist")`, rewrite and re-approve the
   dependent chain, then re-run the test shot (step 4). If a single shot
-  still will not pass: still-only
-  workaround (the user animates a `generate_image` still on the timeline).
+  still will not pass: rewind to Shot List and propose
+  `timeline_animated_still` as an explicit delivery decision.
 - **Generation unavailable** (model missing from `list_models`, or
   `loaded=false`): surface it; keys/credits are bound in the
   host, never a shell command.
 - **Shotlist drift** (fewer shots or changed shot IDs versus the
   manifest): warn the user before rendering.
 
-### Still-only workaround (binding)
+### Animated-still delivery (binding)
 
 If a single shot will not pass the output filter despite everything, the
 user can decide to have it **animated as a still image on the timeline**
@@ -451,14 +455,17 @@ instead of as a video. Strict discipline (same as shotlist rule 3):
    "running", "flying", "leaping", "jumping", "falling"). Motion comes
    from the Ken Burns cut, not the model.
 
-**Marker:** `Shot.notes` contains `still_only_approved: <justification +
-user quote>`. The render loop skips this shot (no `generate_video`); the
-user generates the still via the normal `compile_prompt` →
-`generate_image` path and animates it on the host timeline. Estimate and
-budget guard exclude the shot.
+**Canonical contract:** the approved execution-plan shot has
+`generation_requirement.modality_id=image` and the sole mode id
+`timeline_animated_still`. It remains `source_mode=generated`, uses
+`keyframe_strategy=start`, and cannot carry video inputs. Frames generates
+and audits the image. Render records that exact image without a video
+provider call or additional render cost. `assemble_timeline` adds the
+deterministic zoom and persists `assembly.json`; the Render gate verifies
+the exact image hash, placement, duration, and motion proof.
 
-**Reporting:** see step 11 — list the still-only shots at the end so the
-user knows which stills to animate.
+**Reporting:** see step 11 — list every animated-still delivery and its
+verified timeline placement.
 
 ## Independent generation batches
 

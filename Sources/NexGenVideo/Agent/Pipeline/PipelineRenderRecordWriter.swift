@@ -109,6 +109,7 @@ enum PipelineRenderRecordWriter {
         reconciledLastFrames: [String: RenderLastFrameProofV1]? = nil,
         completedTake: PipelineRenderTakeStore.Completed? = nil,
         additionalArtifacts: [String: Data] = [:],
+        stillShotIDs: Set<String> = [],
         expectedPublicationTransactionID: String?,
         dataRoot: URL,
         declaredPack: String? = nil,
@@ -197,6 +198,7 @@ enum PipelineRenderRecordWriter {
             framesManifest: framesManifest,
             lastFrames: lastFrames,
             preparedLastFrame: preparedLastFrame,
+            stillShotIDs: stillShotIDs,
             dataRoot: dataRoot
         )
 
@@ -210,6 +212,7 @@ enum PipelineRenderRecordWriter {
             routingProof: routingProof,
             framesManifest: framesManifest,
             lastFrames: lastFrames,
+            stillShotIDs: stillShotIDs,
             dataRoot: dataRoot
         )
         let committedAt = currentTimestamp()
@@ -254,7 +257,9 @@ enum PipelineRenderRecordWriter {
             prettyPrinted: true
         )
         var relativeData: [(String, Data, FailurePoint)] = []
-        if manifest.phase != "frames", let replacingShotID {
+        if manifest.phase != "frames",
+           let replacingShotID,
+           !stillShotIDs.contains(replacingShotID) {
             let take = try PipelineRenderTakeStore.prepare(completed: completedTake,
                 provenance: shotProvenance[replacingShotID]?.artifact,
                 shotProof: shotProvenance[replacingShotID]?.proof,
@@ -609,6 +614,10 @@ enum PipelineRenderRecordWriter {
             )
         }
 
+        let stillShotIDs = try currentStillShotIDs(
+            dataRoot: dataRoot,
+            phase: phase
+        )
         guard let currentProof = snapshot.proof,
               let currentRoutingProof = snapshot.routingProof,
               currentProof.project == shotlist.project,
@@ -633,7 +642,7 @@ enum PipelineRenderRecordWriter {
         })
         proof.entries = proof.entries.filter { rendered.contains($0.key) }
         routingProof.entries = routingProof.entries.filter {
-            rendered.contains($0.key)
+            rendered.subtracting(stillShotIDs).contains($0.key)
         }
         let lastFrames = snapshot.publication?.lastFrames.filter {
             rendered.contains($0.key)
@@ -669,6 +678,7 @@ enum PipelineRenderRecordWriter {
             replacingShotID: nil,
             preparedLastFrame: nil,
             reconciledLastFrames: lastFrames,
+            stillShotIDs: stillShotIDs,
             expectedPublicationTransactionID: snapshot.publication?.transactionID,
             dataRoot: dataRoot,
             declaredPack: declaredPack,
@@ -686,6 +696,21 @@ enum PipelineRenderRecordWriter {
             declaredPack: declaredPack,
             declaredBinding: declaredBinding
         )
+    }
+
+    private static func currentStillShotIDs(
+        dataRoot: URL,
+        phase: String
+    ) throws -> Set<String> {
+        guard phase != "frames" else { return [] }
+        let planURL = PipelineLayout.url(
+            PipelineLayout.executionPlanFile,
+            in: dataRoot
+        )
+        guard FileManager.default.fileExists(atPath: planURL.path) else {
+            return []
+        }
+        return try PipelineShotDelivery.stillShotIDs(dataRoot: dataRoot)
     }
 
     @discardableResult
@@ -874,6 +899,7 @@ enum PipelineRenderRecordWriter {
         framesManifest: FramesManifest?,
         lastFrames: [String: RenderLastFrameProofV1],
         preparedLastFrame: PreparedLastFrame?,
+        stillShotIDs: Set<String>,
         dataRoot: URL
     ) throws {
         guard manifest.schema_ == renderManifestSchemaVersion,
@@ -935,8 +961,14 @@ enum PipelineRenderRecordWriter {
             let renderedShotIDs = Set(manifest.entries.compactMap { item in
                 item.value.status == .rendered ? item.key : nil
             })
+            guard stillShotIDs.isSubset(of: renderedShotIDs) else {
+                throw PipelineRenderRecordError.invalidArtifact(
+                    "Still-delivery identities must name rendered shots."
+                )
+            }
             guard Set(proof.entries.keys) == renderedShotIDs,
-                  Set(routingProof.entries.keys) == renderedShotIDs else {
+                  Set(routingProof.entries.keys)
+                    == renderedShotIDs.subtracting(stillShotIDs) else {
                 throw PipelineRenderRecordError.invalidArtifact(
                     "Rendered shots, render proofs, and routing proofs must have exact coverage."
                 )
@@ -970,6 +1002,21 @@ enum PipelineRenderRecordWriter {
                         input.sha256,
                         at: input.path,
                         dataRoot: dataRoot
+                    )
+                }
+            }
+            for shotID in stillShotIDs {
+                guard let entryProof = proof.entries[shotID],
+                      let url = try? ProjectLocalFile.requireHash(
+                          entryProof.outputSha256,
+                          at: entryProof.output,
+                          dataRoot: dataRoot
+                      ),
+                      ProjectMediaExtensions.images.contains(
+                          url.pathExtension.lowercased()
+                      ) else {
+                    throw PipelineRenderRecordError.invalidArtifact(
+                        "Still delivery for \(shotID) is not an exact project image."
                     )
                 }
             }
@@ -1017,7 +1064,10 @@ enum PipelineRenderRecordWriter {
                   frameProof.sha256.allSatisfy(\.isHexDigit),
                   frameProof.sourceOutputSHA256.count == 64,
                   frameProof.sourceOutputSHA256.allSatisfy(\.isHexDigit),
-                  frameProof.extractor == RenderLastFrameProofV1.extractorID,
+                  [
+                    RenderLastFrameProofV1.extractorID,
+                    RenderLastFrameProofV1.stillImagePassthroughID,
+                  ].contains(frameProof.extractor),
                   !frameProof.extractedAt.trimmingCharacters(
                       in: .whitespacesAndNewlines
                   ).isEmpty,
@@ -1128,12 +1178,26 @@ enum PipelineRenderRecordWriter {
         routingProof: PipelineRenderRoutingProofManifestV1?,
         framesManifest: FramesManifest?,
         lastFrames: [String: RenderLastFrameProofV1],
+        stillShotIDs: Set<String>,
         dataRoot: URL
     ) throws -> [String: EncodedShotProvenance] {
         var result: [String: EncodedShotProvenance] = [:]
         for (shotID, entry) in manifest.entries where entry.status == .rendered {
-            let routingData = try routingProof?.entries[shotID].map {
-                try encode($0, prettyPrinted: false)
+            let routingData: Data?
+            if let routing = routingProof?.entries[shotID] {
+                routingData = try encode(routing, prettyPrinted: false)
+            } else if stillShotIDs.contains(shotID),
+                      let renderProof = proof?.entries[shotID] {
+                routingData = try encode(
+                    StillImageDeliveryProofV1(
+                        shotID: shotID,
+                        outputPath: renderProof.output,
+                        outputSHA256: renderProof.outputSha256
+                    ),
+                    prettyPrinted: false
+                )
+            } else {
+                routingData = nil
             }
             let shotProof = RenderShotProvenanceProofV1(
                 project: manifest.project,
@@ -1323,6 +1387,10 @@ enum PipelineRenderRecordWriter {
             routingProof: routingProof,
             framesManifest: framesManifest,
             lastFrames: mainPublication.lastFrames,
+            stillShotIDs: try currentStillShotIDs(
+                dataRoot: dataRoot,
+                phase: mainPublication.phase
+            ),
             dataRoot: dataRoot
         )
         guard publication.schema == RenderShotProvenancePublicationV1.schemaVersion,
@@ -1485,6 +1553,10 @@ enum PipelineRenderRecordWriter {
         let framesManifest = try publication.framesManifest.map {
             try decoder.decode(FramesManifest.self, from: dataByPath[$0.path]!)
         }
+        let stillShotIDs = try currentStillShotIDs(
+            dataRoot: dataRoot,
+            phase: publication.phase
+        )
         guard manifest.project == publication.project,
               manifest.phase == publication.phase else {
             throw PipelineRenderRecordError.invalidArtifact(
@@ -1498,6 +1570,7 @@ enum PipelineRenderRecordWriter {
             framesManifest: framesManifest,
             lastFrames: publication.lastFrames,
             preparedLastFrame: nil,
+            stillShotIDs: stillShotIDs,
             dataRoot: dataRoot
         )
         _ = try verifyShotProvenancePublicationIfPresent(

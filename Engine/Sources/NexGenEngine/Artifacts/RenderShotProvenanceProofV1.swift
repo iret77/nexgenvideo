@@ -168,8 +168,6 @@ public enum RenderShotProvenanceValidatorV1 {
 
         guard proof.frames == nil,
               let renderProof = proof.renderProofEntry,
-              let routingProof = proof.routingProofEntry,
-              !routingProof.isEmpty,
               renderProof.shotId == proof.shotID,
               renderProof.output == proof.renderEntry.output,
               validSHA256(renderProof.outputSha256),
@@ -180,6 +178,23 @@ public enum RenderShotProvenanceValidatorV1 {
               nonEmpty(renderProof.providerPrompt),
               nonEmpty(renderProof.generationModel) else {
             throw RenderShotProvenanceValidationErrorV1.invalidRenderProof
+        }
+        if let routingProof = proof.routingProofEntry,
+           let still = try? JSONDecoder().decode(
+               StillImageDeliveryProofV1.self,
+               from: routingProof
+           ) {
+            guard still.schema == StillImageDeliveryProofV1.schemaVersion,
+                  still.shotID == proof.shotID,
+                  still.outputPath == renderProof.output,
+                  still.outputSHA256 == renderProof.outputSha256 else {
+                throw RenderShotProvenanceValidationErrorV1.invalidRenderProof
+            }
+        } else {
+            guard let routingProof = proof.routingProofEntry,
+                  !routingProof.isEmpty else {
+                throw RenderShotProvenanceValidationErrorV1.invalidRenderProof
+            }
         }
         let directInputs = [
             renderProof.sourceVideo,
@@ -207,7 +222,10 @@ public enum RenderShotProvenanceValidatorV1 {
                       path: lastFrame.path,
                       sha256: lastFrame.sha256
                   )),
-                  lastFrame.extractor == RenderLastFrameProofV1.extractorID,
+                  [
+                    RenderLastFrameProofV1.extractorID,
+                    RenderLastFrameProofV1.stillImagePassthroughID,
+                  ].contains(lastFrame.extractor),
                   nonEmpty(lastFrame.extractedAt) else {
                 throw RenderShotProvenanceValidationErrorV1.invalidLastFrameProof
             }

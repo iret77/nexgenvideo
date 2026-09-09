@@ -358,14 +358,34 @@ enum PipelineExecutionPlanComposer {
     ) throws -> GenerationRequirementV1? {
         guard input.sourceMode != .imported else { return nil }
         guard let supplied = input.generationRequirement,
-              let coreInputs = input.coreInputs,
-              supplied.modalityID == .video else {
+              let coreInputs = input.coreInputs else {
             throw PipelineExecutionPlanComposerError.unsupportedRequirement(shot.id)
         }
-        let requiresFirstFrame = shot.chainWithPreviousEnd
-            || shot.keyframeStrategy == .start
-            || shot.keyframeStrategy == .startEnd
-        let requiresLastFrame = shot.keyframeStrategy == .startEnd
+        let isAnimatedStill = supplied.modalityID == .image
+            && supplied.modeIDs
+                == [ShotDeliveryModeResolverV1.timelineAnimatedStillModeID]
+        guard supplied.modalityID == .video || isAnimatedStill else {
+            throw PipelineExecutionPlanComposerError.unsupportedRequirement(shot.id)
+        }
+        if isAnimatedStill {
+            guard shot.sourceMode == .generated,
+                  shot.keyframeStrategy == .start,
+                  !shot.chainWithPreviousEnd,
+                  !supplied.requiresOutputAudio,
+                  coreInputs.sourceVideoModeID == nil,
+                  coreInputs.firstFrameModeID == nil,
+                  coreInputs.lastFrameModeID == nil,
+                  coreInputs.predecessorLastFrameModeID == nil else {
+                throw PipelineExecutionPlanComposerError.invalidCoreInputs(shot.id)
+            }
+        }
+        let requiresFirstFrame = !isAnimatedStill && (
+            shot.chainWithPreviousEnd
+                || shot.keyframeStrategy == .start
+                || shot.keyframeStrategy == .startEnd
+        )
+        let requiresLastFrame = !isAnimatedStill
+            && shot.keyframeStrategy == .startEnd
         let expectedFirst = shot.chainWithPreviousEnd
             ? coreInputs.predecessorLastFrameModeID != nil
                 && coreInputs.firstFrameModeID == nil

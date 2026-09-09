@@ -702,10 +702,13 @@ public enum AssetGraphValidatorV1 {
         ) else {
             return
         }
+        let outputExtension = outputURL.pathExtension.lowercased()
+        let validExtractor = frameProofExtractorMatchesSource(
+            proof.lastFrame?.extractor,
+            sourceExtension: outputExtension
+        )
         guard asset.modality == .image,
-              ProjectMediaExtensions.videos.contains(
-                  outputURL.pathExtension.lowercased()
-              ),
+              validExtractor,
               proof.renderEntry.shotId == sourceShotID,
               proof.renderEntry.phase == proof.phase,
               proof.renderEntry.status == .rendered,
@@ -717,9 +720,22 @@ public enum AssetGraphValidatorV1 {
               frameProof.path == asset.path,
               frameProof.sha256 == asset.sha256,
               frameProof.sourceOutput == proofEntry.output,
-              frameProof.sourceOutputSHA256 == proofEntry.outputSha256,
-              frameProof.extractor == RenderLastFrameProofV1.extractorID else {
+              frameProof.sourceOutputSHA256 == proofEntry.outputSha256 else {
             throw AssetGraphValidationError.invalidProvenance(asset.id)
+        }
+    }
+
+    private static func frameProofExtractorMatchesSource(
+        _ extractor: String?,
+        sourceExtension: String
+    ) -> Bool {
+        switch extractor {
+        case RenderLastFrameProofV1.extractorID:
+            return ProjectMediaExtensions.videos.contains(sourceExtension)
+        case RenderLastFrameProofV1.stillImagePassthroughID:
+            return ProjectMediaExtensions.images.contains(sourceExtension)
+        default:
+            return false
         }
     }
 

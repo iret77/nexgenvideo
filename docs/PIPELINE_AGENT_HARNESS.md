@@ -29,10 +29,10 @@ Packaged phase prose is guidance inside this state machine, never the state mach
 | Treatment | `write_treatment` | versioned treatment plus `treatment/current.md` |
 | Storyboard | `write_storyboard` | versioned storyboard plus `storyboard/current.yaml` |
 | Bible | `write_bible` | `bible/bible.yaml`, generated-asset proof, and referenced files |
-| Shot List | `PipelineShotlistWriter` via `write_shotlist` or native source-mode edit | latest versioned shot list with source-mode-owned production plans |
+| Shot List | `PipelineShotlistWriter` via `write_shotlist` or native source-mode edit | latest versioned shot list, canonical execution plan, and source-mode-owned production plans |
 | Sanity | `run_sanity` | `sanity/report.json` |
 | Frames | `run_phase`, `record_render`, `save_frame_audit` | role-aware Frames manifest, exact images, exact audits |
-| Render | `run_phase`, `record_render` | final render manifest, render-proof sidecar, exact videos |
+| Render | `run_phase`, `record_render`, `assemble_timeline` | final render manifest, render-proof sidecar, exact provider videos or accepted animated stills, and exact timeline assembly proof |
 
 Only these canonical artifact writers may capture fresh phase lineage. Agent and native Shot List
 edits converge on `PipelineShotlistWriter`; neither entry surface may persist or validate a Shot List
@@ -92,9 +92,11 @@ the current phase's capability set is rejected before it can spend money or muta
   render iteration returns that exact plan and its rescue cut.
 - Analysis binds to the exact track hash. Frames bind each required role to its exact image hash,
   compiled provider prompt, generation model, and current vision audit. Render binds each
-  non-imported final shot to its exact video hash, compiled provider prompt, generation model, and the
-  exact current conditioning inputs required by the Shot List: source video, start/end frames, or the
-  deterministic reference-image plan.
+  non-imported final shot to its exact executable delivery, compiled provider prompt, generation
+  model, and the exact current conditioning inputs required by the Shot List. A provider-video
+  delivery binds its video hash and source video, start/end frames, or deterministic reference-image
+  plan. An animated-still delivery binds the exact accepted Frames image, adds no Render generation
+  cost, and binds its deterministic timeline motion and placement.
 - Model-dependent Sanity checks resolve the selected provider/model ID through the active pack's
   versioned capability catalog. Missing, unreadable, schema-mismatched, or unknown capability data
   fails closed; provider aliases for the same concrete model share one capability definition.
@@ -122,8 +124,10 @@ the current phase's capability set is rejected before it can spend money or muta
   remain valid only as `reference_images`.
 - `source_mode=imported` is deliberately outside provider rendering. Therefore empty Frames/Render
   manifests are valid only when the current shot list requires no provider-generated assets.
-- Timeline assembly is optional editing work after renders exist. It neither completes nor re-seals the
-  Render artifact and cannot change the Render gate.
+- Timeline assembly completes the Render artifact. `assemble_timeline` writes the exact clip, source,
+  placement, duration, and motion proof; the Render gate rejects missing, stale, substituted, or
+  incomplete assembly. Provider videos retain their source motion. Animated stills receive the
+  deterministic host-owned motion declared by their execution plan.
 - End-frame audits bind explicit visible character count, positions, gaze, zones and distinct camera
   fields in the canonical execution inputs. Moving cameras require end framing, angle and height;
   static cameras retain their declared constraints unless explicit end values override them. Start

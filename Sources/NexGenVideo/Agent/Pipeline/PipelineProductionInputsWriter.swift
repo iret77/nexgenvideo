@@ -782,7 +782,10 @@ enum PipelineProductionInputsWriter {
               lastFrameProof.phase == phase,
               lastFrameProof.sourceOutput == proofEntry.output,
               lastFrameProof.sourceOutputSHA256 == proofEntry.outputSha256,
-              lastFrameProof.extractor == RenderLastFrameProofV1.extractorID else {
+              [
+                RenderLastFrameProofV1.extractorID,
+                RenderLastFrameProofV1.stillImagePassthroughID,
+              ].contains(lastFrameProof.extractor) else {
             throw PipelineProductionInputsError.invalidArtifact(
                 "The predecessor render for \(shotID) has no exact current proof."
             )

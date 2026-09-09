@@ -146,6 +146,7 @@ enum MusicvideoPipelineLineage {
         } else {
             selectors.append(PipelineLayout.shotlistVersionFile(0))
         }
+        selectors += executionPlanSelectors
         guard phase != "sanity" else { return selectors }
         selectors.append(PipelineLayout.sanityReportFile)
         guard phase != "frames" else { return selectors }
@@ -186,8 +187,10 @@ enum MusicvideoPipelineLineage {
         case "shotlist":
             if let version = latestShotlistVersion(dataRoot: dataRoot) {
                 return [PipelineLayout.shotlistVersionFile(version)]
+                    + executionPlanSelectors
             }
             return [PipelineLayout.shotlistVersionFile(0)]
+                + executionPlanSelectors
         case "sanity":
             return [PipelineLayout.sanityReportFile]
         case "frames":
@@ -204,11 +207,19 @@ enum MusicvideoPipelineLineage {
                 PipelineLayout.renderRoutingProofFile(phase: "final"),
                 RenderRecordPublicationV1.artifactPath(phase: "final"),
                 RenderShotProvenancePublicationV1.artifactPath(phase: "final"),
+                "assembly.json",
             ]
         default:
             return []
         }
     }
+
+    private static let executionPlanSelectors = [
+        PipelineLayout.executionShotInputsFile,
+        PipelineLayout.creativeContextFile,
+        PipelineLayout.executionPlanFile,
+        ExecutionPlanV1.publicationArtifactPath,
+    ]
 
     private static func treatmentSelectors(dataRoot: URL) -> [String] {
         var selectors = [PipelineLayout.treatmentCurrentFile]
