@@ -2651,18 +2651,26 @@ extension ToolExecutor {
 
     func listModels(_ args: [String: Any]) -> ToolResult {
         let filter = args.string("type")
+        let activation = providerActivation()
         var out: [[String: Any]] = []
         if filter == nil || filter == "video" {
-            out += VideoModelConfig.allModels.map { Self.videoModelInfo($0, includeType: true) }
+            out += modelCatalog.video.map {
+                Self.videoModelInfo(
+                    $0,
+                    includeType: true,
+                    catalog: modelCatalog,
+                    activation: activation
+                )
+            }
         }
         if filter == nil || filter == "image" {
-            out += ImageModelConfig.allModels.map { Self.imageModelInfo($0, includeType: true) }
+            out += modelCatalog.image.map { Self.imageModelInfo($0, includeType: true) }
         }
         if filter == nil || filter == "audio" {
-            out += AudioModelConfig.allModels.map { Self.audioModelInfo($0) }
+            out += modelCatalog.audio.map { Self.audioModelInfo($0) }
         }
         if filter == nil || filter == "upscale" {
-            out += UpscaleModelConfig.allModels.map { Self.upscaleModelInfo($0) }
+            out += modelCatalog.upscale.map { Self.upscaleModelInfo($0) }
         }
         // Usable-only (LLM → NGV → Provider; docs concept #159 + the user's final say): the agent
         // sees ONLY models it can actually run — an activated provider services the model AND the
@@ -2672,12 +2680,19 @@ extension ToolExecutor {
         let prefs = ModelPreferences.shared
         out = out.filter { info in
             guard let id = info["id"] as? String else { return false }
-            return prefs.isEnabled(id) && GenerationProvider.canRun(modelId: id)
+            return prefs.isEnabled(id) && ProviderResolver.resolve(
+                bindings: ProviderManifest.bindings(
+                    forModelId: id,
+                    catalog: modelCatalog
+                ),
+                activation: activation,
+                effectiveCost: ProviderManifest.effectiveCost
+            ) != nil
         }
         // Attach each model's curated card (strengths/weaknesses/best-for/rank) so the agent
         // recommends from the CURRENT truth NGV feeds it, not stale training knowledge. Cards are
         // hosted + refreshed without an app release; absent card = no `card` key (still usable).
-        let cards = ModelCatalog.shared.cardsById
+        let cards = modelCatalog.cardsById
         out = out.map { info in
             guard let id = info["id"] as? String, let card = cards[id] else { return info }
             var info = info
@@ -2700,7 +2715,7 @@ extension ToolExecutor {
         }
         var body: [String: Any] = [
             "models": out,
-            "loaded": ModelCatalog.shared.isLoaded,
+            "loaded": modelCatalog.isLoaded,
         ]
         if out.isEmpty {
             body["note"] = "No usable models yet — activate a provider in Settings → Providers "
@@ -2714,10 +2729,11 @@ extension ToolExecutor {
 
     static func videoModelInfo(
         _ m: VideoModelConfig,
-        includeType: Bool = false
+        includeType: Bool = false,
+        catalog: ModelCatalog = .shared,
+        activation: ProviderActivation = .current()
     ) -> [String: Any] {
-        let activation = ProviderActivation.current()
-        let bindings = ProviderManifest.bindings(forModelId: m.id)
+        let bindings = ProviderManifest.bindings(forModelId: m.id, catalog: catalog)
             .filter { binding in
                 guard activation.isActive(binding.provider, binding.transport),
                       binding.kind == .generation,

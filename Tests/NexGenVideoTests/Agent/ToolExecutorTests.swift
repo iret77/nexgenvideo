@@ -17,9 +17,8 @@ final class ToolHarness {
         providerActivation: @escaping () -> ProviderActivation = {
             ProviderActivation.current()
         },
-        productionRouteCandidates: @escaping ProductionRouteCandidateProvider = {
-            ModelCatalog.shared.productionRouteCandidates(activation: $0)
-        }
+        modelCatalog: ModelCatalog = .shared,
+        productionRouteCandidates: ProductionRouteCandidateProvider? = nil
     ) {
         let editor = EditorViewModel()
         editor.timeline = timeline
@@ -28,6 +27,7 @@ final class ToolHarness {
             editor: editor,
             enforceHardGates: enforceHardGates,
             providerActivation: providerActivation,
+            modelCatalog: modelCatalog,
             productionRouteCandidates: productionRouteCandidates
         )
     }
@@ -457,7 +457,7 @@ struct ToolExecutorReadOnlyTests {
     /// App startup loads the catalog; this isolated harness deliberately does not.
 
     @Test func listModelsReturnsWrappedShape() async throws {
-        let h = ToolHarness()
+        let h = ToolHarness(modelCatalog: ModelCatalog())
         let body = try await h.runOK("list_models") as? [String: Any]
         #expect(body?["models"] is [Any])
         #expect(body?["loaded"] is Bool)
@@ -465,13 +465,13 @@ struct ToolExecutorReadOnlyTests {
 
     @Test func listModelsReportsCatalogNotLoadedInTestEnvironment() async throws {
         // Agents must distinguish an unloaded catalog from a loaded catalog with no runnable models.
-        let h = ToolHarness()
+        let h = ToolHarness(modelCatalog: ModelCatalog())
         let body = try await h.runOK("list_models") as? [String: Any]
         #expect(body?["loaded"] as? Bool == false)
     }
 
     @Test func listModelsFilterIsRespectedForAllEntries() async throws {
-        let h = ToolHarness()
+        let h = ToolHarness(modelCatalog: ModelCatalog())
         let body = try await h.runOK("list_models", args: ["type": "image"]) as? [String: Any]
         let models = body?["models"] as? [[String: Any]]
         for m in models ?? [] {

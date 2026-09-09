@@ -442,7 +442,8 @@ struct PromptComposerShotTests {
 
     @Test("director pattern contributes lighting without overriding the shot camera")
     func patternDoesNotInjectCameraVocabulary() async throws {
-        ModelCatalog.shared.load(entries: ModelCatalog.launchEntries)
+        let modelCatalog = ModelCatalog()
+        modelCatalog.load(entries: ModelCatalog.launchEntries)
         let shot = try Self.shot(height: .eyeLevel, framing: .full)
         let brief = try Brief(
             project: "prompt-test",
@@ -474,7 +475,8 @@ struct PromptComposerShotTests {
             modality: .image,
             editor: editor,
             shotId: shot.id,
-            shot: PromptComposer.ShotProjection(shot)
+            shot: PromptComposer.ShotProjection(shot),
+            modelCatalog: modelCatalog
         ).text
 
         #expect(prompt.contains("fully pre-lit set with constant exposure"))

@@ -163,7 +163,8 @@ enum PromptCompiler {
         style: String = "",
         shotId: String = "none",
         shot: PromptComposer.ShotProjection? = nil,
-        preserveCompositionOverride: Bool? = nil
+        preserveCompositionOverride: Bool? = nil,
+        modelCatalog: ModelCatalog = .shared
     ) async throws -> CompiledPrompt {
         guard shotId == "none" || shot != nil else {
             throw ToolError(
@@ -177,7 +178,8 @@ enum PromptCompiler {
             editor: editor,
             shotId: shotId,
             modality: modality,
-            modelId: modelId
+            modelId: modelId,
+            modelCatalog: modelCatalog
         )
         let videoContext: PromptComposer.VideoContext?
         let imageContext: PromptComposer.ImageContext?
@@ -196,7 +198,8 @@ enum PromptCompiler {
            let plan = try currentFrameReferencePlan(
                editor: editor,
                shotId: shotId,
-               modelId: modelId
+               modelId: modelId,
+               modelCatalog: modelCatalog
            ) {
             guard plan.fingerprint == binding.frameReferencePlanSHA256 else {
                 throw ToolError(
@@ -210,7 +213,7 @@ enum PromptCompiler {
             imageContext = nil
         }
         let preserveComposition = preserveCompositionOverride
-            ?? preservesComposition(modelId: modelId)
+            ?? preservesComposition(modelId: modelId, modelCatalog: modelCatalog)
         let composed = try await PromptComposer.compose(
             intent: intent,
             modality: modality,
@@ -230,7 +233,8 @@ enum PromptCompiler {
             editor: editor,
             shotId: shotId,
             modality: modality,
-            modelId: modelId
+            modelId: modelId,
+            modelCatalog: modelCatalog
         ) == binding else {
             throw ToolError(
                 "The project direction changed during prompt compilation. Compile the current shot again."
@@ -274,7 +278,8 @@ enum PromptCompiler {
         for modelId: String,
         editor: EditorViewModel?,
         allowCurrentRoutingChange: Bool = false,
-        preserveCompositionOverride: Bool? = nil
+        preserveCompositionOverride: Bool? = nil,
+        modelCatalog: ModelCatalog = .shared
     ) async throws -> CompiledPrompt {
         guard let recipe = recipesByToken[token],
               validate(
@@ -289,7 +294,8 @@ enum PromptCompiler {
             editor: editor,
             shotId: recipe.binding.shotId,
             modality: recipe.modality,
-            modelId: recipe.modelId
+            modelId: recipe.modelId,
+            modelCatalog: modelCatalog
         )
         guard current.matchesCurrentState(of: recipe.binding)
                 || (allowCurrentRoutingChange
@@ -308,7 +314,8 @@ enum PromptCompiler {
             style: recipe.style,
             shotId: recipe.binding.shotId,
             shot: try currentShotProjection(editor: editor, shotId: recipe.binding.shotId),
-            preserveCompositionOverride: preserveCompositionOverride
+            preserveCompositionOverride: preserveCompositionOverride,
+            modelCatalog: modelCatalog
         )
     }
 
@@ -353,9 +360,15 @@ enum PromptCompiler {
     /// Apply preservation during the initial compile only when every runnable exact endpoint agrees.
     /// A mixed logical model is normalized again against the exact approved endpoint before submission.
     @MainActor
-    static func preservesComposition(modelId: String) -> Bool {
+    static func preservesComposition(
+        modelId: String,
+        modelCatalog: ModelCatalog = .shared
+    ) -> Bool {
         preservesComposition(
-            bindings: ProviderManifest.bindings(forModelId: modelId),
+            bindings: ProviderManifest.bindings(
+                forModelId: modelId,
+                catalog: modelCatalog
+            ),
             activation: .current()
         )
     }
@@ -451,7 +464,8 @@ enum PromptCompiler {
         editor: EditorViewModel?,
         shotId: String,
         modality: PromptComposer.Modality,
-        modelId: String? = nil
+        modelId: String? = nil,
+        modelCatalog: ModelCatalog = .shared
     ) async throws -> PromptBinding {
         let root = editor?.workingRoot.flatMap {
             DataRootResolver.dataRoot(of: $0)
@@ -533,7 +547,8 @@ enum PromptCompiler {
             framePlan = try currentFrameReferencePlan(
                 editor: editor,
                 shotId: shotId,
-                modelId: modelId
+                modelId: modelId,
+                modelCatalog: modelCatalog
             )
         } else {
             framePlan = nil
@@ -552,7 +567,8 @@ enum PromptCompiler {
     static func currentFrameReferencePlan(
         editor: EditorViewModel?,
         shotId: String,
-        modelId: String
+        modelId: String,
+        modelCatalog: ModelCatalog = .shared
     ) throws -> FrameReferencePlanV1? {
         guard shotId != "none",
               let editor,
@@ -574,7 +590,7 @@ enum PromptCompiler {
         guard let provider = registry.frameReferencePlanProvider else {
             return nil
         }
-        guard let model = ImageModelConfig.allModels.first(where: {
+        guard let model = modelCatalog.image.first(where: {
             $0.id == modelId
         }) else {
             throw ToolError("The selected frame model '\(modelId)' is unavailable.")
