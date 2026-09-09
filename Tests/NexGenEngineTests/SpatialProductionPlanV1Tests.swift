@@ -254,7 +254,7 @@ struct SpatialProductionPlanV1Tests {
         )
     }
 
-    private func hash(_ value: Character) -> String {
-        String(repeating: String(value), count: 64)
+    private func hash(_ value: String) -> String {
+        String(repeating: value, count: 64)
     }
 }

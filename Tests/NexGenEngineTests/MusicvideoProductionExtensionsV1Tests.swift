@@ -55,6 +55,35 @@ struct MusicvideoProductionExtensionsV1Tests {
                 draft(performanceSegments: [invalid])
             )
         }
+
+        let duet = MusicPerformanceSegmentDraftV1(
+            id: "duet",
+            shotIDs: ["s001"],
+            sourceStartSample: 0,
+            sourceEndSample: 96_000,
+            sampleRate: 48_000,
+            timelineStartSeconds: 4,
+            purpose: .performedSong,
+            performerIDs: ["lead", "guest"],
+            audibleVoiceIDs: ["lead-voice", "guest-voice"],
+            mouthOwnership: [
+                MusicMouthOwnershipV1(
+                    performerID: "lead",
+                    voiceID: "lead-voice",
+                    timelineStartSeconds: 4,
+                    timelineEndSeconds: 6
+                ),
+                MusicMouthOwnershipV1(
+                    performerID: "guest",
+                    voiceID: "guest-voice",
+                    timelineStartSeconds: 4,
+                    timelineEndSeconds: 6
+                ),
+            ],
+            routeInputRoleID: "source-song-segment",
+            phraseBoundaryEvidence: "Both approved voices overlap for the complete duet phrase."
+        )
+        try MusicvideoProductionValidatorV1.validate(draft(performanceSegments: [duet]))
     }
 
     @Test("dance masters prove full-body floor contact while close-ups remain usable inserts")

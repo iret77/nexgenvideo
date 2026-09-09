@@ -319,6 +319,8 @@ public struct MusicVisualArcV1: Codable, Sendable, Equatable {
     public let concept: String
     public let motifs: [MusicArcMotifV1]
     public let sections: [MusicArcSectionV1]
+    public let storyboardPath: String
+    public let storyboardSHA256: String
 
     private enum CodingKeys: String, CodingKey {
         case schema
@@ -332,6 +334,8 @@ public struct MusicVisualArcV1: Codable, Sendable, Equatable {
         case concept
         case motifs
         case sections
+        case storyboardPath = "storyboard_path"
+        case storyboardSHA256 = "storyboard_sha256"
     }
 
     public init(
@@ -344,7 +348,9 @@ public struct MusicVisualArcV1: Codable, Sendable, Equatable {
         analysisSHA256: String,
         concept: String,
         motifs: [MusicArcMotifV1],
-        sections: [MusicArcSectionV1]
+        sections: [MusicArcSectionV1],
+        storyboardPath: String,
+        storyboardSHA256: String
     ) {
         schema = Self.schemaVersion
         self.projectID = projectID
@@ -357,6 +363,8 @@ public struct MusicVisualArcV1: Codable, Sendable, Equatable {
         self.concept = concept
         self.motifs = motifs
         self.sections = sections
+        self.storyboardPath = storyboardPath
+        self.storyboardSHA256 = storyboardSHA256
     }
 }
 
@@ -776,9 +784,19 @@ public enum MusicvideoProductionValidatorV1 {
                     throw MusicvideoProductionValidationErrorV1.mouthOwnershipMismatch(segment.id)
                 }
             }
-            if segment.purpose == .performedSong,
-               segment.mouthOwnership.isEmpty || performers.isEmpty || voices.isEmpty {
-                throw MusicvideoProductionValidationErrorV1.mouthOwnershipMismatch(segment.id)
+            if segment.purpose == .performedSong {
+                let ownershipVoices = Set(segment.mouthOwnership.map(\.voiceID))
+                let oneMouthPerVoice = Dictionary(
+                    grouping: segment.mouthOwnership,
+                    by: \.voiceID
+                ).values.allSatisfy { Set($0.map(\.performerID)).count == 1 }
+                guard !segment.mouthOwnership.isEmpty,
+                      !performers.isEmpty,
+                      !voices.isEmpty,
+                      ownershipVoices == voices,
+                      oneMouthPerVoice else {
+                    throw MusicvideoProductionValidationErrorV1.mouthOwnershipMismatch(segment.id)
+                }
             }
         }
         guard draft.finalMix.originalSongTimelineStartSeconds == 0,

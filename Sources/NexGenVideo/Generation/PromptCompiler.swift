@@ -689,13 +689,11 @@ enum PromptCompiler {
             )
         }
         let audioLabel = references.first { $0.role == .audioTiming }?.providerLabel
-        let musicvideoDirectives = try audioLabel.map {
-            try PipelineMusicvideoProductionWriter.promptDirectives(
-                for: shotId,
-                audioLabel: $0,
-                dataRoot: root
-            )
-        } ?? []
+        let musicvideoDirectives = try PipelineMusicvideoProductionWriter.promptDirectives(
+            for: shotId,
+            audioLabel: audioLabel,
+            dataRoot: root
+        )
         try PipelineExecutionPlanWriter.requireCurrent(dataRoot: root)
         try PipelineExecutionPlanWriter.requireCurrentShotlistBinding(dataRoot: root)
         let executionPlan = try PipelineExecutionPlanWriter.load(dataRoot: root).0

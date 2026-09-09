@@ -280,7 +280,8 @@ enum MusicvideoProductionGate {
         guard projectMatches, hashMatches,
               performance.trackPath == shotlist.song.audioPath,
               arc.analysisPath == shotlist.song.analysisPath,
-              arc.treatmentPath == PipelineLayout.treatmentCurrentFile else {
+              arc.treatmentPath == PipelineLayout.treatmentCurrentFile,
+              arc.storyboardPath == PipelineLayout.storyboardCurrentFile else {
             throw GateBlocked(
                 "Can't approve \"shotlist\": the Music Video production plan is stale."
             )
@@ -299,6 +300,11 @@ enum MusicvideoProductionGate {
             _ = try ProjectLocalFile.requireHash(
                 arc.treatmentSHA256,
                 at: arc.treatmentPath,
+                dataRoot: dataRoot
+            )
+            _ = try ProjectLocalFile.requireHash(
+                arc.storyboardSHA256,
+                at: arc.storyboardPath,
                 dataRoot: dataRoot
             )
             guard arc.trackSHA256 == performance.trackSHA256 else {

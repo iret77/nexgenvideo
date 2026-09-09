@@ -131,6 +131,10 @@ enum PipelineMusicvideoProductionWriter {
             shotlist.song.analysisPath,
             dataRoot: dataRoot
         )
+        let storyboardURL = try ProjectLocalFile.resolve(
+            PipelineLayout.storyboardCurrentFile,
+            dataRoot: dataRoot
+        )
         let visualArc = MusicVisualArcV1(
             projectID: shotlist.project,
             shotlistSHA256: shotlistSHA256,
@@ -141,7 +145,9 @@ enum PipelineMusicvideoProductionWriter {
             analysisSHA256: try FileDigest.sha256(of: analysisURL),
             concept: draft.visualArc.concept,
             motifs: draft.visualArc.motifs,
-            sections: draft.visualArc.sections
+            sections: draft.visualArc.sections,
+            storyboardPath: PipelineLayout.storyboardCurrentFile,
+            storyboardSHA256: try FileDigest.sha256(of: storyboardURL)
         )
         let coverage = MusicPerformanceCoverageV1(
             projectID: shotlist.project,
@@ -191,6 +197,10 @@ enum PipelineMusicvideoProductionWriter {
               ))),
               arc.analysisSHA256 == (try FileDigest.sha256(of: ProjectLocalFile.resolve(
                   arc.analysisPath,
+                  dataRoot: dataRoot
+              ))),
+              arc.storyboardSHA256 == (try FileDigest.sha256(of: ProjectLocalFile.resolve(
+                  arc.storyboardPath,
                   dataRoot: dataRoot
               ))),
               try FileDigest.sha256(of: trackURL) == performance.trackSHA256 else {
@@ -304,24 +314,34 @@ enum PipelineMusicvideoProductionWriter {
 
     static func promptDirectives(
         for shotID: String,
-        audioLabel: String,
+        audioLabel: String?,
         dataRoot: URL
     ) throws -> [String] {
+        guard let draft = try loadDraftIfPresent(dataRoot: dataRoot) else { return [] }
+        var directives = visualArcDirectives(
+            visualArc: draft.visualArc,
+            shotID: shotID
+        )
         guard let segment = try materializedSegment(for: shotID, dataRoot: dataRoot) else {
-            return []
+            return directives
         }
-        let draft = segment.draft
-        var directives = [
-            "\(audioLabel) is the exact approved original-song segment for this performance; use it only for \(draft.purpose.rawValue.replacingOccurrences(of: "_", with: " ")).",
-        ]
-        if draft.purpose == .performedSong {
-            for ownership in draft.mouthOwnership {
+        guard let audioLabel else {
+            throw ToolError(
+                "The exact approved song segment is missing from the generation inputs."
+            )
+        }
+        let segmentDraft = segment.draft
+        directives.append(
+            "\(audioLabel) is the exact approved original-song segment for this performance; use it only for \(segmentDraft.purpose.rawValue.replacingOccurrences(of: "_", with: " "))."
+        )
+        if segmentDraft.purpose == .performedSong {
+            for ownership in segmentDraft.mouthOwnership {
                 directives.append(
                     "From \(format(ownership.timelineStartSeconds))s to \(format(ownership.timelineEndSeconds))s, only performer \(ownership.performerID) mouths voice \(ownership.voiceID)."
                 )
             }
-            let owners = Set(draft.mouthOwnership.map(\.performerID))
-            let silent = draft.performerIDs.filter { !owners.contains($0) }
+            let owners = Set(segmentDraft.mouthOwnership.map(\.performerID))
+            let silent = segmentDraft.performerIDs.filter { !owners.contains($0) }
             if !silent.isEmpty {
                 directives.append(
                     "These visible performers do not sing in this segment: \(silent.joined(separator: ", "))."
@@ -330,6 +350,20 @@ enum PipelineMusicvideoProductionWriter {
         }
         directives.append("Do not generate replacement music or an additional song bed.")
         return directives
+    }
+
+    static func visualArcDirectives(
+        visualArc: MusicVisualArcDraftV1,
+        shotID: String
+    ) -> [String] {
+        visualArc.sections.filter { $0.shotIDs.contains(shotID) }.flatMap { section in
+            [
+                "Song section \(section.sectionID) has musical function \(section.musicalFunction) and visual function \(section.visualFunction).",
+                "Its approved motif IDs are \(section.motifIDs.joined(separator: ", ")). \(section.changeExplanation)",
+            ] + (section.constants + section.variations).map { parameter in
+                "Approved song-arc \(parameter.kind.rawValue) for \(parameter.targetID): \(parameter.value). Purpose: \(parameter.rationale)"
+            }
+        }
     }
 
     static func restore(_ snapshot: Snapshot, dataRoot: URL) throws {
