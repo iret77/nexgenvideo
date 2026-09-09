@@ -2163,7 +2163,92 @@ struct WorkflowToolsTests {
         #expect(cost?["spent_eur"] as? Double == 0.0)
         #expect(cost?["remaining_eur"] as? Double == 50.0)
         #expect(cost?["over_budget"] as? Bool == false)
+        #expect(cost?["spend_complete"] as? Bool == true)
+        #expect(cost?["verified_spend_eur"] as? Double == 0.0)
+        #expect(cost?["active_reservations"] as? Int == 0)
         #expect(cost?.keys.contains("next_phase") == true)
+    }
+
+    @Test("estimate_cost never presents an unpriced reservation as a complete zero total")
+    func estimateCostReportsIncompleteMoney() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        var log = GenerationLog()
+        log.spendEvents = [GenerationSpendEvent(
+            transactionId: "unpriced-render",
+            kind: .reserved,
+            model: "provider/model",
+            provider: .fal,
+            transport: .api,
+            endpoint: "provider/model"
+        )]
+        try JSONEncoder().encode(log).write(
+            to: FrameInventory.projectHome(of: dataRoot)
+                .appendingPathComponent(Project.generationLogFilename),
+            options: .atomic
+        )
+
+        let cost = try await h.runOK(
+            "estimate_cost",
+            args: ["project_dir": dataRoot.path]
+        ) as? [String: Any]
+        let state = try await h.runOK(
+            "get_project_state",
+            args: ["project_dir": dataRoot.path]
+        ) as? [String: Any]
+        #expect(cost?["spend_complete"] as? Bool == false)
+        #expect(cost?["spent_eur"] is NSNull)
+        #expect(cost?["remaining_eur"] is NSNull)
+        #expect(cost?["over_budget"] is NSNull)
+        #expect(cost?["unpriced_transactions"] as? Int == 1)
+        #expect(state?["spend_complete"] as? Bool == false)
+        #expect(state?["budget_remaining_eur"] is NSNull)
+    }
+
+    @Test("pipeline cockpit state reads the same spend journal as estimate_cost")
+    func projectStateUsesGenerationMoneyJournal() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let money = GenerationMoney(
+            nativeAmount: 12,
+            nativeCurrency: "USD",
+            eurAmount: 10,
+            eurPerNativeUnit: 10 / 12,
+            exchangeRateDate: "2026-09-09",
+            pricingSource: "https://provider.example/pricing",
+            exchangeRateSource: "https://www.ecb.europa.eu/"
+        )
+        var log = GenerationLog()
+        log.spendEvents = [GenerationSpendEvent(
+            transactionId: "bible-sheet",
+            kind: .reserved,
+            model: "image/bible",
+            provider: .fal,
+            transport: .api,
+            endpoint: "image/bible",
+            money: money
+        )]
+        try JSONEncoder().encode(log).write(
+            to: FrameInventory.projectHome(of: dataRoot)
+                .appendingPathComponent(Project.generationLogFilename),
+            options: .atomic
+        )
+
+        let state = try await h.runOK(
+            "get_project_state",
+            args: ["project_dir": dataRoot.path]
+        ) as? [String: Any]
+        let cost = try await h.runOK(
+            "estimate_cost",
+            args: ["project_dir": dataRoot.path]
+        ) as? [String: Any]
+
+        #expect(state?["budget_spent_eur"] as? Double == 10)
+        #expect(state?["budget_remaining_eur"] as? Double == 40)
+        #expect(state?["spend_complete"] as? Bool == true)
+        #expect(state?["active_reservations"] as? Int == 1)
+        #expect(cost?["verified_spend_eur"] as? Double == 10)
+        #expect(cost?["remaining_eur"] as? Double == 40)
     }
 
     @Test("storyboard writer rejects declared direction-only set anchors")
@@ -2978,7 +3063,7 @@ struct WorkflowToolsTests {
         ]) as? [String: Any]
         #expect(recorded?["shot_id"] as? String == "s001")
         #expect(recorded?["status"] as? String == "rendered")
-        #expect(recorded?["spent_eur"] as? Double == 1.5)
+        #expect(recorded?["reported_phase_cost_eur"] as? Double == 1.5)
 
         let manifest = try await h.runOK("get_render_manifest", args: ["project_dir": dir, "phase": "preview"]) as? [String: Any]
         #expect(manifest?["phase"] as? String == "preview")
@@ -2987,7 +3072,7 @@ struct WorkflowToolsTests {
         let summary = try #require(manifest?["summary"] as? [String: Any])
         #expect(summary["total"] as? Int == 1)
         #expect(summary["rendered"] as? Int == 1)
-        #expect(summary["spent_eur"] as? Double == 1.5)
+        #expect(summary["reported_phase_cost_eur"] as? Double == 1.5)
         let proof = try loadRenderProofManifest(
             dataRoot: dataRoot,
             phase: "preview"

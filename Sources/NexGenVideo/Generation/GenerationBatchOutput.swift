@@ -32,7 +32,7 @@ struct GenerationBatchOutput: Codable, Sendable, Equatable {
               receipt.asset.duration.isFinite, receipt.asset.duration > 0,
               case .project(let mediaPath) = receipt.asset.source,
               mediaPath.hasPrefix(Project.mediaDirectoryName + "/"),
-              try GenerationPackageV1.encode(receipt) == bytes else {
+              try GenerationPackageV1.canonicalData(receipt) == bytes else {
             throw GenerationRequestError.storage("A completed batch output no longer matches its recorded request.")
         }
         _ = try ProjectLocalFile.requireHash(receipt.sha256, at: mediaPath, dataRoot: home)
@@ -91,7 +91,7 @@ struct GenerationBatchOutput: Codable, Sendable, Equatable {
             throw GenerationRequestError.storage("The batch output receipt has no recoverable destination.")
         }
         try ProjectWorkingCopy.markDirty(key: key)
-        try GenerationPackageV1.encode(receipt).write(to: destination, options: .withoutOverwriting)
+        try GenerationPackageV1.canonicalData(receipt).write(to: destination, options: .withoutOverwriting)
     }
 
     nonisolated private static func receiptPath(authorization: GenerationBatchAuthorization, assetID: String) throws -> String {

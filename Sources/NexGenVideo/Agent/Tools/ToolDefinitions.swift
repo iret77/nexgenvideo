@@ -1262,7 +1262,7 @@ enum ToolDefinitions {
                     "home_dir": ["type": "string", "description": "Optional. Directory to scaffold under; omit to use the open project."],
                     "name": ["type": "string", "description": "Project name."],
                     "mode": ["type": "string", "description": "Cut mode: beat/phrase/section/multicam (default beat)."],
-                    "budget_eur": ["type": "number", "description": "Project budget in EUR (default 50)."],
+                    "budget_eur": ["type": "number", "description": "Planning budget in EUR (default 50); this does not enforce a hard stop."],
                 ],
                 required: ["name"]
             )
@@ -1292,7 +1292,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .estimateCost,
-            description: "The project's budget picture. Read-only.\n\nSums EUR already spent across the render ledger and compares against the project budget, returning `{project, budget_eur, spent_eur, remaining_eur, over_budget, next_phase}`. This is the spent/remaining view (not a forward per-shot estimate). `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            description: "The project's verified money journal and budget picture. Read-only.\n\nIncludes every priced reservation and charge across sheets, frames, retakes, failed submitted jobs, and renders. Returns the planning `budget_eur`, optional enforced `budget_stop_eur`, verified spend, reservation and unknown-cost counts, and remaining amounts only when the journal is complete. This is the project spend view, not a forward per-shot estimate. `project_dir` is the `pipeline/` data root; omit to use the open project.",
             inputSchema: projectDirSchema()
         ),
         AgentTool(
@@ -1383,7 +1383,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .getRenderManifest,
-            description: "A video pass's shot-level render ledger, retained takes and progress summary. Read-only.\n\nEach entry exposes `current_output`, model and exact output hash; missing or replaced bytes count as pending. Takes expose attributed review findings and generation-package identities. Pass `take_id` to return one take with its complete exact generation package or a repairable package error. The summary `{total, rendered, pending, failed, spent_eur}` still covers the whole pass. Use `get_frames_manifest` for separate start/end frame audits. `project_dir` is the pipeline data root; omit for the open project.",
+            description: "A video pass's shot-level render records, retained takes and progress summary. Read-only.\n\nEach entry exposes `current_output`, model, exact output hash, and a non-authoritative `reported_cost_eur` production note; missing or replaced bytes count as pending. Takes expose attributed review findings and generation-package identities. Pass `take_id` to return one take with its complete exact generation package or a repairable package error. The summary covers completion and `reported_phase_cost_eur`; use `estimate_cost` for authoritative project spend. Use `get_frames_manifest` for separate start/end frame audits. `project_dir` is the pipeline data root; omit for the open project.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,

@@ -25,7 +25,7 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
                 kind = "replace_clip"; folderID = nil; clipID = id; startFrame = nil; durationSeconds = nil; resetTrim = reset
                 timelineFPS = editor.timeline.fps
                 guard let clip = editor.clipFor(id: id) else { throw GenerationRequestError.optionsInvalid("The replacement clip is no longer available.") }
-                clipSHA256 = FileDigest.sha256(of: try GenerationPackageV1.encode(clip))
+                clipSHA256 = FileDigest.sha256(of: try GenerationPackageV1.canonicalData(clip))
             }
             try requireCurrent(editor: editor)
         }
@@ -35,7 +35,7 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
             if let folderID, editor.folder(id: folderID) == nil { throw GenerationRequestError.gate("The destination folder changed. Prepare the request again.") }
             if let timelineFPS, timelineFPS != editor.timeline.fps { throw GenerationRequestError.gate("The timeline frame rate changed. Prepare the request again.") }
             if let clipID {
-                guard let clip = editor.clipFor(id: clipID), try FileDigest.sha256(of: GenerationPackageV1.encode(clip)) == clipSHA256 else {
+                guard let clip = editor.clipFor(id: clipID), try FileDigest.sha256(of: GenerationPackageV1.canonicalData(clip)) == clipSHA256 else {
                     throw GenerationRequestError.gate("The destination clip changed. Prepare the replacement again.")
                 }
             }
@@ -101,7 +101,7 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
             }
         }
         schema = "generation-package/v1"
-        id = FileDigest.sha256(of: try Self.encode(payload))
+        id = FileDigest.sha256(of: try Self.canonicalData(payload))
         let subject = payload.binding.shotId == "none" ? "asset" : payload.binding.shotId
         renderID = [subject, payload.target.modelId, payload.operation, String(id.prefix(12))].joined(separator: " / ")
         self.payload = payload
@@ -112,7 +112,7 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
         guard self == rebuilt else { throw GenerationRequestError.gate("The generation package changed after review.") }
     }
 
-    static func encode<T: Encodable>(_ value: T) throws -> Data {
+    static func canonicalData<T: Encodable>(_ value: T) throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         return try encoder.encode(value)
@@ -120,7 +120,7 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
 
     static func requestJSON(parameters: PreparedProviderParameters, references: [GenerationReferenceReceipt]) throws -> String {
         let locations = references.enumerated().map { "ngv-input://\($0.offset)/\($0.element.submittedSHA256)" }
-        let data = try encode(parameters.bind(locations))
+        let data = try canonicalData(parameters.bind(locations))
         guard let text = String(data: data, encoding: .utf8) else { throw GenerationRequestError.optionsInvalid("The generation request cannot be encoded.") }
         return text
     }
@@ -183,7 +183,7 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
         let file = try ProjectLocalFile.resolve("generation-packages/\(id).json", dataRoot: home)
         let bytes = try Data(contentsOf: file)
         let package = try JSONDecoder().decode(Self.self, from: bytes)
-        guard package.id == id, try Self.encode(package) == bytes else {
+        guard package.id == id, try Self.canonicalData(package) == bytes else {
             throw GenerationRequestError.gate("The immutable generation package changed. Restore its recorded bytes.")
         }
         return package
@@ -202,7 +202,7 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
         if let key = editor.openWorkingCopyKey { try ProjectWorkingCopy.markDirty(key: key) }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let file = directory.appendingPathComponent(id + ".json")
-        let bytes = try Self.encode(self)
+        let bytes = try Self.canonicalData(self)
         if FileManager.default.fileExists(atPath: file.path) {
             guard try Data(contentsOf: ProjectLocalFile.resolve("generation-packages/\(id).json", dataRoot: home)) == bytes else {
                 throw GenerationRequestError.storage("An immutable generation package has different bytes.")

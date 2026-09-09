@@ -364,7 +364,7 @@ enum PromptComposer {
                     propRefs: []
                 )
             )
-            return FileDigest.sha256(of: try GenerationPackageV1.encode(Inputs(artifactHashes: hashes,
+            return FileDigest.sha256(of: try GenerationPackageV1.canonicalData(Inputs(artifactHashes: hashes,
                 directives: values.all, locked: values.locked)))
         }.value
     }

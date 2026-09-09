@@ -2051,9 +2051,9 @@ extension ToolExecutor {
             "shot_id": shotId,
             "status": entry?.status.rawValue ?? statusRaw,
             "output": entry?.output.map { $0 as Any } ?? NSNull(),
-            "cost_eur": entry?.costEur ?? costEur,
+            "reported_cost_eur": entry?.costEur ?? costEur,
             "updated_at": entry?.updatedAt.map { $0 as Any } ?? NSNull(),
-            "spent_eur": spent(manifest),
+            "reported_phase_cost_eur": spent(manifest),
         ])
     }
 
@@ -2096,7 +2096,7 @@ extension ToolExecutor {
                 "status": e.status.rawValue,
                 "output": e.output.map { $0 as Any } ?? NSNull(),
                 "current_output": currentOutput,
-                "cost_eur": e.costEur,
+                "reported_cost_eur": e.costEur,
                 "updated_at": e.updatedAt.map { $0 as Any } ?? NSNull(),
                 "generation_model": entryProof
                     .map { $0.generationModel as Any } ?? NSNull(),
@@ -2147,7 +2147,7 @@ extension ToolExecutor {
                     do {
                         let package = try GenerationPackageV1.load(id: packageID, home: FrameInventory.projectHome(of: root))
                         try PipelineRenderTakeStore.requirePackage(input: take.generationInput, dataRoot: root)
-                        result["generation_package"] = try JSONSerialization.jsonObject(with: GenerationPackageV1.encode(package))
+                        result["generation_package"] = try JSONSerialization.jsonObject(with: GenerationPackageV1.canonicalData(package))
                     } catch { result["generation_package_error"] = error.localizedDescription }
                 }
             }
@@ -2192,7 +2192,7 @@ extension ToolExecutor {
                 "rendered": rendered,
                 "pending": pending,
                 "failed": failed,
-                "spent_eur": spent(manifest),
+                "reported_phase_cost_eur": spent(manifest),
             ],
         ])
     }

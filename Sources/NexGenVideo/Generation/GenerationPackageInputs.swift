@@ -41,7 +41,7 @@ struct GenerationPackageInputs: Codable, Sendable, Equatable {
         try package.persist(editor: editor)
         let path = manifestPath(package.id)
         let file = home.appendingPathComponent(path)
-        let bytes = try GenerationPackageV1.encode(record)
+        let bytes = try GenerationPackageV1.canonicalData(record)
         if FileManager.default.fileExists(atPath: file.path) {
             guard try Data(contentsOf: ProjectLocalFile.resolve(path, dataRoot: home)) == bytes else {
                 throw GenerationRequestError.storage("The immutable generation input archive changed.")

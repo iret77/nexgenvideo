@@ -6,11 +6,11 @@ extension ToolExecutor {
         guard let home = editor.workingRoot else { throw ToolError("Open a project to read its generation batches.") }
         if let id = args["batchID"] as? String {
             if let pending = editor.generationBatchCoordinator.pending, pending.id == id {
-                return .ok(String(decoding: try GenerationPackageV1.encode(pending), as: UTF8.self))
+                return .ok(String(decoding: try GenerationPackageV1.canonicalData(pending), as: UTF8.self))
             }
             let snapshot = try await Task.detached(priority: .utility) { try GenerationBatchStore.load(id: id, home: home) }.value
             guard editor.workingRoot == home else { throw ToolError("The project changed while reading batch status.") }
-            return .ok(String(decoding: try GenerationPackageV1.encode(snapshot), as: UTF8.self))
+            return .ok(String(decoding: try GenerationPackageV1.canonicalData(snapshot), as: UTF8.self))
         }
         struct Summary: Encodable {
             struct Item: Encodable {
@@ -39,7 +39,7 @@ extension ToolExecutor {
                 .init(id: $0.id, purpose: $0.purpose, packageID: $0.package.id, state: "awaiting_approval", outputAssetIDs: [], detail: nil)
             }))
         }
-        return .ok(String(decoding: try GenerationPackageV1.encode(values), as: UTF8.self))
+        return .ok(String(decoding: try GenerationPackageV1.canonicalData(values), as: UTF8.self))
     }
 
     func prepareGenerationBatch(_ editor: EditorViewModel, _ args: [String: Any], origin: ToolCallOrigin) async throws -> ToolResult {

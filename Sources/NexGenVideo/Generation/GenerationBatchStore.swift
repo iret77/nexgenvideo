@@ -18,8 +18,8 @@ enum GenerationBatchStore {
         let journal = try JSONDecoder().decode(GenerationBatchJournal.self, from: journalBytes)
         let snapshot = Snapshot(batch: batch, journal: journal)
         try snapshot.validate()
-        guard batch.id == id, try GenerationPackageV1.encode(batch) == manifestBytes,
-              GenerationPackageV1.encode(journal) == journalBytes else {
+        guard batch.id == id, try GenerationPackageV1.canonicalData(batch) == manifestBytes,
+              try GenerationPackageV1.canonicalData(journal) == journalBytes else {
             throw GenerationRequestError.storage("The generation batch has changed or incomplete recorded bytes.")
         }
         return snapshot
@@ -54,8 +54,8 @@ enum GenerationBatchStore {
         let staging = folder.appendingPathComponent(".\(batch.id)-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: staging) }
         try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false)
-        try GenerationPackageV1.encode(batch).write(to: staging.appendingPathComponent("manifest.json"), options: .atomic)
-        try GenerationPackageV1.encode(snapshot.journal).write(to: staging.appendingPathComponent("journal.json"), options: .atomic)
+        try GenerationPackageV1.canonicalData(batch).write(to: staging.appendingPathComponent("manifest.json"), options: .atomic)
+        try GenerationPackageV1.canonicalData(snapshot.journal).write(to: staging.appendingPathComponent("journal.json"), options: .atomic)
         try FileManager.default.moveItem(at: staging, to: folder.appendingPathComponent(batch.id, isDirectory: true))
         editor.generationBatchCoordinator.record(snapshot)
         return snapshot
@@ -80,7 +80,7 @@ enum GenerationBatchStore {
         try scope.requireCurrent(editor: editor)
         try markDirty(editor: editor)
         let file = try ProjectLocalFile.resolve(relativePath(id: expected.batch.id) + "/journal.json", dataRoot: home)
-        try GenerationPackageV1.encode(updated.journal).write(to: file, options: .atomic)
+        try GenerationPackageV1.canonicalData(updated.journal).write(to: file, options: .atomic)
         editor.generationBatchCoordinator.record(updated)
         return updated
     }

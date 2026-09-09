@@ -247,7 +247,8 @@ After a frame is in the project:
   `provider_prompt`.
 - Budget check after every call via `estimate_cost(project_dir)`. If
   `over_budget` would flip true, stop and escalate to the user before
-  further calls.
+  further calls. If `spend_complete=false`, stop as well; never treat an
+  unavailable remainder as zero spend.
 
 #### F2.12 — Shots without keyframes
 

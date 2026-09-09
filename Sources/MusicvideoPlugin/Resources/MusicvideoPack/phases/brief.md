@@ -266,7 +266,10 @@ explain the affected approvals and use an explicit rewind before rewriting it.
 
     a) **Show the budget picture** (before asking the question): call
        `estimate_cost(project_dir)` and present `budget_eur`,
-       `spent_eur`, `remaining_eur`. A per-shot forward estimate only
+       `budget_stop_eur`, `spent_eur`, and `remaining_eur`. If
+       `spend_complete=false`, present `verified_spend_eur` as a lower bound
+       and state that remaining amounts are unavailable. A per-shot forward estimate
+       only
        exists only once a shotlist exists. Before Brief approval, use the
        known planning budget and explain that a per-shot estimate is not yet
        available.

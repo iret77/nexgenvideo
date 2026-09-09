@@ -56,13 +56,13 @@ struct GenerationPackageTests {
         try package.requireRequest(input: input, target: generation.target, parameters: restored, references: [])
         input.prompt = "A silently replaced prompt."
         #expect(throws: (any Error).self) { try package.requireRequest(input: input, target: generation.target, parameters: parameters, references: []) }
-        var json = try #require(JSONSerialization.jsonObject(with: GenerationPackageV1.encode(package)) as? [String: Any])
+        var json = try #require(JSONSerialization.jsonObject(with: GenerationPackageV1.canonicalData(package)) as? [String: Any])
         var payload = try #require(json["payload"] as? [String: Any])
         payload["outputCount"] = 4
         json["payload"] = payload
         let tampered = try JSONSerialization.data(withJSONObject: json)
         #expect(throws: (any Error).self) { try JSONDecoder().decode(GenerationPackageV1.self, from: tampered) }
-        #expect(try JSONDecoder().decode(GenerationPackageV1.self, from: GenerationPackageV1.encode(package)) == package)
+        #expect(try JSONDecoder().decode(GenerationPackageV1.self, from: GenerationPackageV1.canonicalData(package)) == package)
     }
 
     @Test func aHigherPriceCannotConsumeTheReviewedRequest() async throws {

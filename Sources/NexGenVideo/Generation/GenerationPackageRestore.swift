@@ -42,7 +42,7 @@ extension GenerationPackageV1 {
                 referenceAudioURLs: saved.referenceAudioURLs ?? [], generateAudio: audio))
         default: throw GenerationRequestError.gate("This saved request has no supported visual generation operation.")
         }
-        guard try Self.encode(parameters) == data, saved.prompt == payload.prompt else {
+        guard try Self.canonicalData(parameters) == data, saved.prompt == payload.prompt else {
             throw GenerationRequestError.gate("The saved provider parameters cannot be restored without changing the request.")
         }
         let slots = payload.references.enumerated().map { "ngv-input://\($0.offset)/\($0.element.submittedSHA256)" }

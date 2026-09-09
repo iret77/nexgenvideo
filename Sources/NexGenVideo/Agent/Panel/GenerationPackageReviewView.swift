@@ -37,7 +37,7 @@ struct GenerationPackageReviewView: View {
                     }
                     Text("Package: \(package.id)").textSelection(.enabled)
                     Button("Copy package details") {
-                        if let data = try? GenerationPackageV1.encode(package), let text = String(data: data, encoding: .utf8) { copy(text) }
+                        if let data = try? GenerationPackageV1.canonicalData(package), let text = String(data: data, encoding: .utf8) { copy(text) }
                     }.buttonStyle(InlineActionButtonStyle())
                 }
             }

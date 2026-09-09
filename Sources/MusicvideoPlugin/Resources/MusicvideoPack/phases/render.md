@@ -262,7 +262,8 @@ Repeat until `next_render_shot(project_dir, "<phase>")` reports
    by its approved Shot List.
 7. **Budget check** after every shot via `estimate_cost(project_dir)`.
    If `over_budget` would flip true, abort the batch and escalate to the
-   user before further `generate_video` calls.
+   user before further `generate_video` calls. Abort in the same way when
+   `spend_complete=false`; `verified_spend_eur` is then only a lower bound.
 
 **Crash tolerance + resume semantics:** every `record_render` persists
 the manifest and proof incrementally. A crash between the two writes is
@@ -420,6 +421,8 @@ pan-zoom).
   in the host, continue the loop.
 - **Budget exceeded (`estimate_cost` over_budget):** abort; this is a
   deliberate brake, never bypass it silently.
+- **Spend incomplete (`estimate_cost` spend_complete=false):** abort and
+  report the unpriced/legacy counts; never infer a remaining amount.
 - **Content-policy fail:** do not batch. Apply the workaround table from
   `phases/shotlist.md` rule 3, call
   `rewind(target_phase="shotlist")`, rewrite and re-approve the

@@ -37,7 +37,7 @@ struct GenerationBatch: Codable, Sendable, Equatable, Identifiable {
             }
         }
         schema = "generation-batch/v1"
-        id = FileDigest.sha256(of: try GenerationPackageV1.encode(payload))
+        id = FileDigest.sha256(of: try GenerationPackageV1.canonicalData(payload))
         self.payload = payload
     }
 

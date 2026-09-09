@@ -220,7 +220,7 @@ struct GenerationBatchTests {
         let (root, _, batch) = try await fixture()
         defer { cleanup(root) }
         let original = batch.payload.items[0].package
-        var payloadJSON = try #require(JSONSerialization.jsonObject(with: GenerationPackageV1.encode(original.payload)) as? [String: Any])
+        var payloadJSON = try #require(JSONSerialization.jsonObject(with: GenerationPackageV1.canonicalData(original.payload)) as? [String: Any])
         payloadJSON.removeValue(forKey: "estimate")
         let payload = try JSONDecoder().decode(GenerationPackageV1.Payload.self, from: JSONSerialization.data(withJSONObject: payloadJSON))
         let unpriced = try GenerationPackageV1(payload: payload)
