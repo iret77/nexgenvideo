@@ -88,6 +88,7 @@ enum PipelineSpatialProductionWriter {
             projectID: shotlist.project,
             shotlistSHA256: shotlistSHA256,
             layouts: draft.layouts,
+            shapes: draft.shapes,
             panels: draft.panels
         )
         let cameraData = try canonicalData(cameraPlan)
@@ -115,6 +116,8 @@ enum PipelineSpatialProductionWriter {
             clipURL = PipelineLayout.url(clipPath, in: dataRoot)
             try NativeBlockoutExporter.export(
                 setups: draft.setups,
+                layouts: draft.layouts,
+                shapes: draft.shapes,
                 request: draft.blockout,
                 to: clipURL
             )
@@ -145,6 +148,7 @@ enum PipelineSpatialProductionWriter {
             fps: draft.blockout.fps,
             durationSeconds: draft.blockout.durationSeconds,
             setupIDs: draft.setups.map(\.id),
+            shapeIDs: draft.shapes.map(\.id),
             entityStateIDs: draft.states.map(\.id)
         )
         let proofData = try canonicalData(proof)
@@ -197,6 +201,7 @@ enum PipelineSpatialProductionWriter {
             shots: cut.shots,
             states: state.states,
             layouts: layout.layouts,
+            shapes: layout.shapes,
             panels: layout.panels,
             blockout: BlockoutRequestV1(
                 mode: .native,
@@ -309,6 +314,7 @@ enum PipelineSpatialProductionWriter {
             shots: cut.shots,
             states: state.states,
             layouts: layout.layouts,
+            shapes: layout.shapes,
             panels: layout.panels,
             blockout: blockout
         )

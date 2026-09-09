@@ -177,8 +177,9 @@ enum MusicvideoProductionGate {
                 dataRoot: dataRoot
             )
             guard proof.projectID == shotlist.project,
-                  Set(proof.setupIDs) == Set(camera.setups.map(\.id)),
-                  Set(proof.entityStateIDs) == Set(state.states.map(\.id)) else {
+                  proof.setupIDs == camera.setups.map(\.id),
+                  proof.shapeIDs == layout.shapes.map(\.id),
+                  proof.entityStateIDs == state.states.map(\.id) else {
                 throw GateBlocked(
                     "Can't approve \"shotlist\": the blockout proof does not describe the current spatial plan."
                 )
@@ -206,6 +207,7 @@ enum MusicvideoProductionGate {
             shots: cut.shots,
             states: state.states,
             layouts: layout.layouts,
+            shapes: layout.shapes,
             panels: layout.panels,
             blockout: blockout
         )

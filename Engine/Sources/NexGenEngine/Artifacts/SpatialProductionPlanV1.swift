@@ -348,6 +348,53 @@ public struct SpatialLayoutV1: Codable, Sendable, Equatable {
     }
 }
 
+public enum BlockoutShapePrimitiveV1: String, Codable, Sendable, Equatable, CaseIterable {
+    case box
+    case cylinder
+}
+
+public struct BlockoutShapeV1: Codable, Sendable, Equatable {
+    public let id: String
+    public let entityID: String
+    public let entityStateIDs: [String]
+    public let locationID: String
+    public let primitive: BlockoutShapePrimitiveV1
+    public let center: SpatialVector3V1
+    public let size: SpatialVector3V1
+    public let headingDegrees: Double
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case entityID = "entity_id"
+        case entityStateIDs = "entity_state_ids"
+        case locationID = "location_id"
+        case primitive
+        case center
+        case size
+        case headingDegrees = "heading_degrees"
+    }
+
+    public init(
+        id: String,
+        entityID: String,
+        entityStateIDs: [String],
+        locationID: String,
+        primitive: BlockoutShapePrimitiveV1,
+        center: SpatialVector3V1,
+        size: SpatialVector3V1,
+        headingDegrees: Double
+    ) {
+        self.id = id
+        self.entityID = entityID
+        self.entityStateIDs = entityStateIDs
+        self.locationID = locationID
+        self.primitive = primitive
+        self.center = center
+        self.size = size
+        self.headingDegrees = headingDegrees
+    }
+}
+
 public struct LookFreePanelV1: Codable, Sendable, Equatable {
     public let id: String
     public let setupID: String
@@ -379,6 +426,7 @@ public struct LayoutPanelsV1: Codable, Sendable, Equatable {
     public let projectID: String
     public let shotlistSHA256: String
     public let layouts: [SpatialLayoutV1]
+    public let shapes: [BlockoutShapeV1]
     public let panels: [LookFreePanelV1]
 
     private enum CodingKeys: String, CodingKey {
@@ -386,6 +434,7 @@ public struct LayoutPanelsV1: Codable, Sendable, Equatable {
         case projectID = "project_id"
         case shotlistSHA256 = "shotlist_sha256"
         case layouts
+        case shapes
         case panels
     }
 
@@ -393,12 +442,14 @@ public struct LayoutPanelsV1: Codable, Sendable, Equatable {
         projectID: String,
         shotlistSHA256: String,
         layouts: [SpatialLayoutV1],
+        shapes: [BlockoutShapeV1],
         panels: [LookFreePanelV1]
     ) {
         schema = Self.schemaVersion
         self.projectID = projectID
         self.shotlistSHA256 = shotlistSHA256
         self.layouts = layouts
+        self.shapes = shapes
         self.panels = panels
     }
 }
@@ -449,6 +500,7 @@ public struct SpatialProductionPlanDraftV1: Codable, Sendable, Equatable {
     public let shots: [PlannedGenerationShotV1]
     public let states: [ProductionStateV1]
     public let layouts: [SpatialLayoutV1]
+    public let shapes: [BlockoutShapeV1]
     public let panels: [LookFreePanelV1]
     public let blockout: BlockoutRequestV1
 
@@ -458,6 +510,7 @@ public struct SpatialProductionPlanDraftV1: Codable, Sendable, Equatable {
         shots: [PlannedGenerationShotV1],
         states: [ProductionStateV1],
         layouts: [SpatialLayoutV1],
+        shapes: [BlockoutShapeV1],
         panels: [LookFreePanelV1],
         blockout: BlockoutRequestV1
     ) {
@@ -466,6 +519,7 @@ public struct SpatialProductionPlanDraftV1: Codable, Sendable, Equatable {
         self.shots = shots
         self.states = states
         self.layouts = layouts
+        self.shapes = shapes
         self.panels = panels
         self.blockout = blockout
     }
@@ -489,6 +543,7 @@ public struct BlockoutProofV1: Codable, Sendable, Equatable {
     public let fps: Int
     public let durationSeconds: Double
     public let setupIDs: [String]
+    public let shapeIDs: [String]
     public let entityStateIDs: [String]
 
     private enum CodingKeys: String, CodingKey {
@@ -507,6 +562,7 @@ public struct BlockoutProofV1: Codable, Sendable, Equatable {
         case fps
         case durationSeconds = "duration_seconds"
         case setupIDs = "setup_ids"
+        case shapeIDs = "shape_ids"
         case entityStateIDs = "entity_state_ids"
     }
 
@@ -525,6 +581,7 @@ public struct BlockoutProofV1: Codable, Sendable, Equatable {
         fps: Int,
         durationSeconds: Double,
         setupIDs: [String],
+        shapeIDs: [String],
         entityStateIDs: [String]
     ) {
         schema = Self.schemaVersion
@@ -542,6 +599,7 @@ public struct BlockoutProofV1: Codable, Sendable, Equatable {
         self.fps = fps
         self.durationSeconds = durationSeconds
         self.setupIDs = setupIDs
+        self.shapeIDs = shapeIDs
         self.entityStateIDs = entityStateIDs
     }
 }
@@ -565,8 +623,11 @@ public enum SpatialProductionValidatorV1 {
         }
         let setupIDs = try unique(draft.setups.map(\.id), "setups.id")
         let stateIDs = try unique(draft.states.map(\.id), "states.id")
+        let layoutIDs = try unique(
+            draft.layouts.map(\.locationID),
+            "layouts.location_id"
+        )
         _ = try unique(draft.shots.map(\.shotID), "shots.shot_id")
-        _ = try unique(draft.layouts.map(\.locationID), "layouts.location_id")
         _ = try unique(draft.panels.map(\.id), "panels.id")
         for setup in draft.setups {
             try require(setup.id, "setup.id")
@@ -654,6 +715,25 @@ public enum SpatialProductionValidatorV1 {
                 pair.0.internalEndSeconds > pair.1.internalStartSeconds {
                 throw SpatialProductionValidationErrorV1.overlappingIntervals(generationID)
             }
+            let cutKinds = ordered.map(\.cutAfter)
+            guard cutKinds.dropLast().allSatisfy({ $0 != .none }),
+                  cutKinds.last == PlannedCutKindV1.none else {
+                throw SpatialProductionValidationErrorV1.invalidField(
+                    "shots.cut_after"
+                )
+            }
+            let timedReferences = ordered.flatMap(\.timedReferences)
+            _ = try unique(
+                timedReferences.map(\.roleID),
+                "shots.timed_references.role_id"
+            )
+            _ = try unique(
+                timedReferences.map(\.demandID),
+                "shots.timed_references.demand_id"
+            )
+        }
+        guard draft.setups.allSatisfy({ layoutIDs.contains($0.locationID) }) else {
+            throw SpatialProductionValidationErrorV1.invalidField("layouts.location_id")
         }
         for layout in draft.layouts {
             try require(layout.locationID, "layout.location_id")
@@ -663,10 +743,42 @@ public enum SpatialProductionValidatorV1 {
                 throw SpatialProductionValidationErrorV1.invalidField("layout.dimensions")
             }
             let declared = try unique(layout.setupIDs, "layout.setup_ids")
-            guard declared.isSubset(of: setupIDs),
-                  draft.setups.filter({ $0.locationID == layout.locationID })
-                    .allSatisfy({ declared.contains($0.id) }) else {
+            let locationSetupIDs = Set(draft.setups.filter {
+                $0.locationID == layout.locationID
+            }.map(\.id))
+            guard declared == locationSetupIDs else {
                 throw SpatialProductionValidationErrorV1.unknownSetup(layout.locationID)
+            }
+        }
+        let statesByID = Dictionary(uniqueKeysWithValues: draft.states.map { ($0.id, $0) })
+        let layoutsByID = Dictionary(uniqueKeysWithValues: draft.layouts.map {
+            ($0.locationID, $0)
+        })
+        _ = try unique(draft.shapes.map(\.id), "shapes.id")
+        for shape in draft.shapes {
+            try require(shape.id, "shape.id")
+            try require(shape.entityID, "shape.entity_id")
+            try require(shape.locationID, "shape.location_id")
+            let shapeStateIDs = try unique(
+                shape.entityStateIDs,
+                "shape.entity_state_ids"
+            )
+            guard !shapeStateIDs.isEmpty,
+                  shapeStateIDs.allSatisfy({
+                      statesByID[$0]?.entityID == shape.entityID
+                  }),
+                  let layout = layoutsByID[shape.locationID] else {
+                throw SpatialProductionValidationErrorV1.invalidField("shape")
+            }
+            try finite(shape.center, "shape.center")
+            try finite(shape.size, "shape.size")
+            guard shape.headingDegrees.isFinite,
+                  shape.size.x > 0, shape.size.y > 0, shape.size.z > 0,
+                  abs(shape.center.x) + shape.size.x / 2 <= layout.widthMeters / 2,
+                  shape.center.y - shape.size.y / 2 >= 0,
+                  shape.center.y + shape.size.y / 2 <= layout.heightMeters,
+                  abs(shape.center.z) + shape.size.z / 2 <= layout.depthMeters / 2 else {
+                throw SpatialProductionValidationErrorV1.invalidField("shape.bounds")
             }
         }
         for panel in draft.panels {
@@ -684,6 +796,14 @@ public enum SpatialProductionValidatorV1 {
         }
         if draft.activation.requiresBlockout, blockout.mode == .none {
             throw SpatialProductionValidationErrorV1.blockoutRequired
+        }
+        if blockout.mode != .none {
+            guard !draft.shapes.isEmpty,
+                  Set(draft.shapes.flatMap(\.entityStateIDs)) == stateIDs else {
+                throw SpatialProductionValidationErrorV1.invalidField(
+                    "blockout.shapes"
+                )
+            }
         }
         if blockout.mode == .imported {
             guard let imported = blockout.importedClipPath else {
@@ -703,14 +823,46 @@ public enum SpatialProductionValidatorV1 {
         layoutPanelsData: Data,
         dataRoot: URL
     ) throws {
-        guard proof.schema == BlockoutProofV1.schemaVersion,
+        let decoder = JSONDecoder()
+        guard let cameraPlan = try? decoder.decode(
+                  CameraSetupPlanV1.self,
+                  from: cameraSetupPlanData
+              ),
+              let cutPlan = try? decoder.decode(
+                  ShotGenerationCutPlanV1.self,
+                  from: shotGenerationCutPlanData
+              ),
+              let stateLadder = try? decoder.decode(
+                  StateLadderV1.self,
+                  from: stateLadderData
+              ),
+              let layoutPanels = try? decoder.decode(
+                  LayoutPanelsV1.self,
+                  from: layoutPanelsData
+              ),
+              proof.schema == BlockoutProofV1.schemaVersion,
               proof.sourceMode != .none,
               proof.cameraSetupPlanSHA256 == FileDigest.sha256(of: cameraSetupPlanData),
               proof.shotGenerationCutPlanSHA256 == FileDigest.sha256(of: shotGenerationCutPlanData),
               proof.stateLadderSHA256 == FileDigest.sha256(of: stateLadderData),
               proof.layoutPanelsSHA256 == FileDigest.sha256(of: layoutPanelsData),
+              cameraPlan.schema == CameraSetupPlanV1.schemaVersion,
+              cutPlan.schema == ShotGenerationCutPlanV1.schemaVersion,
+              stateLadder.schema == StateLadderV1.schemaVersion,
+              layoutPanels.schema == LayoutPanelsV1.schemaVersion,
+              cameraPlan.projectID == proof.projectID,
+              cutPlan.projectID == proof.projectID,
+              stateLadder.projectID == proof.projectID,
+              layoutPanels.projectID == proof.projectID,
+              cameraPlan.shotlistSHA256 == cutPlan.shotlistSHA256,
+              cameraPlan.shotlistSHA256 == stateLadder.shotlistSHA256,
+              cameraPlan.shotlistSHA256 == layoutPanels.shotlistSHA256,
+              proof.setupIDs == cameraPlan.setups.map(\.id),
+              proof.shapeIDs == layoutPanels.shapes.map(\.id),
+              proof.entityStateIDs == stateLadder.states.map(\.id),
               proof.width >= 64, proof.height >= 64, proof.fps > 0,
-              proof.durationSeconds > 0, proof.container == "quicktime" else {
+              proof.durationSeconds.isFinite, proof.durationSeconds > 0,
+              proof.container == "quicktime" else {
             throw SpatialProductionValidationErrorV1.staleProof("plan")
         }
         try path(proof.clipPath, "proof.clip_path")

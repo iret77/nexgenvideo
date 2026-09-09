@@ -44,6 +44,57 @@ struct SpatialProductionPlanV1Tests {
         }
     }
 
+    @Test("multi-shot generations require real cuts and shot-owned timed anchors")
+    func rejectsAmbiguousInternalTakePlan() {
+        let noInternalCut = shot(
+            id: "s010",
+            setupID: "wide-a",
+            start: 0,
+            end: 3,
+            startStateID: "room-v1",
+            endStateID: "room-v2"
+        )
+        let final = shot(
+            id: "s002",
+            setupID: "wide-b",
+            start: 3,
+            end: 6,
+            startStateID: "room-v2",
+            endStateID: "room-v2"
+        )
+        #expect(throws: SpatialProductionValidationErrorV1.self) {
+            try SpatialProductionValidatorV1.validate(
+                draft(shots: [noInternalCut, final])
+            )
+        }
+
+        let first = shot(
+            id: "s001",
+            setupID: "wide-a",
+            start: 0,
+            end: 3,
+            startStateID: "room-v1",
+            endStateID: "room-v2",
+            timedRoleID: "shared-role",
+            timedDemandID: "shared-demand"
+        )
+        let reusedAnchor = shot(
+            id: "s002",
+            setupID: "wide-b",
+            start: 3,
+            end: 6,
+            startStateID: "room-v2",
+            endStateID: "room-v2",
+            timedRoleID: "shared-role",
+            timedDemandID: "shared-demand"
+        )
+        #expect(throws: SpatialProductionValidationErrorV1.self) {
+            try SpatialProductionValidatorV1.validate(
+                draft(shots: [first, reusedAnchor])
+            )
+        }
+    }
+
     @Test("state versions require an explicit causal beat")
     func rejectsUncausedState() {
         let invalidState = ProductionStateV1(
@@ -84,10 +135,33 @@ struct SpatialProductionPlanV1Tests {
             withIntermediateDirectories: true
         )
         try Data("blockout".utf8).write(to: clip)
-        let setupData = Data("setups".utf8)
-        let cutData = Data("cuts".utf8)
-        let stateData = Data("states".utf8)
-        let layoutData = Data("layouts".utf8)
+        let draft = draft()
+        let shotlistSHA256 = hash("f")
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let setupData = try encoder.encode(CameraSetupPlanV1(
+            projectID: "demo",
+            shotlistSHA256: shotlistSHA256,
+            activation: draft.activation,
+            setups: draft.setups
+        ))
+        let cutData = try encoder.encode(ShotGenerationCutPlanV1(
+            projectID: "demo",
+            shotlistSHA256: shotlistSHA256,
+            shots: draft.shots
+        ))
+        let stateData = try encoder.encode(StateLadderV1(
+            projectID: "demo",
+            shotlistSHA256: shotlistSHA256,
+            states: draft.states
+        ))
+        let layoutData = try encoder.encode(LayoutPanelsV1(
+            projectID: "demo",
+            shotlistSHA256: shotlistSHA256,
+            layouts: draft.layouts,
+            shapes: draft.shapes,
+            panels: draft.panels
+        ))
         let proof = BlockoutProofV1(
             projectID: "demo",
             sourceMode: .native,
@@ -103,6 +177,7 @@ struct SpatialProductionPlanV1Tests {
             fps: 24,
             durationSeconds: 6,
             setupIDs: ["wide-a", "wide-b"],
+            shapeIDs: ["room-shell"],
             entityStateIDs: ["room-v1", "room-v2"]
         )
 
@@ -124,6 +199,34 @@ struct SpatialProductionPlanV1Tests {
                 dataRoot: root
             )
         }
+        let wrongAssignment = BlockoutProofV1(
+            projectID: proof.projectID,
+            sourceMode: proof.sourceMode,
+            cameraSetupPlanSHA256: proof.cameraSetupPlanSHA256,
+            shotGenerationCutPlanSHA256: proof.shotGenerationCutPlanSHA256,
+            stateLadderSHA256: proof.stateLadderSHA256,
+            layoutPanelsSHA256: proof.layoutPanelsSHA256,
+            clipPath: proof.clipPath,
+            clipSHA256: proof.clipSHA256,
+            container: proof.container,
+            width: proof.width,
+            height: proof.height,
+            fps: proof.fps,
+            durationSeconds: proof.durationSeconds,
+            setupIDs: proof.setupIDs,
+            shapeIDs: ["substituted-shape"],
+            entityStateIDs: proof.entityStateIDs
+        )
+        #expect(throws: SpatialProductionValidationErrorV1.self) {
+            try SpatialProductionValidatorV1.validate(
+                proof: wrongAssignment,
+                cameraSetupPlanData: setupData,
+                shotGenerationCutPlanData: cutData,
+                stateLadderData: stateData,
+                layoutPanelsData: layoutData,
+                dataRoot: root
+            )
+        }
     }
 
     private func draft(
@@ -131,7 +234,23 @@ struct SpatialProductionPlanV1Tests {
         states: [ProductionStateV1]? = nil,
         blockout: BlockoutRequestV1? = nil
     ) -> SpatialProductionPlanDraftV1 {
-        SpatialProductionPlanDraftV1(
+        let resolvedStates = states ?? [
+            ProductionStateV1(
+                id: "room-v1",
+                entityID: "room",
+                version: 1,
+                description: "The intact rehearsal room.",
+                causeBeatID: "arrival"
+            ),
+            ProductionStateV1(
+                id: "room-v2",
+                entityID: "room",
+                version: 2,
+                description: "The landing light is now on.",
+                causeBeatID: "switch-light"
+            ),
+        ]
+        return SpatialProductionPlanDraftV1(
             activation: SpatialPlanActivationV1(
                 verticalGeography: true,
                 axisIDs: ["room-axis", "stair-axis"],
@@ -158,28 +277,23 @@ struct SpatialProductionPlanV1Tests {
                     endStateID: "room-v2"
                 ),
             ],
-            states: states ?? [
-                ProductionStateV1(
-                    id: "room-v1",
-                    entityID: "room",
-                    version: 1,
-                    description: "The intact rehearsal room.",
-                    causeBeatID: "arrival"
-                ),
-                ProductionStateV1(
-                    id: "room-v2",
-                    entityID: "room",
-                    version: 2,
-                    description: "The landing light is now on.",
-                    causeBeatID: "switch-light"
-                ),
-            ],
+            states: resolvedStates,
             layouts: [SpatialLayoutV1(
                 locationID: "rehearsal-room",
                 widthMeters: 8,
                 depthMeters: 6,
                 heightMeters: 5,
                 setupIDs: ["wide-a", "wide-b"]
+            )],
+            shapes: [BlockoutShapeV1(
+                id: "room-shell",
+                entityID: "room",
+                entityStateIDs: resolvedStates.map(\.id),
+                locationID: "rehearsal-room",
+                primitive: .box,
+                center: SpatialVector3V1(x: 0, y: 0.05, z: 0),
+                size: SpatialVector3V1(x: 8, y: 0.1, z: 6),
+                headingDegrees: 0
             )],
             panels: [
                 LookFreePanelV1(
@@ -233,7 +347,9 @@ struct SpatialProductionPlanV1Tests {
         start: Double,
         end: Double,
         startStateID: String,
-        endStateID: String
+        endStateID: String,
+        timedRoleID: String? = nil,
+        timedDemandID: String? = nil
     ) -> PlannedGenerationShotV1 {
         PlannedGenerationShotV1(
             shotID: id,
@@ -247,8 +363,8 @@ struct SpatialProductionPlanV1Tests {
             continuityIn: ["screen-direction-left-to-right"],
             continuityOut: ["screen-direction-left-to-right"],
             timedReferences: [TimedReferenceAnchorV1(
-                roleID: "identity",
-                demandID: "demand-\(id)",
+                roleID: timedRoleID ?? "identity-\(id)",
+                demandID: timedDemandID ?? "demand-\(id)",
                 timeSeconds: start
             )]
         )

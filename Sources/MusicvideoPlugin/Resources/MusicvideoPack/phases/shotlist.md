@@ -235,9 +235,13 @@ metric layout bounds, camera position/orientation/height/optics/FOV, axis side,
 look target and any timed path. Every Shot List shot binds exactly one setup,
 one planned generation group and its own non-overlapping internal interval,
 start/end entity states caused by real Storyboard step IDs, continuity and timed
-reference roles. Panels are look-free checking views, never implicit generator
-references. Use the native graybox export or register a project-local imported
-QuickTime blockout; the host records exact plan and clip hashes.
+reference roles. Give every blockout entity a stable primitive shape, location,
+metric center/size/heading and the exact State Ladder IDs that shape represents.
+Each internal shot in a shared generation owns distinct timed roles and reference
+demands; every non-final internal shot declares its real manual or model-internal
+cut. Panels are look-free checking views, never implicit generator references.
+Use the native graybox export or register a project-local imported QuickTime
+blockout; the host records exact plan, shape assignments and clip hashes.
 
 For the current Music Video pack, every call also supplies `musicvideo_plan`:
 

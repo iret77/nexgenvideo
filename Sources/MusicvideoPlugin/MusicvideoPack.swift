@@ -42,7 +42,7 @@ public struct MusicvideoPack: Pack {
 
     static let productionKnowledgeDescriptor = ProductionKnowledgeConsumerDescriptorV1(
         id: "musicvideo-production-knowledge",
-        version: "1.2.0",
+        version: "1.2.1",
         packID: "musicvideo",
         profileResourceIDs: ["generative_film", "narrative_storytelling"],
         phaseSelections: [
@@ -186,6 +186,7 @@ public struct MusicvideoPack: Pack {
                 intentTags: [
                     "continuity", "craft", "video-prompting", "style-control",
                     "production-pipeline", "workflows", "post-audio-legal",
+                    "camera", "lighting", "color", "pacing", "visual-strategy",
                 ]
             ),
         ],

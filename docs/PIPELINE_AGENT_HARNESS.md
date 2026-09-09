@@ -90,6 +90,12 @@ the current phase's capability set is rejected before it can spend money or muta
   canonical agent writer while preserving that explicit legacy tolerance. Prompt
   compilation projects the approved action, camera move, continuity locks, and match-action cue;
   render iteration returns that exact plan and its rescue cut.
+- A required spatial blockout binds stable location-local camera setups, metric layouts, entity
+  shapes, State Ladder IDs, camera paths, internal shot ranges, cut kinds, and shot-owned timed
+  reference roles. Native graybox export and imported QuickTime blockouts pass through the same
+  canonical Shot List writer. The blockout proof binds those exact canonical bytes, the ordered
+  setup/shape/state identities, and the exported clip hash; a changed plan, assignment, or clip
+  blocks approval before generation.
 - Analysis binds to the exact track hash. Frames bind each required role to its exact image hash,
   compiled provider prompt, generation model, and current vision audit. Render binds each
   non-imported final shot to its exact executable delivery, compiled provider prompt, generation

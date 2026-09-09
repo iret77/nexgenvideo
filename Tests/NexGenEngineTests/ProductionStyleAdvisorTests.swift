@@ -61,8 +61,11 @@ struct ProductionStyleAdvisorTests {
         #expect(candidate.kind == .alias)
         #expect(selection.directorID == "director-wim-wenders-the-seeing-road")
         #expect(selection.signatureID == "dop-robby-m-ller")
-        #expect(Set(selection.overrides.map(\.dimension)) == [.camera, .timing])
-        #expect(Set(selection.overrides.compactMap(\.sourceEntryID)) == ["director-yasujir-ozu-domestic-stillness"])
+        #expect(Set(selection.overrides.map(\.dimension)) == [.camera, .timing, .lighting, .color])
+        #expect(Set(selection.overrides.compactMap(\.sourceEntryID)) == [
+            "director-yasujir-ozu-domestic-stillness",
+            "dop-robby-m-ller",
+        ])
         let resolved = try ResolvedProductionStyleV1.resolve(selection, catalog: catalog)
         #expect(resolved.value(.camera)?.contains("locked off") == true)
         #expect(resolved.criteria.contains { $0.source.recipeID == "director-yasujir-ozu-domestic-stillness" && $0.source.dimension == .timing })

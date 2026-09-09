@@ -16,7 +16,7 @@ Musicvideo registers phase-specific selections for Project Init, Analysis, Brief
 |---|---|
 | Director/DoP | `ProductionStyleAdvisorV1` resolves genre, name, aliases, mood, constraints, harmony and clashes across 31 director recipes and 11 DoP signatures. `ProductionStyleStoreV1`, prompt binding, frame review and timeline review preserve per-dimension overrides and scoped evidence. |
 | Story and canon | `StoryCausalityPlanV1`, Treatment and Storyboard writers bind proposals, causal changes, beat coverage and downstream rewind to canonical artifacts. |
-| Spatial production | `SpatialProductionPlanV1` binds location/setup IDs, state changes, take/cut timing and exact blockout bytes through Shot List, Render and approval. |
+| Spatial production | `SpatialProductionPlanV1` binds location/setup IDs, metric entity shapes, state changes, take/cut timing and exact blockout bytes through Shot List, Render and approval. |
 | Assets and references | `ConfirmedIdentityAssetStoreV1`, `ReferencePlannerV2` and frame reference usage receipts bind approved project-local assets, semantic jobs, offering limits and actual ordered inputs. |
 | Prompt dialects | `VideoPromptIRV1`, `VideoPromptDialectCompilerV1`, `PromptDialectRegistry` and `PromptCompiler` translate typed reference roles, operation mode, camera and audio intent into the selected route's syntax. |
 | Generation | `GenerationPackageV1`, the central provider boundary and host-owned execution authority bind exact compiled requests, retained input bytes, route evidence, single-use spend, provider receipts and output bytes. |

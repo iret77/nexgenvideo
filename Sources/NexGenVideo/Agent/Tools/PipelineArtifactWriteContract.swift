@@ -678,10 +678,14 @@ enum PipelineArtifactWriteContract {
             "shots": array(plannedGenerationShot, minimum: 1),
             "states": array(productionState, minimum: 1),
             "layouts": array(spatialLayout, minimum: 1),
+            "shapes": array(blockoutShape, minimum: 1),
             "panels": array(lookFreePanel),
             "blockout": blockoutRequest,
         ],
-        required: ["activation", "setups", "shots", "states", "layouts", "panels", "blockout"]
+        required: [
+            "activation", "setups", "shots", "states", "layouts", "shapes",
+            "panels", "blockout",
+        ]
     ) }
 
     private static var musicvideoProductionPlan: [String: Any] { object(
@@ -899,6 +903,23 @@ enum PipelineArtifactWriteContract {
             "look_free": boolean,
         ],
         required: ["id", "setup_id", "path", "sha256", "look_free"]
+    ) }
+
+    private static var blockoutShape: [String: Any] { object(
+        [
+            "id": nonEmptyString,
+            "entity_id": nonEmptyString,
+            "entity_state_ids": array(nonEmptyString, minimum: 1),
+            "location_id": nonEmptyString,
+            "primitive": enumeration(BlockoutShapePrimitiveV1.allCases.map(\.rawValue)),
+            "center": spatialVector,
+            "size": spatialVector,
+            "heading_degrees": number,
+        ],
+        required: [
+            "id", "entity_id", "entity_state_ids", "location_id", "primitive",
+            "center", "size", "heading_degrees",
+        ]
     ) }
 
     private static var blockoutRequest: [String: Any] {

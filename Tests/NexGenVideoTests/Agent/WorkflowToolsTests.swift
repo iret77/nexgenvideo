@@ -2610,6 +2610,40 @@ struct WorkflowToolsTests {
         ]
         var generatedExecution = generatedExecutionShotInput()
         generatedExecution["storyboard_step_ids"] = storyboardSteps.compactMap { $0["id"] as? String }
+        let musicvideoPlan: [String: Any] = [
+            "performance_segments": [],
+            "final_mix": [
+                "original_song_timeline_start_seconds": 0,
+                "original_song_occurrences": 1,
+                "provider_song_audio_muted": true,
+                "approved_additional_layer_ids": [],
+            ],
+            "visual_arc": [
+                "concept": "The yard opens from stillness into arrival.",
+                "motifs": [[
+                    "id": "yard-threshold",
+                    "description": "The yard entrance remains the section anchor.",
+                    "setup_ids": [],
+                ]],
+                "sections": [[
+                    "section_id": "intro",
+                    "musical_function": "opening",
+                    "visual_function": "establish the yard before the arrival",
+                    "motif_ids": ["yard-threshold"],
+                    "shot_ids": ["s001"],
+                    "constants": [[
+                        "kind": "guidance",
+                        "target_id": "s001",
+                        "value": "Hold the empty yard before the entrance.",
+                        "rationale": "The opening establishes the section's visual baseline.",
+                    ]],
+                    "variations": [],
+                    "lyrics_relation": "unused",
+                    "change_explanation": "The arrival changes the held opening frame.",
+                ]],
+            ],
+            "coverage": [],
+        ]
         var missingPlanShot = shot
         missingPlanShot.removeValue(forKey: "production_plan")
         let missingPlan = await h.runRaw("write_shotlist", args: [
@@ -2770,6 +2804,7 @@ struct WorkflowToolsTests {
             "project_dir": dataRoot.path,
             "shots": [shot],
             "execution_shots": [generatedExecution],
+            "musicvideo_plan": musicvideoPlan,
         ])
         let shotlist = try #require(try loadShotlist(dataRoot: dataRoot))
         #expect(shotlist.project == "demo")
@@ -2795,6 +2830,7 @@ struct WorkflowToolsTests {
             "project_dir": dataRoot.path,
             "shots": [importedShot],
             "execution_shots": [importedExecution],
+            "musicvideo_plan": musicvideoPlan,
         ])
         let importedShotlist = try #require(try loadShotlist(dataRoot: dataRoot))
         #expect(importedShotlist.shots.first?.sourceMode == .imported)
