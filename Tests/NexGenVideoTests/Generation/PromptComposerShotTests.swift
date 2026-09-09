@@ -63,6 +63,16 @@ struct PromptComposerShotTests {
             ),
             to: dataRoot
         )
+        if musicvideo {
+            try store.save(
+                try Bible(
+                    project: "prompt-test",
+                    generated: "2026-09-09",
+                    generator: "test"
+                ),
+                to: PipelineLayout.bibleFile
+            )
+        }
         try Fixtures.prepareProjectPackage(at: home)
         if musicvideo {
             let pack = MusicvideoPack()
