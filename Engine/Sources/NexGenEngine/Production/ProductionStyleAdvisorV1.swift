@@ -470,9 +470,17 @@ public enum ProductionStyleAdvisorV1 {
         let queryTokens = Set(query.split(separator: " ").map(String.init).filter { $0.count > 2 })
         guard !queryTokens.isEmpty else { return nil }
         let ranked = entries.map { entry -> (Int, CreativeKnowledgeEntryV1) in
-            let words = Set(normalize(entry.title + " " + entry.applicability.intentTags.joined(separator: " ")).split(separator: " ").map(String.init))
-            return (queryTokens.intersection(words).count, entry)
-        }.sorted { $0.0 == $1.0 ? $0.1.id.rawValue < $1.1.id.rawValue : $0.0 > $1.0 }
+            let searchableText = entry.title + " " + entry.applicability.intentTags.joined(separator: " ")
+            let normalizedWords = normalize(searchableText).split(separator: " ").map(String.init)
+            let words = Set(normalizedWords)
+            let score = queryTokens.intersection(words).count
+            return (score, entry)
+        }.sorted { left, right in
+            if left.0 == right.0 {
+                return left.1.id.rawValue < right.1.id.rawValue
+            }
+            return left.0 > right.0
+        }
         return (ranked.first?.0 ?? 0) > 0 ? ranked.first?.1 : nil
     }
 
