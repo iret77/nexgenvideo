@@ -36,7 +36,7 @@ struct TakeRangeReviewView: View {
                 Button("Play source range") { playRange() }
                     .buttonStyle(InlineActionButtonStyle()).disabled(busy || !validRange)
                 if player != nil {
-                    VideoPlayer(player: player).frame(minHeight: AppTheme.ComponentSize.previewMinHeight)
+                    VideoPlayer(player: player).frame(minHeight: AppTheme.Layout.previewMinHeight)
                 }
                 if findings.count < TakeReview.Pass.allCases.count {
                     let pass = TakeReview.Pass.allCases[findings.count]
