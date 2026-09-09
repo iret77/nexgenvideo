@@ -52,15 +52,27 @@ enum FrameAuditExpectations {
         var forbidden = ["no characters beyond declared character_refs"]
         if !(brief?.allowTextOverlays ?? false) { forbidden.insert("no text overlays / title cards", at: 0) }
         let anchor = bible?.locations.first(where: { $0.id == shot.locationRef })?.proportionAnchorShot
-        var result = [
-            "character_count": "\(ProductionDiscipline.visibleCharacterCount(shot, bible: bible))",
+        let characterPositions = blocking.map { item -> String in
+            let setAnchor = shot.productionPlan?.setAnchor(
+                for: item.characterRef
+            ) ?? ""
+            return "\(item.characterRef)@\(item.position) (\(item.pose), "
+                + "anchor=\(setAnchor), relation=\(item.relationToSet))"
+        }.joined(separator: "; ")
+        let gazes = blocking.map {
+            "\($0.characterRef): \($0.gaze)"
+        }.joined(separator: "; ")
+        let characterCount = ProductionDiscipline.visibleCharacterCount(
+            shot,
+            bible: bible
+        )
+        var result: [String: String] = [
+            "character_count": String(characterCount),
             "framing": shot.framing?.rawValue ?? "",
             "camera_angle": shot.cameraSetup?.angle.rawValue ?? "",
             "camera_height": shot.cameraSetup?.height.rawValue ?? "",
-            "character_position": blocking.map {
-                "\($0.characterRef)@\($0.position) (\($0.pose), anchor=\(shot.productionPlan?.setAnchor(for: $0.characterRef) ?? ""), relation=\($0.relationToSet))"
-            }.joined(separator: "; "),
-            "gaze": blocking.map { "\($0.characterRef): \($0.gaze)" }.joined(separator: "; "),
+            "character_position": characterPositions,
+            "gaze": gazes,
             "forbidden_elements": forbidden.joined(separator: "; "),
             "visible_zones": shot.visibleZones.joined(separator: ", "),
             "anchor_at_t0": "exact start state: subject in the planned start pose, before the shot's action",
