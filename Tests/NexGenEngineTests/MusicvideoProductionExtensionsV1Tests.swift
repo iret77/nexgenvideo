@@ -97,7 +97,8 @@ struct MusicvideoProductionExtensionsV1Tests {
             showsFloorContact: true,
             showsHandsAndOrientation: false,
             minimumContinuousSeconds: 4,
-            assemblyRoleID: "dance-master"
+            assemblyRoleID: "dance-master",
+            referenceDemandIDs: []
         )
         let insert = MusicCoverageEvidenceV1(
             roleID: "face-insert",
@@ -108,7 +109,8 @@ struct MusicvideoProductionExtensionsV1Tests {
             showsFloorContact: false,
             showsHandsAndOrientation: false,
             minimumContinuousSeconds: 1,
-            assemblyRoleID: "dance-insert"
+            assemblyRoleID: "dance-insert",
+            referenceDemandIDs: []
         )
         let covered = MusicPerformanceCoverageItemV1(
             id: "dance-chorus",
@@ -137,6 +139,85 @@ struct MusicvideoProductionExtensionsV1Tests {
         #expect(throws: MusicvideoProductionValidationErrorV1.self) {
             try MusicvideoProductionValidatorV1.validate(draft(coverage: [missingMaster]))
         }
+    }
+
+    @Test("concert and instrument coverage prove their distinct roles and rescue")
+    func concertAndInstrumentCoverageAreExecutable() throws {
+        let concertRoles = ["master", "performer", "reaction", "detail"]
+        let concert = MusicPerformanceCoverageItemV1(
+            id: "concert-chorus",
+            sectionIDs: ["chorus"],
+            kind: .concert,
+            requiredRoleIDs: concertRoles,
+            evidence: concertRoles.map { roleID in
+                MusicCoverageEvidenceV1(
+                    roleID: roleID,
+                    shotIDs: ["concert-\(roleID)"],
+                    performerIDs: roleID == "reaction" ? ["audience"] : ["band"],
+                    setupIDs: ["wide"],
+                    showsFullBody: roleID == "master",
+                    showsFloorContact: false,
+                    showsHandsAndOrientation: roleID == "detail",
+                    minimumContinuousSeconds: roleID == "master" ? 4 : 1,
+                    assemblyRoleID: "concert-\(roleID)",
+                    referenceDemandIDs: []
+                )
+            },
+            approvedExceptionRoleIDs: [],
+            choreographyBeatIDs: []
+        )
+        let instrument = MusicPerformanceCoverageItemV1(
+            id: "guitar-chorus",
+            sectionIDs: ["chorus"],
+            kind: .instrument,
+            requiredRoleIDs: ["hands"],
+            evidence: [MusicCoverageEvidenceV1(
+                roleID: "hands",
+                shotIDs: ["guitar-detail"],
+                performerIDs: ["guitarist"],
+                setupIDs: ["wide"],
+                showsFullBody: false,
+                showsFloorContact: false,
+                instrumentID: "guitar",
+                showsHandsAndOrientation: true,
+                minimumContinuousSeconds: 2,
+                assemblyRoleID: "instrument-detail",
+                referenceDemandIDs: []
+            )],
+            approvedExceptionRoleIDs: [],
+            choreographyBeatIDs: [],
+            risk: "Fine finger placement may drift during the close view.",
+            rescue: "Cut to the approved master while the fingering is obscured."
+        )
+        try MusicvideoProductionValidatorV1.validate(
+            draft(coverage: [concert, instrument])
+        )
+
+        let missingReaction = MusicPerformanceCoverageItemV1(
+            id: concert.id,
+            sectionIDs: concert.sectionIDs,
+            kind: concert.kind,
+            requiredRoleIDs: concert.requiredRoleIDs,
+            evidence: concert.evidence.filter { $0.roleID != "reaction" },
+            approvedExceptionRoleIDs: [],
+            choreographyBeatIDs: []
+        )
+        #expect(throws: MusicvideoProductionValidationErrorV1.self) {
+            try MusicvideoProductionValidatorV1.validate(draft(coverage: [missingReaction]))
+        }
+
+        let approvedAudienceException = MusicPerformanceCoverageItemV1(
+            id: concert.id,
+            sectionIDs: concert.sectionIDs,
+            kind: concert.kind,
+            requiredRoleIDs: concert.requiredRoleIDs,
+            evidence: concert.evidence.filter { $0.roleID != "reaction" },
+            approvedExceptionRoleIDs: ["reaction"],
+            choreographyBeatIDs: []
+        )
+        try MusicvideoProductionValidatorV1.validate(
+            draft(coverage: [approvedAudienceException])
+        )
     }
 
     @Test("the final mix contains the original song once and suppresses provider song audio")
@@ -173,6 +254,53 @@ struct MusicvideoProductionExtensionsV1Tests {
         #expect(throws: MusicvideoProductionValidationErrorV1.self) {
             try MusicvideoProductionValidatorV1.validate(draft(visualArc: arc))
         }
+    }
+
+    @Test("the complete song arc preserves its motif through recurrence variation and closure")
+    func completeSongArcIsExplicit() throws {
+        let sectionIDs = [
+            "verse-1", "chorus-1", "verse-2", "chorus-2",
+            "bridge", "chorus-3", "outro",
+        ]
+        let sections = sectionIDs.enumerated().map { index, sectionID in
+            MusicArcSectionV1(
+                sectionID: sectionID,
+                musicalFunction: sectionID.hasPrefix("chorus") ? "release" : sectionID,
+                visualFunction: sectionID == "outro" ? "closure" : "develop the motif",
+                motifIDs: ["window-light"],
+                shotIDs: ["arc-shot-\(index + 1)"],
+                constants: [MusicArcParameterV1(
+                    kind: .lighting,
+                    targetID: "window-light",
+                    value: "preserve the diagonal amber key",
+                    rationale: "Keep the recurring motif recognizable."
+                )],
+                variations: [MusicArcParameterV1(
+                    kind: sectionID == "outro" ? .state : .camera,
+                    targetID: sectionID == "outro" ? "room" : "wide",
+                    value: sectionID == "outro"
+                        ? "return the room to stillness"
+                        : "variation \(index + 1)",
+                    rationale: sectionID == "outro"
+                        ? "Resolve the established visual movement."
+                        : "Distinguish this measured song section."
+                )],
+                lyricsRelation: .unused,
+                changeExplanation: sectionID == "outro"
+                    ? "The final recurrence resolves into the original still composition."
+                    : "The motif recurs while this section changes one approved parameter."
+            )
+        }
+        let arc = MusicVisualArcDraftV1(
+            concept: "One recurring light motif evolves with the measured song form.",
+            motifs: [motif()],
+            sections: sections
+        )
+
+        try MusicvideoProductionValidatorV1.validate(draft(visualArc: arc))
+        #expect(arc.sections.map(\.sectionID) == sectionIDs)
+        #expect(arc.sections.allSatisfy { $0.motifIDs == ["window-light"] })
+        #expect(arc.sections.last?.visualFunction == "closure")
     }
 
     private func draft(

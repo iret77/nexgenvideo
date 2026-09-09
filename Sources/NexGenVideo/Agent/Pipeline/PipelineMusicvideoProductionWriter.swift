@@ -95,6 +95,7 @@ enum PipelineMusicvideoProductionWriter {
                 }
             }
         }
+        try validateCoverageReferences(draft.coverage, inputs: inputs)
 
         let trackURL = try ProjectLocalFile.resolve(shotlist.song.audioPath, dataRoot: dataRoot)
         let trackSHA256 = try FileDigest.sha256(of: trackURL)
@@ -322,6 +323,7 @@ enum PipelineMusicvideoProductionWriter {
             visualArc: draft.visualArc,
             shotID: shotID
         )
+        directives += coverageDirectives(coverage: draft.coverage, shotID: shotID)
         guard let segment = try materializedSegment(for: shotID, dataRoot: dataRoot) else {
             return directives
         }
@@ -362,6 +364,86 @@ enum PipelineMusicvideoProductionWriter {
                 "Its approved motif IDs are \(section.motifIDs.joined(separator: ", ")). \(section.changeExplanation)",
             ] + (section.constants + section.variations).map { parameter in
                 "Approved song-arc \(parameter.kind.rawValue) for \(parameter.targetID): \(parameter.value). Purpose: \(parameter.rationale)"
+            }
+        }
+    }
+
+    static func coverageDirectives(
+        coverage: [MusicPerformanceCoverageItemV1],
+        shotID: String
+    ) -> [String] {
+        coverage.flatMap { item in
+            item.evidence.filter { $0.shotIDs.contains(shotID) }.map { evidence in
+                var requirements = [
+                    "hold role \(evidence.roleID) continuously for at least \(format(evidence.minimumContinuousSeconds))s",
+                ]
+                if item.kind == .dance, evidence.showsFullBody {
+                    requirements.append("keep the full body visible")
+                }
+                if item.kind == .dance, evidence.showsFloorContact {
+                    requirements.append("keep floor contact visible")
+                }
+                if let instrumentID = evidence.instrumentID {
+                    requirements.append("keep instrument \(instrumentID), the player's hands, and orientation visible")
+                }
+                return "Approved \(item.kind.rawValue) coverage: \(requirements.joined(separator: "; "))."
+            }
+        }
+    }
+
+    static func validateCoverageReferences(
+        _ coverage: [MusicPerformanceCoverageItemV1],
+        inputs: [String: PipelineExecutionShotInput]
+    ) throws {
+        for item in coverage {
+            for evidence in item.evidence {
+                let boundInputs = evidence.shotIDs.compactMap { inputs[$0] }
+                let generated = boundInputs.filter { $0.sourceMode != .imported }
+                let declared = Set(evidence.referenceDemandIDs)
+                if generated.isEmpty {
+                    guard declared.isEmpty else {
+                        throw MusicvideoProductionValidationErrorV1.sourceMismatch(
+                            evidence.roleID
+                        )
+                    }
+                    continue
+                }
+                let selectedByShot = generated.map { input in
+                    input.referenceDemands.filter { declared.contains($0.id) }
+                }
+                guard !declared.isEmpty,
+                      selectedByShot.allSatisfy({ !$0.isEmpty }),
+                      Set(selectedByShot.flatMap { $0.map(\.id) }) == declared else {
+                    throw MusicvideoProductionValidationErrorV1.sourceMismatch(evidence.roleID)
+                }
+                let selected = selectedByShot.flatMap { $0 }
+                if item.kind == .instrument, let instrumentID = evidence.instrumentID {
+                    guard selected.contains(where: {
+                        ProductionIdentifierNormalizerV1.matches(
+                            $0.entityID ?? "",
+                            instrumentID
+                        )
+                    }) else {
+                        throw MusicvideoProductionValidationErrorV1.sourceMismatch(
+                            evidence.roleID
+                        )
+                    }
+                }
+                if item.kind == .dance,
+                   !selected.contains(where: { $0.modality == .video }) {
+                    let referencedPerformers = Set(selected.compactMap(\.entityID).map(
+                        ProductionIdentifierNormalizerV1.canonical
+                    ))
+                    guard evidence.performerIDs.allSatisfy({ performerID in
+                        referencedPerformers.contains(
+                            ProductionIdentifierNormalizerV1.canonical(performerID)
+                        )
+                    }) else {
+                        throw MusicvideoProductionValidationErrorV1.sourceMismatch(
+                            evidence.roleID
+                        )
+                    }
+                }
             }
         }
     }

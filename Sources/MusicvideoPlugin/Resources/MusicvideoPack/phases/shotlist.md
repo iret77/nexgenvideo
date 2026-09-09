@@ -259,7 +259,9 @@ For the current Music Video pack, every call also supplies `musicvideo_plan`:
   proof that owns the master role must show full body and floor contact;
   instrument proof names the instrument and shows hands/orientation. Concert
   roles need master, performer, reaction and detail unless the absent role is an
-  explicit approved exception. Every retained risk has a concrete rescue.
+  explicit approved exception. For every generated coverage view, list the exact
+  `reference_demand_ids` that carry its body, instrument or motion evidence;
+  imported views leave this list empty. Every retained risk has a concrete rescue.
 
 These are parts of Shot List, not additional phases or intake questions. A
 change to the song, analysis, Treatment, Sections, setup/state sheets, blockout,

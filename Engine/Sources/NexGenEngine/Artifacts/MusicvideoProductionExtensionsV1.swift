@@ -398,6 +398,7 @@ public struct MusicCoverageEvidenceV1: Codable, Sendable, Equatable {
     public let showsHandsAndOrientation: Bool
     public let minimumContinuousSeconds: Double
     public let assemblyRoleID: String
+    public let referenceDemandIDs: [String]
 
     private enum CodingKeys: String, CodingKey {
         case roleID = "role_id"
@@ -410,6 +411,7 @@ public struct MusicCoverageEvidenceV1: Codable, Sendable, Equatable {
         case showsHandsAndOrientation = "shows_hands_and_orientation"
         case minimumContinuousSeconds = "minimum_continuous_seconds"
         case assemblyRoleID = "assembly_role_id"
+        case referenceDemandIDs = "reference_demand_ids"
     }
 
     public init(
@@ -422,7 +424,8 @@ public struct MusicCoverageEvidenceV1: Codable, Sendable, Equatable {
         instrumentID: String? = nil,
         showsHandsAndOrientation: Bool,
         minimumContinuousSeconds: Double,
-        assemblyRoleID: String
+        assemblyRoleID: String,
+        referenceDemandIDs: [String]
     ) {
         self.roleID = roleID
         self.shotIDs = shotIDs
@@ -434,6 +437,7 @@ public struct MusicCoverageEvidenceV1: Codable, Sendable, Equatable {
         self.showsHandsAndOrientation = showsHandsAndOrientation
         self.minimumContinuousSeconds = minimumContinuousSeconds
         self.assemblyRoleID = assemblyRoleID
+        self.referenceDemandIDs = referenceDemandIDs
     }
 }
 
@@ -834,6 +838,10 @@ public enum MusicvideoProductionValidatorV1 {
                     throw MusicvideoProductionValidationErrorV1.invalidField(item.id)
                 }
                 try require(evidence.assemblyRoleID, "coverage.evidence.assembly_role_id")
+                _ = try unique(
+                    evidence.referenceDemandIDs,
+                    "coverage.evidence.reference_demand_ids"
+                )
                 if item.kind == .dance,
                    required.contains(evidence.roleID),
                    !evidence.showsFullBody || !evidence.showsFloorContact {

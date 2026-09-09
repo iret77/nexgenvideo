@@ -782,11 +782,12 @@ enum PipelineArtifactWriteContract {
             "shows_hands_and_orientation": boolean,
             "minimum_continuous_seconds": ["type": "number", "exclusiveMinimum": 0],
             "assembly_role_id": nonEmptyString,
+            "reference_demand_ids": stringArray,
         ],
         required: [
             "role_id", "shot_ids", "performer_ids", "setup_ids", "shows_full_body",
             "shows_floor_contact", "shows_hands_and_orientation", "minimum_continuous_seconds",
-            "assembly_role_id",
+            "assembly_role_id", "reference_demand_ids",
         ]
     ) }
 
