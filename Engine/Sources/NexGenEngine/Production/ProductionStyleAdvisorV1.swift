@@ -368,18 +368,9 @@ public enum ProductionStyleAdvisorV1 {
             return ProductionStyleOverrideV1(dimension: dimension, value: value, reason: alias.rationale,
                                              sourceEntryID: sourceID, verification: criterion)
         }
-        let assessment = pairing(directorID: alias.directorID, signatureID: alias.signatureID)
         if let signatureID = alias.signatureID {
             let source = try entry(signatureID, catalog: catalog)
-            overrides += try alias.signatureDimensions.compactMap { dimension in
-                let needsExplicitValue: Bool
-                do {
-                    _ = try dimensionValue(dimension, entry: source)
-                    needsExplicitValue = assessment.requiresExplicitTradeoffAcceptance
-                } catch {
-                    needsExplicitValue = true
-                }
-                guard needsExplicitValue else { return nil }
+            overrides += try alias.signatureDimensions.map { dimension in
                 let value: String
                 if let dimensionValue = try? dimensionValue(
                     dimension,

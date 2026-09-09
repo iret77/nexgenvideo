@@ -131,7 +131,9 @@ enum PipelineSpatialProductionWriter {
             clipPath = path
             clipURL = try ProjectLocalFile.resolve(path, dataRoot: dataRoot)
         case .none:
-            fatalError("handled above")
+            throw SpatialProductionValidationErrorV1.invalidField(
+                "blockout.mode"
+            )
         }
         let proof = BlockoutProofV1(
             projectID: shotlist.project,

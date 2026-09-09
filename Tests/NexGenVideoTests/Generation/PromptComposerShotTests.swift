@@ -459,7 +459,7 @@ struct PromptComposerShotTests {
 
         let prompt = try await PromptCompiler.compile(
             intent: "The performer holds a precise opening pose.",
-            modelId: "openai/gpt-image-2",
+            modelId: "fal-ai/gpt-image-2",
             modality: .image,
             editor: editor,
             shotId: shot.id,

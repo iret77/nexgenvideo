@@ -75,8 +75,8 @@ public struct FixtureFictionPack: Pack, PackResourceRootProviding {
                 "film-production-story-structures", "film-production-genre-baselines",
                 "film-production-workflows",
             ], ["story-structures", "genre-baselines", "workflows"]),
-            selection("scene_plan", "treatment", [
-                "story-containers", "continuity-and-coverage",
+            selection("scene_plan", "storyboard", [
+                "film-craft-baseline", "continuity-and-coverage",
                 "film-production-film-craft", "film-production-renderability",
             ], ["story-development", "coverage", "continuity", "renderability"]),
             selection("production_design", "production_design", [

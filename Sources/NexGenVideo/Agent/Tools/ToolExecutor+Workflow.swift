@@ -3329,7 +3329,11 @@ extension ToolExecutor {
                 declaredBinding: declaration.binding
             )
             // Dedicated assembly video track — reused across runs, cleared before each rebuild.
-            let videoTrackId = ensureAssemblyTrack(editor, existingId: sidecar.videoTrackId, type: .video)
+            let videoTrackId = ensureAssemblyTrack(
+                editor,
+                existingId: sidecar.videoTrackId ?? "ngv-assembly-video-v1",
+                type: .video
+            )
             sidecar.videoTrackId = videoTrackId
             if let vi = editor.timeline.tracks.firstIndex(where: { $0.id == videoTrackId }) {
                 editor.timeline.tracks[vi].clips = []
