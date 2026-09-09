@@ -97,7 +97,7 @@ struct TimelineStyleReview: Codable, Sendable {
             guard before == (try ProductionStyleStoreV1.snapshot(dataRoot: root)) else { throw ToolError("Production Design changed during review. Refresh the review.") }
             let evidence = Dictionary(uniqueKeysWithValues: style.criteria.map { criterion in
                 let targets = Self.eligibleClips(for: criterion, clips: clips)
-                return (criterion.auditKey, targets.compactMap { clip in
+                return (criterion.auditKey, targets.compactMap { clip -> TimelineStyleEvidenceReference? in
                     guard let sha256 = hashByMediaID[clip.mediaRef] else { return nil }
                     return TimelineStyleEvidenceReference(
                         clipID: clip.id,
