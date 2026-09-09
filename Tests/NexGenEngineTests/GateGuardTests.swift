@@ -426,7 +426,7 @@ struct GateGuardTests {
         version: Int? = nil,
         stillShotIDs: Set<String> = []
     ) throws -> URL {
-        let shotlistURL = try NexGenEngine.saveShotlist(
+        let shotlistURL = try saveShotlist(
             shotlist,
             to: dataRoot,
             version: version
