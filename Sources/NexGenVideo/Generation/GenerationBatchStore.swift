@@ -242,7 +242,7 @@ enum GenerationBatchStore {
         }
     }
 
-    private static func loadProjectIfPresent(id: String, home: URL) throws -> Snapshot? {
+    nonisolated private static func loadProjectIfPresent(id: String, home: URL) throws -> Snapshot? {
         let path = try relativePath(id: id)
         let manifestURL = home.appendingPathComponent(path + "/manifest.json")
         let journalURL = home.appendingPathComponent(path + "/journal.json")
@@ -285,7 +285,7 @@ enum GenerationBatchStore {
             .write(to: destination.appendingPathComponent("journal.json"), options: .atomic)
     }
 
-    private static func projectIdentity(home: URL) -> String? {
+    nonisolated private static func projectIdentity(home: URL) -> String? {
         if let identity = ProjectIdentity.existingUUID(for: home) { return identity }
         let name = home.lastPathComponent
         guard name.hasPrefix("p-") else { return nil }
