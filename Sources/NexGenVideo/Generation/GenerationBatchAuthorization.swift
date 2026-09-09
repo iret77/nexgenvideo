@@ -71,6 +71,15 @@ struct GenerationBatchAuthorization: Sendable, Equatable {
             try readyIDs.compactMap { try GenerationBatchOutput.load(authorization: self, assetID: $0, home: home) }
         }.value
         try scope.requireCurrent(editor: editor)
+        for receipt in receipts {
+            guard let asset = editor.mediaAssets.first(where: { $0.id == receipt.asset.id }),
+                  asset.generationStatus == .none,
+                  asset.toManifestEntry(projectURL: home).source == receipt.asset.source,
+                  asset.generationInput?.spendTransactionId == execution.transactionID,
+                  asset.generationInput.map(GenerationPackageV1.normalized) == item.package.payload.generationInput else {
+                throw GenerationRequestError.storage("A completed batch output changed while its receipt was verified.")
+            }
+        }
         _ = try GenerationBatchStore.update(snapshot, editor: editor) { journal in
             if [.running, .blocked].contains(execution.state), ready.count == item.package.payload.outputCount,
                Set(receipts.map(\.asset.id)) == Set(readyIDs) {

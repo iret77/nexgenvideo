@@ -349,7 +349,8 @@ final class GenerationService {
         for planned in execution.placeholders {
             let receipt = receipts.first { $0.asset.id == planned.id }
             let entry = receipt?.asset ?? planned
-            guard case .project(let path) = entry.source else { throw GenerationRequestError.storage("The batch output is not project-local.") }
+            guard case .project(let path) = entry.source,
+                  case .project(let plannedPath) = planned.source else { throw GenerationRequestError.storage("The batch output is not project-local.") }
             let url = home.appendingPathComponent(path)
             guard url.resolvingSymlinksInPath() == home.resolvingSymlinksInPath().appendingPathComponent(path) else {
                 throw GenerationRequestError.storage("The batch output cannot traverse a symbolic link.")
@@ -357,10 +358,22 @@ final class GenerationService {
             if let existing = editor.mediaAssets.first(where: { $0.id == entry.id }) {
                 guard existing.generationInput?.spendTransactionId == execution.transactionID,
                       existing.generationInput?.generationPackageID == specification.package.id,
-                      existing.url.standardizedFileURL == url.standardizedFileURL else {
+                      existing.generationInput.map(GenerationPackageV1.normalized) == specification.package.payload.generationInput,
+                      existing.type == entry.type,
+                      existing.url.standardizedFileURL == url.standardizedFileURL ||
+                        (receipt != nil && existing.url.standardizedFileURL == home.appendingPathComponent(plannedPath).standardizedFileURL) else {
                     throw GenerationRequestError.gate("A saved batch destination now belongs to another asset.")
                 }
-                if receipt != nil { existing.generationStatus = .none }
+                if receipt != nil {
+                    existing.url = url
+                    existing.duration = entry.duration
+                    existing.sourceWidth = entry.sourceWidth
+                    existing.sourceHeight = entry.sourceHeight
+                    existing.sourceFPS = entry.sourceFPS
+                    existing.hasAudio = entry.hasAudio ?? false
+                    existing.pendingDownloadURL = nil
+                    existing.generationStatus = .none
+                }
                 placeholders.append(existing)
             } else {
                 let asset = MediaAsset(entry: entry, resolvedURL: url)

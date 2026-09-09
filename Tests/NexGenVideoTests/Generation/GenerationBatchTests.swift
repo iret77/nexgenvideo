@@ -169,6 +169,16 @@ struct GenerationBatchTests {
         }.value
         #expect(restored == receipt)
         #expect(try GenerationBatchOutput.load(authorization: authorization, assetID: "another-output", home: home) == nil)
+        let substitute = home.appendingPathComponent(Project.mediaDirectoryName + "/substitute.png")
+        try Data("another output".utf8).write(to: substitute)
+        asset.url = substitute
+        await #expect(throws: (any Error).self) { try await authorization.settle(editor: editor) }
+        asset.url = url
+        try await authorization.settle(editor: editor)
+        let settled = try GenerationBatchStore.load(id: batch.id, home: home)
+        #expect(settled.journal.executions[0].state == .complete)
+        #expect(settled.journal.executions[0].detail == nil)
+        #expect(settled.journal.executions.dropFirst().allSatisfy { $0.state == .queued })
         try Data("replaced bytes".utf8).write(to: url, options: .atomic)
         #expect(throws: (any Error).self) {
             try GenerationBatchOutput.load(authorization: authorization, assetID: entry.id, home: home)
