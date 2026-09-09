@@ -3298,7 +3298,7 @@ extension ToolExecutor {
                         "assembly_manifest": NSNull(),
                     ])
                 }
-                guard action == .rebuild else {
+                if action != .rebuild {
                     throw ToolError("The previously assembled timeline region changed. Choose drift_action \"adopt\" to finish the current cut or \"rebuild\" to replace it from the canonical plan.")
                 }
             }
