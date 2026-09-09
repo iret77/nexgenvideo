@@ -183,7 +183,7 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
         let file = try ProjectLocalFile.resolve("generation-packages/\(id).json", dataRoot: home)
         let bytes = try Data(contentsOf: file)
         let package = try JSONDecoder().decode(Self.self, from: bytes)
-        guard package.id == id, try encode(package) == bytes else {
+        guard package.id == id, try Self.encode(package) == bytes else {
             throw GenerationRequestError.gate("The immutable generation package changed. Restore its recorded bytes.")
         }
         return package

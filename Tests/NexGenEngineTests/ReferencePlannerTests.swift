@@ -183,8 +183,8 @@ struct ReferencePlannerTests {
         )
         let bible = try Bible(
             project: "p", generated: "t", generator: "g",
-            characters: [ari, bea], props: [prop], locations: [location],
-            look: LookGuide(style: "film", lightingAnchor: "look/light.png")
+            look: LookGuide(style: "film", lightingAnchor: "look/light.png"),
+            characters: [ari, bea], props: [prop], locations: [location]
         )
         let plan = ReferencePlanner.planShotRefs(
             projectDir: dir,
@@ -213,8 +213,8 @@ struct ReferencePlannerTests {
                 id: "s001", section: "verse", timeStart: 0, timeEnd: 4,
                 durationS: 4, type: .performance, description: "d",
                 visualPrompt: "p", mood: "m", characterRefs: ["ari", "bea"],
-                locationRef: "studio", propRefs: ["mic"],
-                keyframeStrategy: .start
+                locationRef: "studio", keyframeStrategy: .start,
+                propRefs: ["mic"]
             )),
             brief: try Self.briefWith(.runwayGen4Image),
             bible: bible,

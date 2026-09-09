@@ -1975,11 +1975,8 @@ final class GenerationService {
             editor.importMediaAsset(placeholder, skipAppend: true)
             editor.appendGenerationLog(for: placeholder)
             await editor.finalizeImportedAsset(placeholder)
-            do {
-                if let batchItem { try await GenerationBatchOutput.record(asset: placeholder, authorization: batchItem, editor: editor) }
-            } catch {
-                placeholder.generationStatus = .failed(error.localizedDescription)
-                continue
+            if let batchItem = authorization.batchItem {
+                try await GenerationBatchOutput.record(asset: placeholder, authorization: batchItem, editor: editor)
             }
             onComplete?(placeholder)
             AppNotifications.generationComplete(

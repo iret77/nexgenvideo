@@ -77,7 +77,7 @@ final class GenerationReferenceSnapshot: Sendable {
             for index in sources.indices {
                 try Task.checkCancellation()
                 guard try FileDigest.sha256(of: sources[index].url) == receipts[index].sourceSHA256,
-                      FileDigest.sha256(of: urls[index]) == receipts[index].submittedSHA256 else {
+                      try FileDigest.sha256(of: urls[index]) == receipts[index].submittedSHA256 else {
                     throw GenerationRequestError.optionsInvalid("An approved reference changed. Prepare and approve the request again.")
                 }
             }
