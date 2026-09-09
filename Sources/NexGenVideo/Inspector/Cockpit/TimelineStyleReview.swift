@@ -73,7 +73,7 @@ struct TimelineStyleReview: Codable, Sendable {
         let clips = timeline.tracks.flatMap(\.clips)
         let references = Set(clips.filter { $0.mediaType != .text }.map(\.mediaRef)).sorted()
         let urls = references.map { ($0, resolver.resolveURL(for: $0)) }
-        return try await Task.detached(priority: .utility) {
+        return try await Task.detached(priority: .utility) { () throws -> Snapshot? in
             guard let style = try ProductionStyleStoreV1.load(dataRoot: root) else { return nil }
             let before = try ProductionStyleStoreV1.snapshot(dataRoot: root)
             guard style == (try ProductionStyleStoreV1.load(dataRoot: root)) else {

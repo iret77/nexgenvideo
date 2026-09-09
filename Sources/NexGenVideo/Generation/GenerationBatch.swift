@@ -77,16 +77,18 @@ struct GenerationBatchJournal: Codable, Sendable, Equatable {
         var detail: String?
     }
     let batchID: String
+    let authorityID: String?
     let approvedAt: Date
     private(set) var revision: Int
     private(set) var executions: [Execution]
 
-    init(approving batch: GenerationBatch, at date: Date = Date()) throws {
+    init(approving batch: GenerationBatch, authorityID: String, at date: Date = Date()) throws {
         try batch.validate()
-        guard batch.totalEUR != nil else {
+        guard batch.totalEUR != nil, !authorityID.isEmpty else {
             throw GenerationRequestError.gate("Every batch item needs a verified monetary ceiling before unattended generation can be approved.")
         }
         batchID = batch.id
+        self.authorityID = authorityID
         approvedAt = date
         revision = 0
         executions = batch.payload.items.map {
@@ -97,7 +99,7 @@ struct GenerationBatchJournal: Codable, Sendable, Equatable {
 
     func validate(batch: GenerationBatch) throws {
         try batch.validate()
-        guard batchID == batch.id, revision >= 0, batch.totalEUR != nil,
+        guard batchID == batch.id, authorityID?.isEmpty != true, revision >= 0, batch.totalEUR != nil,
               approvedAt.timeIntervalSince1970.isFinite,
               executions.map(\.itemID) == batch.payload.items.map(\.id),
               Set(executions.compactMap(\.transactionID)).count == executions.compactMap(\.transactionID).count else {

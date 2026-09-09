@@ -69,9 +69,10 @@ final class GenerationBatchCoordinator {
             do {
                 let snapshots = try await Task.detached(priority: .utility) { try GenerationBatchStore.all(home: home) }.value
                 guard let self, let editor, editor.workingRoot == home, self.readID == requestID else { return }
+                try GenerationBatchStore.reconcileRuntime(snapshots, editor: editor)
                 self.snapshots = snapshots
                 self.error = nil
-                let candidates = snapshots.filter { snapshot in snapshot.journal.executions.contains(where: {
+                let candidates = snapshots.filter { snapshot in snapshot.authorityAvailable && snapshot.journal.executions.contains(where: {
                     [.queued, .submitting, .running].contains($0.state) || (retryKnownJobs && $0.state == .blocked && $0.providerRequestResumable)
                 }) }.map(\.batch.id)
                 if let first = candidates.first {

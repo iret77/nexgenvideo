@@ -25,6 +25,15 @@ enum AppPaths {
     /// Recovery store — the live working copy of each open project, so unsaved work survives a crash.
     static var recovery: URL { applicationSupport.appendingPathComponent("Recovery", isDirectory: true) }
 
+    /// Host-owned single-use authority for approved paid generation jobs.
+    static var approvedGenerationExecutions: URL {
+        applicationSupport.appendingPathComponent("ApprovedGenerationExecutions", isDirectory: true)
+    }
+
+    static var executionHostIdentity: URL {
+        applicationSupport.appendingPathComponent("execution-host.json", isDirectory: false)
+    }
+
     /// A project's working copy (editing target; synced into the `.ngv` package on save).
     static func workingCopy(projectId: String) -> URL {
         recovery.appendingPathComponent(projectId, isDirectory: true)

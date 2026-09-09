@@ -64,6 +64,10 @@ struct GenerationBatchProgressView: View {
                             let completed = snapshot.journal.executions.filter { $0.state == .complete }.count
                             Text("\(completed) of \(snapshot.batch.payload.items.count) complete")
                                 .fontWeight(AppTheme.FontWeight.semibold)
+                            if !snapshot.authorityAvailable {
+                                Text("Execution authority is not available on this Mac. This batch is history only.")
+                                    .foregroundStyle(AppTheme.Status.warningColor)
+                            }
                             ForEach(snapshot.batch.payload.items) { item in
                                 if let execution = snapshot.journal.executions.first(where: { $0.itemID == item.id }) {
                                     Text("\(item.purpose) · \(label(execution.state))")
@@ -78,8 +82,8 @@ struct GenerationBatchProgressView: View {
                             }
                             Button("Cancel remaining") { coordinator.cancelRemaining(batchID: snapshot.batch.id, editor: editor) }
                                 .buttonStyle(InlineActionButtonStyle())
-                                .disabled(!snapshot.journal.executions.contains(where: { $0.state == .queued }))
-                            if snapshot.journal.executions.contains(where: { $0.state == .blocked && $0.providerRequestResumable }) {
+                                .disabled(!snapshot.authorityAvailable || !snapshot.journal.executions.contains(where: { $0.state == .queued }))
+                            if snapshot.authorityAvailable && snapshot.journal.executions.contains(where: { $0.state == .blocked && $0.providerRequestResumable }) {
                                 Button("Resume status checks") { coordinator.start(batchID: snapshot.batch.id, editor: editor, resumeBlocked: true) }
                                     .buttonStyle(InlineActionButtonStyle())
                             }

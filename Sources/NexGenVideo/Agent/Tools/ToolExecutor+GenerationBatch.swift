@@ -23,19 +23,21 @@ extension ToolExecutor {
             }
             let id: String
             let approved: Bool
+            let executionAuthorized: Bool
             let items: [Item]
         }
         let snapshots = try await Task.detached(priority: .utility) { try GenerationBatchStore.all(home: home) }.value
         guard editor.workingRoot == home else { throw ToolError("The project changed while reading batch status.") }
         var values = snapshots.map { snapshot in
-            Summary(id: snapshot.batch.id, approved: true, items: snapshot.batch.payload.items.map { item in
+            Summary(id: snapshot.batch.id, approved: true, executionAuthorized: snapshot.authorityAvailable,
+                items: snapshot.batch.payload.items.map { item in
                 let execution = snapshot.journal.executions.first(where: { $0.itemID == item.id })!
                 return .init(id: item.id, purpose: item.purpose, packageID: item.package.id,
                     state: execution.state.rawValue, outputAssetIDs: execution.outputAssetIDs, detail: execution.detail)
             })
         }
         if let pending = editor.generationBatchCoordinator.pending {
-            values.append(Summary(id: pending.id, approved: false, items: pending.payload.items.map {
+            values.append(Summary(id: pending.id, approved: false, executionAuthorized: false, items: pending.payload.items.map {
                 .init(id: $0.id, purpose: $0.purpose, packageID: $0.package.id, state: "awaiting_approval", outputAssetIDs: [], detail: nil)
             }))
         }

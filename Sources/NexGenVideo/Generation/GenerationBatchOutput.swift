@@ -19,24 +19,31 @@ struct GenerationBatchOutput: Codable, Sendable, Equatable {
         let bytes = try Data(contentsOf: ProjectLocalFile.resolve(path, dataRoot: home))
         let receipt = try JSONDecoder().decode(Self.self, from: bytes)
         let snapshot = try GenerationBatchStore.load(id: authorization.batchID, home: home)
+        try validate(receipt, snapshot: snapshot, home: home)
+        guard try GenerationPackageV1.canonicalData(receipt) == bytes else {
+            throw GenerationRequestError.storage("A completed batch output no longer matches its recorded request.")
+        }
+        return receipt
+    }
+
+    nonisolated static func validate(_ receipt: Self, snapshot: GenerationBatchStore.Snapshot,
+                                     home: URL) throws {
         guard receipt.schema == "generation-batch-output/v1",
-              let item = snapshot.batch.payload.items.first(where: { $0.id == authorization.itemID }),
-              let execution = snapshot.journal.executions.first(where: { $0.itemID == authorization.itemID }),
-              receipt.batchID == authorization.batchID, receipt.itemID == authorization.itemID,
+              let item = snapshot.batch.payload.items.first(where: { $0.id == receipt.itemID }),
+              let execution = snapshot.journal.executions.first(where: { $0.itemID == receipt.itemID }),
+              receipt.batchID == snapshot.batch.id,
               receipt.packageID == item.package.id, receipt.transactionID == execution.transactionID,
-              receipt.asset.id == assetID, execution.placeholders.contains(where: { $0.id == assetID }),
+              execution.placeholders.contains(where: { $0.id == receipt.asset.id }),
               receipt.asset.generationInput?.spendTransactionId == receipt.transactionID,
               receipt.asset.generationInput?.generationPackageID == receipt.packageID,
               receipt.asset.generationInput.map(GenerationPackageV1.normalized) == item.package.payload.generationInput,
               receipt.asset.type.rawValue == item.package.payload.modality,
               receipt.asset.duration.isFinite, receipt.asset.duration > 0,
               case .project(let mediaPath) = receipt.asset.source,
-              mediaPath.hasPrefix(Project.mediaDirectoryName + "/"),
-              try GenerationPackageV1.canonicalData(receipt) == bytes else {
+              mediaPath.hasPrefix(Project.mediaDirectoryName + "/") else {
             throw GenerationRequestError.storage("A completed batch output no longer matches its recorded request.")
         }
         _ = try ProjectLocalFile.requireHash(receipt.sha256, at: mediaPath, dataRoot: home)
-        return receipt
     }
 
     @MainActor
@@ -81,8 +88,11 @@ struct GenerationBatchOutput: Codable, Sendable, Equatable {
         }
         if let existing {
             guard existing == receipt else { throw GenerationRequestError.storage("A completed batch output cannot replace its receipt.") }
+            try GenerationExecutionAuthorityStore.live().archiveOutput(receipt, home: home)
             return
         }
+        try GenerationExecutionAuthorityStore.live().archiveOutput(receipt, home: home)
+        try scope.requireCurrent(editor: editor)
         let relative = try receiptPath(authorization: authorization, assetID: entry.id)
         let destination = home.appendingPathComponent(relative)
         let parent = try ProjectLocalFile.resolve("generation-batches/\(authorization.batchID)/manifest.json", dataRoot: home)
@@ -94,13 +104,17 @@ struct GenerationBatchOutput: Codable, Sendable, Equatable {
         try GenerationPackageV1.canonicalData(receipt).write(to: destination, options: .withoutOverwriting)
     }
 
-    nonisolated private static func receiptPath(authorization: GenerationBatchAuthorization, assetID: String) throws -> String {
+    nonisolated static func receiptKey(authorization: GenerationBatchAuthorization, assetID: String) -> String {
+        FileDigest.sha256(of: Data((authorization.itemID + "\n" + assetID).utf8))
+    }
+
+    nonisolated static func receiptPath(authorization: GenerationBatchAuthorization, assetID: String) throws -> String {
         guard authorization.batchID.count == 64,
               authorization.batchID.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
               UUID(uuidString: authorization.itemID) != nil, !assetID.isEmpty else {
             throw GenerationRequestError.storage("Invalid batch output identity.")
         }
-        let key = FileDigest.sha256(of: Data((authorization.itemID + "\n" + assetID).utf8))
+        let key = receiptKey(authorization: authorization, assetID: assetID)
         return "generation-batches/\(authorization.batchID)/output-\(key).json"
     }
 }

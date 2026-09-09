@@ -35,7 +35,7 @@ struct GenerationBatchAuthorization: Sendable, Equatable {
         guard placeholders.count == package.payload.outputCount else {
             throw GenerationRequestError.gate("The batch's output destinations were not recorded before submission.")
         }
-        _ = try GenerationBatchStore.update(snapshot, editor: editor) {
+        _ = try GenerationBatchStore.update(snapshot, editor: editor, addingSpendEvents: [reservation]) {
             try $0.beginSubmission(itemID: itemID, packageID: package.id, transactionID: transactionID,
                 placeholders: placeholders, batch: snapshot.batch)
         }

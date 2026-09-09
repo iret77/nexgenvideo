@@ -135,7 +135,7 @@ extension EditorViewModel {
         try authorization.projectMutationScope?.requireCurrent(editor: self)
         let previousLog = generationLog
         generationLog.version = 2
-        generationLog.spendEvents.append(GenerationSpendEvent(
+        let event = GenerationSpendEvent(
             transactionId: transactionId,
             kind: kind,
             model: authorization.target.modelId,
@@ -146,13 +146,17 @@ extension EditorViewModel {
             providerRequestResumable: providerRequestResumable,
             money: money,
             note: note
-        ))
+        )
+        generationLog.spendEvents.append(event)
         do {
             _ = try GenerationBudgetGuard.verifiedSpend(
                 log: generationLog,
                 generatedAssets: mediaAssets,
                 requireCompleteMoney: false
             )
+            if let batch = authorization.batchItem {
+                try GenerationBatchStore.recordSpendEvent(event, authorization: batch, editor: self)
+            }
             try persistGenerationLog()
         } catch {
             generationLog = previousLog

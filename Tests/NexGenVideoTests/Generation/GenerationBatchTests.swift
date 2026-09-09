@@ -21,6 +21,11 @@ struct GenerationBatchTests {
     }
 
     private func cleanup(_ root: URL) {
+        if let projectKey = ProjectIdentity.existingUUID(for: root),
+           let authority = try? GenerationExecutionAuthorityStore.live(),
+           let records = try? authority.all(projectKey: projectKey) {
+            for record in records { try? authority.removeForTesting(projectKey: projectKey, batchID: record.batch.id) }
+        }
         if let key = ProjectIdentity.existingKey(for: root) { ProjectWorkingCopy.discard(key: key) }
         try? FileManager.default.removeItem(at: root)
     }
@@ -39,7 +44,7 @@ struct GenerationBatchTests {
     @Test func duplicateSubmissionsCannotReuseAnItemOrAnotherItemsReservation() async throws {
         let (root, _, batch) = try await fixture()
         defer { cleanup(root) }
-        var journal = try GenerationBatchJournal(approving: batch)
+        var journal = try GenerationBatchJournal(approving: batch, authorityID: "test-authority")
         let first = batch.payload.items[0], second = batch.payload.items[1]
         try journal.beginSubmission(itemID: first.id, packageID: first.package.id, transactionID: "one", placeholders: placeholders(first, transaction: "one"), batch: batch)
         #expect(throws: (any Error).self) {
@@ -89,7 +94,7 @@ struct GenerationBatchTests {
     @Test func cancellationKeepsSubmittedWorkAndFailureDoesNotConsumeOtherItems() async throws {
         let (root, _, batch) = try await fixture()
         defer { cleanup(root) }
-        var journal = try GenerationBatchJournal(approving: batch)
+        var journal = try GenerationBatchJournal(approving: batch, authorityID: "test-authority")
         let first = batch.payload.items[0], second = batch.payload.items[1]
         try journal.beginSubmission(itemID: first.id, packageID: first.package.id, transactionID: "one", placeholders: placeholders(first, transaction: "one"), batch: batch)
         try journal.stop(itemID: second.id, state: .blocked, detail: "The exact route is unavailable.")
@@ -133,7 +138,7 @@ struct GenerationBatchTests {
         #expect(changed.id != batch.id)
         #expect(changed.payload.items.count == 2)
         #expect(changed.totalEUR == 0.5)
-        let journal = try GenerationBatchJournal(approving: batch)
+        let journal = try GenerationBatchJournal(approving: batch, authorityID: "test-authority")
         #expect(throws: (any Error).self) { try journal.validate(batch: changed) }
     }
 
@@ -231,7 +236,7 @@ struct GenerationBatchTests {
         let manifest = try GenerationBatch(payload: .init(nonce: UUID(), projectKey: batch.payload.projectKey, phase: nil,
             items: [.init(id: UUID().uuidString, purpose: "Unpriced generation", package: unpriced)]))
         #expect(manifest.totalEUR == nil)
-        #expect(throws: (any Error).self) { try GenerationBatchJournal(approving: manifest) }
+        #expect(throws: (any Error).self) { try GenerationBatchJournal(approving: manifest, authorityID: "test-authority") }
     }
 
     @Test func changedArchivedInputsCannotResumeUnderTheOriginalPackage() async throws {
@@ -272,5 +277,108 @@ struct GenerationBatchTests {
         try Data("changed archived bytes".utf8).write(to: archived, options: .atomic)
         await #expect(throws: (any Error).self) { try await GenerationPackageInputs.restore(package: package, editor: editor) }
         #expect(editor.generationLog.spendEvents.isEmpty)
+    }
+
+    @Test func hostAuthorityRestoresAnOlderProjectWithoutReissuingApproval() async throws {
+        let (root, editor, batch) = try await fixture()
+        let authorityRoot = FileManager.default.temporaryDirectory.appendingPathComponent("ngv-authority-\(UUID().uuidString)")
+        let authority = try GenerationExecutionAuthorityStore(root: authorityRoot, hostID: UUID().uuidString)
+        defer {
+            cleanup(root)
+            try? FileManager.default.removeItem(at: authorityRoot)
+        }
+        let approved = try await GenerationBatchStore.approve(batch, editor: editor, authority: authority)
+        let home = try #require(editor.workingRoot)
+        let item = batch.payload.items[0]
+        let reservation = GenerationSpendEvent(transactionId: "durable-transaction", kind: .reserved,
+            model: item.package.payload.target.modelId, provider: item.package.payload.target.provider,
+            transport: item.package.payload.target.transport, endpoint: item.package.payload.target.endpoint,
+            money: try #require(item.package.payload.estimate))
+        let submitting = try GenerationBatchStore.update(approved, editor: editor, authority: authority,
+            addingSpendEvents: [reservation]) {
+            try $0.beginSubmission(itemID: item.id, packageID: item.package.id,
+                transactionID: reservation.transactionId, placeholders: placeholders(item, transaction: reservation.transactionId),
+                batch: batch)
+        }
+        let providerRecorded = try GenerationBatchStore.update(submitting, editor: editor, authority: authority) {
+            try $0.recordProviderRequest(itemID: item.id, transactionID: reservation.transactionId,
+                requestID: "provider-job", resumable: true)
+        }
+        try FileManager.default.removeItem(at: home.appendingPathComponent("generation-batches"))
+        try FileManager.default.removeItem(at: home.appendingPathComponent("generation-packages"))
+        let restored = try #require(try GenerationBatchStore.all(home: home, authority: authority).first)
+        #expect(restored == providerRecorded)
+        #expect(restored.authorityAvailable)
+        #expect(restored.authoritySpendEvents == [reservation])
+        #expect(FileManager.default.fileExists(atPath: home.appendingPathComponent(
+            "generation-packages/\(item.package.id).json").path))
+        try GenerationBatchStore.reconcileRuntime([restored], editor: editor)
+        #expect(editor.generationLog.spendEvents.contains(reservation))
+    }
+
+    @Test func saveAsAndAnotherHostKeepHistoryWithoutExecutableAuthority() async throws {
+        let (root, editor, batch) = try await fixture()
+        let authorityRoot = FileManager.default.temporaryDirectory.appendingPathComponent("ngv-authority-\(UUID().uuidString)")
+        let host = try GenerationExecutionAuthorityStore(root: authorityRoot, hostID: UUID().uuidString)
+        defer {
+            cleanup(root)
+            try? FileManager.default.removeItem(at: authorityRoot)
+        }
+        _ = try await GenerationBatchStore.approve(batch, editor: editor, authority: host)
+        let home = try #require(editor.workingRoot)
+
+        let copied = FileManager.default.temporaryDirectory.appendingPathComponent("ngv-save-as-\(UUID().uuidString).ngv")
+        defer { try? FileManager.default.removeItem(at: copied) }
+        try FileManager.default.copyItem(at: home, to: copied)
+        _ = try ProjectIdentity.regenerate(at: copied)
+        let saveAsHistory = try #require(try GenerationBatchStore.all(home: copied, authority: host).first)
+        #expect(!saveAsHistory.authorityAvailable)
+        #expect(saveAsHistory.journal.executions.allSatisfy { $0.state == .queued })
+
+        let anotherHost = try GenerationExecutionAuthorityStore(root: authorityRoot, hostID: UUID().uuidString)
+        let foreignHistory = try GenerationBatchStore.load(id: batch.id, home: home, authority: anotherHost)
+        #expect(!foreignHistory.authorityAvailable)
+    }
+
+    @Test func completedOutputBytesSurviveDiscardedRecovery() async throws {
+        let (root, editor, batch) = try await fixture()
+        let authorityRoot = FileManager.default.temporaryDirectory.appendingPathComponent("ngv-authority-\(UUID().uuidString)")
+        let authority = try GenerationExecutionAuthorityStore(root: authorityRoot, hostID: UUID().uuidString)
+        defer {
+            cleanup(root)
+            try? FileManager.default.removeItem(at: authorityRoot)
+        }
+        let approved = try await GenerationBatchStore.approve(batch, editor: editor, authority: authority)
+        let home = try #require(editor.workingRoot)
+        let item = batch.payload.items[0]
+        let entries = placeholders(item, transaction: "output-transaction")
+        let running = try GenerationBatchStore.update(approved, editor: editor, authority: authority) {
+            try $0.beginSubmission(itemID: item.id, packageID: item.package.id,
+                transactionID: "output-transaction", placeholders: entries, batch: batch)
+            try $0.recordProviderRequest(itemID: item.id, transactionID: "output-transaction",
+                requestID: "provider-output", resumable: true)
+        }
+        let entry = try #require(entries.first)
+        guard case .project(let path) = entry.source else { Issue.record("Expected a project output"); return }
+        let outputURL = home.appendingPathComponent(path)
+        try FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let bytes = Data("durable completed output".utf8)
+        try bytes.write(to: outputURL)
+        let receipt = GenerationBatchOutput(schema: "generation-batch-output/v1", batchID: batch.id,
+            itemID: item.id, packageID: item.package.id, transactionID: "output-transaction",
+            asset: entry, sha256: FileDigest.sha256(of: bytes))
+        try authority.archiveOutput(receipt, home: home)
+        try FileManager.default.removeItem(at: outputURL)
+        let receiptPath = try GenerationBatchOutput.receiptPath(
+            authorization: .init(batchID: batch.id, itemID: item.id), assetID: entry.id)
+        try? FileManager.default.removeItem(at: home.appendingPathComponent(receiptPath))
+        let restored = try GenerationBatchStore.load(id: batch.id, home: home, authority: authority)
+        #expect(restored == running)
+        #expect(restored.recoveredOutputs == [receipt])
+        #expect(try Data(contentsOf: outputURL) == bytes)
+        #expect(FileManager.default.fileExists(atPath: home.appendingPathComponent(receiptPath).path))
+        try GenerationBatchStore.reconcileRuntime([restored], editor: editor)
+        #expect(editor.mediaAssets.contains(where: { $0.id == entry.id && $0.generationStatus == .none }))
+        #expect(editor.mediaManifest.entries.contains(entry))
     }
 }
