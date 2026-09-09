@@ -105,11 +105,14 @@ struct GenerationBatchTests {
         let (root, editor, batch) = try await fixture()
         defer { cleanup(root) }
         let initial = try await GenerationBatchStore.approve(batch, editor: editor)
+        let home = try #require(editor.workingRoot)
+        let manifestURL = home.appendingPathComponent("generation-batches/\(batch.id)/manifest.json")
+        let immutableManifest = try Data(contentsOf: manifestURL)
         let item = batch.payload.items[0]
         let submitting = try GenerationBatchStore.update(initial, editor: editor) {
             try $0.beginSubmission(itemID: item.id, packageID: item.package.id, transactionID: "one", placeholders: placeholders(item, transaction: "one"), batch: batch)
         }
-        let home = try #require(editor.workingRoot)
+        #expect(try Data(contentsOf: manifestURL) == immutableManifest)
         #expect(try GenerationBatchStore.load(id: batch.id, home: home) == submitting)
         #expect(try await GenerationBatchStore.approve(batch, editor: editor) == submitting)
         #expect(throws: (any Error).self) {
@@ -132,6 +135,44 @@ struct GenerationBatchTests {
         #expect(changed.totalEUR == 0.5)
         let journal = try GenerationBatchJournal(approving: batch)
         #expect(throws: (any Error).self) { try journal.validate(batch: changed) }
+    }
+
+    @Test func partialOutputsRetainExactBytesAcrossInterruptedJobs() async throws {
+        let (root, editor, batch) = try await fixture()
+        defer { cleanup(root) }
+        let initial = try await GenerationBatchStore.approve(batch, editor: editor)
+        let home = try #require(editor.workingRoot)
+        let item = batch.payload.items[0]
+        let entries = placeholders(item, transaction: "partial")
+        let submitted = try GenerationBatchStore.update(initial, editor: editor) {
+            try $0.beginSubmission(itemID: item.id, packageID: item.package.id,
+                transactionID: "partial", placeholders: entries, batch: batch)
+            try $0.recordProviderRequest(itemID: item.id, transactionID: "partial",
+                requestID: "recorded-job", resumable: true)
+        }
+        let entry = try #require(entries.first)
+        guard case .project(let path) = entry.source else { Issue.record("Expected a project output"); return }
+        let url = home.appendingPathComponent(path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("completed provider output".utf8).write(to: url)
+        let asset = MediaAsset(entry: entry, resolvedURL: url)
+        editor.mediaAssets.append(asset)
+        let authorization = GenerationBatchAuthorization(batchID: batch.id, itemID: item.id)
+        try await GenerationBatchOutput.record(asset: asset, authorization: authorization, editor: editor)
+        let receipt = try #require(GenerationBatchOutput.load(authorization: authorization, assetID: entry.id, home: home))
+        try await GenerationBatchOutput.record(asset: asset, authorization: authorization, editor: editor)
+        _ = try GenerationBatchStore.update(submitted, editor: editor) {
+            try $0.stop(itemID: item.id, state: .blocked, detail: "Connection interrupted after download")
+        }
+        let restored = try await Task.detached {
+            try GenerationBatchOutput.load(authorization: authorization, assetID: entry.id, home: home)
+        }.value
+        #expect(restored == receipt)
+        #expect(try GenerationBatchOutput.load(authorization: authorization, assetID: "another-output", home: home) == nil)
+        try Data("replaced bytes".utf8).write(to: url, options: .atomic)
+        #expect(throws: (any Error).self) {
+            try GenerationBatchOutput.load(authorization: authorization, assetID: entry.id, home: home)
+        }
     }
 
     @Test func unknownPricingCannotCreateAnUnattendedAuthorization() async throws {

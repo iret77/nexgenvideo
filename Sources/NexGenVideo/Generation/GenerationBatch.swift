@@ -183,12 +183,14 @@ struct GenerationBatchJournal: Codable, Sendable, Equatable {
         try validate(batch: batch)
         let index = try index(of: itemID)
         if executions[index].state == .complete, executions[index].outputAssetIDs == outputAssetIDs { return }
-        guard executions[index].state == .running,
+        guard [.running, .blocked].contains(executions[index].state),
+              executions[index].transactionID != nil, executions[index].providerRequestID != nil,
               outputAssetIDs.count == batch.payload.items[index].package.payload.outputCount,
               Set(outputAssetIDs).count == outputAssetIDs.count,
               Set(outputAssetIDs) == Set(executions[index].placeholders.map(\.id)) else { throw invalidState() }
         executions[index].state = .complete
         executions[index].outputAssetIDs = outputAssetIDs
+        executions[index].detail = nil
         revision += 1
     }
 

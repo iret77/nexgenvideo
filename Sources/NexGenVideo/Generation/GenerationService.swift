@@ -56,6 +56,7 @@ final class GenerationService {
 
     private static let uploadCacheTTL: TimeInterval = 6 * 24 * 60 * 60
     private var generationTasks: [String: Task<Void, Never>] = [:]
+    private var batchResumeTasks: [String: Task<Void, Error>] = [:]
 
     @discardableResult
     func generate(
@@ -292,7 +293,7 @@ final class GenerationService {
                 )
                 onFailure?()
             }
-            do { try authorization.batchItem?.settle(editor: editor) }
+            do { try await authorization.batchItem?.settle(editor: editor) }
             catch { Log.generation.error("could not settle generation batch: \(error.localizedDescription)") }
         }
         generationTasks[primaryId] = task
@@ -312,6 +313,17 @@ final class GenerationService {
     }
 
     func resumeBatchJob(_ item: GenerationBatchAuthorization, editor: EditorViewModel) async throws {
+        let identity = item.batchID + "/" + item.itemID
+        if let task = batchResumeTasks[identity] { return try await task.value }
+        let task = Task { @MainActor in
+            defer { self.batchResumeTasks.removeValue(forKey: identity) }
+            try await self.performResumeBatchJob(item, editor: editor)
+        }
+        batchResumeTasks[identity] = task
+        try await task.value
+    }
+
+    private func performResumeBatchJob(_ item: GenerationBatchAuthorization, editor: EditorViewModel) async throws {
         guard let home = editor.workingRoot else { throw GenerationRequestError.storage("The batch project is closed.") }
         let scope = try GenerationProjectMutationScope(projectHome: home, editor: editor)
         let saved = try GenerationBatchStore.load(id: item.batchID, home: home)
@@ -322,52 +334,66 @@ final class GenerationService {
             throw GenerationRequestError.gate("This interrupted request has no resumable provider receipt. It will not be submitted again.")
         }
         if let existing = generationTasks[primaryID] { await existing.value; return }
+        let receipts = try await Task.detached(priority: .utility) {
+            try execution.placeholders.compactMap {
+                try GenerationBatchOutput.load(authorization: item, assetID: $0.id, home: home)
+            }
+        }.value
+        try scope.requireCurrent(editor: editor)
+        let completedIDs = Set(receipts.map(\.asset.id))
         let target = specification.package.payload.target
         guard target.transport == .api, [.fal, .runway, .marble].contains(target.provider) else {
             throw GenerationRequestError.gate("This provider request cannot yet resume status retrieval.")
         }
-        guard let key = ProviderKeychain.load(target.provider) else {
-            throw GenerationRequestError.gate("Restore the approved provider's key before resuming its job.")
-        }
         var placeholders: [MediaAsset] = []
-        for entry in execution.placeholders {
+        for planned in execution.placeholders {
+            let receipt = receipts.first { $0.asset.id == planned.id }
+            let entry = receipt?.asset ?? planned
+            guard case .project(let path) = entry.source else { throw GenerationRequestError.storage("The batch output is not project-local.") }
+            let url = home.appendingPathComponent(path)
+            guard url.resolvingSymlinksInPath() == home.resolvingSymlinksInPath().appendingPathComponent(path) else {
+                throw GenerationRequestError.storage("The batch output cannot traverse a symbolic link.")
+            }
             if let existing = editor.mediaAssets.first(where: { $0.id == entry.id }) {
                 guard existing.generationInput?.spendTransactionId == execution.transactionID,
-                      existing.generationInput?.generationPackageID == specification.package.id else {
+                      existing.generationInput?.generationPackageID == specification.package.id,
+                      existing.url.standardizedFileURL == url.standardizedFileURL else {
                     throw GenerationRequestError.gate("A saved batch destination now belongs to another asset.")
                 }
+                if receipt != nil { existing.generationStatus = .none }
                 placeholders.append(existing)
             } else {
-                guard case .project(let path) = entry.source else { throw GenerationRequestError.storage("The batch output is not project-local.") }
-                let url = home.appendingPathComponent(path)
-                guard url.resolvingSymlinksInPath() == home.resolvingSymlinksInPath().appendingPathComponent(path) else {
-                    throw GenerationRequestError.storage("The batch output cannot traverse a symbolic link.")
-                }
                 let asset = MediaAsset(entry: entry, resolvedURL: url)
-                asset.generationStatus = .generating
+                asset.generationStatus = receipt == nil ? .generating : .none
                 editor.mediaAssets.append(asset)
                 placeholders.append(asset)
             }
         }
         _ = try GenerationBatchStore.update(saved, editor: editor) { try $0.resumeRecordedJob(itemID: item.itemID) }
+        guard let key = ProviderKeychain.load(target.provider) else {
+            throw GenerationRequestError.gate("Restore the approved provider's key before resuming its job.")
+        }
         let task = Task { @MainActor [weak self, weak editor] in
             guard let self, let editor else { return }
             defer { self.generationTasks.removeValue(forKey: primaryID) }
             do {
-                let urls: [String]
-                switch target.provider {
-                case .fal:
-                    let data = try await FalClient(apiKey: key).result(endpoint: target.endpoint, requestId: requestID)
-                    let shape: CatalogEntry.ResponseShape = specification.package.payload.modality == "image" ? .images : .video
-                    urls = FalOutput.urls(from: data, shape: shape)
-                case .runway: urls = try await RunwayClient(apiKey: key).output(taskId: requestID)
-                case .marble: urls = MarbleOutput.urls(from: try await MarbleClient(apiKey: key).result(operationId: requestID))
-                default: throw GenerationRequestError.gate("The saved provider route has no status adapter.")
+                if completedIDs.count < execution.placeholders.count {
+                    let urls: [String]
+                    switch target.provider {
+                    case .fal:
+                        let data = try await FalClient(apiKey: key).result(endpoint: target.endpoint, requestId: requestID)
+                        let shape: CatalogEntry.ResponseShape = specification.package.payload.modality == "image" ? .images : .video
+                        urls = FalOutput.urls(from: data, shape: shape)
+                    case .runway: urls = try await RunwayClient(apiKey: key).output(taskId: requestID)
+                    case .marble: urls = MarbleOutput.urls(from: try await MarbleClient(apiKey: key).result(operationId: requestID))
+                    default: throw GenerationRequestError.gate("The saved provider route has no status adapter.")
+                    }
+                    try scope.requireCurrent(editor: editor)
+                    await self.finalizeSuccess(job: .init(_id: requestID, status: .succeeded, resultUrls: urls,
+                        errorMessage: nil, costCredits: nil, completedAt: nil), placeholders: placeholders,
+                        editor: editor, mutationScope: scope, batchItem: item,
+                        completedAssetIDs: completedIDs, onComplete: nil, onFailure: nil)
                 }
-                try scope.requireCurrent(editor: editor)
-                await self.finalizeSuccess(job: .init(_id: requestID, status: .succeeded, resultUrls: urls,
-                    errorMessage: nil, costCredits: nil, completedAt: nil), placeholders: placeholders,
-                    editor: editor, mutationScope: scope, onComplete: nil, onFailure: nil)
                 if let transaction = execution.transactionID,
                    !editor.generationLog.spendEvents.contains(where: { $0.transactionId == transaction && $0.kind == .charged }) {
                     let reserved = editor.generationLog.spendEvents.first { $0.transactionId == transaction && $0.kind == .reserved }?.money
@@ -382,7 +408,7 @@ final class GenerationService {
             } catch {
                 self.failJob(placeholders, error.localizedDescription, nil)
             }
-            do { try item.settle(editor: editor) }
+            do { try await item.settle(editor: editor) }
             catch { Log.generation.error("could not settle resumed batch: \(error.localizedDescription)") }
         }
         generationTasks[primaryID] = task
@@ -455,7 +481,8 @@ final class GenerationService {
         asset: MediaAsset,
         remoteURL: URL,
         editor: EditorViewModel,
-        mutationScope: GenerationProjectMutationScope?
+        mutationScope: GenerationProjectMutationScope?,
+        batchItem: GenerationBatchAuthorization? = nil
     ) async -> Bool {
         asset.generationStatus = .downloading
         var transientURL: URL?
@@ -481,6 +508,9 @@ final class GenerationService {
             // system temp URL when no project is open.
             let tempURL = Self.stageDownload(downloadURL, ext: asset.url.pathExtension, editor: editor)
             transientURL = tempURL
+            if batchItem != nil, FileManager.default.fileExists(atPath: asset.url.path) {
+                throw GenerationRequestError.storage("An unverified batch output already occupies this destination. Preserve it for reconciliation.")
+            }
             try? FileManager.default.removeItem(at: asset.url)
             try FileManager.default.moveItem(at: tempURL, to: asset.url)
             transientURL = nil
@@ -490,6 +520,7 @@ final class GenerationService {
             editor.importMediaAsset(asset, skipAppend: true)
             editor.appendGenerationLog(for: asset)
             await editor.finalizeImportedAsset(asset)
+            if let batchItem { try await GenerationBatchOutput.record(asset: asset, authorization: batchItem, editor: editor) }
             return true
         } catch {
             let message = error.localizedDescription
@@ -517,12 +548,26 @@ final class GenerationService {
             return
         }
         Task { @MainActor in
-            await downloadAndFinalize(
-                asset: asset,
-                remoteURL: remoteURL,
-                editor: editor,
-                mutationScope: mutationScope
-            )
+            do {
+                var batchItem: GenerationBatchAuthorization?
+                if let home = editor.workingRoot, let transaction = asset.generationInput?.spendTransactionId,
+                   asset.generationInput?.generationPackageID != nil {
+                    let assetID = asset.id
+                    batchItem = try await Task.detached(priority: .utility) {
+                        let candidates = try GenerationBatchStore.all(home: home).flatMap { snapshot in
+                            snapshot.journal.executions.filter {
+                                $0.transactionID == transaction && $0.placeholders.contains(where: { $0.id == assetID })
+                            }.map { GenerationBatchAuthorization(batchID: snapshot.batch.id, itemID: $0.itemID) }
+                        }
+                        guard candidates.count <= 1 else { throw GenerationRequestError.storage("This output belongs to conflicting batch executions.") }
+                        return candidates.first
+                    }.value
+                    try mutationScope?.requireCurrent(editor: editor)
+                }
+                await downloadAndFinalize(asset: asset, remoteURL: remoteURL, editor: editor,
+                    mutationScope: mutationScope, batchItem: batchItem)
+                try await batchItem?.settle(editor: editor)
+            } catch { asset.generationStatus = .failed(error.localizedDescription) }
         }
     }
 
@@ -1061,6 +1106,7 @@ final class GenerationService {
                 placeholders: placeholders,
                 editor: editor,
                 mutationScope: authorization.projectMutationScope,
+                batchItem: authorization.batchItem,
                 onComplete: onComplete,
                 onFailure: onFailure
             )
@@ -1208,6 +1254,7 @@ final class GenerationService {
                 await finalizeSuccess(
                     job: job, placeholders: placeholders, editor: editor,
                     mutationScope: authorization.projectMutationScope,
+                    batchItem: authorization.batchItem,
                     onComplete: onComplete, onFailure: onFailure)
             } else {
                 await finalizeMCPMedia(
@@ -1215,6 +1262,7 @@ final class GenerationService {
                     placeholders: placeholders,
                     editor: editor,
                     mutationScope: authorization.projectMutationScope,
+                    batchItem: authorization.batchItem,
                     onComplete: onComplete,
                     onFailure: onFailure
                 )
@@ -1365,6 +1413,7 @@ final class GenerationService {
             await finalizeSuccess(
                 job: job, placeholders: placeholders, editor: editor,
                 mutationScope: authorization.projectMutationScope,
+                batchItem: authorization.batchItem,
                 onComplete: onComplete, onFailure: onFailure)
             markCharged(authorization: authorization, editor: editor)
         } catch let error as RunwayClient.SubmissionOutcomeUnknownError {
@@ -1534,6 +1583,7 @@ final class GenerationService {
                 placeholders: placeholders,
                 editor: editor,
                 mutationScope: authorization.projectMutationScope,
+                batchItem: authorization.batchItem,
                 onComplete: onComplete,
                 onFailure: onFailure
             )
@@ -1578,6 +1628,7 @@ final class GenerationService {
         placeholders: [MediaAsset],
         editor: EditorViewModel,
         mutationScope: GenerationProjectMutationScope?,
+        batchItem: GenerationBatchAuthorization?,
         onComplete: (@MainActor (MediaAsset) -> Void)?,
         onFailure: (@MainActor () -> Void)?
     ) async {
@@ -1596,6 +1647,9 @@ final class GenerationService {
             }
             do {
                 try mutationScope?.requireCurrent(editor: editor)
+                if batchItem != nil, FileManager.default.fileExists(atPath: placeholder.url.path) {
+                    throw GenerationRequestError.storage("An unverified batch output already occupies this destination. Preserve it for reconciliation.")
+                }
                 try? FileManager.default.removeItem(at: placeholder.url)
                 try images[i].write(to: placeholder.url, options: .atomic)
             } catch {
@@ -1606,6 +1660,12 @@ final class GenerationService {
             editor.importMediaAsset(placeholder, skipAppend: true)
             editor.appendGenerationLog(for: placeholder)
             await editor.finalizeImportedAsset(placeholder)
+            do {
+                if let batchItem { try await GenerationBatchOutput.record(asset: placeholder, authorization: batchItem, editor: editor) }
+            } catch {
+                placeholder.generationStatus = .failed(error.localizedDescription)
+                continue
+            }
             onComplete?(placeholder)
             finalized.append(placeholder)
         }
@@ -1620,6 +1680,7 @@ final class GenerationService {
         placeholders: [MediaAsset],
         editor: EditorViewModel,
         mutationScope: GenerationProjectMutationScope?,
+        batchItem: GenerationBatchAuthorization?,
         onComplete: (@MainActor (MediaAsset) -> Void)?,
         onFailure: (@MainActor () -> Void)?
     ) async {
@@ -1640,7 +1701,8 @@ final class GenerationService {
                     asset: placeholder,
                     remoteURL: remoteURL,
                     editor: editor,
-                    mutationScope: mutationScope
+                    mutationScope: mutationScope,
+                    batchItem: batchItem
                 ) {
                     onComplete?(placeholder)
                     finalized.append(placeholder)
@@ -1683,6 +1745,9 @@ final class GenerationService {
                 }
                 do {
                     try mutationScope?.requireCurrent(editor: editor)
+                    if batchItem != nil, FileManager.default.fileExists(atPath: placeholder.url.path) {
+                        throw GenerationRequestError.storage("An unverified batch output already occupies this destination. Preserve it for reconciliation.")
+                    }
                     try? FileManager.default.removeItem(at: placeholder.url)
                     try media.data.write(to: placeholder.url, options: .atomic)
                 } catch {
@@ -1693,6 +1758,12 @@ final class GenerationService {
                 editor.importMediaAsset(placeholder, skipAppend: true)
                 editor.appendGenerationLog(for: placeholder)
                 await editor.finalizeImportedAsset(placeholder)
+                do {
+                    if let batchItem { try await GenerationBatchOutput.record(asset: placeholder, authorization: batchItem, editor: editor) }
+                } catch {
+                    placeholder.generationStatus = .failed(error.localizedDescription)
+                    continue
+                }
                 onComplete?(placeholder)
                 finalized.append(placeholder)
             }
@@ -1891,6 +1962,12 @@ final class GenerationService {
             editor.importMediaAsset(placeholder, skipAppend: true)
             editor.appendGenerationLog(for: placeholder)
             await editor.finalizeImportedAsset(placeholder)
+            do {
+                if let batchItem { try await GenerationBatchOutput.record(asset: placeholder, authorization: batchItem, editor: editor) }
+            } catch {
+                placeholder.generationStatus = .failed(error.localizedDescription)
+                continue
+            }
             onComplete?(placeholder)
             AppNotifications.generationComplete(
                 assetId: placeholder.id,
@@ -1960,6 +2037,7 @@ final class GenerationService {
                 placeholders: placeholders,
                 editor: editor,
                 mutationScope: authorization.projectMutationScope,
+                batchItem: authorization.batchItem,
                 onComplete: onComplete,
                 onFailure: onFailure
             )
@@ -1985,6 +2063,8 @@ final class GenerationService {
         placeholders: [MediaAsset],
         editor: EditorViewModel,
         mutationScope: GenerationProjectMutationScope?,
+        batchItem: GenerationBatchAuthorization?,
+        completedAssetIDs: Set<String> = [],
         onComplete: (@MainActor (MediaAsset) -> Void)?,
         onFailure: (@MainActor () -> Void)?
     ) async {
@@ -2003,6 +2083,7 @@ final class GenerationService {
 
         var finalized: [MediaAsset] = []
         for (i, placeholder) in placeholders.enumerated() {
+            if completedAssetIDs.contains(placeholder.id) { continue }
             guard editor.mediaAssets.contains(where: { $0.id == placeholder.id }) else { continue }
             guard i < urlStrings.count, let remote = URL(string: urlStrings[i]) else {
                 placeholder.generationStatus = .failed("No URL for placeholder")
@@ -2012,7 +2093,8 @@ final class GenerationService {
                 asset: placeholder,
                 remoteURL: remote,
                 editor: editor,
-                mutationScope: mutationScope
+                mutationScope: mutationScope,
+                batchItem: batchItem
             ) {
                 onComplete?(placeholder)
                 finalized.append(placeholder)

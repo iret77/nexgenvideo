@@ -16,16 +16,12 @@ final class GenerationBatchCoordinator {
     private(set) var error: String?
     private(set) var approving = false
     @ObservationIgnored private var jobs: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored private var readID = UUID()
 
     func record(_ snapshot: GenerationBatchStore.Snapshot) {
+        readID = UUID()
         if let index = snapshots.firstIndex(where: { $0.batch.id == snapshot.batch.id }) { snapshots[index] = snapshot }
         else { snapshots.append(snapshot) }
-    }
-
-    func refresh(editor: EditorViewModel) {
-        guard let home = editor.workingRoot else { snapshots = []; return }
-        do { snapshots = try GenerationBatchStore.all(home: home) }
-        catch { self.error = error.localizedDescription }
     }
 
     func remove(itemID: String, editor: EditorViewModel) {
@@ -53,7 +49,6 @@ final class GenerationBatchCoordinator {
             _ = try await GenerationBatchStore.approve(manifest, editor: editor)
             pending = nil
             error = nil
-            refresh(editor: editor)
             start(batchID: manifest.id, editor: editor)
         } catch { self.error = error.localizedDescription }
     }
@@ -63,26 +58,47 @@ final class GenerationBatchCoordinator {
             guard let home = editor.workingRoot else { return }
             let snapshot = try GenerationBatchStore.load(id: batchID, home: home)
             _ = try GenerationBatchStore.update(snapshot, editor: editor) { $0.cancelRemaining() }
-            refresh(editor: editor)
         } catch { self.error = error.localizedDescription }
     }
 
     func resume(editor: EditorViewModel, retryKnownJobs: Bool = true) {
-        refresh(editor: editor)
-        for snapshot in snapshots where snapshot.journal.executions.contains(where: {
-            [.queued, .submitting, .running].contains($0.state) || (retryKnownJobs && $0.state == .blocked && $0.providerRequestResumable)
-        }) { start(batchID: snapshot.batch.id, editor: editor, resumeBlocked: retryKnownJobs) }
+        guard jobs.isEmpty, let home = editor.workingRoot else { return }
+        let requestID = UUID()
+        readID = requestID
+        Task { @MainActor [weak self, weak editor] in
+            do {
+                let snapshots = try await Task.detached(priority: .utility) { try GenerationBatchStore.all(home: home) }.value
+                guard let self, let editor, editor.workingRoot == home, self.readID == requestID else { return }
+                self.snapshots = snapshots
+                self.error = nil
+                let candidates = snapshots.filter { snapshot in snapshot.journal.executions.contains(where: {
+                    [.queued, .submitting, .running].contains($0.state) || (retryKnownJobs && $0.state == .blocked && $0.providerRequestResumable)
+                }) }.map(\.batch.id)
+                if let first = candidates.first {
+                    self.start(batchID: first, editor: editor, resumeBlocked: retryKnownJobs,
+                               remainingBatchIDs: Array(candidates.dropFirst()))
+                }
+            } catch {
+                guard let self, let editor, editor.workingRoot == home, self.readID == requestID else { return }
+                self.error = error.localizedDescription
+            }
+        }
     }
 
-    func start(batchID: String, editor: EditorViewModel, resumeBlocked: Bool = false) {
+    func start(batchID: String, editor: EditorViewModel, resumeBlocked: Bool = false,
+               remainingBatchIDs: [String] = []) {
         guard jobs.isEmpty, let home = editor.workingRoot else { return }
         jobs[batchID] = Task { @MainActor [weak self, weak editor] in
             guard let self, let editor else { return }
             var settled = false
             defer {
                 self.jobs.removeValue(forKey: batchID)
-                self.refresh(editor: editor)
-                if settled, editor.workingRoot == home { self.resume(editor: editor, retryKnownJobs: false) }
+                if editor.workingRoot == home {
+                    if let next = remainingBatchIDs.first {
+                        self.start(batchID: next, editor: editor, resumeBlocked: resumeBlocked,
+                                   remainingBatchIDs: Array(remainingBatchIDs.dropFirst()))
+                    } else if settled { self.resume(editor: editor, retryKnownJobs: false) }
+                }
             }
             do {
                 await CatalogDiscovery.ensureCurrent()
@@ -109,7 +125,6 @@ final class GenerationBatchCoordinator {
                         case .queued:
                             let generation = try await GenerationController.restoreApprovedBatchItem(authorization, editor: editor)
                             let result = try await GenerationController.submitPrepared(generation, editor: editor).get()
-                            self.refresh(editor: editor)
                             await editor.generationService.waitForGeneration(placeholderId: result.placeholderId)
                         case .running:
                             try await editor.generationService.resumeBatchJob(authorization, editor: editor)
@@ -136,7 +151,6 @@ final class GenerationBatchCoordinator {
                             }
                         }
                     }
-                    self.refresh(editor: editor)
                 }
                 editor.agentService.completeGenerationBatch(batchID,
                     message: "Generation batch \(batchID) has settled. Read get_generation_batches for completed outputs and any failed or blocked items before continuing the phase.")

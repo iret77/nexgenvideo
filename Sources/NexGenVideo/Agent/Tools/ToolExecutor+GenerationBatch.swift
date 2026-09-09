@@ -2,13 +2,15 @@ import Foundation
 import NexGenEngine
 
 extension ToolExecutor {
-    func getGenerationBatches(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+    func getGenerationBatches(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
         guard let home = editor.workingRoot else { throw ToolError("Open a project to read its generation batches.") }
         if let id = args["batchID"] as? String {
             if let pending = editor.generationBatchCoordinator.pending, pending.id == id {
                 return .ok(String(decoding: try GenerationPackageV1.encode(pending), as: UTF8.self))
             }
-            return .ok(String(decoding: try GenerationPackageV1.encode(GenerationBatchStore.load(id: id, home: home)), as: UTF8.self))
+            let snapshot = try await Task.detached(priority: .utility) { try GenerationBatchStore.load(id: id, home: home) }.value
+            guard editor.workingRoot == home else { throw ToolError("The project changed while reading batch status.") }
+            return .ok(String(decoding: try GenerationPackageV1.encode(snapshot), as: UTF8.self))
         }
         struct Summary: Encodable {
             struct Item: Encodable {
@@ -23,7 +25,9 @@ extension ToolExecutor {
             let approved: Bool
             let items: [Item]
         }
-        var values = try GenerationBatchStore.all(home: home).map { snapshot in
+        let snapshots = try await Task.detached(priority: .utility) { try GenerationBatchStore.all(home: home) }.value
+        guard editor.workingRoot == home else { throw ToolError("The project changed while reading batch status.") }
+        var values = snapshots.map { snapshot in
             Summary(id: snapshot.batch.id, approved: true, items: snapshot.batch.payload.items.map { item in
                 let execution = snapshot.journal.executions.first(where: { $0.itemID == item.id })!
                 return .init(id: item.id, purpose: item.purpose, packageID: item.package.id,
@@ -46,7 +50,11 @@ extension ToolExecutor {
         }
         let requestBytes = try JSONSerialization.data(withJSONObject: args, options: [.sortedKeys, .withoutEscapingSlashes])
         let requestHash = FileDigest.sha256(of: requestBytes)
-        if let recorded = try GenerationBatchStore.all(home: home).first(where: { $0.batch.payload.nonce == nonce }) {
+        let recorded = try await Task.detached(priority: .utility) {
+            try GenerationBatchStore.all(home: home).first(where: { $0.batch.payload.nonce == nonce })
+        }.value
+        guard editor.workingRoot == home else { throw ToolError("The project changed while preparing the batch.") }
+        if let recorded {
             guard recorded.batch.payload.requestSHA256 == requestHash else { throw ToolError("This requestID already describes another batch. Prepare changed work with a new requestID.") }
             return .ok("This batch was already approved: \(recorded.batch.id). Read get_generation_batches; do not submit it again.")
         }

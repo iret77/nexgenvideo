@@ -51,11 +51,12 @@ struct GenerationBatchAuthorization: Sendable, Equatable {
     }
 
     @MainActor
-    func settle(editor: EditorViewModel) throws {
+    func settle(editor: EditorViewModel) async throws {
         guard let home = editor.workingRoot else { throw GenerationRequestError.storage("The batch project is closed.") }
+        let scope = try GenerationProjectMutationScope(projectHome: home, editor: editor)
         let snapshot = try GenerationBatchStore.load(id: batchID, home: home)
         guard let execution = snapshot.journal.executions.first(where: { $0.itemID == itemID }),
-              [.queued, .submitting, .running].contains(execution.state) else { return }
+              [.queued, .submitting, .running, .blocked].contains(execution.state) else { return }
         let item = snapshot.batch.payload.items.first { $0.id == itemID }!
         let assets = editor.mediaAssets.filter {
             execution.transactionID != nil && $0.generationInput?.spendTransactionId == execution.transactionID
@@ -65,10 +66,16 @@ struct GenerationBatchAuthorization: Sendable, Equatable {
             if case .none = $0.generationStatus { return FileManager.default.fileExists(atPath: $0.url.path) }
             return false
         }
+        let readyIDs = ready.map(\.id)
+        let receipts = try await Task.detached(priority: .utility) {
+            try readyIDs.compactMap { try GenerationBatchOutput.load(authorization: self, assetID: $0, home: home) }
+        }.value
+        try scope.requireCurrent(editor: editor)
         _ = try GenerationBatchStore.update(snapshot, editor: editor) { journal in
-            if execution.state == .running, ready.count == item.package.payload.outputCount {
+            if [.running, .blocked].contains(execution.state), ready.count == item.package.payload.outputCount,
+               Set(receipts.map(\.asset.id)) == Set(readyIDs) {
                 try journal.finish(itemID: itemID, outputAssetIDs: ready.map(\.id), batch: snapshot.batch)
-            } else {
+            } else if execution.state != .blocked {
                 let failure = assets.compactMap { asset -> String? in
                     if case .failed(let message) = asset.generationStatus { return message }
                     return nil

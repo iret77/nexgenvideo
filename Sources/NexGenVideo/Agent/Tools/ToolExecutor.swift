@@ -418,7 +418,7 @@ final class ToolExecutor {
         case .prepareGenerationBatch:
             return try await prepareGenerationBatch(editor, args, origin: origin)
         case .getGenerationBatches:
-            return try getGenerationBatches(editor, args)
+            return try await getGenerationBatches(editor, args)
         case .generateAudio:
             await CatalogDiscovery.ensureCurrent()
             return try await generateAudio(editor, args, origin: origin)
