@@ -78,6 +78,17 @@ enum AgentInstructions {
           the immediate predecessor's exact last frame, native_extension for the exact source video \
           with direction and boundary state, or first_frame only as an explicit directorial choice. \
           Never place a reference anchor in a first-frame slot or mix native extension with frame input.
+        - When the plan uses vertical geography, more than one camera axis, or documents spatial \
+          drift, supply spatial_plan with stable location/setup IDs, per-generation internal cut \
+          intervals, caused entity states, look-free panels, and a native or imported blockout. \
+          Each Shot List shot binds one setup and its own timed references. Treat prompt time marks as \
+          budgets; Review and Assembly own the measured take and cut times.
+        - For a Music Video project on the current pack, supply musicvideo_plan. Bind performed-song \
+          shots to exact exported ranges from the approved original track, name every audible voice \
+          and visible mouth owner, and keep provider music muted in the final mix. Carry one song-bound \
+          visual concept through every measured section with explicit constants and effective \
+          variations. Declare dance, concert, instrument or staged-vocal coverage roles, evidence, \
+          approved exceptions and a concrete rescue for every retained performance risk.
         - Style overrides require verification scope, evidenceKind and a concrete criterion. A frame \
           can verify static image criteria; motion, cut order and sound need the actual cut. Inspect \
           the current frame before saving its audit; transient observation receipts may expire. \

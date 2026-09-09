@@ -179,35 +179,22 @@ editorial validation. Never split an atomic step by inventing compound action.
 - `model_suggestion` based on shot type and `brief.model_preference`.
   Resolve the concrete video model against the host's live `nexgen`
   catalog at render time (`list_models` with `type="video"`).
-- `keyframe_strategy` (default: `start`):
-  - `start` — default. **Mandatory as soon as a shot carries bible
-    refs** (`location_ref`, `character_refs`, `prop_refs`,
-    `ensemble_refs`). The frame phase creates the anchor from the
-    bible sheets. Also applies to figure-less shots — an empty street
-    needs the `bible/<loc>/wide.png` as anchor, otherwise the video
-    model invents the world freely (sanity block
-    `MISSING_BIBLE_ANCHOR_FOR_T2V`).
-  - `start_end` — **MANDATORY for expanding camera moves** (pull, pan,
-    tilt, track, orbit, crane, zoom-out). These moves bring new world
-    area into the frame — without an end frame, the video model
-    extrapolates and hallucinates. Also sensible for strict movement
-    between two poses. Sanity check `EXPANDING_CAMERA_NEEDS_END_FRAME`
-    warns when `motion`/`camera` describes an expanding move but
-    `start_end` is not set. Escape: `keyframe_end_skip_ok: <reason>` in
-    `notes`, e.g. "newly revealed area is pure SKY/GROUND,
-    hallucination harmless".
-  - `none` — for completely abstract / world-free visuals (logo
-    insert, color field, lyrics overlay with no world reference), or
-    for a generated `chain_with_previous_end=true` shot whose sole
-    start condition is the previous render's extracted last frame.
-    Such shots carry no explicit reference images. For a justified
-    text-to-video exception: `text_to_video_ok: <reason>` in `notes`.
-
-For `chain_with_previous_end=true`, the shot must be generated, follow
-an earlier renderable shot, use `keyframe_strategy=none` and
-`seedance_input_mode=keyframe`, and leave `reference_image_refs` empty.
-Do not create a separate Frames start image: the predecessor's exact
-last frame is the sole continuity anchor.
+- Choose each generated shot's `execution_shots.conditioning` before prose.
+  `reference_anchor` sends approved named image demands through reference
+  slots and never through the first-frame slot. `two_state_interpolation`
+  binds this shot's approved first and last states. `frame_continuation`
+  binds only the exact last frame of the immediate predecessor on a route
+  without native extension. `first_frame` is an explicit directorial choice,
+  not a default. Record the chosen route mode IDs and the reason.
+- An AI-enhanced extension uses `native_extension`: bind the exact project-local
+  source video, source shot, forward/backward direction, boundary state and the
+  original reference demands that must persist. A harvested still can describe
+  the boundary but cannot replace the source video. Do not combine native
+  extension with a first-frame input.
+- Keep `keyframe_strategy`, `chain_with_previous_end` and
+  `seedance_input_mode` consistent with that strategy. Frames still owns and
+  approves actual first/last images. Existing projects pinned to an older pack
+  retain their stored legacy strategy until an explicit Recovery-copy upgrade.
 
 ### 6a. Source modes — ask early (hybrid production)
 
@@ -239,6 +226,45 @@ ownership and blocking-anchor requirements; do not restate that doctrine here.
 write prompts, so live shots get shooting specs and enhanced shots route
 to the edit path. Set `source_mode` per shot accordingly. When unstated,
 the shot is `generated`.
+
+### 6b. Spatial and Music Video execution extensions
+
+Supply `spatial_plan` when the sequence uses vertical geography, multiple
+camera axes, or documented spatial drift. Give every location stable setup IDs,
+metric layout bounds, camera position/orientation/height/optics/FOV, axis side,
+look target and any timed path. Every Shot List shot binds exactly one setup,
+one planned generation group and its own non-overlapping internal interval,
+start/end entity states caused by real Storyboard step IDs, continuity and timed
+reference roles. Panels are look-free checking views, never implicit generator
+references. Use the native graybox export or register a project-local imported
+QuickTime blockout; the host records exact plan and clip hashes.
+
+For the current Music Video pack, every call also supplies `musicvideo_plan`:
+
+- Bind each performed or timing-driven shot to an exact sample range of the
+  approved original track. Name its target song-timeline position, purpose,
+  performers, audible voices, mouth owner and time range. Lyrics/alignment are
+  optional, but when cited they must be exact project-local bytes. The host
+  exports the range and routes those exact bytes through the audio-timing slot.
+- Keep the original song once at timeline frame zero and provider song audio
+  muted. List any separately approved diegetic/dialogue layer; never turn it
+  into a second song bed.
+- Carry one visual concept through every measured section. Every section names
+  its musical and visual function, recurring motifs/setups, constant parameters,
+  actual camera/state/lighting/performance variations or explicit guidance,
+  lyrics relation, affected shots and the reason for change. Performance and
+  abstract projects need no invented plot.
+- For each continuous performance segment, declare dance, concert, instrument
+  or staged-vocal coverage roles and the shots/setups that satisfy them. Dance
+  proof that owns the master role must show full body and floor contact;
+  instrument proof names the instrument and shows hands/orientation. Concert
+  roles need master, performer, reaction and detail unless the absent role is an
+  explicit approved exception. Every retained risk has a concrete rescue.
+
+These are parts of Shot List, not additional phases or intake questions. A
+change to the song, analysis, Treatment, Sections, setup/state sheets, blockout,
+performance segment or coverage plan invalidates Shot List currency and its
+downstream approvals.
 
 ### 7. Shot IDs gapless: `s001, s002, …`
 

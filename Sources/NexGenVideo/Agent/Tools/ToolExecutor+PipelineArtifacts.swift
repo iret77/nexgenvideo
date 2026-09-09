@@ -589,6 +589,36 @@ extension ToolExecutor {
         } catch {
             throw ToolError("The execution plan input is invalid: \(error.localizedDescription)")
         }
+        let spatialPlan: SpatialProductionPlanDraftV1?
+        if let object = args["spatial_plan"] as? [String: Any] {
+            do {
+                let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+                spatialPlan = try JSONDecoder().decode(
+                    SpatialProductionPlanDraftV1.self,
+                    from: data
+                )
+                try SpatialProductionValidatorV1.validate(spatialPlan!)
+            } catch {
+                throw ToolError("The spatial production plan is invalid: \(error.localizedDescription)")
+            }
+        } else {
+            spatialPlan = nil
+        }
+        let musicvideoPlan: MusicvideoProductionPlanDraftV1?
+        if let object = args["musicvideo_plan"] as? [String: Any] {
+            do {
+                let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+                musicvideoPlan = try JSONDecoder().decode(
+                    MusicvideoProductionPlanDraftV1.self,
+                    from: data
+                )
+                try MusicvideoProductionValidatorV1.validate(musicvideoPlan!)
+            } catch {
+                throw ToolError("The Music Video production plan is invalid: \(error.localizedDescription)")
+            }
+        } else {
+            musicvideoPlan = nil
+        }
         let declaration = try mutationPackDeclaration(
             editor,
             dataRoot: root
@@ -619,7 +649,9 @@ extension ToolExecutor {
                 executionInputs: executionInputs,
                 dataRoot: stagingRoot,
                 declaredPack: declaration.packName,
-                declaredBinding: declaration.binding
+                declaredBinding: declaration.binding,
+                spatialPlan: spatialPlan,
+                musicvideoPlan: musicvideoPlan
             )
             try PipelinePhaseMutationRecorder.record(
                 phase: "shotlist",

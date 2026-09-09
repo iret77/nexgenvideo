@@ -3345,6 +3345,25 @@ extension ToolExecutor {
             guard let videoTrackID = sidecar.videoTrackId else {
                 throw ToolError("The assembly video track is unavailable.")
             }
+            var audioPlacements: [PipelineMusicvideoAssemblyWriter.AudioPlacement] = []
+            for track in editor.timeline.tracks where track.type == .audio && !track.muted {
+                for clip in track.clips {
+                    guard clip.rawVolumeAt(frame: clip.startFrame) > 0,
+                          let asset = editor.mediaAssets.first(where: {
+                            $0.id == clip.mediaRef
+                          }) else {
+                        continue
+                    }
+                    audioPlacements.append(.init(
+                        mediaID: clip.mediaRef,
+                        clipID: clip.id,
+                        url: asset.url,
+                        isAudioOnlyAsset: asset.type == .audio,
+                        startFrame: clip.startFrame,
+                        durationFrames: clip.durationFrames
+                    ))
+                }
+            }
             try saveAssemblySidecar(
                 sidecar,
                 proof: TimelineAssemblyProofV1(
@@ -3356,7 +3375,11 @@ extension ToolExecutor {
                     generatedAt: currentTimestamp(),
                     placements: placementProofs
                 ),
-                dataRoot: root
+                audioPlacements: audioPlacements,
+                songMediaID: song?.id,
+                dataRoot: root,
+                declaredPack: declaration.packName,
+                declaredBinding: declaration.binding
             )
         }
 
@@ -4063,7 +4086,11 @@ extension ToolExecutor {
     private func saveAssemblySidecar(
         _ sidecar: AssemblySidecar,
         proof: TimelineAssemblyProofV1,
-        dataRoot: URL
+        audioPlacements: [PipelineMusicvideoAssemblyWriter.AudioPlacement],
+        songMediaID: String?,
+        dataRoot: URL,
+        declaredPack: String?,
+        declaredBinding: ProjectPackBinding?
     ) throws {
         guard proof.videoTrackID == sidecar.videoTrackId,
               proof.audioTrackID == sidecar.audioTrackId else {
@@ -4073,7 +4100,40 @@ extension ToolExecutor {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(proof)
-        try data.write(to: assemblySidecarURL(dataRoot: dataRoot), options: .atomic)
+        let assemblyURL = assemblySidecarURL(dataRoot: dataRoot)
+        let musicProofURL = PipelineLayout.url(
+            MusicAssemblyProofV1.relativePath,
+            in: dataRoot
+        )
+        let previousAssembly = try? Data(contentsOf: assemblyURL)
+        let previousMusicProof = try? Data(contentsOf: musicProofURL)
+        do {
+            try data.write(to: assemblyURL, options: .atomic)
+            try PipelineMusicvideoAssemblyWriter.writeIfRequired(
+                assembly: proof,
+                audioPlacements: audioPlacements,
+                songMediaID: songMediaID,
+                dataRoot: dataRoot,
+                declaredPack: declaredPack,
+                declaredBinding: declaredBinding
+            )
+        } catch {
+            try restoreAssemblyFile(previousAssembly, at: assemblyURL)
+            try restoreAssemblyFile(previousMusicProof, at: musicProofURL)
+            throw error
+        }
+    }
+
+    private func restoreAssemblyFile(_ data: Data?, at url: URL) throws {
+        if let data {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try data.write(to: url, options: .atomic)
+        } else if FileManager.default.fileExists(atPath: url.path) {
+            try FileManager.default.removeItem(at: url)
+        }
     }
 
     // MARK: - Phase runner

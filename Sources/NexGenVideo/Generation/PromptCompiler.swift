@@ -688,6 +688,14 @@ enum PromptCompiler {
                 preservationScopeIDs: binding.preservationScopeIDs
             )
         }
+        let audioLabel = references.first { $0.role == .audioTiming }?.providerLabel
+        let musicvideoDirectives = try audioLabel.map {
+            try PipelineMusicvideoProductionWriter.promptDirectives(
+                for: shotId,
+                audioLabel: $0,
+                dataRoot: root
+            )
+        } ?? []
         try PipelineExecutionPlanWriter.requireCurrent(dataRoot: root)
         try PipelineExecutionPlanWriter.requireCurrentShotlistBinding(dataRoot: root)
         let executionPlan = try PipelineExecutionPlanWriter.load(dataRoot: root).0
@@ -708,7 +716,7 @@ enum PromptCompiler {
             endState: execution.endState.summary,
             blocking: blocking,
             timedActionBeats: execution.timedActionBeats,
-            continuityLocks: execution.continuityLocks,
+            continuityLocks: execution.continuityLocks + musicvideoDirectives,
             transitionIntent: execution.transitionIntent
         )
     }

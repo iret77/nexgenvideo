@@ -45,6 +45,12 @@ repeat until `next_render_shot` reports `done`.
 - The render manifest and its render-proof sidecar, updated incrementally
   per shot. The proof binds the exact video bytes to the compiled provider
   prompt and generation model; a missing or replaced file is pending again.
+- After every final source is current, call `assemble_timeline`. The host records
+  the exact original-song file and timeline clip, rejects duplicate or unapproved
+  audio layers, suppresses provider audio, and binds each required dance,
+  concert, instrument, or staged-vocal coverage role to actual placed clip IDs
+  for at least its planned continuous duration. An explicitly approved coverage
+  exception remains an exception; never fabricate a placement to satisfy it.
 - Gate: the pipeline has ONE terminal gate, `render`. R1 (preview) is a
   quality pass, not a separate pipeline gate — don't approve anything for
   it. When R2 (final) is done, close the pipeline:

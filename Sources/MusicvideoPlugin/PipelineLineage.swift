@@ -210,6 +210,7 @@ enum MusicvideoPipelineLineage {
                 RenderRecordPublicationV1.artifactPath(phase: "final"),
                 RenderShotProvenancePublicationV1.artifactPath(phase: "final"),
                 "assembly.json",
+                PipelineLayout.musicAssemblyProofFile,
             ]
         default:
             return []
@@ -221,6 +222,17 @@ enum MusicvideoPipelineLineage {
         PipelineLayout.creativeContextFile,
         PipelineLayout.executionPlanFile,
         ExecutionPlanV1.publicationArtifactPath,
+        PipelineLayout.conditioningStrategyFile,
+        PipelineLayout.cameraSetupPlanFile,
+        PipelineLayout.shotGenerationCutPlanFile,
+        PipelineLayout.stateLadderFile,
+        PipelineLayout.layoutPanelsFile,
+        PipelineLayout.blockoutProofFile,
+        PipelineLayout.blockoutDir,
+        PipelineLayout.musicPerformanceBindingFile,
+        PipelineLayout.musicVisualArcFile,
+        PipelineLayout.musicPerformanceCoverageFile,
+        PipelineLayout.musicPerformanceSegmentsDir,
     ]
 
     private static func treatmentSelectors(dataRoot: URL) -> [String] {

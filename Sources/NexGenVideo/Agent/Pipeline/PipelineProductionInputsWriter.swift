@@ -431,7 +431,9 @@ enum PipelineProductionInputsWriter {
                 songAudioPath: shotlist.song.audioPath,
                 dataRoot: dataRoot
             )
-            stagedAudioDirectories.append(segment.stagedURL.deletingLastPathComponent())
+            if let stagedURL = segment.stagedURL {
+                stagedAudioDirectories.append(stagedURL.deletingLastPathComponent())
+            }
             try requirePackMutation(
                 dataRoot: dataRoot,
                 declaredPack: declaredPack,
@@ -439,14 +441,15 @@ enum PipelineProductionInputsWriter {
             )
             let outputURL = PipelineLayout.url(segment.path, in: dataRoot)
             let outputDirectory = outputURL.deletingLastPathComponent()
-            if FileManager.default.fileExists(atPath: outputURL.path) {
+            if let stagedURL = segment.stagedURL,
+               FileManager.default.fileExists(atPath: outputURL.path) {
                 guard try FileDigest.sha256(of: outputURL)
-                    == FileDigest.sha256(of: segment.stagedURL) else {
+                    == FileDigest.sha256(of: stagedURL) else {
                     throw PipelineProductionInputsError.publicationFailed(
                         "The shot audio timing segment path is occupied by different bytes."
                     )
                 }
-            } else {
+            } else if let stagedURL = segment.stagedURL {
                 let directoryExisted = FileManager.default.fileExists(
                     atPath: outputDirectory.path
                 )
@@ -461,9 +464,15 @@ enum PipelineProductionInputsWriter {
                     ".publish-\(UUID().uuidString).m4a"
                 )
                 defer { try? FileManager.default.removeItem(at: commitURL) }
-                try FileManager.default.copyItem(at: segment.stagedURL, to: commitURL)
+                try FileManager.default.copyItem(at: stagedURL, to: commitURL)
                 try FileManager.default.moveItem(at: commitURL, to: outputURL)
                 publishedAudioURLs.append(outputURL)
+            } else {
+                _ = try ProjectLocalFile.requireHash(
+                    segment.sha256,
+                    at: segment.path,
+                    dataRoot: dataRoot
+                )
             }
             let asset = try upsertingAsset(
                 path: segment.path,
@@ -643,9 +652,10 @@ enum PipelineProductionInputsWriter {
 
     private struct AudioTimingSegment {
         let path: String
+        let sha256: String
         let sourceAssetID: String
         let durationSeconds: Double
-        let stagedURL: URL
+        let stagedURL: URL?
     }
 
     private struct AudioTimingIdentity: Encodable {
@@ -803,6 +813,21 @@ enum PipelineProductionInputsWriter {
         songAudioPath: String,
         dataRoot: URL
     ) async throws -> AudioTimingSegment {
+        if let performance = try PipelineMusicvideoProductionWriter.materializedSegment(
+            for: shot.id,
+            dataRoot: dataRoot
+        ) {
+            let duration = Double(
+                performance.draft.sourceEndSample - performance.draft.sourceStartSample
+            ) / Double(performance.draft.sampleRate)
+            return AudioTimingSegment(
+                path: performance.segmentPath,
+                sha256: performance.segmentSHA256,
+                sourceAssetID: "song-audio-\(performance.sourceTrackSHA256)",
+                durationSeconds: duration,
+                stagedURL: nil
+            )
+        }
         guard shot.timeStart.isFinite,
               shot.timeStart >= 0,
               shot.durationS.isFinite,
@@ -883,6 +908,7 @@ enum PipelineProductionInputsWriter {
             let outputPath = "execution/audio-timing/\(shot.id)-\(sliceID)-\(outputSHA256).m4a"
             return AudioTimingSegment(
                 path: outputPath,
+                sha256: outputSHA256,
                 sourceAssetID: "song-audio-\(sourceSHA256)",
                 durationSeconds: shot.durationS,
                 stagedURL: temporaryURL

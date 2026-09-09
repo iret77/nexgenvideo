@@ -78,6 +78,13 @@ enum MusicvideoGateChecks {
             let plan = try ExecutionPlanCanonicalCodec.decodePlan(planData)
             let context = try ExecutionPlanCanonicalCodec.decodeContext(contextData)
             try ExecutionPlanValidator.validate(plan, against: context)
+            for reference in context.extensions {
+                _ = try ProjectLocalFile.requireHash(
+                    reference.sha256,
+                    at: reference.path,
+                    dataRoot: dataRoot
+                )
+            }
             guard plan.projectID == project,
                   plan.completeness == .complete,
                   plan.incompleteReasons.isEmpty else {
@@ -1816,6 +1823,11 @@ enum MusicvideoGateChecks {
             phase: "shotlist",
             dataRoot: dataRoot
         )
+        try MusicvideoProductionGate.requireCurrent(
+            executionPlan: executionPlan,
+            shotlist: shotlist,
+            dataRoot: dataRoot
+        )
         guard executionPlan.shots.map(\.id) == shotlist.shots.map(\.id),
               zip(executionPlan.shots, shotlist.shots).allSatisfy({ pair in
                 switch (pair.0.sourceMode, pair.1.sourceMode) {
@@ -2917,6 +2929,10 @@ enum MusicvideoGateChecks {
                 )
             }
         }
+        try MusicvideoAssemblyGate.requireCurrent(
+            assembly: assembly,
+            dataRoot: dataRoot
+        )
     }
 
 }

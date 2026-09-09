@@ -922,6 +922,22 @@ enum PipelineExecutionPlanComposer {
                 sha256: FileDigest.sha256(of: data)
             ))
         }
+        let spatialPlanURL = PipelineLayout.url(CameraSetupPlanV1.relativePath, in: dataRoot)
+        if FileManager.default.fileExists(atPath: spatialPlanURL.path) {
+            references.append(contentsOf: try PipelineSpatialProductionWriter.requireCurrent(
+                dataRoot: dataRoot
+            ))
+        }
+        let musicPlanURL = PipelineLayout.url(
+            MusicPerformanceBindingV1.relativePath,
+            in: dataRoot
+        )
+        if declaredPack == "musicvideo",
+           FileManager.default.fileExists(atPath: musicPlanURL.path) {
+            references.append(contentsOf: try PipelineMusicvideoProductionWriter.requireCurrent(
+                dataRoot: dataRoot
+            ))
+        }
         if try StoryCausalityStoreV1.requireCurrent(dataRoot: dataRoot) != nil {
             _ = try StoryboardCausalityV1.requireCurrent(dataRoot: dataRoot)
             for (id, schema, path) in [
