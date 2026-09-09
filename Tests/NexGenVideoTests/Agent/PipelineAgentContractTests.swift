@@ -113,6 +113,38 @@ struct PipelineAgentContractTests {
         #expect(rewind.lowerBound < runner.lowerBound)
     }
 
+    @Test("Sanity accepts the gate-approved macOS 26 rhythm path")
+    func sanityUsesAnalysisProvenanceContract() throws {
+        let document = try PackKnowledge.phaseDoc(name: "sanity")
+        #expect(document.contains("`beat-transformer` is the"))
+        #expect(document.contains("canonical macOS 26 path"))
+        #expect(document.contains("`native_dsp` and `neural_beat_grid` both"))
+        #expect(!document.contains("analysis.downbeat_source != \"music-understanding\""))
+        #expect(!document.contains("error\n     `NON_SYSTEM_RHYTHM`"))
+    }
+
+    @Test("Brief-owned production decisions are settled before approval")
+    func briefOwnsDeferredDecisions() throws {
+        let document = try PackKnowledge.phaseDoc(name: "brief")
+        #expect(document.contains("finish before Brief approval"))
+        #expect(document.contains("later phases cannot update an approved Brief in place"))
+        #expect(document.contains("budget_stop_eur"))
+        #expect(document.contains("A 4-second net shot therefore"))
+        #expect(document.contains("orders 6 gross seconds"))
+        #expect(!document.contains("DEFER these out of the brief interview"))
+        #expect(!document.contains("freeze-frame handles"))
+        #expect(!document.contains("redo it after K7"))
+    }
+
+    @Test("Bible instructions keep approved images as identity truth")
+    func bibleDoesNotRequestRecognitionTrait() throws {
+        let document = try PackKnowledge.phaseDoc(name: "bible")
+        #expect(document.contains("Do not ask for a single “recognition trait”"))
+        #expect(document.contains("Canonical approved character"))
+        #expect(!document.contains("frame builder appends it"))
+        #expect(!document.contains("Ask the user explicitly per character"))
+    }
+
     @Test("Cover is a reachable post-pipeline utility, never a hidden phase")
     func coverIsPostPipelineUtility() throws {
         let document = try PackKnowledge.phaseDoc(name: "cover")

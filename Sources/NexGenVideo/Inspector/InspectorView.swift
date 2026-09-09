@@ -23,7 +23,6 @@ struct InspectorView: View {
     @State private var entityEditTarget: String?
     @State private var entityEditName = ""
     @State private var entityEditPrompt = ""
-    @State private var entityEditTrait = ""
     @State private var transformExpanded = true
     @State private var shotSourceModeMutationID: String?
     @State private var shotSourceModeAvailableID: String?
@@ -122,7 +121,6 @@ struct InspectorView: View {
                     Button("Edit…") {
                         entityEditName = entity.name
                         entityEditPrompt = entity.visualPrompt
-                        entityEditTrait = entity.hardRecognitionTrait
                         entityEditTarget = entity.id
                     }
                     .controlSize(.small)
@@ -416,9 +414,6 @@ struct InspectorView: View {
                 .textFieldStyle(.roundedBorder)
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .lineLimit(3...6)
-            TextField("Hard recognition trait", text: $entityEditTrait)
-                .textFieldStyle(.roundedBorder)
-                .interfaceFont(size: AppTheme.Typography.ui)
             HStack {
                 Spacer()
                 Button("Apply via Agent") { applyEntityEdit(entity) }
@@ -443,7 +438,6 @@ struct InspectorView: View {
         }
         diff("name", new: entityEditName, old: entity.name, clearable: false)
         diff("visual_prompt", new: entityEditPrompt, old: entity.visualPrompt, clearable: true)
-        diff("hard_recognition_trait", new: entityEditTrait, old: entity.hardRecognitionTrait, clearable: true)
         entityEditTarget = nil
         guard !changes.isEmpty else { return }
         let kind = entityKind(of: entity).rawValue

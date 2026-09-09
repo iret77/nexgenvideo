@@ -2365,7 +2365,6 @@ struct WorkflowToolsTests {
             "name": "Schoolyard",
             "visual_prompt": "A quiet hand-drawn schoolyard at blue hour.",
             "attributes": [],
-            "hard_recognition_trait": "red gate",
             "reference_images": [],
             "sheets": [["view": "wide", "path": "bible/yard-wide.png"]],
             "view_purpose": [["view": "wide", "purpose": "establishing"]],

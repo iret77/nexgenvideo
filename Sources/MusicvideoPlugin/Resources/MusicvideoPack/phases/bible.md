@@ -89,7 +89,6 @@ sheet:
 | `Location.view_purpose` | dict[str, str] — description per view | |
 | `Location.zones` | list of zones `{id, description, status, bible_assets, established_by_shot}` — world-zone inventory (clean/dirty/undefined/safe) | |
 | `Location.proportion_anchor_shot` | ID of an approved shot used as scale anchor | may be `None` pre-shotlist |
-| `*.hard_recognition_trait` | recommended for Characters/Ensembles | one concrete recognition feature |
 
 **Anchor requirement** (schema-enforced): every character / ensemble /
 location needs ≥1 entry in `reference_images` OR ≥1 in `sheets`.
@@ -112,13 +111,10 @@ location needs ≥1 entry in `reference_images` OR ≥1 in `sheets`.
    the field may still be `None`; it is updated at the first frame
    approve.
 
-**hard_recognition_trait** — per character/ensemble one concrete, hard
-recognition feature: silver earring on the left, wrist tattoo,
-characteristic glasses, yellow cap. The frame builder appends it to
-every identity-lock prompt; it demonstrably reduces identity drift
-across multi-shot sequences. Ask the user explicitly per character; if
-you generate it yourself from the visual_prompt, clearly mark it as
-"suggestion, please confirm / refine".
+Do not ask for a single “recognition trait”. Canonical approved character
+images are the visual identity source, selected by required view and visible
+identity task. Old projects may contain `hard_recognition_trait`; treat it as
+legacy descriptive metadata and never claim that it secures identity.
 
 ### 3. Demand analysis — the storyboard demand is the truth (story-first)
 

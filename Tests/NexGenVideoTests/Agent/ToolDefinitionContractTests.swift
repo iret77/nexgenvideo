@@ -359,6 +359,22 @@ struct ToolDefinitionContractTests {
         }
     }
 
+    @Test("write_bible does not expose the legacy recognition trait")
+    func bibleSchemaOmitsRecognitionTrait() throws {
+        let tool = try #require(
+            ToolDefinitions.all.first { $0.name == .writeBible }
+        )
+        let root = try #require(schemaProperties(tool.inputSchema["properties"]))
+        for collection in ["characters", "ensembles", "props", "locations"] {
+            let values = try #require(root[collection])
+            let item = try #require(values["items"] as? [String: Any])
+            let properties = try #require(schemaProperties(item["properties"]))
+            let required = Set(item["required"] as? [String] ?? [])
+            #expect(properties["hard_recognition_trait"] == nil)
+            #expect(!required.contains("hard_recognition_trait"))
+        }
+    }
+
     @Test("agent dialogs cannot claim or replace host workflow intake")
     @MainActor
     func hostWorkflowIntakeIsExclusive() async throws {

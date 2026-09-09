@@ -171,15 +171,14 @@ For any section whose options aren't exhaustive, set `allowsCustom: true` so the
    to use their style as a reference when phrasing the notes. Ask the
    user to approve the phrased notes sentence.
 
-#### Technical / render-tuning questions — DEFER these out of the brief interview
+#### Technical / render-tuning questions — finish before Brief approval
 
-To cut approval fatigue, do NOT front-load render-tuning into the opening
-brief. Settle only the ESSENTIALS now (Batch 1 + 1a + 1b: mission, format,
-mode, medium, style, and questions 11–12 figures/lyrics). Ask each of the
-following at the phase that actually needs it — the video-model and
-director-pattern choices when the shotlist-agent needs them, the preview
-pass and cut-handles at render — not up front. Each is its own show_dialog
-at that point; keep the answers in `brief.yaml` as they're settled.
+Do not front-load render tuning into the opening creative questions. After the
+essentials (Batch 1 + 1a + 1b: mission, format, mode, medium, style, and
+questions 11–12 figures/lyrics), settle the following in short dialogs before
+writing and approving the Brief. These fields live in `brief.yaml`; later
+phases cannot update an approved Brief in place. If a later change is needed,
+explain the affected approvals and use an explicit rewind before rewriting it.
 
 7. **Video model preference** — exactly 4 options (Other automatic for
    the rest). Concrete options depend on the host's available
@@ -190,8 +189,11 @@ at that point; keep the answers in `brief.yaml` as they're settled.
    the brief; the shotlist/render phases resolve it against the live
    `nexgen` generation catalog.
 
-8. **Budget cap EUR** — 25 | 50 (default) | 100 | Other (free text,
-   numeric). This sets the engine budget guard.
+8. **Planning budget and hard spending limit EUR.** Ask for the planning target
+   (25 | 50 default | 100 | Other numeric) and store it as `budget_eur`. Then
+   ask whether that amount is also a hard stop. If yes, write the same amount
+   to `budget_stop_eur`; if no, state that the planning target does not block
+   spending and leave `budget_stop_eur` empty. Never call `budget_eur` a cap.
 
 9. **Image-model routing** (phase F + K5 bible sheets) — exactly 4
    options (Other automatic):
@@ -265,10 +267,9 @@ at that point; keep the answers in `brief.yaml` as they're settled.
     a) **Show the budget picture** (before asking the question): call
        `estimate_cost(project_dir)` and present `budget_eur`,
        `spent_eur`, `remaining_eur`. A per-shot forward estimate only
-       exists once a shotlist exists (Pass-2 render phase). If you are
-       on the first pass and have no shotlist yet: skip this question
-       and redo it after K7 — default `skip`, the user can change it
-       later.
+       exists only once a shotlist exists. Before Brief approval, use the
+       known planning budget and explain that a per-shot estimate is not yet
+       available.
 
     b) **Reason about the recommendation** (fact-based) from:
        - shot count (≥15: large enough for a preview)
@@ -291,32 +292,35 @@ at that point; keep the answers in `brief.yaml` as they're settled.
 
        Store under `brief.preview_mode`.
 
-    **NEVER** guess the preview mode or derive it from preferences. If
-    the reasoning in (b) is impossible (no shotlist yet), default to
-    `skip` and set a note: "re-evaluate after K7".
+    **NEVER** guess the preview mode or derive it from preferences. Ask before
+    Brief approval. A later change requires an explicit Brief rewind with the
+    affected downstream approvals shown first.
 
 17. **Cut-handles mode** (mandatory)
 
     Ask about the editing workflow before the pipeline continues — so
     the render output matches the planned cut:
 
-    > "Editing workflow: hard back-to-back straight from the renders,
-    > or manual editing with freeze-frame handles at the front/back for
-    > J-cuts / L-cuts / crossfades?"
+    > "Editing workflow: hard back-to-back at the planned duration, or
+    > generated motion handles before and after the cut for fades and later
+    > trimming? Handles add ordered seconds and generation cost."
 
     Options via `show_dialog`:
 
-    - `with_overlap` (default) — deterministic pre-/post-freeze-frames
-      are appended after rendering; originals untouched. Recommended for
-      timeline editing where the editor needs manual cutting tolerance.
-    - `back_to_back` — no handle append. Renders stay exactly
+    - `with_overlap` (default) — the provider generates one second of real
+      motion before and after each net shot. A 4-second net shot therefore
+      orders 6 gross seconds (subject to the route's whole-second duration
+      rules) and pricing uses the gross duration. The timeline trims to the
+      net interval while retaining the handles for fades.
+    - `back_to_back` — no extra generated handles. Renders stay exactly
       `shot.duration_s` and are taken into the editing workflow as-is.
       Recommended when the cut is already calculated in the storyboard
       and no editor slack is needed.
 
-    Store under `brief.cut_handles_mode`. The render-phase orchestrator
-    (Pass 2) reads the field and decides whether handles are appended
-    after R1/R2.
+    Store under `brief.cut_handles_mode`. The shot plan and render iterator use
+    it to compute net and gross duration before pricing and dispatch. Prompted
+    micro-motion remains a generation target that review must verify; the
+    duration calculation alone is not a quality guarantee.
 
 18. **Director pattern** (optional but recommended)
 

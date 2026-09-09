@@ -354,7 +354,6 @@ enum PipelineArtifactWriteContract {
             "name": string,
             "visual_prompt": string,
             "attributes": keyValueArray(key: "key", value: "value"),
-            "hard_recognition_trait": string,
             "reference_images": stringArray,
             "sheets": keyValueArray(key: "view", value: "path"),
         ]
@@ -365,7 +364,6 @@ enum PipelineArtifactWriteContract {
         "name",
         "visual_prompt",
         "attributes",
-        "hard_recognition_trait",
         "reference_images",
         "sheets",
     ]

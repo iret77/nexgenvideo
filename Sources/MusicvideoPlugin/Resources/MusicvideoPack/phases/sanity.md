@@ -76,9 +76,11 @@ explicitly every time; no implicit carry-over.
    - If `analysis.structure_resolution.status == "needs_review"`: error
      `UNRESOLVED_STRUCTURE`. This should have been blocked by the Analysis
      gate; rewind to Analysis instead of continuing.
-   - If `analysis.downbeat_source != "music-understanding"`: error
-     `NON_SYSTEM_RHYTHM`. Approved analysis requires the Apple-measured beat and
-     bar grid; a fallback grid is diagnostic only.
+   - Apply the same provenance rule as the Analysis gate. `music-understanding`
+     is valid with its native measurement record. `beat-transformer` is the
+     canonical macOS 26 path when `native_dsp` and `neural_beat_grid` both
+     succeeded. Any other or missing source is invalid. Do not invent a
+     `NON_SYSTEM_RHYTHM` error for a gate-approved beat-transformer grid.
    - Surface every `stage_diagnostics` entry whose status is `failed`,
      `degraded`, or `unavailable`; do not infer failure merely from an empty
      optional field.
