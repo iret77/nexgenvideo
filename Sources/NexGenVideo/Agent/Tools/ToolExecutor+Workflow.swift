@@ -3281,7 +3281,7 @@ extension ToolExecutor {
                 videoTrackID: sidecar.videoTrackId,
                 audioTrackID: sidecar.audioTrackId
             )
-            guard currentRegion == previousAssembly.manifest.appliedRegionFingerprint else {
+            if currentRegion != previousAssembly.manifest.appliedRegionFingerprint {
                 let action = args.string("drift_action").flatMap {
                     PipelineAssemblyStore.DriftAction(rawValue: $0)
                 }
