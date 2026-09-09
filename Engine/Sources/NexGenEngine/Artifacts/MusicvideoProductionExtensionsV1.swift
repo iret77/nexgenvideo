@@ -801,7 +801,6 @@ public enum MusicvideoProductionValidatorV1 {
             )
             let evidenced = try unique(item.evidence.map(\.roleID), "coverage.evidence.role_id")
             guard required.isSubset(of: evidenced.union(exceptions)),
-                  evidenced.isSubset(of: required),
                   exceptions.isSubset(of: required),
                   evidenced.isDisjoint(with: exceptions) else {
                 throw MusicvideoProductionValidationErrorV1.coverageMissing(item.id)

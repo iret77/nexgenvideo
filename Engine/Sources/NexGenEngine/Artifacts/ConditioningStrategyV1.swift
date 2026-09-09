@@ -244,7 +244,32 @@ public enum ConditioningStrategyValidatorV1 {
             firstFrames.count == 1 && lastFrames.isEmpty && predecessorFrames.isEmpty
                 && sourceVideos.isEmpty
         }
-        guard valid else {
+        let relevantBindings: [ReferenceBindingV2] = switch strategy.strategy {
+        case .referenceAnchor:
+            bindings.filter { anchorIDs.contains($0.demandID) }
+        case .twoStateInterpolation:
+            firstFrames + lastFrames
+        case .frameContinuation:
+            predecessorFrames
+        case .nativeExtension:
+            sourceVideos + bindings.filter {
+                strategy.originalReferenceDemandIDs.contains($0.demandID)
+            }
+        case .firstFrame:
+            firstFrames
+        }
+        let declaredModes = Set(strategy.modeIDs.map(
+            ProductionIdentifierNormalizerV1.canonical
+        ))
+        let boundModes = Set(relevantBindings.map(\.modeID).map(
+            ProductionIdentifierNormalizerV1.canonical
+        ))
+        let exactAssets = strategy.referenceAnchors.allSatisfy { asset in
+            relevantBindings.contains { bindingMatches(asset, $0) }
+        } && (strategy.sourceVideo.map { asset in
+            relevantBindings.contains { bindingMatches(asset, $0) }
+        } ?? true)
+        guard valid, declaredModes == boundModes, exactAssets else {
             throw ConditioningStrategyValidationErrorV1.referencePlanMismatch(strategy.shotID)
         }
     }
@@ -266,6 +291,10 @@ public enum ConditioningStrategyValidatorV1 {
         }
         for binding in item.referenceAnchors + [item.sourceVideo].compactMap({ $0 }) {
             try validate(binding)
+        }
+        guard Set(item.referenceAnchors.compactMap(\.demandID)).count
+                == item.referenceAnchors.count else {
+            throw ConditioningStrategyValidationErrorV1.invalidField("reference_anchors")
         }
 
         let valid: Bool = switch item.strategy {
@@ -343,5 +372,17 @@ public enum ConditioningStrategyValidatorV1 {
 
     private static func matches(_ lhs: String, _ rhs: String) -> Bool {
         ProductionIdentifierNormalizerV1.matches(lhs, rhs)
+    }
+
+    private static func bindingMatches(
+        _ asset: ConditioningAssetBindingV1,
+        _ binding: ReferenceBindingV2
+    ) -> Bool {
+        (asset.demandID == nil || asset.demandID == binding.demandID)
+            && asset.path == binding.path
+            && asset.sha256 == binding.sha256
+            && asset.modality == binding.modality
+            && matches(asset.semanticJobID, binding.semanticJobID)
+            && matches(asset.inputSlotID, binding.inputSlotID)
     }
 }

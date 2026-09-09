@@ -57,4 +57,37 @@ struct ProductionKnowledgeToolTests {
         #expect(candidate.proposedSelection?.signatureID == "dop-robby-m-ller")
         #expect(candidate.synthesisSourceIDs == ["director-yasujir-ozu-domestic-stillness"])
     }
+
+    @Test("retrieved procedures preserve operational counterexamples")
+    func operationalCounterexamples() throws {
+        let executor = ToolExecutor(editorProvider: { nil })
+        let always = try text(executor.getProductionKnowledge([
+            "operation": "read",
+            "entryID": "film-production-skill/skill-f468f0c333ce",
+        ]))
+        #expect(always.contains("reflections as texture are green"))
+        #expect(always.contains("a hand close-up is allowed only as a short single-action beat"))
+        #expect(always.contains("cut away before the fine work"))
+
+        let extensionDoctrine = try text(executor.getProductionKnowledge([
+            "operation": "read",
+            "entryID": "film-production-video-prompting/video-prompting-2d077c405e26",
+        ]))
+        #expect(extensionDoctrine.contains("never extend the draft"))
+        #expect(extensionDoctrine.contains("video_extension"))
+
+        let environment = try text(executor.getProductionKnowledge([
+            "operation": "read",
+            "entryID": "film-production-pixar-look/pixar-look-fdcec6b2c0f0",
+        ]))
+        #expect(environment.contains("Brightness is the deciding factor"))
+        #expect(environment.contains("dark target scenes"))
+
+        let ozu = try text(executor.getProductionKnowledge([
+            "operation": "read",
+            "entryID": "film-production-blueprints/director-yasujir-ozu-domestic-stillness",
+        ]))
+        #expect(ozu.contains("the 360° assembly happens in the NLE, not inside a take"))
+        #expect(ozu.contains("state the axis in every one of those prompts"))
+    }
 }

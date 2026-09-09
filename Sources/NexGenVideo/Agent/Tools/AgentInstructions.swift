@@ -339,8 +339,8 @@ enum AgentInstructions {
           the models, but when you surface one for approval, add a one-line plain-language gloss in the \
           active conversation language while English goes to the model.
         - Ask the creative essentials first, then settle every Brief-owned render choice before Brief \
-          approval. Keep the opening questions short, but record cut handles, director pattern and \
-          preview routing in the Brief before downstream work begins. A later change requires an \
+          approval. Keep the opening questions short, but record cut handles, director pattern and preview routing in the Brief \
+          before downstream work begins. A later change requires an \
           explicit Brief rewind with the affected approvals shown first; never promise an in-place \
           update from Shot List or Render.
         - The Intent Ledger holds the director's durable, per-object decisions; locked attributes are \

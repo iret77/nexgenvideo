@@ -955,6 +955,27 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
         guard valid else {
             throw PipelineExecutionShotInputValidationError.invalid("\(path).conditioning")
         }
+        let boundModes: [String] = switch conditioning.strategy {
+        case .referenceAnchor:
+            conditioning.anchorDemandIDs.compactMap { demandsByID[$0]?.modeID }
+        case .twoStateInterpolation:
+            [coreInputs.firstFrameModeID, coreInputs.lastFrameModeID].compactMap { $0 }
+        case .frameContinuation:
+            [coreInputs.predecessorLastFrameModeID].compactMap { $0 }
+        case .nativeExtension:
+            [coreInputs.sourceVideoModeID].compactMap { $0 }
+                + conditioning.originalReferenceDemandIDs.compactMap {
+                    demandsByID[$0]?.modeID
+                }
+        case .firstFrame:
+            [coreInputs.firstFrameModeID].compactMap { $0 }
+        }
+        guard Set(conditioning.modeIDs.map(ProductionIdentifierNormalizerV1.canonical))
+                == Set(boundModes.map(ProductionIdentifierNormalizerV1.canonical)) else {
+            throw PipelineExecutionShotInputValidationError.invalid(
+                "\(path).conditioning.mode_ids"
+            )
+        }
     }
 
     private func validateImported(path: String) throws {

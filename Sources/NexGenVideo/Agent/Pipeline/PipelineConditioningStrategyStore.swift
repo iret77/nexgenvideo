@@ -269,7 +269,7 @@ enum PipelineConditioningStrategyStore {
                 shotID: shot.id,
                 strategy: .twoStateInterpolation,
                 rationale: "Preserve the approved two-state interpolation of the existing plan.",
-                modeIDs: [first, last]
+                modeIDs: Array(Set([first, last])).sorted()
             )
         }
         if shot.keyframeStrategy == .start, let modeID = core.firstFrameModeID {

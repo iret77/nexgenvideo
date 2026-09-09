@@ -99,6 +99,41 @@ struct PipelineExecutionShotInputTests {
         #expect(decoded.coreInputs?.firstFrameModeID == "image-to-video")
     }
 
+    @Test("conditioning modes exactly match the inputs used by its strategy")
+    func conditioningModesMatchBoundInputs() throws {
+        var generated = commonInput(sourceMode: .generated)
+        generated["generation_requirement"] = [
+            "modality_id": "video",
+            "mode_ids": ["first-frame", "last-frame"],
+            "duration": ["allows_automatic": true],
+            "requires_output_audio": false,
+        ]
+        generated["core_inputs"] = [
+            "first_frame_mode_id": "first-frame",
+            "last_frame_mode_id": "last-frame",
+        ]
+        generated["reference_demands"] = []
+        generated["conditioning"] = [
+            "strategy": "two_state_interpolation",
+            "rationale": "Interpolate between approved boundary states.",
+            "mode_ids": ["last-frame", "first-frame"],
+        ]
+
+        let valid = try JSONSerialization.data(withJSONObject: generated)
+        let decoded = try JSONDecoder().decode(PipelineExecutionShotInput.self, from: valid)
+        #expect(decoded.conditioning?.modeIDs == ["last-frame", "first-frame"])
+
+        generated["conditioning"] = [
+            "strategy": "two_state_interpolation",
+            "rationale": "Interpolate between approved boundary states.",
+            "mode_ids": ["first-frame"],
+        ]
+        let invalid = try JSONSerialization.data(withJSONObject: generated)
+        #expect(throws: PipelineExecutionShotInputValidationError.self) {
+            try JSONDecoder().decode(PipelineExecutionShotInput.self, from: invalid)
+        }
+    }
+
     @Test("blocking entity identifiers are unique after canonicalization")
     func canonicalBlockingUniqueness() throws {
         var imported = commonInput(sourceMode: .imported)

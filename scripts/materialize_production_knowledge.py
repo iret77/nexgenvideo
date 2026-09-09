@@ -75,6 +75,10 @@ def encoded(value):
     return (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode()
 
 
+def ordered_unique(values):
+    return list(dict.fromkeys(values))
+
+
 def section_phases(section, contract_id):
     return RUNBOOK_PHASES.get(section["id"], CONTRACT_PHASES[contract_id])
 
@@ -113,7 +117,7 @@ def materialize():
                             for reference in link["entryIDs"]})
             entry = {
                 "id": section["id"], "title": section["title"],
-                "applicability": {"packIDs": [], "phases": phases, "intentTags": [chapter, contract["id"]], "activeProfileIDs": []},
+                "applicability": {"packIDs": [], "phases": phases, "intentTags": ordered_unique([chapter, contract["id"]]), "activeProfileIDs": []},
                 "inputs": [], "outputIntent": "Source knowledge for " + contract["consumer"],
                 "guidance": [section["contentMarkdown"]]
                             + ["Required ancestor context: " + ancestor["contentMarkdown"] for ancestor in ancestors]
@@ -139,7 +143,7 @@ def materialize():
         contract_ids = sorted({section["applicationContract"] for section in chapters[chapter]})
         library = {
             "schemaVersion": "creative-library.v1", "id": library_id, "version": "3.1.1",
-            "applicability": {"packIDs": [], "phases": sorted({phase for entry in entries for phase in entry["applicability"]["phases"]}), "intentTags": [chapter] + contract_ids, "activeProfileIDs": []},
+            "applicability": {"packIDs": [], "phases": sorted({phase for entry in entries for phase in entry["applicability"]["phases"]}), "intentTags": ordered_unique([chapter] + contract_ids), "activeProfileIDs": []},
             "entries": entries,
             "provenance": {"sourceURL": "https://github.com/iret77/ai-film-production",
                            "sourceCommit": inventory["sourceCommit"], "sourceSections": [source_file["sourcePath"]],
@@ -164,7 +168,7 @@ def materialize():
         "applicability": {"packIDs": [], "phases": CONTRACT_PHASES["blueprints"], "intentTags": ["style", "director", "cinematography", "blueprints"], "activeProfileIDs": []},
         "entries": [{
             "id": recipe["id"], "title": recipe["name"],
-            "applicability": {"packIDs": [], "phases": CONTRACT_PHASES["blueprints"], "intentTags": ["style", "blueprints", recipe["kind"]], "activeProfileIDs": []},
+            "applicability": {"packIDs": [], "phases": CONTRACT_PHASES["blueprints"], "intentTags": ordered_unique(["style", "blueprints", recipe["kind"]]), "activeProfileIDs": []},
             "inputs": [], "outputIntent": "Resolve the selected style dimensions with explicit overrides and scoped observation criteria.",
             "guidance": [recipe["completeRecipeMarkdown"],
                          "Selection and synthesis procedure:\n" + selection_procedure,
