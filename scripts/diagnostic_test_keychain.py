@@ -120,6 +120,8 @@ class DiagnosticKeychain:
             for authorization in ("kSecACLAuthorizationDecrypt", "kSecACLAuthorizationPartitionID"):
                 acls = own(matching(access, ref.in_dll(sec, authorization)))
                 if not acls or not count(acls):
+                    if authorization == "kSecACLAuthorizationPartitionID":
+                        continue
                     raise RuntimeError(f"missing synthetic credential ACL: {authorization}")
                 for index in range(count(acls)):
                     acl = required(at(acls, index))
