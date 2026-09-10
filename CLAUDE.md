@@ -184,8 +184,11 @@ release or a wasted CI cycle.
   and direct `write` entry points must pass the same pack gate before package bytes change.
 - **Shot List has one writer.** Agent `write_shotlist` and native source-mode edits both persist
   through `PipelineShotlistWriter`; neither may duplicate its semantic validation. A chained generated
-  shot uses `keyframe_strategy=none`, `seedance_input_mode=keyframe`, no explicit reference images,
-  skips Frames, and binds its predecessor's exact last frame as the sole Render start condition.
+  shot explicitly chooses frame continuation or a verified native video extension. Frame continuation
+  uses `keyframe_strategy=none`, `seedance_input_mode=keyframe`, no explicit reference images, skips
+  Frames, and binds its predecessor's exact last frame as the sole Render start condition. Native
+  extension binds the exact approved predecessor video and executable extension mode instead; it
+  never silently substitutes a reference image or combines the legacy first-frame mechanism.
 
 ### Providers and models
 
