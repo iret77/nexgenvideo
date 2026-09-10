@@ -1,8 +1,9 @@
-import os
+from pathlib import Path
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from diagnostic_test_keychain import DiagnosticKeychain, isolated_keychain
+from hang_diagnostic_acceptance import verify_retained_key
 from verify_diagnostic_candidate import HARNESS_PATHS, verify
 
 
@@ -68,44 +69,20 @@ class CandidateProvenanceTests(unittest.TestCase):
                 self.check([*HARNESS_PATHS, path])
 
 
-class DisposableKeychainTests(unittest.TestCase):
-    def test_restores_runner_configuration_even_after_acceptance_failure(self):
-        calls = []
+class RetainedKeyAcceptanceTests(unittest.TestCase):
+    def verify(self, codes):
+        with patch("hang_diagnostic_acceptance.subprocess.run",
+                   side_effect=[SimpleNamespace(returncode=code) for code in codes]):
+            verify_retained_key(Path("NexGenVideo.app"),
+                                "hang-diagnostic-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "synthetic-key")
 
-        def security(*arguments):
-            calls.append(arguments)
-            if arguments == ("default-keychain", "-d", "user"):
-                return '"/original/login.keychain-db"'
-            if arguments == ("list-keychains", "-d", "user"):
-                return '"/original/login.keychain-db"\n"/original/other.keychain-db"'
-            return ""
+    def test_accepts_real_key_and_rejects_changed_key_and_missing_recording(self):
+        self.verify([0, 70, 70, 0])
 
-        with patch("diagnostic_test_keychain.security", side_effect=security), \
-                patch("diagnostic_test_keychain.sys.platform", "darwin"), \
-                patch.dict(os.environ, GITHUB_ACTIONS="true"):
-            with self.assertRaisesRegex(RuntimeError, "acceptance failed"):
-                with isolated_keychain() as keychain:
-                    self.assertIn(("list-keychains", "-d", "user", "-s", keychain.path), calls)
-                    raise RuntimeError("acceptance failed")
-        self.assertEqual(calls[-3:], [
-            ("default-keychain", "-d", "user", "-s", "/original/login.keychain-db"),
-            ("list-keychains", "-d", "user", "-s", "/original/login.keychain-db", "/original/other.keychain-db"),
-            ("delete-keychain", keychain.path),
-        ])
-
-    def test_never_touches_keychains_outside_actions(self):
-        with patch("diagnostic_test_keychain.security") as security, \
-                patch.dict(os.environ, GITHUB_ACTIONS="false"), self.assertRaises(RuntimeError):
-            with isolated_keychain():
-                self.fail("must refuse before entering")
-        security.assert_not_called()
-
-    def test_missing_retained_item_is_never_recreated(self):
-        keychain = DiagnosticKeychain("/temporary/acceptance.keychain-db", "synthetic-password")
-        with patch.object(keychain, "_grant_reader", side_effect=RuntimeError("item missing")), \
-                patch("diagnostic_test_keychain.security") as security, self.assertRaisesRegex(RuntimeError, "item missing"):
-            keychain.read_retained_key("hang-diagnostic-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
-        self.assertEqual([call.args[0] for call in security.call_args_list], ["lock-keychain", "unlock-keychain"])
+    def test_rejects_an_app_that_always_succeeds_or_cannot_read_its_key(self):
+        for codes in ([0, 0, 0, 0], [70, 70, 70, 70], [0, 70, 0, 0], [0, 70, 70, 70]):
+            with self.subTest(codes=codes), self.assertRaises(AssertionError):
+                self.verify(codes)
 
 
 if __name__ == "__main__":

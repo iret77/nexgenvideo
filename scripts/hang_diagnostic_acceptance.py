@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Verify the shipped app's independent capture path; never use owner data."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
 import subprocess
 import tempfile
 import time
+import uuid
 
 from analyze_hang_diagnostics import analyze
-from diagnostic_test_keychain import isolated_keychain
 from verify_hang_startup import verify_startup
 
 
@@ -19,11 +20,10 @@ def main():
     parser.add_argument("symbols", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    with isolated_keychain() as keychain:
-        verify(args, keychain)
+    verify(args)
 
 
-def verify(args, keychain):
+def verify(args):
     root = Path.home() / "Library/Logs/NexGenVideo/HangIncidents"
     args.output.mkdir(parents=True, exist_ok=True)
     results = []
@@ -135,10 +135,29 @@ def verify(args, keychain):
             process.wait(timeout=5)
     retained_recordings.append(folder)
     results.append(verify_startup(args.app, protected_recordings=retained_recordings))
-    stored_key = keychain.read_retained_key(replay_account)
-    assert stored_key == replay_key, "normal restarts lost the replay key"
+    verify_retained_key(args.app, replay_account, replay_key)
     results.append({"mode": "replay-key-retention", "passed": True})
     (args.output / "result.json").write_text(json.dumps(results, indent=2))
+
+
+def verify_retained_key(app, account, key):
+    if not account.startswith("hang-diagnostic-"):
+        raise ValueError("expected a diagnostic recording account")
+    recording_id = str(uuid.UUID(account.removeprefix("hang-diagnostic-")))
+    digest = hashlib.sha256(key.encode()).hexdigest()
+    wrong_digest = ("0" if digest[0] != "0" else "1") + digest[1:]
+    for candidate_id, expected_digest, exit_code in (
+        (recording_id, digest, 0),
+        (recording_id, wrong_digest, 70),
+        (str(uuid.uuid4()), digest, 70),
+        (recording_id, digest, 0),
+    ):
+        environment = {**os.environ, "NGV_HANG_SELFTEST": "verify-retained-key",
+                       "NGV_HANG_SELFTEST_RECORDING_ID": candidate_id,
+                       "NGV_HANG_SELFTEST_KEY_DIGEST": expected_digest}
+        result = subprocess.run([str(app / "Contents/MacOS/NexGenVideo")], env=environment,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
+        assert result.returncode == exit_code, "retained key verification or its negative control failed"
 
 
 if __name__ == "__main__":
