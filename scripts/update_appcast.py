@@ -73,6 +73,18 @@ def _validate_item(
             )
 
 
+def render_item(version, build, length, signature, tag, minimum_system_version, date):
+    url = f"https://github.com/iret77/nexgenvideo/releases/download/{tag}/NexGenVideo.dmg"
+    return f"""        <item>
+            <title>Version {escape(version)}</title>
+            <pubDate>{escape(date)}</pubDate>
+            <sparkle:version>{escape(build)}</sparkle:version>
+            <sparkle:shortVersionString>{escape(version)}</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>{escape(minimum_system_version)}</sparkle:minimumSystemVersion>
+            <enclosure url={quoteattr(url)} length={quoteattr(length)} type="application/octet-stream" sparkle:edSignature={quoteattr(signature)}/>
+        </item>"""
+
+
 def update_appcast(
     version: str,
     build: str,
@@ -105,18 +117,7 @@ def update_appcast(
     if require_existing:
         raise ValueError(f"{path}: missing {version} entry")
 
-    url = (
-        f"https://github.com/iret77/nexgenvideo/releases/download/"
-        f"{tag}/NexGenVideo.dmg"
-    )
-    item = f"""        <item>
-            <title>Version {escape(version)}</title>
-            <pubDate>{formatdate()}</pubDate>
-            <sparkle:version>{escape(build)}</sparkle:version>
-            <sparkle:shortVersionString>{escape(version)}</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>{escape(minimum_system_version)}</sparkle:minimumSystemVersion>
-            <enclosure url={quoteattr(url)} length={quoteattr(length)} type="application/octet-stream" sparkle:edSignature={quoteattr(signature)}/>
-        </item>"""
+    item = render_item(version, build, length, signature, tag, minimum_system_version, formatdate())
     marker = "    </channel>"
     if content.count(marker) != 1:
         raise ValueError(f"{path}: expected exactly one channel closing tag")
