@@ -3,7 +3,7 @@
   "entries": [
     {
       "version": "1.5.7",
-      "date": "2026-09-09",
+      "date": "2026-09-10",
       "sections": [
         {
           "heading": "Reliability",
@@ -25,6 +25,7 @@
           "heading": "Workflow",
           "items": [
             "Storyboard Review opens the authored storyboard surface, and active agent work exposes the current stage instead of a static Working label.",
+            "Storyboard Review can be dismissed while loading or when its artifact is unavailable, and reloads after project Recovery.",
             "Still-image delivery, imported canon assets, cut handles and project spending use explicit executable contracts and matching approval gates."
           ]
         }
