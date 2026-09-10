@@ -26,6 +26,14 @@ class CIWatchTests(unittest.TestCase):
         self.assertIn("source context", excerpt)
         self.assertLessEqual(len(excerpt.splitlines()), 60)
 
+    def test_passed_tests_named_failure_do_not_hide_actual_issues(self):
+        issue = "✘ Test cancellation() recorded an issue at ImportTests.swift:10: Expectation failed"
+        log = "\n".join([issue, "actual != expected"] + ["✔ Test failed_import_is_rejected() passed"] * 1000)
+        excerpt = failure_excerpt(log)
+        self.assertIn(issue, excerpt)
+        self.assertIn("actual != expected", excerpt)
+        self.assertLessEqual(len(excerpt.splitlines()), 60)
+
     def invoke(self, replies):
         with patch("sys.argv", ["ci_watch.py", "1", "--sha", "expected"]), \
              patch("ci_watch.subprocess.check_output", side_effect=replies), \

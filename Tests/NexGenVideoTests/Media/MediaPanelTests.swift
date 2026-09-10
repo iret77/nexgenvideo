@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import Observation
 import Testing
 import UniformTypeIdentifiers
 @testable import NexGenVideo
@@ -378,16 +379,15 @@ struct DurableMediaImportTests {
         try Fixtures.prepareProjectPackage(at: projectURL)
         e.projectURL = projectURL
 
-        let importTask = Task { @MainActor in
-            await e.addMediaAsset(from: source)
+        let cancellationGeneration = e.mediaImportCancellationGeneration
+        withObservationTracking {
+            _ = e.mediaImportProgress
+        } onChange: {
+            MainActor.assumeIsolated { e.cancelMediaImport() }
         }
-        for _ in 0..<10_000 where e.mediaImportProgress == nil {
-            await Task.yield()
-        }
-        #expect(e.mediaImportProgress != nil)
-        e.cancelMediaImport()
-        let imported = await importTask.value
+        let imported = await e.addMediaAsset(from: source)
 
+        #expect(e.mediaImportCancellationGeneration == cancellationGeneration + 1)
         #expect(imported == nil)
         #expect(e.mediaPanelToast?.message == MediaImportError.cancelled.localizedDescription)
         #expect(e.mediaAssets.isEmpty)
@@ -580,15 +580,13 @@ struct DurableMediaImportTests {
         e.projectURL = projectURL
         let workingRoot = try #require(e.workingRoot)
 
-        let importTask = Task { @MainActor in
-            await e.importFinderItems([source], into: nil)
+        withObservationTracking {
+            _ = e.mediaImportProgress
+        } onChange: {
+            MainActor.assumeIsolated { e.releaseWorkingCopy() }
         }
-        for _ in 0..<10_000 where e.mediaImportProgress == nil {
-            await Task.yield()
-        }
-        #expect(e.mediaImportProgress != nil)
-        e.releaseWorkingCopy()
-        _ = await importTask.value
+        let summary = await e.importFinderItems([source], into: nil)
+        #expect(summary.failure == MediaImportError.cancelled.localizedDescription)
         for _ in 0..<10_000 where FileManager.default.fileExists(atPath: workingRoot.path) {
             await Task.yield()
         }

@@ -34,12 +34,23 @@ def summarize(run, jobs):
 
 
 def failure_excerpt(log, limit=60):
-    lines = log.splitlines()
-    selected = set(range(max(0, len(lines) - 12), len(lines)))
+    raw_lines = log.splitlines()
+    lines = [re.sub(r"\x1b\[[0-9;]*m", "", line) for line in raw_lines]
+    failures = []
     for index, line in enumerate(lines):
-        if re.search(r"error:|::error|failed|failure|✘|recorded an issue", line, re.I):
-            selected.update(range(max(0, index - 2), min(len(lines), index + 4)))
-    return "\n".join(lines[index][:800] for index in sorted(selected)[-limit:])
+        if "\x1b[36;1m" in raw_lines[index] or "✔" in line or "◇" in line:
+            continue
+        if re.search(r"✘|recorded an issue|Expectation failed|unexpected signal code|##\[error\]|::error|\berror: (?!none)", line, re.I):
+            failures.append(index)
+    selected = set(failures[:limit])
+    for index in failures:
+        for neighbor in range(max(0, index - 1), min(len(lines), index + 4)):
+            if len(selected) < limit:
+                selected.add(neighbor)
+    for index in range(max(0, len(lines) - 12), len(lines)):
+        if len(selected) < limit:
+            selected.add(index)
+    return "\n".join(lines[index][:800] for index in sorted(selected))
 
 
 def main():
