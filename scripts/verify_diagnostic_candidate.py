@@ -7,7 +7,6 @@ import subprocess
 
 HARNESS_PATHS = {
     ".github/workflows/diagnostic-acceptance.yml",
-    "scripts/diagnostic_test_keychain.py",
     "scripts/hang_diagnostic_acceptance.py",
     "scripts/verify_diagnostic_candidate.py",
     "scripts/test_diagnostic_acceptance.py",

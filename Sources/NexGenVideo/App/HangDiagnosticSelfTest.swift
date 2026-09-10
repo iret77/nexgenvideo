@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import SwiftUI
 import HangDiagnostics
 
@@ -8,10 +9,15 @@ enum HangDiagnosticSelfTest {
     static var requested: Bool {
         ProcessInfo.processInfo.environment["NGV_HANG_SELFTEST"] == "wait"
             || ProcessInfo.processInfo.environment["NGV_HANG_SELFTEST"] == "spin"
+            || ProcessInfo.processInfo.environment["NGV_HANG_SELFTEST"] == "verify-retained-key"
     }
 
     @MainActor
     static func start() {
+        if ProcessInfo.processInfo.environment["NGV_HANG_SELFTEST"] == "verify-retained-key" {
+            verifyRetainedKey()
+            return
+        }
         let content = ProcessInfo.processInfo.environment["NGV_HANG_SELFTEST_KEY"] != nil
         HangDiagnosticRecorder.shared.start(includeContent: content)
         if content {
@@ -49,6 +55,17 @@ enum HangDiagnosticSelfTest {
                 }
             }
         }
+    }
+
+    private static func verifyRetainedKey() {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["GITHUB_ACTIONS"] == "true",
+              let rawID = environment["NGV_HANG_SELFTEST_RECORDING_ID"],
+              let id = UUID(uuidString: rawID),
+              let expected = environment["NGV_HANG_SELFTEST_KEY_DIGEST"], expected.count == 64,
+              let key = KeychainStore.load(account: "hang-diagnostic-\(id.uuidString)") else { exit(70) }
+        let actual = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+        exit(actual == expected ? 0 : 70)
     }
 
     static func injectReplayControl(_ messages: [AgentMessage]) {
