@@ -1,9 +1,9 @@
 # Encrypted hang reproduction
 
 The temporary hang fixture is authenticated AES-256-GCM ciphertext. Its outer
-key is supplied through the `NGV_HANG_FIXTURE_KEY` Actions secret. The original
-recording key is inside the encrypted fixture. Neither key nor plaintext belongs
-in source control or public logs, screenshots or artifacts.
+key is supplied through the `NGV_HANG_FIXTURE_KEY_890AD793` Actions secret. The
+original recording key is inside the encrypted fixture. Neither key nor plaintext
+belongs in source control or public logs, screenshots or artifacts.
 
 The replay runs the shipped application without executing recorded tool calls.
 Only numerical results and authenticated-encrypted diagnostic output are uploaded.
@@ -31,4 +31,6 @@ Once the investigation no longer needs these inputs, remove both encrypted
 fixtures, diagnostic artifacts, temporary plaintext copies and all replay-key
 copies, including the Actions secret. Do not retain them as permanent test data.
 
-This is a reproduction harness, not evidence that the hang is fixed.
+Recorded Hang Replay passes only when the released control stalls inside the captured
+failure window and the candidate finishes every state with a responsive main-thread
+pulse. Chat Hang Replay remains broader regression coverage for saved sessions.

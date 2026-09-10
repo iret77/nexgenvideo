@@ -5,8 +5,12 @@ on:
     paths:
       - .github/workflows/recorded-hang-replay.yml
       - scripts/recorded_hang_replay.py
+      - scripts/verify_recorded_hang_result.py
+      - scripts/test_verify_recorded_hang_result.py
       - Tests/PrivateFixtures/hang-recording.enc
       - Sources/NexGenVideo/App/HangDiagnosticReplay.swift
+      - Sources/NexGenVideo/Agent/Panel/AgentPanelView.swift
+      - Sources/NexGenVideo/Agent/Panel/AgentTranscriptLayout.swift
       - Sources/NexGenVideo/Editor/EditorView.swift
 
 permissions:
@@ -40,11 +44,9 @@ jobs:
           fetch-depth: 0
       - uses: ./.github/actions/setup-xcode-27
       - uses: ./.github/actions/cache-swiftpm-dependencies
-      - name: Restore shipped panel and transcript sizing for control
+      - name: Restore affected released transcript container for control
         if: matrix.variant == 'baseline'
-        run: |
-          git show 6798bb32ec214247133a932ac94ba1743032286f:Sources/NexGenVideo/Editor/EditorView.swift > Sources/NexGenVideo/Editor/EditorView.swift
-          git show 6798bb32ec214247133a932ac94ba1743032286f:Sources/NexGenVideo/Agent/Panel/AgentMessageView.swift > Sources/NexGenVideo/Agent/Panel/AgentMessageView.swift
+        run: git show 6a56826a64faae5df48c24ec3f35311f50aacc7c:Sources/NexGenVideo/Agent/Panel/AgentPanelView.swift > Sources/NexGenVideo/Agent/Panel/AgentPanelView.swift
       - name: Build optimized replay app
         run: |
           scripts/bundle.sh release
@@ -71,7 +73,7 @@ jobs:
           path: ${{ runner.temp }}/replay
       - name: Replay captured states with recorded dimensions
         env:
-          NGV_HANG_FIXTURE_KEY: ${{ secrets.NGV_HANG_FIXTURE_KEY }}
+          NGV_HANG_FIXTURE_KEY: ${{ secrets.NGV_HANG_FIXTURE_KEY_890AD793 }}
         run: |
           set -euo pipefail
           umask 077
@@ -80,6 +82,7 @@ jobs:
           pip install --quiet cryptography==46.0.5
           ditto -x -k "$RUNNER_TEMP/replay/replay-app.zip" "$RUNNER_TEMP/replay"
           python3 scripts/recorded_hang_replay.py "$RUNNER_TEMP/replay/NexGenVideo.app" Tests/PrivateFixtures/hang-recording.enc "$RUNNER_TEMP/evidence" --match-geometry
+          python3 scripts/verify_recorded_hang_result.py "$RUNNER_TEMP/evidence/result.json" --expect "${{ matrix.variant }}"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

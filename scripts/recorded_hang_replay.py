@@ -98,7 +98,8 @@ def main():
         nonce = os.urandom(12)
         (output / "diagnostics.enc").write_bytes(nonce + AESGCM(key).encrypt(
             nonce, evidence.getvalue(), b"NGV_HANG_EVIDENCE_V1"))
-        result = {"frames": len(frames), "recordedSeconds": duration,
+        result = {"frames": len(frames), "firstSequence": decoded[0]["sequence"],
+                  "lastSequence": decoded[-1]["sequence"], "recordedSeconds": duration,
                   "elapsedSeconds": time.monotonic() - started, "exitCode": process.returncode,
                   "timedOut": timed_out, "geometryRequested": args.match_geometry}
         result["maxObservedCPU"] = max((o["cpu"] for o in observations), default=None)

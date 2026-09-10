@@ -20,7 +20,7 @@ struct AgentTranscriptLayout: SwiftUI.Layout {
         }
     }
 
-    // Transcript rows do not export descendant alignment guides to the lazy scroll layout.
+    // Transcript rows do not export descendant alignment guides to the enclosing scroll layout.
     func explicitAlignment(of guide: HorizontalAlignment, in bounds: CGRect, proposal: ProposedViewSize,
                            subviews: Subviews, cache: inout ()) -> CGFloat? { nil }
 

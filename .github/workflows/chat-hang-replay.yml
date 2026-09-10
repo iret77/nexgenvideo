@@ -9,6 +9,7 @@ on:
       - 'Tests/PrivateFixtures/chat-replay.enc'
       - 'Tests/PrivateFixtures/project-replay.enc'
       - 'Sources/NexGenVideo/App/ChatHangReplay.swift'
+      - 'Sources/NexGenVideo/Agent/Panel/AgentPanelView.swift'
       - 'Sources/NexGenVideo/Agent/Panel/AgentTranscriptLayout.swift'
       - 'Sources/NexGenVideo/Agent/Panel/AgentMessageView.swift'
 
