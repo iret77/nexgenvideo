@@ -1,0 +1,105 @@
+name: Verify existing signed diagnostic candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Original release workflow run"
+        type: string
+        required: true
+      source_sha:
+        description: "Exact source commit embedded in the signed app"
+        type: string
+        required: true
+      artifact_id:
+        description: "diagnostic-release-evidence artifact ID"
+        type: string
+        required: true
+      artifact_sha256:
+        description: "SHA-256 of the original artifact archive"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: diagnostic-acceptance-${{ inputs.run_id }}
+  cancel-in-progress: false
+
+env:
+  CANDIDATE_RUN: ${{ inputs.run_id }}
+  CANDIDATE_SOURCE: ${{ inputs.source_sha }}
+  CANDIDATE_ARTIFACT: ${{ inputs.artifact_id }}
+  CANDIDATE_DIGEST: ${{ inputs.artifact_sha256 }}
+
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify acceptance tooling
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+      - name: Bind the successful release job and immutable artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_RUN" =~ ^[1-9][0-9]*$ ]]
+          [[ "$CANDIDATE_ARTIFACT" =~ ^[1-9][0-9]*$ ]]
+          [[ "$CANDIDATE_SOURCE" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$CANDIDATE_DIGEST" =~ ^[0-9a-f]{64}$ ]]
+          mkdir -p "$RUNNER_TEMP/candidate-metadata"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN" > "$RUNNER_TEMP/candidate-metadata/run.json"
+          ATTEMPT="$(jq -r .run_attempt "$RUNNER_TEMP/candidate-metadata/run.json")"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN/attempts/$ATTEMPT/jobs?per_page=100" > "$RUNNER_TEMP/candidate-metadata/jobs.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$CANDIDATE_ARTIFACT" > "$RUNNER_TEMP/candidate-metadata/artifact.json"
+          python3 scripts/verify_diagnostic_candidate.py "$CANDIDATE_RUN" "$CANDIDATE_SOURCE" \
+            "$CANDIDATE_ARTIFACT" "$CANDIDATE_DIGEST" "$RUNNER_TEMP/candidate-metadata"
+
+  acceptance:
+    needs: source
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve the exact signed candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$CANDIDATE_ARTIFACT/zip" > "$RUNNER_TEMP/candidate.zip"
+          ACTUAL="$(shasum -a 256 "$RUNNER_TEMP/candidate.zip" | cut -d' ' -f1)"
+          [ "$ACTUAL" = "$CANDIDATE_DIGEST" ]
+          ditto -x -k "$RUNNER_TEMP/candidate.zip" "$RUNNER_TEMP/candidate"
+          ditto -x -k "$RUNNER_TEMP/candidate/diagnostic-app.zip" .
+          ditto -x -k "$RUNNER_TEMP/candidate/diagnostic-symbols.zip" .
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :NGVSourceCommit' NexGenVideo.app/Contents/Info.plist)" = "$CANDIDATE_SOURCE" ]
+          codesign --verify --strict --verbose=2 NexGenVideo.app
+          xcrun stapler validate NexGenVideo.app
+          [ "$(sw_vers -productVersion | cut -d. -f1)" = 26 ]
+      - name: Verify signed capture, replay, startup and retained key bytes
+        run: python3 scripts/hang_diagnostic_acceptance.py NexGenVideo.app diagnostic-symbols/NexGenVideo.dSYM --output evidence
+      - name: Record candidate identity
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          Path("evidence/candidate.json").write_text(json.dumps({
+              key: os.environ[key] for key in (
+                  "CANDIDATE_RUN", "CANDIDATE_SOURCE", "CANDIDATE_ARTIFACT", "CANDIDATE_DIGEST"
+              )
+          }, indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diagnostic-runtime-acceptance
+          path: evidence/*.json
+          if-no-files-found: error
+          retention-days: 90
