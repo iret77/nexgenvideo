@@ -9,6 +9,7 @@ import tempfile
 import time
 
 from analyze_hang_diagnostics import analyze
+from diagnostic_test_keychain import isolated_keychain
 from verify_hang_startup import verify_startup
 
 
@@ -18,6 +19,11 @@ def main():
     parser.add_argument("symbols", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    with isolated_keychain() as keychain:
+        verify(args, keychain)
+
+
+def verify(args, keychain):
     root = Path.home() / "Library/Logs/NexGenVideo/HangIncidents"
     args.output.mkdir(parents=True, exist_ok=True)
     results = []
@@ -129,10 +135,9 @@ def main():
             process.wait(timeout=5)
     retained_recordings.append(folder)
     results.append(verify_startup(args.app, protected_recordings=retained_recordings))
-    stored_key = subprocess.check_output([
-        "security", "find-generic-password", "-s", "de.h5ventures.nexgenvideo",
-        "-a", replay_account, "-w"], text=True, timeout=10).strip()
+    stored_key = keychain.read_retained_key(replay_account)
     assert stored_key == replay_key, "normal restarts lost the replay key"
+    results.append({"mode": "replay-key-retention", "passed": True})
     (args.output / "result.json").write_text(json.dumps(results, indent=2))
 
 
