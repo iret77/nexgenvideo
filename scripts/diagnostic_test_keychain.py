@@ -57,6 +57,8 @@ class DiagnosticKeychain:
         if not account.startswith("hang-diagnostic-"):
             raise ValueError("expected a synthetic diagnostic account")
         uuid.UUID(account.removeprefix("hang-diagnostic-"))
+        security("lock-keychain", self.path)
+        security("unlock-keychain", "-p", self.password, self.path)
         self._grant_reader(account)
         return security("find-generic-password", "-s", SERVICE, "-a", account, "-w", self.path)
 
@@ -83,6 +85,8 @@ class DiagnosticKeychain:
         find = bind(sec, "SecKeychainFindGenericPassword", C.c_int32,
                     ref, integer, C.c_char_p, integer, C.c_char_p, ref, ref, out)
         copy_access = bind(sec, "SecKeychainItemCopyAccess", C.c_int32, ref, out)
+        item_keychain = bind(sec, "SecKeychainItemCopyKeychain", C.c_int32, ref, out)
+        keychain_path = bind(sec, "SecKeychainGetPath", C.c_int32, ref, C.POINTER(integer), C.c_void_p)
         matching = bind(sec, "SecAccessCopyMatchingACLList", ref, ref, ref)
         contents = bind(sec, "SecACLCopyContents", C.c_int32, ref, out, out, C.POINTER(prompt_selector))
         set_contents = bind(sec, "SecACLSetContents", C.c_int32, ref, ref, ref, prompt_selector)
@@ -113,6 +117,14 @@ class DiagnosticKeychain:
             check(find(keychain, len(service), service, len(account_bytes), account_bytes,
                        None, None, C.byref(item)))
             required(own(item))
+            actual_keychain = ref()
+            check(item_keychain(item, C.byref(actual_keychain)))
+            required(own(actual_keychain))
+            path_buffer = C.create_string_buffer(4096)
+            path_size = integer(len(path_buffer))
+            check(keychain_path(actual_keychain, C.byref(path_size), path_buffer))
+            if Path(os.fsdecode(path_buffer.value)).resolve() != Path(self.path).resolve():
+                raise RuntimeError("synthetic credential is outside the disposable keychain")
             check(copy_access(item, C.byref(access)))
             required(own(access))
             check(trusted_app(b"/usr/bin/security", C.byref(reader)))
@@ -149,3 +161,18 @@ class DiagnosticKeychain:
                     check(set_contents(acl, applications, description, prompt))
             password = self.password.encode()
             check(set_access(item, access, len(password), password))
+
+
+def verify_reader(app):
+    with isolated_keychain() as keychain:
+        account = f"hang-diagnostic-{uuid.uuid4()}"
+        value = secrets.token_hex(32)
+        security("add-generic-password", "-s", SERVICE, "-a", account, "-w", value,
+                 "-T", str(app / "Contents/MacOS/NexGenVideo"), keychain.path)
+        if keychain.read_retained_key(account) != value:
+            raise RuntimeError("synthetic keychain reader changed credential bytes")
+    print("Disposable keychain reader verified.")
+
+
+if __name__ == "__main__":
+    verify_reader(Path(sys.argv[1]))

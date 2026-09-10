@@ -105,7 +105,7 @@ class DisposableKeychainTests(unittest.TestCase):
         with patch.object(keychain, "_grant_reader", side_effect=RuntimeError("item missing")), \
                 patch("diagnostic_test_keychain.security") as security, self.assertRaisesRegex(RuntimeError, "item missing"):
             keychain.read_retained_key("hang-diagnostic-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
-        security.assert_not_called()
+        self.assertEqual([call.args[0] for call in security.call_args_list], ["lock-keychain", "unlock-keychain"])
 
 
 if __name__ == "__main__":

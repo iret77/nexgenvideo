@@ -82,6 +82,8 @@ jobs:
           codesign --verify --strict --verbose=2 NexGenVideo.app
           xcrun stapler validate NexGenVideo.app
           [ "$(sw_vers -productVersion | cut -d. -f1)" = 26 ]
+      - name: Verify disposable keychain reader
+        run: python3 scripts/diagnostic_test_keychain.py NexGenVideo.app
       - name: Verify signed capture, replay, startup and retained key bytes
         run: python3 scripts/hang_diagnostic_acceptance.py NexGenVideo.app diagnostic-symbols/NexGenVideo.dSYM --output evidence
       - name: Record candidate identity
