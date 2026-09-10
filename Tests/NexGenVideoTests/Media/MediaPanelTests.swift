@@ -373,21 +373,24 @@ struct DurableMediaImportTests {
         }
         FileManager.default.createFile(atPath: source.path, contents: nil)
         let handle = try FileHandle(forWritingTo: source)
-        try handle.truncate(atOffset: 128 * 1024 * 1024)
+        try handle.truncate(atOffset: 8 * 1024 * 1024)
         try handle.close()
         try Fixtures.prepareProjectPackage(at: projectURL)
         e.projectURL = projectURL
 
-        let importTask = Task { @MainActor in
+        let cancellationGeneration = e.mediaImportCancellationGeneration
+        let imported = await DurableMediaStore.$copyChunkObserver.withValue({ partial in
+            await MainActor.run {
+                let size = try? partial.resourceValues(forKeys: [.fileSizeKey]).fileSize
+                #expect((size ?? 0) > 0)
+                #expect(e.mediaAssets.isEmpty)
+                e.cancelMediaImport()
+            }
+        }) {
             await e.addMediaAsset(from: source)
         }
-        for _ in 0..<10_000 where e.mediaImportProgress == nil {
-            await Task.yield()
-        }
-        #expect(e.mediaImportProgress != nil)
-        e.cancelMediaImport()
-        let imported = await importTask.value
 
+        #expect(e.mediaImportCancellationGeneration == cancellationGeneration + 1)
         #expect(imported == nil)
         #expect(e.mediaPanelToast?.message == MediaImportError.cancelled.localizedDescription)
         #expect(e.mediaAssets.isEmpty)
@@ -574,23 +577,29 @@ struct DurableMediaImportTests {
         }
         FileManager.default.createFile(atPath: source.path, contents: nil)
         let handle = try FileHandle(forWritingTo: source)
-        try handle.truncate(atOffset: 128 * 1024 * 1024)
+        try handle.truncate(atOffset: 8 * 1024 * 1024)
         try handle.close()
         try Fixtures.prepareProjectPackage(at: projectURL)
         e.projectURL = projectURL
         let workingRoot = try #require(e.workingRoot)
 
-        let importTask = Task { @MainActor in
+        let summary = await DurableMediaStore.$copyChunkObserver.withValue({ partial in
+            await MainActor.run {
+                let size = try? partial.resourceValues(forKeys: [.fileSizeKey]).fileSize
+                #expect((size ?? 0) > 0)
+                e.releaseWorkingCopy()
+                #expect(e.workingRoot == nil)
+                #expect(FileManager.default.fileExists(atPath: partial.path))
+                #expect(FileManager.default.fileExists(atPath: workingRoot.path))
+            }
+        }) {
             await e.importFinderItems([source], into: nil)
         }
-        for _ in 0..<10_000 where e.mediaImportProgress == nil {
-            await Task.yield()
-        }
-        #expect(e.mediaImportProgress != nil)
-        e.releaseWorkingCopy()
-        _ = await importTask.value
-        for _ in 0..<10_000 where FileManager.default.fileExists(atPath: workingRoot.path) {
-            await Task.yield()
+        #expect(summary.failure == MediaImportError.cancelled.localizedDescription)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while FileManager.default.fileExists(atPath: workingRoot.path),
+              ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
         }
 
         #expect(e.workingRoot == nil)

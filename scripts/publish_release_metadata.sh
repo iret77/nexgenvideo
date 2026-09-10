@@ -13,6 +13,7 @@ if [[ "${NGV_RELEASE_TOOL_COPY:-}" != "1" ]]; then
     "$SOURCE_TOOL_DIR/publish_release_metadata.sh" \
     "$SOURCE_TOOL_DIR/update_release_metadata.py" \
     "$SOURCE_TOOL_DIR/update_appcast.py" \
+    "$SOURCE_TOOL_DIR/ci_watch.py" \
     "$EXEC_TOOL_DIR/"
   NGV_RELEASE_TOOL_COPY=1 exec "$EXEC_TOOL_DIR/publish_release_metadata.sh" "$@"
 fi
@@ -149,10 +150,11 @@ wait_for_merge_gate() {
     --jq "[.[] | select(.headSha == \"$sha\") | .databaseId] | max // 0")"
   gh workflow run "$CI_WORKFLOW" \
     --repo "$GITHUB_REPOSITORY" \
-    --ref "$METADATA_BRANCH"
+    --ref "$METADATA_BRANCH" \
+    -f "metadata_version=$VERSION"
 
   local run_id=""
-  for _ in $(seq 1 150); do
+  for _ in $(seq 1 30); do
     run_id="$(gh run list \
       --repo "$GITHUB_REPOSITORY" \
       --workflow "$CI_WORKFLOW" \
@@ -162,13 +164,11 @@ wait_for_merge_gate() {
       --json databaseId,headSha \
       --jq "[.[] | select(.headSha == \"$sha\" and .databaseId > $previous_run_id) | .databaseId] | max // empty")"
     [[ -n "$run_id" ]] && break
-    sleep 2
+    sleep 10
   done
   [[ -n "$run_id" ]] \
     || { echo "::error::dispatched CI run was not registered"; exit 1; }
-  timeout 1800 gh run watch "$run_id" \
-    --repo "$GITHUB_REPOSITORY" \
-    --exit-status \
+  python3 "$TOOL_DIR/ci_watch.py" "$run_id" --sha "$sha" --timeout 1800 \
     || { echo "::error::CI run $run_id failed or exceeded 30 minutes"; exit 1; }
   [[ "$(merge_gate_succeeded "$sha")" == "true" ]] \
     || { echo "::error::Merge Gate did not succeed for $sha"; exit 1; }

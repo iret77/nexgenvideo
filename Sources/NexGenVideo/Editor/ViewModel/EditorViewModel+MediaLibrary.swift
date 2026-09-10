@@ -265,6 +265,7 @@ private struct PreparedMediaImport: Sendable {
 
 enum DurableMediaStore {
     private static let chunkBytes = 4 * 1024 * 1024
+    @TaskLocal static var copyChunkObserver: (@Sendable (URL) async -> Void)?
 
     static func digest(of url: URL) throws -> String {
         let handle = try FileHandle(forReadingFrom: url)
@@ -340,6 +341,7 @@ enum DurableMediaStore {
                 try Task.checkCancellation()
                 hasher.update(data: data)
                 try output.write(contentsOf: data)
+                await copyChunkObserver?(staging)
             }
             try output.synchronize()
             let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
@@ -815,21 +817,24 @@ extension EditorViewModel {
             currentName: plan.files.first?.name
         )
         let existingMediaURLs = mediaAssets.map(\.url)
+        let copyChunkObserver = DurableMediaStore.copyChunkObserver
         let worker = Task.detached(priority: .userInitiated) {
-            try await MediaImportPreparer.prepare(
-                plan,
-                mediaDirectory: mediaDirectory,
-                existingMediaURLs: existingMediaURLs,
-                progress: { [weak self] completed, currentName in
-                    await MainActor.run {
-                        self?.mediaImportProgress = MediaImportProgress(
-                            completed: completed,
-                            total: plan.files.count,
-                            currentName: currentName.isEmpty ? nil : currentName
-                        )
+            try await DurableMediaStore.$copyChunkObserver.withValue(copyChunkObserver) {
+                try await MediaImportPreparer.prepare(
+                    plan,
+                    mediaDirectory: mediaDirectory,
+                    existingMediaURLs: existingMediaURLs,
+                    progress: { [weak self] completed, currentName in
+                        await MainActor.run {
+                            self?.mediaImportProgress = MediaImportProgress(
+                                completed: completed,
+                                total: plan.files.count,
+                                currentName: currentName.isEmpty ? nil : currentName
+                            )
+                        }
                     }
-                }
-            )
+                )
+            }
         }
         mediaImportCancellation = { worker.cancel() }
         let result = await worker.result
