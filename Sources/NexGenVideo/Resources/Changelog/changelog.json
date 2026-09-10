@@ -2,6 +2,20 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.5.8",
+      "date": "2026-09-11",
+      "sections": [
+        {
+          "heading": "Settings",
+          "items": [
+            "Installed format-pack versions can be removed reliably while preserving other versions and project bindings.",
+            "Models settings shows connected providers, model visibility and upscalers without capability-research setup. Native adapter limits apply without Claude research.",
+            "All Settings pages use consistent rows, wrapping descriptions, trailing controls and shared button styles."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.5.7",
       "date": "2026-09-10",
       "sections": [

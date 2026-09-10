@@ -84,24 +84,9 @@ struct PluginsPane: View {
                     if index > 0 {
                         SettingsDivider()
                     }
-                    HStack(alignment: .center, spacing: AppTheme.Spacing.md) {
-                        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-                            Text(rowData.displayName)
-                                .interfaceFont(size: AppTheme.Typography.ui)
-                                .foregroundStyle(AppTheme.Text.primaryColor)
-                            HStack(spacing: AppTheme.Spacing.sm) {
-                                if let tagline = rowData.tagline {
-                                    Text(tagline)
-                                }
-                            }
-                            .interfaceFont(size: AppTheme.Typography.ui)
-                            .foregroundStyle(AppTheme.Text.tertiaryColor)
-                        }
-                        Spacer(minLength: AppTheme.Spacing.lg)
+                    SettingsRow(title: rowData.displayName, subtitle: rowData.tagline) {
                         actions(rowData)
                     }
-                    .padding(.horizontal, AppTheme.Spacing.mdLg)
-                    .padding(.vertical, AppTheme.Spacing.md)
                     ForEach(manager.versions(for: rowData.id)) { installedVersion in
                         SettingsDivider()
                         versionRow(installedVersion)

@@ -4,6 +4,7 @@ enum ModelsPaneProjection {
     struct Row: Identifiable, Equatable {
         let id: String
         let displayName: String
+        var providers: String = ""
     }
 
     struct Section: Identifiable, Equatable {
@@ -16,17 +17,22 @@ enum ModelsPaneProjection {
         image: [Row],
         video: [Row],
         audio: [Row],
+        upscale: [Row] = [],
         query: String,
         canRun: (String) -> Bool
     ) -> [Section] {
-        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         func filtered(_ rows: [Row]) -> [Row] {
-            rows.filter { canRun($0.id) && (q.isEmpty || $0.displayName.lowercased().contains(q)) }
+            rows.filter {
+                canRun($0.id) && (q.isEmpty || $0.displayName.lowercased().contains(q)
+                    || $0.providers.lowercased().contains(q))
+            }.sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
         }
         return [
             Section(id: "image", title: "Image", rows: filtered(image)),
             Section(id: "video", title: "Video", rows: filtered(video)),
             Section(id: "audio", title: "Audio", rows: filtered(audio)),
+            Section(id: "upscale", title: "Upscaling", rows: filtered(upscale)),
         ].filter { !$0.rows.isEmpty }
     }
 }
@@ -34,64 +40,59 @@ enum ModelsPaneProjection {
 struct ModelsPane: View {
     private var prefs = ModelPreferences.shared
     private var catalog = ModelCatalog.shared
-    @Bindable private var research = ModelCapabilityResearchController.shared
 
     @State private var query = ""
-    /// Bumped when provider keys change so availability (which reads the keychain) re-renders live.
     @State private var keyRevision = 0
 
     private var sections: [ModelsPaneProjection.Section] {
         _ = keyRevision
-        let image = catalog.image.map { ModelsPaneProjection.Row(id: $0.id, displayName: $0.displayName) }
-        let video = catalog.video.map { ModelsPaneProjection.Row(id: $0.id, displayName: $0.displayName) }
-        let audio = catalog.audio.map { ModelsPaneProjection.Row(id: $0.id, displayName: $0.displayName) }
-        let runnable = Set((image + video + audio).filter {
-            GenerationProvider.canRun(modelId: $0.id)
+        let activation = ProviderActivation.current()
+        let image = catalog.image.map { row(id: $0.id, name: $0.displayName, activation: activation) }
+        let video = catalog.video.map { row(id: $0.id, name: $0.displayName, activation: activation) }
+        let audio = catalog.audio.map { row(id: $0.id, name: $0.displayName, activation: activation) }
+        let upscale = catalog.upscale.map { row(id: $0.id, name: $0.displayName, activation: activation) }
+        let runnable = Set((image + video + audio + upscale).filter {
+            !$0.providers.isEmpty
         }.map(\.id))
         return ModelsPaneProjection.sections(
             image: image,
             video: video,
             audio: audio,
+            upscale: upscale,
             query: query,
             canRun: { runnable.contains($0) }
         )
     }
 
-    private var researchTargets: [ModelCapabilityResearchTargetV1] {
-        guard research.recordsLoaded else { return [] }
-        return ModelCapabilityResearchTargetBuilder.targets(
-            catalog: catalog,
-            records: research.records,
-            corpus: CatalogCapabilityRuntime.corpus
-        )
+    private func row(id: String, name: String, activation: ProviderActivation) -> ModelsPaneProjection.Row {
+        let providers = Set(ProviderManifest.bindings(forModelId: id)
+            .filter { activation.isActive($0.provider, $0.transport) }
+            .map { $0.provider.displayName })
+        return .init(id: id, displayName: name, providers: providers.sorted().joined(separator: " · "))
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
             SettingsSection(
-                "Model Visibility",
-                subtitle: "Only models available through a connected provider are shown."
+                "Show in generation tools",
+                subtitle: "Models from your connected providers are enabled by default."
             ) {
                 searchBar
                 if sections.isEmpty {
                     SettingsCard {
                         SettingsRow(title: emptyStateText) {
-                            EmptyView()
+                            if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                Button("Open Providers") { SettingsWindowController.shared.show(tab: .providers) }
+                            }
                         }
                     }
                 }
-            }
-
-            if !researchTargets.isEmpty || !research.records.isEmpty
-                || research.phase != .idle {
-                ModelCapabilityResearchPane()
             }
 
             ForEach(sections) { section in
                 sectionView(section)
             }
         }
-        .task { research.start() }
         .onReceive(NotificationCenter.default.publisher(for: .providerKeysChanged)) { _ in
             keyRevision += 1
         }
@@ -102,12 +103,12 @@ struct ModelsPane: View {
 
     private var emptyStateText: String {
         guard catalog.isLoaded else { return "Loading models…" }
-        let hasRunnableModel = (catalog.image.map(\.id) + catalog.video.map(\.id) + catalog.audio.map(\.id))
+        let hasRunnableModel = (catalog.image.map(\.id) + catalog.video.map(\.id) + catalog.audio.map(\.id) + catalog.upscale.map(\.id))
             .contains { GenerationProvider.canRun(modelId: $0) }
-        guard hasRunnableModel else { return "Activate a provider in Providers to see its models." }
+        guard hasRunnableModel else { return "Connect a provider to see its models." }
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty { return "No models match \"\(trimmed)\"." }
-        return "Activate a provider in Providers to see its models."
+        return "Connect a provider to see its models."
     }
 
     private var searchBar: some View {
@@ -115,7 +116,7 @@ struct ModelsPane: View {
             Image(systemName: "magnifyingglass")
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.mutedColor)
-            TextField("Search models", text: $query)
+            TextField("Search models or providers", text: $query)
                 .textFieldStyle(.plain)
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.primaryColor)
@@ -146,12 +147,8 @@ struct ModelsPane: View {
     }
 
     private func modelRow(_ row: ModelsPaneProjection.Row) -> some View {
-        HStack(spacing: AppTheme.Spacing.md) {
-            Text(row.displayName)
-                .interfaceFont(size: AppTheme.Typography.ui)
-                .foregroundStyle(AppTheme.Text.primaryColor)
-            Spacer(minLength: AppTheme.Spacing.lg)
-            Toggle("", isOn: Binding(
+        SettingsRow(title: row.displayName, subtitle: row.providers) {
+            Toggle("Show \(row.displayName) in generation tools", isOn: Binding(
                 get: { prefs.isEnabled(row.id) },
                 set: { prefs.setEnabled(row.id, $0) }
             ))
@@ -159,7 +156,5 @@ struct ModelsPane: View {
             .toggleStyle(.switch)
             .controlSize(.small)
         }
-        .padding(.horizontal, AppTheme.Spacing.mdLg)
-        .padding(.vertical, AppTheme.Spacing.md)
     }
 }

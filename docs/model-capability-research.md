@@ -1,3 +1,5 @@
+> Retired from the application: Models settings and production capability resolution use the shipped adapters, bundled profiles and validated discovery. Local research records are retained on disk but are not loaded or applied by normal startup. The following documents the former subsystem.
+
 # Model capability research subsystem
 
 This subsystem resolves issue #436 without widening the normal agent runtime. It is host-owned and

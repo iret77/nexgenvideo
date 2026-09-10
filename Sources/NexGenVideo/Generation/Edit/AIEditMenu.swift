@@ -10,7 +10,7 @@ struct AIEditMenu: View {
             EmptyView()
         } else {
             Menu("AI Edit") {
-                if availableActions.contains(.upscale) {
+                if availableActions.contains(.upscale), !UpscaleModelConfig.models(for: asset.type).isEmpty {
                     Menu("Upscale") {
                         ForEach(UpscaleModelConfig.models(for: asset.type)) { model in
                             Button(model.displayName) { runUpscale(model) }

@@ -218,31 +218,16 @@ struct AgentPane: View {
 
     private var anthropicConfiguration: some View {
         VStack(spacing: AppTheme.Spacing.none) {
-            HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
-                VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-                    Text("Anthropic API")
-                        .interfaceFont(size: AppTheme.Typography.ui)
-                        .foregroundStyle(AppTheme.Text.primaryColor)
-                    Button(action: { NSWorkspace.shared.open(consoleURL) }) {
-                        Label("Get API key", systemImage: "arrow.up.right")
-                            .interfaceFont(size: AppTheme.Typography.ui)
-                            .foregroundStyle(AppTheme.Accent.primary)
-                    }
-                    .buttonStyle(.plain)
-                }
-                Spacer(minLength: AppTheme.Spacing.lg)
-                SettingsStatusBadge(
-                    text: hasKey ? "Key saved" : "Not configured",
-                    tone: hasKey ? .success : .neutral
-                )
+            SettingsRow(title: "Anthropic API") {
+                Button("Get API key", systemImage: "arrow.up.right") { NSWorkspace.shared.open(consoleURL) }
+                SettingsStatusBadge(text: hasKey ? "Key saved" : "Not configured", tone: hasKey ? .success : .neutral)
             }
-            .padding(.horizontal, AppTheme.Spacing.mdLg)
-            .padding(.vertical, AppTheme.Spacing.md)
 
             SettingsDivider()
 
             HStack(spacing: AppTheme.Spacing.sm) {
                 SecureField(keyPlaceholder, text: $draft)
+                    .accessibilityLabel("Anthropic API key")
                     .textFieldStyle(.plain)
                     .focused($isFocused)
                     .interfaceFont(size: AppTheme.Typography.ui, design: .monospaced)
@@ -264,52 +249,29 @@ struct AgentPane: View {
                     .animation(.easeOut(duration: AppTheme.Anim.hover), value: isFocused)
                 keyTrailingControl
             }
-            .padding(.horizontal, AppTheme.Spacing.mdLg)
+            .padding(.horizontal, AppTheme.Spacing.lgXl)
             .padding(.vertical, AppTheme.Spacing.md)
         }
     }
 
     private var claudeCodeConfiguration: some View {
         VStack(spacing: AppTheme.Spacing.none) {
-            HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
-                VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-                    Text(claudeCodeTitle)
-                        .interfaceFont(size: AppTheme.Typography.ui)
-                        .foregroundStyle(AppTheme.Text.primaryColor)
-                    Text(claudeCodeDetail)
-                        .interfaceFont(size: AppTheme.Typography.ui)
-                        .foregroundStyle(AppTheme.Text.tertiaryColor)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: AppTheme.Spacing.lg)
-                HStack(spacing: AppTheme.Spacing.sm) {
-                    SettingsStatusBadge(text: claudeStatusLabel, tone: claudeStatusTone)
-                    Button("Check again") {
-                        Task { await checkClaude() }
-                    }
-                    .buttonStyle(.capsule(.secondary, size: .regular))
-                    .controlSize(.small)
+            SettingsRow(title: claudeCodeTitle, subtitle: claudeCodeDetail) {
+                SettingsStatusBadge(text: claudeStatusLabel, tone: claudeStatusTone)
+                Button("Check again") { Task { await checkClaude() } }
                     .disabled(isCheckingClaude)
-                }
             }
-            .padding(.horizontal, AppTheme.Spacing.mdLg)
-            .padding(.vertical, AppTheme.Spacing.md)
 
             if !isCheckingClaude && claudeStatus?.found == false {
                 SettingsDivider()
-                HStack {
+                SettingsRow(title: "Install Claude Code") {
                     Button("Installation guide") { NSWorkspace.shared.open(installationURL) }
-                        .buttonStyle(.capsule(.secondary, size: .regular))
-                        .controlSize(.small)
-                    Spacer(minLength: AppTheme.Spacing.lg)
                 }
-                .padding(.horizontal, AppTheme.Spacing.mdLg)
-                .padding(.vertical, AppTheme.Spacing.smMd)
             }
 
             SettingsDivider()
             SettingsNotice(
-                text: "Claude Code runs headlessly with Read as its only built-in tool. Timeline changes go through NexGenVideo's local MCP tools.",
+                text: "The agent edits the project through NexGenVideo’s tools. Paid generation follows your approval settings.",
                 systemImage: "lock.shield",
                 tone: .neutral
             )
@@ -388,7 +350,7 @@ struct AgentPane: View {
                                 .controlSize(.small)
                         }
                         Toggle(
-                            "",
+                            "Enable NexGenVideo MCP server",
                             isOn: Binding(
                                 get: { appState.isMCPEnabled },
                                 set: { appState.setMCPEnabled($0) }
@@ -401,20 +363,9 @@ struct AgentPane: View {
                     }
                 }
                 SettingsDivider()
-                HStack {
-                    Text("Connection setup for Claude Desktop, Claude Code, Codex, and other MCP clients.")
-                        .interfaceFont(size: AppTheme.Typography.ui)
-                        .foregroundStyle(AppTheme.Text.tertiaryColor)
-                    Spacer(minLength: AppTheme.Spacing.lg)
-                    Button("Setup instructions") {
-                        HelpWindowController.shared.show(tab: .mcp)
-                    }
-                    .buttonStyle(.plain)
-                    .interfaceFont(size: AppTheme.Typography.ui)
-                    .foregroundStyle(AppTheme.Accent.primary)
+                SettingsRow(title: "Connect an MCP client", subtitle: "Setup for Claude Desktop, Claude Code, Codex, and other clients.") {
+                    Button("Setup instructions") { HelpWindowController.shared.show(tab: .mcp) }
                 }
-                .padding(.horizontal, AppTheme.Spacing.mdLg)
-                .padding(.vertical, AppTheme.Spacing.smMd)
             }
         }
     }
@@ -473,7 +424,7 @@ struct AgentPane: View {
                                 .controlSize(.small)
                             Spacer(minLength: AppTheme.Spacing.lg)
                         }
-                        .padding(.horizontal, AppTheme.Spacing.mdLg)
+                        .padding(.horizontal, AppTheme.Spacing.lgXl)
                         .padding(.vertical, AppTheme.Spacing.smMd)
                     }
                 }
@@ -499,12 +450,8 @@ struct AgentPane: View {
                     .buttonStyle(.capsule(.secondary, size: .regular))
                     .controlSize(.small)
                     .disabled(externalMcpEditor.isPresented)
-                Button {
+                Button("Remove", role: .destructive) {
                     pendingExternalMcpRemoval = entry.name
-                } label: {
-                    Image(systemName: "trash")
-                        .interfaceFont(size: AppTheme.Typography.ui)
-                        .frame(width: AppTheme.IconSize.xs, height: AppTheme.IconSize.xs)
                 }
                 .buttonStyle(.capsule(.secondary, size: .regular))
                 .controlSize(.small)
@@ -610,7 +557,7 @@ struct AgentPane: View {
                 )
             }
         }
-        .padding(.horizontal, AppTheme.Spacing.mdLg)
+        .padding(.horizontal, AppTheme.Spacing.lgXl)
         .padding(.vertical, AppTheme.Spacing.md)
     }
 
@@ -717,16 +664,11 @@ struct AgentPane: View {
         if !trimmed.isEmpty {
             Button("Save", action: saveKey)
                 .buttonStyle(.capsule(.prominent, size: .regular))
-                .controlSize(.large)
+                .controlSize(.small)
         } else if hasKey {
-            Button(action: removeKey) {
-                Image(systemName: "trash")
-                    .interfaceFont(size: AppTheme.Typography.ui)
-                    .foregroundStyle(AppTheme.Text.secondaryColor)
-                    .frame(width: AppTheme.IconSize.md, height: AppTheme.IconSize.md)
-            }
+            Button("Remove", role: .destructive, action: removeKey)
             .buttonStyle(.capsule(.secondary, size: .regular))
-            .controlSize(.large)
+            .controlSize(.small)
             .help("Remove Anthropic API key")
         }
     }

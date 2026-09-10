@@ -218,14 +218,17 @@ enum PluginInstaller {
             .appendingPathExtension(PluginPaths.bundleExtension)
         let selected = bundleURL.standardizedFileURL
         let allowed = [versioned, legacy].map(\.standardizedFileURL)
-        guard allowed.contains(selected),
+        // Directory enumeration adds a trailing slash; URL equality treats it as a different URL.
+        guard allowed.contains(where: { $0.path == selected.path }),
+              isContainedInstall(selected, in: installDirectory),
               let selectedInfo = PluginBundleInfo(bundleURL: selected),
               selectedInfo.id == id,
               selectedInfo.version == version else {
             throw InstallError.uninstallMismatch(id: id, version: version)
         }
         let targets = allowed.filter { candidate in
-            guard let info = PluginBundleInfo(bundleURL: candidate) else { return false }
+            guard isContainedInstall(candidate, in: installDirectory),
+                  let info = PluginBundleInfo(bundleURL: candidate) else { return false }
             return info.id == id && info.version == version
         }
         guard !targets.isEmpty else {
@@ -240,6 +243,13 @@ enum PluginInstaller {
         ), remaining.isEmpty {
             try FileManager.default.removeItem(at: versionDirectory)
         }
+    }
+
+    private static func isContainedInstall(_ bundle: URL, in directory: URL) -> Bool {
+        let root = directory.resolvingSymlinksInPath().standardizedFileURL.path
+        let resolved = bundle.resolvingSymlinksInPath().standardizedFileURL.path
+        let relative = bundle.standardizedFileURL.path.dropFirst(directory.standardizedFileURL.path.count)
+        return resolved == root + String(relative)
     }
 
     // MARK: - Steps

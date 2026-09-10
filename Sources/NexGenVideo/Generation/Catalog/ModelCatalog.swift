@@ -292,8 +292,6 @@ final class ModelCatalog {
         var newCuratedOfferingCapabilitiesByModelID:
             [String: [ResolvedOfferingCapabilityProfileV1]] = [:]
         var capabilityErrors: [String] = []
-        let researchRecords = ModelCapabilityResearchController.shared.records
-        let researchCorpus = CatalogCapabilityRuntime.corpus
         newVideo.reserveCapacity(entries.count)
         newImage.reserveCapacity(entries.count)
         newAudio.reserveCapacity(entries.count)
@@ -306,13 +304,7 @@ final class ModelCatalog {
                     for: entry,
                     resolver: capabilityResolver
                 )
-                let capabilities = try curatedCapabilities.map {
-                    try Self.applyingResearchRecords(
-                        to: $0,
-                        records: researchRecords,
-                        corpus: researchCorpus
-                    )
-                }
+                let capabilities = curatedCapabilities
                 if !curatedCapabilities.isEmpty {
                     newCuratedOfferingCapabilitiesByModelID[entry.id] = curatedCapabilities
                 }
@@ -455,7 +447,7 @@ final class ModelCatalog {
                 )
                 return productionRoutingCapability(capability)
             }
-            return productionRoutingCapability(try resolver.resolveOffering(
+            let resolved = try resolver.resolveOffering(
                 offering,
                 lookup: CapabilityLookupV1(
                     modality: modality,
@@ -465,7 +457,8 @@ final class ModelCatalog {
                     offer.productionInputPolicy,
                     offering: offering
                 )
-            ))
+            )
+            return productionRoutingCapability(CatalogNativeCapabilities.applying(to: resolved, offer: offer))
         }
     }
 

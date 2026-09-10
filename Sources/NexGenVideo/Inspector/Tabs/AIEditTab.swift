@@ -288,7 +288,7 @@ struct AIEditTab: View {
             .menuStyle(.borderlessButton)
             .fixedSize()
             .controlSize(.small)
-            .disabled(!isEnabled)
+            .disabled(!isEnabled || UpscaleModelConfig.models(for: asset.type).isEmpty)
         case .createVideo:
             Menu(title) {
                 Button("Set as first frame") { sendToVideo(asReference: false) }
