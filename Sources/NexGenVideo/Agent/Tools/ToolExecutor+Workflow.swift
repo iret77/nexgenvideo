@@ -668,6 +668,27 @@ extension ToolExecutor {
         let sourceAsset = try mediaID.map {
             try asset($0, editor: editor)
         }
+        let isProductionDesignDestination = toRel.hasPrefix("production_design/")
+        if isProductionDesignDestination, let fromRel {
+            let confirmedIdentity = try ConfirmedIdentityAssetStoreV1.currentEntry(
+                fromRel,
+                dataRoot: root
+            )
+            if confirmedIdentity != nil {
+                throw ToolError(
+                    "Prepared character and location references are reserved for Bible identity."
+                )
+            }
+        }
+        if isProductionDesignDestination,
+           let sourceAsset,
+           let assignedRole = editor.mediaManifest.intakeRoleByAssetID[sourceAsset.id],
+           assignedRole != "style" {
+            throw ToolError(
+                "Media '\(sourceAsset.name)' is assigned as \(assignedRole), not style. "
+                    + "Use the matching prepared asset in Bible."
+            )
+        }
         let from: URL
         if let sourceAsset {
             guard sourceAsset.type == .image else {
@@ -713,7 +734,8 @@ extension ToolExecutor {
             destinationURL: to,
             dataRoot: root
         )
-        let confirmedIdentityProvenance = if let fromRel {
+        let confirmedIdentityProvenance = if let fromRel,
+            toRel.hasPrefix("bible/") {
             try ConfirmedIdentityAssetStoreV1.adopt(
                 from: fromRel,
                 to: toRel,

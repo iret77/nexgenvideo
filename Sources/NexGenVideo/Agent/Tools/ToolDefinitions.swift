@@ -1285,7 +1285,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .rewind,
-            description: "Rewind the pipeline to `target_phase`. WRITES.\n\nResets `target_phase` and every following phase (in the merged core+pack phase order, so pack phases like `analysis` sit in the right place) to unapproved; artifacts are kept. Returns `{target, reset_phases}`. `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            description: "Rewind the pipeline to `target_phase`. WRITES.\n\nUse only when an accepted semantic change requires editing that phase. Copying or staging an asset, retrying a host operation, and byte-identical content never justify a rewind. Resets `target_phase` and every following phase (in the merged core+pack phase order, so pack phases like `analysis` sit in the right place) to unapproved; artifacts are kept. Returns `{target, reset_phases}`. `project_dir` is the `pipeline/` data root; omit to use the open project.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,
@@ -1323,7 +1323,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .copyProjectFile,
-            description: "Stage one image asset for Production Design or Bible use (copy, never move). WRITES. Pass exactly one source: `from` for an uploaded image under `import/`, or `media` for a ready image asset returned by get_media/generate_image. Destinations are limited to `production_design/refs/`, `production_design/lighting_anchor.png`, or image paths under `bible/`; canonical YAML/JSON artifacts are refused. Generated media receives an exact hash, compiled prompt, and model in the scope's provenance sidecar. Returns `{from, media, to, generated_provenance}`.",
+            description: "Stage one image asset for Production Design or Bible use (copy, never move). WRITES. Pass exactly one source: `from` for an uploaded image under `import/`, or `media` for a ready image asset returned by get_media/generate_image. Production Design accepts loose style images from `import/` or unassigned/generated media; prepared character and location assets remain Bible identity inputs. Destinations are limited to `production_design/refs/`, `production_design/lighting_anchor.png`, or image paths under `bible/`; canonical YAML/JSON artifacts are refused. Generated media receives an exact hash, compiled prompt, and model in the scope's provenance sidecar. Returns `{from, media, to, generated_provenance}`.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,
