@@ -203,6 +203,84 @@ struct ProjectDocumentIOTests {
         #expect(doc.fileModificationDate == savedPackageDate)
     }
 
+    @Test func metadataOnlyPackageDateDriftRefreshesTheKnownState() throws {
+        let root = fm.temporaryDirectory.appendingPathComponent(
+            "pp-metadata-drift-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let package = root.appendingPathComponent(
+            "Project.ngv",
+            isDirectory: true
+        )
+        try Fixtures.prepareProjectPackage(at: package)
+        defer { try? fm.removeItem(at: root) }
+        let doc = configuredDocument(fileURL: package)
+        try doc.recordKnownPackageState(at: package)
+        let driftedDate = Date(timeIntervalSinceNow: 30)
+        try fm.setAttributes(
+            [.modificationDate: driftedDate],
+            ofItemAtPath: package.path
+        )
+        let actualDate = try #require(
+            fm.attributesOfItem(atPath: package.path)[.modificationDate] as? Date
+        )
+
+        #expect(doc.refreshKnownPackageStateIfContentsUnchanged(at: package))
+        #expect(doc.fileModificationDate == actualDate)
+    }
+
+    @Test func changedPackageContentKeepsTheConflictBaseline() throws {
+        let root = fm.temporaryDirectory.appendingPathComponent(
+            "pp-content-change-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let package = root.appendingPathComponent(
+            "Project.ngv",
+            isDirectory: true
+        )
+        try Fixtures.prepareProjectPackage(at: package)
+        defer { try? fm.removeItem(at: root) }
+        let doc = configuredDocument(fileURL: package)
+        try doc.recordKnownPackageState(at: package)
+        let baseline = doc.fileModificationDate
+        try Data("external-change".utf8).write(
+            to: package.appendingPathComponent(Project.timelineFilename),
+            options: .atomic
+        )
+        try fm.setAttributes(
+            [.modificationDate: Date(timeIntervalSinceNow: 30)],
+            ofItemAtPath: package.path
+        )
+
+        #expect(!doc.refreshKnownPackageStateIfContentsUnchanged(at: package))
+        #expect(doc.fileModificationDate == baseline)
+    }
+
+    @Test func finderMetadataDoesNotCreateAProjectContentConflict() throws {
+        let root = fm.temporaryDirectory.appendingPathComponent(
+            "pp-finder-metadata-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let package = root.appendingPathComponent(
+            "Project.ngv",
+            isDirectory: true
+        )
+        try Fixtures.prepareProjectPackage(at: package)
+        defer { try? fm.removeItem(at: root) }
+        let doc = configuredDocument(fileURL: package)
+        try doc.recordKnownPackageState(at: package)
+        try Data("finder".utf8).write(
+            to: package.appendingPathComponent(".DS_Store"),
+            options: .atomic
+        )
+        try fm.setAttributes(
+            [.modificationDate: Date(timeIntervalSinceNow: 30)],
+            ofItemAtPath: package.path
+        )
+
+        #expect(doc.refreshKnownPackageStateIfContentsUnchanged(at: package))
+    }
+
     private func makePackage(at url: URL) throws {
         let media = url.appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
         try fm.createDirectory(at: media, withIntermediateDirectories: true)

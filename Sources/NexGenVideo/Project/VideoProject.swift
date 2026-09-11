@@ -65,6 +65,7 @@ final class VideoProject: NSDocument {
     private nonisolated(unsafe) var snapshotPreparedForWrite = false
     private nonisolated(unsafe) var snapshotCaptureError: Error?
     private var checkpointFailurePresented = false
+    private var knownPackageRevision: ProjectPackageRevision?
 
     // MARK: - Persistence
 
@@ -238,6 +239,9 @@ final class VideoProject: NSDocument {
         let savedWorkingCopyKey = snapshotWorkingCopyKey
         let migrationSourceURL = fileURL
         let clearsWorkingCopy = saveOperation != .saveToOperation
+        if saveOperation == .saveOperation, Self.sameFile(fileURL, url) {
+            refreshKnownPackageStateIfContentsUnchanged(at: url)
+        }
         super.save(to: url, ofType: typeName, for: saveOperation) { error in
             if error == nil, clearsWorkingCopy {
                 if let savedWorkingCopyKey {
@@ -264,13 +268,43 @@ final class VideoProject: NSDocument {
     }
 
     func recordKnownPackageState(at url: URL) throws {
-        let values = try url.resourceValues(
-            forKeys: [.contentModificationDateKey]
-        )
-        guard let date = values.contentModificationDate else {
-            throw CocoaError(.fileReadUnknown)
+        let revision = try ProjectPackageRevision.capture(at: url)
+        knownPackageRevision = revision
+        fileModificationDate = revision.packageModificationDate
+    }
+
+    @discardableResult
+    func refreshKnownPackageStateIfContentsUnchanged(at url: URL) -> Bool {
+        guard let knownPackageRevision else { return false }
+        do {
+            let currentDate = try FileManager.default.attributesOfItem(atPath: url.path)[
+                .modificationDate
+            ] as? Date
+            guard currentDate != fileModificationDate else { return false }
+            let current = try ProjectPackageRevision.capture(at: url)
+            guard current.entries == knownPackageRevision.entries else {
+                let changes = knownPackageRevision.changedPaths(comparedTo: current)
+                Log.project.notice(
+                    "save found changed package content: \(changes.prefix(8).joined(separator: ", "))"
+                )
+                return false
+            }
+            self.knownPackageRevision = current
+            fileModificationDate = current.packageModificationDate
+            Log.project.notice("save accepted package timestamp drift after content verification")
+            return true
+        } catch {
+            Log.project.notice(
+                "save couldn't verify package timestamp drift: \(error.localizedDescription)"
+            )
+            return false
         }
-        fileModificationDate = date
+    }
+
+    private nonisolated static func sameFile(_ lhs: URL?, _ rhs: URL) -> Bool {
+        guard let lhs else { return false }
+        return lhs.standardizedFileURL.resolvingSymlinksInPath()
+            == rhs.standardizedFileURL.resolvingSymlinksInPath()
     }
 
     nonisolated static func saveContextError(

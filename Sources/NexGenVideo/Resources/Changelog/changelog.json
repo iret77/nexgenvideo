@@ -18,7 +18,8 @@
         {
           "heading": "Reliability",
           "items": [
-            "UI hang recording now restarts its helper after an unexpected exit, records the exit status for analysis, and no longer interrupts active work with a modal diagnostic error."
+            "UI hang recording now restarts its helper after an unexpected exit, records the exit status for analysis, and no longer interrupts active work with a modal diagnostic error.",
+            "Saving verifies the project package contents before treating a changed filesystem timestamp as an external edit, while preserving the conflict warning for real file changes."
           ]
         }
       ]
