@@ -5,6 +5,8 @@ on:
     paths:
       - .github/workflows/recorded-hang-replay.yml
       - scripts/recorded_hang_replay.py
+      - scripts/replay_key.py
+      - scripts/test_replay_key.py
       - scripts/verify_recorded_hang_result.py
       - scripts/test_verify_recorded_hang_result.py
       - Tests/PrivateFixtures/hang-recording.enc

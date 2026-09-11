@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Replay authenticated private inputs; publish only counts and encrypted evidence."""
-import base64
 import argparse
 import io
 import json
@@ -12,6 +11,7 @@ import time
 import zipfile
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from replay_key import decode_base64_key
 
 
 def main():
@@ -23,7 +23,7 @@ def main():
     args = parser.parse_args()
     app, fixture, output = args.app, args.fixture, args.output
     output.mkdir(parents=True, exist_ok=True)
-    key = base64.b64decode(os.environ["NGV_HANG_FIXTURE_KEY"], validate=True)
+    key = decode_base64_key(os.environ["NGV_HANG_FIXTURE_KEY"])
     encrypted = fixture.read_bytes()
     plain = AESGCM(key).decrypt(encrypted[:12], encrypted[12:], b"NGV_HANG_FIXTURE_V1")
     with tempfile.TemporaryDirectory() as directory:
@@ -36,7 +36,7 @@ def main():
             archive.extractall(root)
         folder, = [p for p in root.iterdir() if p.is_dir()]
         frames = sorted(folder.glob("replay-*.enc"))
-        replay_key = base64.b64decode((root / "replay.key").read_text().strip(), validate=True)
+        replay_key = decode_base64_key((root / "replay.key").read_text())
         decoded = []
         for file in frames:
             data = file.read_bytes()
