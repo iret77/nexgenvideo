@@ -264,8 +264,9 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
                 }
             }
         } catch {
-            recordIssue("write-failed", detail: Self.errorCode(error))
-            Log.hang.error("Diagnostic recording write failed", telemetry: "hang_diagnostic_write_failed")
+            if recordIssue("write-failed", detail: Self.errorCode(error)) {
+                Log.hang.error("Diagnostic recording write failed", telemetry: "hang_diagnostic_write_failed")
+            }
         }
     }
 
@@ -318,11 +319,13 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
         }
     }
 
+    @discardableResult
     private func recordIssue(_ code: String, detail: String? = nil,
-                             uptime: Double = ProcessInfo.processInfo.systemUptime) {
-        guard captureIssues.last?.code != code || captureIssues.last?.detail != detail else { return }
+                             uptime: Double = ProcessInfo.processInfo.systemUptime) -> Bool {
+        guard captureIssues.last?.code != code || captureIssues.last?.detail != detail else { return false }
         captureIssues.append(DiagnosticCaptureIssue(uptime: uptime, code: code, detail: detail))
         if captureIssues.count > 32 { captureIssues.removeFirst(captureIssues.count - 32) }
+        return true
     }
 
     private static func helperExitDescription(_ process: Process?) -> String {
