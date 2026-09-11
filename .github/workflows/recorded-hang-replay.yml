@@ -14,6 +14,7 @@ on:
       - Sources/NexGenVideo/Agent/Panel/AgentPanelView.swift
       - Sources/NexGenVideo/Agent/Panel/AgentTranscriptLayout.swift
       - Sources/NexGenVideo/Editor/EditorView.swift
+      - Sources/NexGenVideo/Inspector/Cockpit/PipelinePanelView.swift
 
 permissions:
   contents: read

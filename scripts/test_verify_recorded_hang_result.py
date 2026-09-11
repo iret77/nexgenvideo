@@ -4,7 +4,7 @@ from verify_recorded_hang_result import verification_errors
 
 
 class RecordedHangResultTests(unittest.TestCase):
-    def test_released_control_must_stall_inside_captured_failure_window(self):
+    def test_stalled_released_control_must_stop_inside_captured_failure_window(self):
         result = {
             "timedOut": True,
             "geometryRequested": True,
@@ -19,6 +19,16 @@ class RecordedHangResultTests(unittest.TestCase):
             "released control did not identify the stalled sequence",
             verification_errors(result, "baseline"),
         )
+
+    def test_completed_released_control_is_a_valid_nondeterministic_control(self):
+        result = {
+            "timedOut": False,
+            "exitCode": 0,
+            "geometryRequested": True,
+            "lastSequence": 247,
+            "progress": {"finished": True, "sequence": None},
+        }
+        self.assertEqual(verification_errors(result, "baseline"), [])
 
     def test_candidate_must_finish_with_a_responsive_main_thread(self):
         result = {

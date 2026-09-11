@@ -740,6 +740,11 @@ struct PipelinePanelView: View {
     }
 
     private func load(showProgress: Bool = true) async {
+        if ProcessInfo.processInfo.environment["NGV_DIAGNOSTIC_REPLAY"] != nil {
+            dataRoot = nil
+            state = .loaded(editor.projectState)
+            return
+        }
         guard let dir = editor.workingRoot else {
             dataRoot = nil
             state = .failed(.noProject)

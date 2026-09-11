@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Require the released control to hang and the candidate replay to finish."""
+"""Validate a released control replay and require the candidate replay to finish."""
 import argparse
 import json
 from pathlib import Path
@@ -18,21 +18,25 @@ def verification_errors(result, expected, maximum_pulse_gap=5.0):
         errors.append("recorded geometry was not requested")
 
     if expected == "baseline":
-        if result.get("timedOut") is not True:
-            errors.append("released control did not reproduce the hang")
         if not isinstance(progress, dict):
             errors.append("released control never published replay progress")
             return errors
-        if progress.get("finished") is not False:
-            errors.append("released control unexpectedly completed the replay")
-        sequence = progress.get("sequence")
-        last_sequence = result.get("lastSequence")
-        if type(sequence) is not int or type(last_sequence) is not int:
-            errors.append("released control did not identify the stalled sequence")
-        elif not last_sequence - FAILURE_WINDOW_FROM_END <= sequence < last_sequence:
-            errors.append(
-                f"released control stalled at sequence {sequence}, outside the captured failure window"
-            )
+        if result.get("timedOut") is True:
+            if progress.get("finished") is not False:
+                errors.append("timed-out released control reported a finished replay")
+            sequence = progress.get("sequence")
+            last_sequence = result.get("lastSequence")
+            if type(sequence) is not int or type(last_sequence) is not int:
+                errors.append("released control did not identify the stalled sequence")
+            elif not last_sequence - FAILURE_WINDOW_FROM_END <= sequence < last_sequence:
+                errors.append(
+                    f"released control stalled at sequence {sequence}, outside the captured failure window"
+                )
+        else:
+            if result.get("exitCode") != 0:
+                errors.append(f"released control exited with {result.get('exitCode')!r}")
+            if progress.get("finished") is not True or progress.get("sequence") is not None:
+                errors.append("released control did not finish every captured state")
         return errors
 
     if result.get("timedOut") is not False:

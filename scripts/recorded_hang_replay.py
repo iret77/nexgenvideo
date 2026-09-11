@@ -42,6 +42,9 @@ def main():
             data = file.read_bytes()
             decoded.append(json.loads(AESGCM(replay_key).decrypt(data[:12], data[12:], folder.name.encode())))
         duration = decoded[-1]["uptime"] - decoded[0]["uptime"]
+        replay_delay = len(decoded) * (0.12 if args.match_geometry else 0)
+        settling_delay = 30 if args.match_geometry else 2
+        timeout = duration + replay_delay + settling_delay + 60
         environment = {**os.environ, "NGV_DIAGNOSTIC_REPLAY": str(folder),
                        "NGV_DIAGNOSTIC_KEY_FILE": str(root / "replay.key")}
         environment.pop("NGV_HANG_FIXTURE_KEY", None)
@@ -60,7 +63,7 @@ def main():
             try:
                 while process.poll() is None:
                     elapsed = time.monotonic() - started
-                    if elapsed > duration + 75:
+                    if elapsed > timeout:
                         timed_out = True
                         capture_stack(process.pid, root / "timeout.sample.txt")
                         break
@@ -100,6 +103,7 @@ def main():
             nonce, evidence.getvalue(), b"NGV_HANG_EVIDENCE_V1"))
         result = {"frames": len(frames), "firstSequence": decoded[0]["sequence"],
                   "lastSequence": decoded[-1]["sequence"], "recordedSeconds": duration,
+                  "timeoutSeconds": timeout,
                   "elapsedSeconds": time.monotonic() - started, "exitCode": process.returncode,
                   "timedOut": timed_out, "geometryRequested": args.match_geometry}
         result["maxObservedCPU"] = max((o["cpu"] for o in observations), default=None)
