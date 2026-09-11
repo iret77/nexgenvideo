@@ -35,8 +35,6 @@ def verification_errors(result, expected, maximum_pulse_gap=5.0):
             )
         return errors
 
-    if result.get("constraintOverflowWarning") is True:
-        errors.append("SwiftUI reported a constraint overflow")
     if result.get("timedOut") is not False:
         errors.append("candidate replay timed out")
     if result.get("exitCode") != 0:

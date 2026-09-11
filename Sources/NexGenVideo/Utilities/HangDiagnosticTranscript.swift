@@ -14,6 +14,20 @@ struct HangDiagnosticTranscript: Codable, Sendable {
         let pipeline: ProjectStateData?
         let binding: ProjectPackBinding?
         let revision: Int
+        let workspaceFocus: String?
+        let cockpitTab: String?
+
+        init(timeline: Timeline, manifest: MediaManifest, pipeline: ProjectStateData?,
+             binding: ProjectPackBinding?, revision: Int, workspaceFocus: String? = nil,
+             cockpitTab: String? = nil) {
+            self.timeline = timeline
+            self.manifest = manifest
+            self.pipeline = pipeline
+            self.binding = binding
+            self.revision = revision
+            self.workspaceFocus = workspaceFocus
+            self.cockpitTab = cockpitTab
+        }
     }
 
     static func capture(messages: [AgentMessage], streaming: Bool, sessionID: UUID? = nil,

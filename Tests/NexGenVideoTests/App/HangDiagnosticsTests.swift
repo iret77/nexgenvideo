@@ -162,4 +162,36 @@ struct HangDiagnosticsTests {
         #expect(try frame.apply(to: before).messages == after.messages)
         #expect(throws: (any Error).self) { try frame.apply(to: nil) }
     }
+
+    @Test func legacyProjectContextDecodesWithoutWorkspaceFields() throws {
+        let context = HangDiagnosticTranscript.ProjectContext(
+            timeline: Timeline(), manifest: MediaManifest(), pipeline: nil,
+            binding: nil, revision: 3, workspaceFocus: "produce", cockpitTab: "Pipeline"
+        )
+        var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(context)) as? [String: Any])
+        object.removeValue(forKey: "workspaceFocus")
+        object.removeValue(forKey: "cockpitTab")
+        let legacy = try JSONSerialization.data(withJSONObject: object)
+        let decoded = try JSONDecoder().decode(HangDiagnosticTranscript.ProjectContext.self, from: legacy)
+        #expect(decoded.workspaceFocus == nil)
+        #expect(decoded.cockpitTab == nil)
+    }
+
+    @Test @MainActor func replayActivationCombinesWindowsFromTheSameHeartbeat() {
+        let records = [
+            DiagnosticRecord(sequence: 1, uptime: 1, operation: .window,
+                             values: [1, 1463, 1040, 2, 0, 1]),
+            DiagnosticRecord(sequence: 2, uptime: 2, operation: .window,
+                             values: [1, 1463, 1040, 2, 0, 0]),
+            DiagnosticRecord(sequence: 3, uptime: 3, operation: .window,
+                             values: [1, 1463, 1040, 2, 1, 0]),
+            DiagnosticRecord(sequence: 4, uptime: 3.001, operation: .window,
+                             values: [2, 881, 448, 2, 1, 1]),
+        ]
+        #expect(HangDiagnosticReplay.recordedActivationTimeline(in: records) == [
+            .init(uptime: 1, active: true),
+            .init(uptime: 2, active: false),
+            .init(uptime: 3, active: true),
+        ])
+    }
 }

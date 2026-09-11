@@ -865,7 +865,8 @@ final class EditorViewModel {
             }
         }
         return .init(timeline: timeline, manifest: manifest, pipeline: projectState,
-                     binding: declaredPluginBinding, revision: engineStateRevision)
+                     binding: declaredPluginBinding, revision: engineStateRevision,
+                     workspaceFocus: workspaceFocus.rawValue, cockpitTab: cockpitTab.rawValue)
     }
 
     func restoreDiagnosticProject(_ snapshot: HangDiagnosticTranscript.ProjectContext) {
@@ -873,6 +874,19 @@ final class EditorViewModel {
         timeline = snapshot.timeline
         mediaManifest = snapshot.manifest
         projectState = snapshot.pipeline
+        activePluginName = snapshot.binding?.id
+        declaredPluginName = snapshot.binding?.id
+        declaredPluginBinding = snapshot.binding
+        engineStateRevision = snapshot.revision
+        hasProductionPipeline = snapshot.pipeline != nil
+        if let rawValue = snapshot.workspaceFocus,
+           let focus = WorkspaceFocus(rawValue: rawValue) {
+            workspaceFocus = focus
+        }
+        if let rawValue = snapshot.cockpitTab,
+           let tab = CockpitTab(rawValue: rawValue) {
+            cockpitTab = tab
+        }
     }
 
     private func performEngineStateRefresh() async {

@@ -34,7 +34,7 @@ enum HangDiagnosticReplay {
             let records = try (matchGeometry ? structuralRecords(in: folder) : [])
             let recordedWindow = records.last { $0.operation == .window && $0.values.count >= 6 && $0.values[5] == 1 }
             let recordedScroll = records.last { $0.operation == .scroll && $0.values.count >= 5 }
-            if matchGeometry { editor.cockpitTab = .review }
+            let activationTimeline = recordedActivationTimeline(in: records)
             let host = NSHostingController(rootView: EditorWindowContentView().environment(editor).allowsHitTesting(false))
             host.safeAreaRegions = []
             let window = ReplayWindow(contentViewController: host)
@@ -62,6 +62,8 @@ enum HangDiagnosticReplay {
                 var previous: HangDiagnosticTranscript?
                 var previousDigest: String?
                 var priorTime: Double?
+                var activationIndex = 0
+                var isReplayActive = true
                 do {
                     for file in files {
                         let (decoded, digest) = try await Task.detached { () -> (HangDiagnosticReplayFrame, String) in
@@ -72,6 +74,20 @@ enum HangDiagnosticReplay {
                         }.value
                         if let priorTime {
                             try await Task.sleep(for: .seconds(max(0, decoded.uptime - priorTime)))
+                        }
+                        while activationIndex < activationTimeline.count,
+                              activationTimeline[activationIndex].uptime <= decoded.uptime {
+                            let active = activationTimeline[activationIndex].active
+                            if active != isReplayActive {
+                                if active {
+                                    window.makeKeyAndOrderFront(nil)
+                                    app.activate(ignoringOtherApps: true)
+                                } else {
+                                    app.deactivate()
+                                }
+                                isReplayActive = active
+                            }
+                            activationIndex += 1
                         }
                         guard decoded.predecessor == nil || decoded.predecessor == previousDigest else {
                             throw CocoaError(.fileReadCorruptFile)
@@ -133,6 +149,30 @@ enum HangDiagnosticReplay {
             .filter { $0.lastPathComponent.hasPrefix("events-") && $0.pathExtension == "json" }
             .flatMap { try JSONDecoder().decode([DiagnosticRecord].self, from: Data(contentsOf: $0)) }
             .sorted { $0.sequence < $1.sequence }
+    }
+
+    struct ActivationSample: Equatable {
+        var uptime: Double
+        var active: Bool
+    }
+
+    static func recordedActivationTimeline(in records: [DiagnosticRecord]) -> [ActivationSample] {
+        let windows = records
+            .filter { $0.operation == .window && $0.values.count >= 6 }
+            .sorted { $0.uptime < $1.uptime }
+        var samples: [ActivationSample] = []
+        for record in windows {
+            let active = record.values[5] == 1
+            if let index = samples.indices.last,
+               record.uptime - samples[index].uptime <= 0.05 {
+                samples[index].active = samples[index].active || active
+            } else {
+                samples.append(ActivationSample(uptime: record.uptime, active: active))
+            }
+        }
+        return samples.enumerated().compactMap { index, sample in
+            index == 0 || samples[index - 1].active != sample.active ? sample : nil
+        }
     }
 
     private static func descendants(of view: NSView) -> [NSView] {

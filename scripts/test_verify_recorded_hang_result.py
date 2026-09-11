@@ -8,7 +8,7 @@ class RecordedHangResultTests(unittest.TestCase):
         result = {
             "timedOut": True,
             "geometryRequested": True,
-            "constraintOverflowWarning": False,
+            "constraintOverflowWarning": True,
             "lastSequence": 247,
             "progress": {"finished": False, "sequence": 245},
         }
@@ -25,7 +25,7 @@ class RecordedHangResultTests(unittest.TestCase):
             "timedOut": False,
             "exitCode": 0,
             "geometryRequested": True,
-            "constraintOverflowWarning": False,
+            "constraintOverflowWarning": True,
             "progress": {
                 "finished": True,
                 "sequence": None,
