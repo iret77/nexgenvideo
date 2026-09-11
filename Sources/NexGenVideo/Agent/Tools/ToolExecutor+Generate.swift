@@ -2329,6 +2329,7 @@ extension ToolExecutor {
             )
         }
         let dialog = try AgentDialog.parse(args)
+        try validateDialogMediaChoices(dialog, editor: editor)
         try editor.pipelineAgentHarness.guardAgentDecision(dialog, editor: editor)
         try editor.agentService.presentDialog(dialog, origin: origin)
         // Canvas projection (A3, #124): reveal the Review gallery at the shot so its candidates are
@@ -2339,6 +2340,32 @@ extension ToolExecutor {
             editor.inspectedObject = .shot(shot)
         }
         return .suspended("Dialog \u{201C}\(dialog.title)\u{201D} is presented in the composer. STOP — the user's structured answer arrives as the next semantic user turn; do not act on this step until then.")
+    }
+
+    private func validateDialogMediaChoices(
+        _ dialog: AgentDialog,
+        editor: EditorViewModel
+    ) throws {
+        let usableIDs = Set(editor.agentPickableMediaAssets.map(\.id))
+        for section in dialog.sections {
+            guard case .choices(let options, _) = section.kind else { continue }
+            for option in options {
+                guard let mediaRef = option.mediaRef else { continue }
+                let media = try asset(mediaRef, editor: editor, label: "Image choice")
+                guard media.type == .image else {
+                    throw ToolError(
+                        "show_dialog: mediaRef '\(mediaRef)' in section '\(section.id)' is "
+                            + "\(media.type.rawValue), not an image."
+                    )
+                }
+                guard usableIDs.contains(media.id) else {
+                    throw ToolError(
+                        "show_dialog: image choice '\(mediaRef)' is not currently usable. "
+                            + "Wait for generation to finish or choose an available asset from get_media."
+                    )
+                }
+            }
+        }
     }
 
     /// Validation IS the execution: a strict parse failure returns the exact violation for the

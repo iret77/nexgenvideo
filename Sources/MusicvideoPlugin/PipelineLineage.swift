@@ -551,9 +551,15 @@ enum MusicvideoPipelineLineage {
             hasher.update(data: Data(path.utf8))
             hasher.update(data: Data([0]))
             do {
-                hasher.update(data: Data(
-                    try FileDigest.sha256(of: url).utf8
-                ))
+                let sha256: String
+                if path == PipelineLayout.confirmedIdentityAssetsFile {
+                    sha256 = try ConfirmedIdentityAssetStoreV1.intakeLineageSHA256(
+                        dataRoot: dataRoot
+                    )
+                } else {
+                    sha256 = try FileDigest.sha256(of: url)
+                }
+                hasher.update(data: Data(sha256.utf8))
             } catch {
                 throw LineageError.unreadableFile(path)
             }

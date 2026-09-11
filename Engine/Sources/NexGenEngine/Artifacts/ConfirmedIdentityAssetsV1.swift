@@ -222,9 +222,10 @@ public enum ConfirmedIdentityAssetStoreV1 {
         to destinationPath: String,
         dataRoot: URL
     ) throws -> Bool {
-        var manifest = try load(dataRoot: dataRoot)
+        let manifest = try load(dataRoot: dataRoot)
         try requireIdentity(manifest, dataRoot: dataRoot)
         guard let source = manifest.entries[sourcePath],
+              source.path == source.originalPath,
               try isCurrent(source, dataRoot: dataRoot) else {
             return false
         }
@@ -232,23 +233,7 @@ public enum ConfirmedIdentityAssetStoreV1 {
             path: destinationPath,
             dataRoot: dataRoot
         )
-        guard destinationSHA256 == source.sha256 else { return false }
-        let idData = Data(
-            "\(source.id)\n\(destinationPath)\n\(destinationSHA256)".utf8
-        )
-        manifest.entries[destinationPath] = ConfirmedIdentityAssetV1(
-            id: "confirmed-identity-\(FileDigest.sha256(of: idData))",
-            role: source.role,
-            identityName: source.identityName,
-            identitySlug: source.identitySlug,
-            path: destinationPath,
-            sha256: destinationSHA256,
-            originalPath: source.originalPath,
-            originalSHA256: source.originalSHA256,
-            confirmedAt: source.confirmedAt
-        )
-        try save(manifest, dataRoot: dataRoot)
-        return true
+        return destinationSHA256 == source.sha256
     }
 
     public static func isCurrent(
@@ -258,17 +243,58 @@ public enum ConfirmedIdentityAssetStoreV1 {
         try currentEntry(path, dataRoot: dataRoot) != nil
     }
 
+    public static func intakeLineageSHA256(dataRoot: URL) throws -> String {
+        let manifest = try load(dataRoot: dataRoot)
+        try requireIdentity(manifest, dataRoot: dataRoot)
+        var intake = manifest
+        intake.entries = manifest.entries.filter { path, entry in
+            path == entry.path && entry.path == entry.originalPath
+        }
+        try validate(intake, dataRoot: dataRoot)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return FileDigest.sha256(of: try encoder.encode(intake))
+    }
+
     public static func currentEntry(
         _ path: String,
         dataRoot: URL
     ) throws -> ConfirmedIdentityAssetV1? {
         let manifest = try load(dataRoot: dataRoot)
         try requireIdentity(manifest, dataRoot: dataRoot)
-        guard let entry = manifest.entries[path],
-              try isCurrent(entry, dataRoot: dataRoot) else {
-            return nil
+        return try currentEntries(
+            path,
+            manifest: manifest,
+            dataRoot: dataRoot
+        ).first
+    }
+
+    private static func currentEntries(
+        _ path: String,
+        manifest: ConfirmedIdentityAssetManifestV1,
+        dataRoot: URL
+    ) throws -> [ConfirmedIdentityAssetV1] {
+        if let entry = manifest.entries[path] {
+            return try isCurrent(entry, dataRoot: dataRoot) ? [entry] : []
         }
-        return entry
+        guard let destinationSHA256 = try? currentHash(
+            path: path,
+            dataRoot: dataRoot
+        ) else { return [] }
+        return manifest.entries.values
+            .filter {
+                $0.path == $0.originalPath
+                    && $0.sha256 == destinationSHA256
+                    && (try? isCurrent($0, dataRoot: dataRoot)) == true
+            }
+            .sorted { $0.id < $1.id }
+            .map {
+                adoptedEntry(
+                    from: $0,
+                    destinationPath: path,
+                    destinationSHA256: destinationSHA256
+                )
+            }
     }
 
     public static func matchesCurrent(
@@ -278,22 +304,31 @@ public enum ConfirmedIdentityAssetStoreV1 {
         identityName: String,
         dataRoot: URL
     ) throws -> Bool {
-        guard let entry = try currentEntry(path, dataRoot: dataRoot),
-              entry.role == role else { return false }
+        let manifest = try load(dataRoot: dataRoot)
+        try requireIdentity(manifest, dataRoot: dataRoot)
         let normalizedID = identityID
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
             .replacingOccurrences(of: "_", with: "-")
-        let normalizedSlug = entry.identitySlug
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .replacingOccurrences(of: "_", with: "-")
-        let nameMatches = entry.identityName
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .caseInsensitiveCompare(identityName.trimmingCharacters(
-                in: .whitespacesAndNewlines
-            )) == .orderedSame
-        return normalizedSlug == normalizedID && nameMatches
+        let normalizedName = identityName.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        return try currentEntries(
+            path,
+            manifest: manifest,
+            dataRoot: dataRoot
+        ).contains { entry in
+            let normalizedSlug = entry.identitySlug
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+                .replacingOccurrences(of: "_", with: "-")
+            let nameMatches = entry.identityName
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .caseInsensitiveCompare(normalizedName) == .orderedSame
+            return entry.role == role
+                && normalizedSlug == normalizedID
+                && nameMatches
+        }
     }
 
     public static func validate(
@@ -352,6 +387,27 @@ public enum ConfirmedIdentityAssetStoreV1 {
         return current == entry.sha256
             && original == entry.originalSHA256
             && entry.sha256 == entry.originalSHA256
+    }
+
+    private static func adoptedEntry(
+        from source: ConfirmedIdentityAssetV1,
+        destinationPath: String,
+        destinationSHA256: String
+    ) -> ConfirmedIdentityAssetV1 {
+        let idData = Data(
+            "\(source.id)\n\(destinationPath)\n\(destinationSHA256)".utf8
+        )
+        return ConfirmedIdentityAssetV1(
+            id: "confirmed-identity-\(FileDigest.sha256(of: idData))",
+            role: source.role,
+            identityName: source.identityName,
+            identitySlug: source.identitySlug,
+            path: destinationPath,
+            sha256: destinationSHA256,
+            originalPath: source.originalPath,
+            originalSHA256: source.originalSHA256,
+            confirmedAt: source.confirmedAt
+        )
     }
 
     private static func currentHash(path: String, dataRoot: URL) throws

@@ -57,16 +57,10 @@ You are spawned fresh on every `/continue`. Before generating anything:
 
 1. List `storyboard/v*.yaml` and determine the highest vN.
 2. No version → normal flow.
-3. If `vN.yaml` exists: load it and ask one `show_dialog` with 3
-   options (+ Other):
-   - `continue_to_gate` → call `approve_gate` directly.
-   - `revise` → ask for concrete change requests, write a new version
-     (`vN+1.yaml`, update `current.yaml`), loop.
-   - `discard_and_restart` → keep existing versions as history, run a
-     fresh pass as the next vN+1.
-
-   Never silently generate a new storyboard when versions already
-   exist.
+3. If `vN.yaml` exists: load it, surface `storyboard/current.yaml` with
+   `show_artifact`, and call `approve_gate` directly. Do not present a
+   resume or recovery dialog. Revise only when the user gives an explicit
+   change instruction; keep existing versions as history and write vN+1.
 
 ### 2. Read inputs
 
@@ -116,12 +110,29 @@ sanity check `PATTERN_DRIFT` stays silent.
 
 ### 5. Choose the mode
 
-Ask via `show_dialog` (2 options + Other):
+Ask via `show_dialog` with `workflowDecision: storyboard_mode`, one
+single-select `storyboard_mode` section, and 2 options + Other. Use these
+stable option identities in this order; the host owns their localized
+visible copy:
 
-1. **Claude-only** (**recommended**) — you write the step sequences
-   directly, fast, no external spend.
-2. **User-supplied** — the user delivers the storyboard manually as
-   YAML, you validate and review.
+- Question: **How should the step sequences be created?**
+- `agent_created` — **Create sequences for me** (**recommended**): you
+  create them directly, fast, with no external spend.
+- `user_supplied` — **I'll provide sequences**: the user delivers the
+  storyboard manually as YAML; you validate and review it.
+
+Translate those exact meanings when the interface language is not English.
+In every language, first person in an option label denotes the user. Never
+label the agent-created route “I write them” or any equivalent that makes
+the agent and user routes read as the same action.
+
+If the user chooses `agent_created`, this is the only Storyboard decision:
+derive step count, framing, reference demand, and later Bible sheet demand
+from the approved artifacts and write the storyboard. Do not ask the user
+to choose shot granularity, sheet scope, cost scope, or an internal repair.
+If the user chooses `user_supplied`, request the YAML exactly once with
+`workflowDecision: storyboard_input` and one multiline text field, then
+validate and write it without another dialog.
 
 ### 6. Build a step sequence per section
 
@@ -235,17 +246,19 @@ not a substitute for thinking it through here.
 From `storyboard/current.yaml`, aggregate per location which sheet views
 the bible agent will have to generate, and per character which views are
 requested. Present this overview inline — the user should see whether the
-demand is realistic (not 12 views per location or the like).
+demand is realistic (not 12 views per location or the like). This is a
+report, not a decision. Record the smallest sufficient set of view keys;
+the Bible phase owns actual sheet planning and generation cost.
 
 ### 10. Ref-budget early warning
 
 Estimate per typical shot how many bible anchors will be needed
 (characters + their sheet views + location + props). If more than the
 capability limit of the targeted video model (`brief.model_preference`,
-e.g. a typical 9-ref limit) looms, warn the user **before the bible
-phase**: "Step `chorus1.07` references 4 characters with 2 views each
-plus 1 location plus 2 props — that's 11 refs, the model takes at most 9.
-Split, or reduce the character-view demand?"
+e.g. a typical 9-ref limit) looms, split or restructure the step while
+preserving the approved Treatment. Do not ask the user to solve a model
+reference limit. If the only valid correction changes Treatment semantics,
+stop Storyboard work and request an explicit rewind to Treatment.
 
 ### 11. Gate
 
@@ -406,17 +419,16 @@ planned per shot — the shotlist agent carries it into the shot fields.
 
 ## Failure modes & escalation
 
-- **Existing versions found on resume**: never silently regenerate —
-  always run the 3-option resume question (step 1).
+- **Existing versions found on resume**: show the current version and
+  request its gate directly; regenerate only from an explicit user revision.
 - **Validation error on save**: fix the named field, don't guess
   (step 7).
 - **Shared objects between two views of a location**: rebuild one step
   (different crop, cutaway, different subject) and document
   "non-overlapping views: <a> / <b>" in the affected steps' notes
   (step 8).
-- **Ref budget exceeds the model's capability limit**: warn the user
-  before the bible phase — split the step or reduce the character-view
-  demand (step 10).
+- **Ref budget exceeds the model's capability limit**: split or restructure
+  the step without changing approved story semantics (step 10).
 - **A section dramaturgically needs to leave the director pattern**:
   deviate deliberately and record `pattern_deviation: <reason>` in the
   section notes; otherwise `PATTERN_DRIFT` fires (step 4).

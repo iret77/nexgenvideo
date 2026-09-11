@@ -831,6 +831,67 @@
     margin-top: var(--s-sm);
   }
 
+  .media-choice-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+    gap: var(--s-sm);
+    margin-top: var(--s-sm);
+  }
+
+  .media-choice {
+    min-width: 0;
+    padding: var(--s-xs);
+    border: var(--hair) solid var(--border);
+    border-radius: var(--r-md);
+    background: transparent;
+  }
+
+  .media-choice.selected {
+    border: 2px solid var(--accent);
+    background: var(--accent-dim);
+  }
+
+  .media-choice-thumb {
+    display: grid;
+    place-items: start end;
+    height: 58px;
+    border-radius: var(--r-sm);
+    background: linear-gradient(145deg, #806045, #263d55 55%, #17191f);
+  }
+
+  .media-choice-thumb.studio {
+    background: linear-gradient(145deg, #59405f, #bd805f 48%, #262e46);
+  }
+
+  .media-choice-thumb.alley {
+    background: linear-gradient(145deg, #26384c, #aa6b3d 46%, #151a24);
+  }
+
+  .media-choice-check {
+    margin: var(--s-xs);
+    color: var(--accent);
+    font-weight: 700;
+  }
+
+  .media-choice-label,
+  .media-choice-file {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .media-choice-label {
+    margin-top: var(--s-xs);
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  .media-choice-file {
+    margin-top: var(--s-xxs);
+    color: var(--text-3);
+    font-size: var(--f-micro);
+  }
+
   .drop-target {
     display: grid;
     place-items: center;
@@ -1179,8 +1240,9 @@
     <h2>Composer Dock and #96 compatibility</h2>
     <p>Decision questions preserve their authored casing, use normal letter spacing and UI-sized
       text. Long questions must not receive uppercase metadata styling.</p>
-    <p>#96 keeps three roles in three places: pending control in the Dock, visual choices on canonical
-      application surfaces, and history as a compact non-interactive Receipt.</p>
+    <p>#96 keeps three roles in three places: pending control in the Dock, spatial or timeline choices
+      on their canonical application surfaces, and history as a compact non-interactive Receipt.
+      Concrete image-asset choices stay visible inside their pending Dock control.</p>
 
     <table class="spec-table">
       <tr><th>Dock state</th><th>Rule</th></tr>
@@ -1205,6 +1267,17 @@
         The Transcript remains a separate sibling scroll view.</li>
       <li>Library results inside intake are bounded and searchable. The intake drop target remains a
         leaf SwiftUI drop target; no parent SwiftUI <code>.onDrop</code> spans nested targets.</li>
+      <li>When accepted library assets exist, they appear before the new-file drop target so the first
+        matching asset is visible without discovering the decision body's scroll. Search appears only
+        when there is more than one matching asset.</li>
+      <li>Choice labels use the user's point of view: first person always means the user, and another
+        actor is named explicitly. Distinct outcomes remain clear without their icons; for example,
+        <strong>Create sequences for me</strong> and <strong>I'll provide sequences</strong>.</li>
+      <li>A decision between concrete image assets renders compact, clickable, aspect-preserving
+        thumbnails in the card. Every tile keeps a descriptive choice label and the asset's persistent
+        library filename visible. The tool contract requires one distinct, currently usable image
+        reference per option and rejects partial, stale or non-image sets instead of degrading to
+        ambiguous symbols or version numbers.</li>
       <li>Streaming may replace Send with Stop. A detached paid generation does not take over the
         Dock; its concise state and Cancel remain in Live Status, so composing stays available.</li>
       <li>A completed paid generation resumes the idle owning Agent session in place. Delivering its
@@ -1513,6 +1586,19 @@
         "</div></div>";
     }
 
+    function imageChoiceDecision() {
+      return "<div class='dock'><div class='decision' aria-label='Choose the anchor'>" +
+        "<div class='decision-head'><span class='decision-symbol'>▣</span><div class='decision-title'>Choose the anchor</div></div>" +
+        "<div class='decision-scroll'><p class='decision-copy'>Which image becomes the project’s lighting anchor?</p>" +
+        "<div class='media-choice-grid'>" +
+        "<div class='media-choice selected'><div class='media-choice-thumb' role='img' aria-label='Dusk street thumbnail'><span class='media-choice-check'>✓</span></div><div class='media-choice-label'>Dusk street</div><div class='media-choice-file'>lighting-anchor-dusk.png</div></div>" +
+        "<div class='media-choice'><div class='media-choice-thumb studio' role='img' aria-label='Warm studio thumbnail'></div><div class='media-choice-label'>Warm studio</div><div class='media-choice-file'>lighting-anchor-studio.png</div></div>" +
+        "<div class='media-choice'><div class='media-choice-thumb alley' role='img' aria-label='Night alley thumbnail'></div><div class='media-choice-label'>Night alley</div><div class='media-choice-file'>lighting-anchor-alley.png</div></div>" +
+        "</div><div class='field'>Other direction…</div></div>" +
+        "<div class='decision-actions'><span class='button'>Cancel</span><span class='button primary'>Set anchor</span></div>" +
+        "</div></div>";
+    }
+
     function spendDecision() {
       return "<div class='dock'><div class='decision' aria-label='Approve spend'>" +
         "<div class='decision-head'><span class='decision-symbol'>▣</span><div class='decision-title'>Approve spend</div></div>" +
@@ -1539,10 +1625,10 @@
         content += "<div class='file-row'><span>▧</span><span class='file-name'>ai-cat-reference-profile.png</span><span>Remove</span></div>" +
           "<div class='text-action' style='margin-top:7px'>Add another image…</div>";
       } else {
-        content += "<div class='drop-target'>Drop the reference images · Choose…</div>" +
-          "<div class='library-search'>Search your library</div><div class='asset-list'>" +
+        content += "<div class='library-search'>Search your library</div><div class='asset-list'>" +
           "<div class='asset'><span class='asset-thumb'></span><span class='asset-name'>AI Cat portrait.png</span></div>" +
-          "<div class='asset'><span class='asset-thumb'></span><span class='asset-name'>Claude Mouse reference.png</span></div></div>";
+          "<div class='asset'><span class='asset-thumb'></span><span class='asset-name'>Claude Mouse reference.png</span></div></div>" +
+          "<div class='drop-target'>Drop the reference images · Choose…</div>";
       }
 
       content += "</div><div class='decision-actions'>";
@@ -1722,6 +1808,19 @@
         dock: clarificationDecision,
         latest: false,
         conversation: "Bridge transition"
+      },
+      {
+        id: "visual-choice",
+        title: "Pending image choice",
+        description: "Concrete image options remain identifiable through selectable thumbnails, descriptive labels and persistent library filenames.",
+        transcript: function () {
+          return turn([intent("Choose the approved lighting anchor."),
+            prose("The three generated candidates are ready for selection.")]);
+        },
+        status: "action",
+        dock: imageChoiceDecision,
+        latest: false,
+        conversation: "Lighting anchor selection"
       },
       {
         id: "decision",

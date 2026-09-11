@@ -17,6 +17,7 @@ STATES = (
     "long-prose",
     "structured",
     "clarification",
+    "visual-choice",
     "decision",
     "spend",
     "intake-first",

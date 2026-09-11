@@ -128,8 +128,13 @@ the current phase's capability set is rejected before it can spend money or muta
 - Every Bible sheet and Scene3D panorama binds exact current bytes to one of two host-recorded
   provenance classes: a completed generation with compiled prompt/model, or an identity image the
   user explicitly confirmed in the host-owned prepared-character/location intake. A confirmed image
-  may be adopted as the demanded canonical view without generation; an arbitrary library import may
-  not. Only a demanded view lacking either proof is generated.
+  may be adopted as the demanded canonical view without generation; that copy derives its proof from
+  the immutable intake record and never mutates upstream input truth. Lineage hashes only those
+  immutable intake entries, so downstream adoption records written by an older pack cannot invalidate
+  an earlier phase. An arbitrary library import may not. Only a demanded view lacking either proof is
+  generated. Assets assigned as character or location intake cannot be reclassified as Production
+  Design style references. Asset staging and byte-identical content never justify rewinding an
+  approved phase.
 - A real outfit or persistent identity-state change is a distinct Bible entity plus the versioned
   `bible/identity-variants.v1.json` inheritance artifact. Its changed attributes are exhaustive;
   every undeclared attribute remains byte-identical to the base entity, inherited paths must be

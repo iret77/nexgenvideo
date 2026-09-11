@@ -296,6 +296,24 @@ struct AgentTranscriptLayoutPolicyTests {
         #expect(!implementation.contains(".fixedSize()"))
     }
 
+    @Test func dialogImageChoicesShowSelectableThumbnailsAndPersistentNames() throws {
+        let source = try sourceFile(
+            "Sources/NexGenVideo/Agent/Panel/AgentDialogCard.swift"
+        )
+        let start = try #require(source.range(of: "private struct MediaChoiceGrid"))
+        let end = try #require(source.range(
+            of: "private struct FlowChips",
+            range: start.upperBound..<source.endIndex
+        ))
+        let implementation = source[start.lowerBound..<end.lowerBound]
+
+        #expect(implementation.contains("asset?.thumbnail"))
+        #expect(implementation.contains("asset?.userFacingFilename"))
+        #expect(implementation.contains("Button {"))
+        #expect(implementation.contains("agentMediaChoiceThumbnailHeight"))
+        #expect(implementation.contains(".accessibilityValue(isOn ? \"Selected\" : \"Not selected\")"))
+    }
+
     @Test func everyDecisionCardHasOneBoundedInternalScrollRegion() throws {
         for path in [
             "Sources/NexGenVideo/Agent/Panel/AgentDialogCard.swift",

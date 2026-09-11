@@ -428,8 +428,8 @@ struct MusicvideoPackTests {
     func packSatisfiesContract() {
         let pack: Pack = MusicvideoPack()
         #expect(pack.name == "musicvideo")
-        #expect(pack.version == "0.5.8")
-        #expect(pack.manifest.minAppVersion == "1.5.8")
+        #expect(pack.version == "0.5.9")
+        #expect(pack.manifest.minAppVersion == "1.5.9")
     }
 
     @Test("pack exposes gallery manifest and a starter")
@@ -455,6 +455,19 @@ struct MusicvideoPackTests {
         )
         #expect(!starter.prompt.contains("Core production profile:"))
         #expect(!starter.prompt.contains("Apply this profile only when `concept_type`"))
+    }
+
+    @Test("storyboard setup distinguishes agent-created and user-supplied sequences")
+    func storyboardSetupUsesUserPerspective() throws {
+        let document = try PackKnowledge.phaseDoc(name: "storyboard")
+        #expect(document.contains("`agent_created` — **Create sequences for me**"))
+        #expect(document.contains("`user_supplied` — **I'll provide sequences**"))
+        #expect(document.contains("first person in an option label denotes the user"))
+        #expect(document.contains("this is the only Storyboard decision"))
+        #expect(document.contains("request its gate directly"))
+        #expect(!document.contains("always run the 3-option resume question"))
+        #expect(!document.contains("Split, or reduce the character-view demand?"))
+        #expect(!document.contains("**Claude-only**"))
     }
 
     @Test("pack registers the analysis UI contract entry")

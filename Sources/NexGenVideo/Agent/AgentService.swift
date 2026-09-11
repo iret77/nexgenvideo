@@ -443,7 +443,9 @@ final class AgentService {
                 try editor.pipelineAgentHarness.recordAgentDecision(
                     dialog,
                     result: result,
-                    selectedOptionIDs: dialogChoiceSelections
+                    selectedOptionIDs: result.selectedOptionIDs.isEmpty
+                        ? dialogChoiceSelections
+                        : result.selectedOptionIDs
                 )
             } catch {
                 dialogSubmissionError = error.localizedDescription
@@ -1010,6 +1012,25 @@ final class AgentService {
         for section in dialog.sections {
             var semanticValues = result.labels(section.id)
             var presentedValues = semanticValues.map { section.transcriptValue(for: $0) }
+            var selectedMediaDetails: [String] = []
+            if case .choices(let options, _) = section.kind {
+                let selectedIDs = result.selectedOptionIDs[section.id] ?? []
+                let selectedOptions = options.filter { selectedIDs.contains($0.id) }
+                let mediaValues = selectedOptions.compactMap { option -> String? in
+                    guard option.mediaRef != nil,
+                          let filename = result.selectedMediaFilenames[section.id]?[option.id]
+                    else { return nil }
+                    return "\(option.shortLabel) · \(filename)"
+                }
+                if !mediaValues.isEmpty { presentedValues = mediaValues }
+                selectedMediaDetails = selectedOptions.compactMap { option in
+                    guard let mediaRef = option.mediaRef else { return nil }
+                    let filename = result.selectedMediaFilenames[section.id]?[option.id]
+                    return [option.label, "mediaRef: \(mediaRef)", filename]
+                        .compactMap { $0 }
+                        .joined(separator: " · ")
+                }
+            }
             if let custom = result.customValues[section.id]?.trimmingCharacters(in: .whitespacesAndNewlines),
                !custom.isEmpty {
                 semanticValues.append(custom)
@@ -1022,6 +1043,9 @@ final class AgentService {
             if !semanticValues.isEmpty {
                 selections.append(.init(label: section.shortLabel, values: presentedValues))
                 agentLines.append("\(section.label): \(semanticValues.joined(separator: ", "))")
+                if !selectedMediaDetails.isEmpty {
+                    agentLines.append("Selected image assets: \(selectedMediaDetails.joined(separator: "; "))")
+                }
             }
         }
         let direction = result.direction.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -37,8 +37,9 @@ def analyze(folder):
                               "missingStacks": missing})
             if missing:
                 gaps.append("requested stack snapshots are missing")
-        elif name in ("capture-error.json", "self-capture-error.json"):
-            gaps.append(json.loads(data))
+        elif name in ("capture-error.json", "helper-error.json", "self-capture-error.json"):
+            issue = json.loads(data)
+            gaps.extend(issue if isinstance(issue, list) else [issue])
         elif name == "heartbeat.json" and json.loads(data).get("dropped", 0):
             gaps.append(f"{json.loads(data)['dropped']} dropped recording events/snapshots")
     records.sort(key=lambda item: item["sequence"])

@@ -13,6 +13,10 @@ struct AgentDialogResult: Sendable, Equatable {
     /// Files the user dropped or picked in a `fileIntake` dialog. The host imports each as a media
     /// asset and hands the agent an @mention — the user never types, and no path travels as prose.
     var fileURLs: [URL] = []
+    /// Exact option identities selected by the card, independent of their display labels.
+    var selectedOptionIDs: [String: Set<String>] = [:]
+    /// Host-resolved filenames for selected media options, keyed by section then option id.
+    var selectedMediaFilenames: [String: [String: String]] = [:]
 
     func labels(_ sectionId: String) -> [String] { selectedLabels[sectionId] ?? [] }
     var allLabels: [String] { selectedLabels.values.flatMap { $0 } }
@@ -136,6 +140,8 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
         case analysisInterpretationReview = "analysis_interpretation_review"
         case analysisTrackReplacement = "analysis_track_replacement"
         case treatmentPath = "treatment_path"
+        case storyboardMode = "storyboard_mode"
+        case storyboardInput = "storyboard_input"
     }
 
     struct Choice: Identifiable, Equatable, Sendable, Codable {
@@ -145,6 +151,8 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
         let shortLabel: String
         /// SF Symbol name (Workstream B folds in here — every element carries a semantic icon).
         let symbol: String?
+        /// Exact image asset displayed as this choice's selectable thumbnail.
+        let mediaRef: String?
         /// When the choice IS a projected timeline range, its `TimelineRangeCandidate.id` — the card
         /// stays compact and the range is picked on the canvas instead (A3).
         let rangeRef: String?
@@ -154,12 +162,14 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
             label: String,
             shortLabel: String? = nil,
             symbol: String? = nil,
+            mediaRef: String? = nil,
             rangeRef: String? = nil
         ) {
             self.id = id
             self.label = label
             self.shortLabel = Self.compactLabel(shortLabel, fallback: label)
             self.symbol = symbol
+            self.mediaRef = mediaRef
             self.rangeRef = rangeRef
         }
 
@@ -409,11 +419,24 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
                                   label: optLabel,
                                   shortLabel: opt["shortLabel"] as? String,
                                   symbol: opt["symbol"] as? String,
+                                  mediaRef: opt["mediaRef"] as? String,
                                   rangeRef: opt["rangeRef"] as? String)
                 }
                 // GUARDRAIL: enough to be a choice, few enough to scan. Set allowsCustom for open sets.
                 guard options.count >= 2, options.count <= Self.maxOptionsPerSection else {
                     throw ToolError("show_dialog: choices section '\(id)' needs 2…\(Self.maxOptionsPerSection) options (set allowsCustom for an open 'Other…' field).")
+                }
+                let mediaRefs = options.compactMap(\.mediaRef)
+                if !mediaRefs.isEmpty {
+                    guard mediaRefs.count == options.count else {
+                        throw ToolError("show_dialog: image choices in section '\(id)' must give every option a mediaRef.")
+                    }
+                    guard Set(mediaRefs).count == mediaRefs.count else {
+                        throw ToolError("show_dialog: image choices in section '\(id)' must reference distinct media assets.")
+                    }
+                    guard options.allSatisfy({ $0.rangeRef == nil }) else {
+                        throw ToolError("show_dialog: choices in section '\(id)' cannot combine mediaRef with rangeRef.")
+                    }
                 }
                 sections.append(Section(id: id, label: label, shortLabel: shortLabel,
                                         kind: .choices(options: options,
@@ -429,20 +452,81 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
             throw ToolError("show_dialog: give it structure — at least one section, a textField, or a fileIntake; a bare question belongs in prose.")
         }
         let projection = try parseProjection(args["projection"] as? [String: Any])
+        let workflowDecision = (args["workflowDecision"] as? String)
+            .flatMap(WorkflowDecision.init(rawValue:))
+        let display = canonicalWorkflowDisplay(
+            title: title,
+            sections: sections,
+            workflowDecision: workflowDecision
+        )
         return AgentDialog(
             id: UUID().uuidString,
-            title: title,
+            title: display.title,
             symbol: (args["symbol"] as? String) ?? "slider.horizontal.3",
             intro: args["intro"] as? String,
             costHint: args["costHint"] as? String,
             confirmLabel: (args["confirmLabel"] as? String) ?? "Continue",
             textField: textField,
-            sections: sections,
+            sections: display.sections,
             fileIntake: fileIntake,
             projection: projection,
-            workflowDecision: (args["workflowDecision"] as? String)
-                .flatMap(WorkflowDecision.init(rawValue:))
+            workflowDecision: workflowDecision
         )
+    }
+
+    private static func canonicalWorkflowDisplay(
+        title: String,
+        sections: [Section],
+        workflowDecision: WorkflowDecision?
+    ) -> (title: String, sections: [Section]) {
+        guard workflowDecision == .storyboardMode else { return (title, sections) }
+        let canonicalTitle = String(
+            localized: "storyboard.mode.title",
+            defaultValue: "Storyboard setup",
+            comment: "Title for choosing who creates storyboard step sequences"
+        )
+        let canonicalQuestion = String(
+            localized: "storyboard.mode.question",
+            defaultValue: "How should the step sequences be created?",
+            comment: "Question for choosing who creates storyboard step sequences"
+        )
+        let canonicalLabels = [
+            "agent_created": String(
+                localized: "storyboard.mode.agent_created",
+                defaultValue: "Create sequences for me",
+                comment: "Choice asking NexGenVideo to create storyboard step sequences"
+            ),
+            "user_supplied": String(
+                localized: "storyboard.mode.user_supplied",
+                defaultValue: "I'll provide sequences",
+                comment: "Choice indicating the user will provide storyboard step sequences"
+            ),
+        ]
+        let canonicalSections = sections.map { section in
+            guard section.id == "storyboard_mode",
+                  case .choices(let options, let multiSelect) = section.kind else {
+                return section
+            }
+            let canonicalOptions = options.map { option in
+                guard let label = canonicalLabels[option.id] else { return option }
+                return Choice(
+                    id: option.id,
+                    label: label,
+                    shortLabel: label,
+                    symbol: option.symbol,
+                    mediaRef: option.mediaRef,
+                    rangeRef: option.rangeRef
+                )
+            }
+            return Section(
+                id: section.id,
+                label: canonicalQuestion,
+                shortLabel: section.shortLabel,
+                kind: .choices(options: canonicalOptions, multiSelect: multiSelect),
+                allowsCustom: section.allowsCustom
+            )
+        }
+        return (canonicalTitle, canonicalSections)
     }
 
     /// GUARDRAILS for agent-generated dialogs — the vocabulary is fixed and bounded so a card can never

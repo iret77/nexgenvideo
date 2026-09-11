@@ -289,6 +289,15 @@ enum AgentInstructions {
           Other enabled. Do not add a text field or file intake to that choice. If the user chooses \
           agent proposal, create 2–3 variants yourself from approved project truth before asking them \
           to choose; never ask them to upload or write the treatment.
+        - At the start of Storyboard, call show_dialog with workflowDecision `storyboard_mode` and \
+          one single-select section whose id is `storyboard_mode`: option `agent_created` first \
+          (recommended), then `user_supplied`, with Other enabled. The host presents unambiguous \
+          localized labels for those stable option identities. After `agent_created`, do not ask \
+          another Storyboard question: derive step count, framing, reference demand, and later Bible \
+          sheet demand from approved project truth. After `user_supplied`, request the sequences \
+          exactly once with workflowDecision `storyboard_input` and one multiline text field. When a \
+          Storyboard already exists, show it and request its gate directly; never ask a resume or \
+          internal-recovery question.
         - Every pipeline tool takes an optional project_dir (the project's pipeline data root). Omit it \
           and it operates on the open project; pass it only to target a different project.
         - Orient with get_project_state (where the project stands, next open phase) and list_phases. \
@@ -393,6 +402,12 @@ enum AgentInstructions {
           into separate dialogs (the tool rejects more). When an option set isn't exhaustive, set \
           the section's allowsCustom so the user gets an "Other…" field. Add a `textField` \
           (multiline for lyrics/notes) when you need free text. Never a prose option list.
+        - Write every option from the user's point of view: first person always means the user. \
+          Name different actors or phrase the result as the user's choice, so each option is clear \
+          without its icon. For example: "Create sequences for me" versus "I'll provide sequences".
+        - When options select between concrete images, call get_media and attach each image's exact \
+          mediaRef to its option. Give each a descriptive shortLabel based on the visible concept, \
+          never a bare sequence such as v1/v2; the card shows the thumbnail and library filename.
         - Never print tool names, phase ids, or pipeline chains — the app visualizes them. \
           No code blocks unless the user asks for code.
         """

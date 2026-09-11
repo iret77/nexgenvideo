@@ -134,6 +134,41 @@ public struct DiagnosticHangState: Sendable {
     }
 }
 
+public struct DiagnosticHelperRecovery: Sendable {
+    public enum Action: Equatable, Sendable {
+        case restart(Int)
+        case backoff(until: Double)
+    }
+
+    private let retryLimit: Int
+    private let retryWindow: Double
+    private var exits: [Double] = []
+    private var retryAfter: Double?
+
+    public init(retryLimit: Int = 3, retryWindow: Double = 60) {
+        precondition(retryLimit > 0 && retryWindow > 0)
+        self.retryLimit = retryLimit
+        self.retryWindow = retryWindow
+    }
+
+    public mutating func helperExited(now: Double, stopping: Bool) -> Action? {
+        guard !stopping else { return nil }
+        if let retryAfter {
+            guard now >= retryAfter else { return nil }
+            exits.removeAll()
+            self.retryAfter = nil
+        }
+        exits.removeAll { now - $0 >= retryWindow }
+        guard exits.count < retryLimit else {
+            let retryAfter = (exits.first ?? now) + retryWindow
+            self.retryAfter = retryAfter
+            return .backoff(until: retryAfter)
+        }
+        exits.append(now)
+        return .restart(exits.count)
+    }
+}
+
 public enum DiagnosticFiles {
     public static func copyRecording(from source: URL, to destination: URL) throws {
         let began = ProcessInfo.processInfo.systemUptime
@@ -171,13 +206,13 @@ public enum DiagnosticFiles {
             "schema": "hang-export/1", "bytes": String(total),
             "exportBeganUptime": String(began),
             "exportCompletedUptime": String(ProcessInfo.processInfo.systemUptime),
-            "completeness": "Check heartbeat losses, capture-error and requested versus completed stack files.",
+            "completeness": "Check heartbeat losses, capture-error, helper-error and requested versus completed stack files.",
             "replayScope": "UI state and displayed transcript images; library media bytes and pipeline artifact bytes are not copied. Pack binaries are not embedded. Geometry is recorded, not restored by replay.",
         ], at: destination.appendingPathComponent("export.json"))
     }
 
     private static func isRecordingFile(_ relative: String) -> Bool {
-        if ["build.json", "heartbeat.json", "pinned.json", "sample-request.json", "capture-error.json", "self-capture-error.json"].contains(relative) { return true }
+        if ["build.json", "heartbeat.json", "pinned.json", "sample-request.json", "capture-error.json", "helper-error.json", "self-capture-error.json"].contains(relative) { return true }
         let patterns = [#"^events-[0-9]{12}\.json$"#, #"^replay-[0-9]{12}\.enc$"#,
                         #"^self-[A-Fa-f0-9-]{36}-[0-2]\.stacks$"#,
                         #"^incident-[A-Fa-f0-9-]{36}/incident\.json$"#]

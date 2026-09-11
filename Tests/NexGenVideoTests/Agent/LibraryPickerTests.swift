@@ -204,11 +204,19 @@ struct LibraryPickerTests {
         ) == true)
     }
 
-    @Test("dialog library results share the card's single bounded scroll region")
+    @Test("dialog library results lead new-file import in the bounded card")
     func dialogLibraryIsBounded() throws {
         let source = try sourceFile(
             "Sources/NexGenVideo/Agent/Panel/AgentDialogCard.swift"
         )
+        let fileWellStart = try #require(source.range(of: "private func fileWell"))
+        let fileWellEnd = try #require(source.range(
+            of: "private func libraryPicker",
+            range: fileWellStart.upperBound..<source.endIndex
+        ))
+        let fileWell = source[fileWellStart.lowerBound..<fileWellEnd.lowerBound]
+        let libraryPosition = try #require(fileWell.range(of: "libraryPicker(intake)"))
+        let importPosition = try #require(fileWell.range(of: "emptyFileWell(intake)"))
         let start = try #require(source.range(
             of: "private func libraryPicker"
         ))
@@ -218,7 +226,8 @@ struct LibraryPickerTests {
         ))
         let picker = source[start.lowerBound..<end.lowerBound]
 
-        #expect(picker.contains("showsSearch: true"))
+        #expect(libraryPosition.lowerBound < importPosition.lowerBound)
+        #expect(picker.contains("showsSearch: picks.count > 1"))
         #expect(!picker.contains("scrollHeight:"))
         #expect(source.contains("ScrollView {\n                decisionBody"))
         #expect(source.contains("AppTheme.ComponentSize.agentDecisionMaxHeight"))

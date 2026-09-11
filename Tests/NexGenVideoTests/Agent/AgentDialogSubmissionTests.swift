@@ -5,6 +5,102 @@ import Testing
 @Suite("Agent dialog submission")
 @MainActor
 struct AgentDialogSubmissionTests {
+    @Test func storyboardModeUsesHostOwnedUnambiguousLabels() throws {
+        let dialog = try AgentDialog.parse([
+            "title": "Storyboard setup",
+            "workflowDecision": "storyboard_mode",
+            "sections": [[
+                "id": "storyboard_mode",
+                "label": "Who writes the step sequences?",
+                "type": "choices",
+                "allowsCustom": true,
+                "options": [
+                    ["id": "agent_created", "label": "I write them"],
+                    ["id": "user_supplied", "label": "I supply it"],
+                ],
+            ]],
+        ])
+
+        try PipelineAgentHarness.validateStoryboardModeDialog(dialog)
+        let section = try #require(dialog.sections.first)
+        #expect(section.label == "How should the step sequences be created?")
+        guard case .choices(let options, _) = section.kind else {
+            Issue.record("Expected Storyboard mode choices")
+            return
+        }
+        #expect(options.map(\.shortLabel) == [
+            "Create sequences for me",
+            "I'll provide sequences",
+        ])
+        #expect(try PipelineAgentHarness.resolveStoryboardCreationPath(
+            dialog,
+            result: AgentDialogResult(
+                selectedLabels: [:],
+                toggles: [:],
+                direction: ""
+            ),
+            selectedOptionIDs: ["storyboard_mode": ["agent_created"]]
+        ) == .agentCreated)
+    }
+
+    @Test func agentCreatedStoryboardRejectsFurtherQuestions() throws {
+        let dialog = try AgentDialog.parse([
+            "title": "Choose the sheet scope",
+            "sections": [[
+                "id": "scope",
+                "label": "How many sheets?",
+                "type": "choices",
+                "options": [
+                    ["id": "lean", "label": "Lean"],
+                    ["id": "full", "label": "Full"],
+                ],
+            ]],
+        ])
+
+        #expect(throws: ToolError.self) {
+            try PipelineAgentHarness.guardStoryboardDecision(
+                dialog,
+                hasStoryboard: false,
+                creationPath: .agentCreated,
+                inputReceived: false
+            )
+        }
+        #expect(throws: ToolError.self) {
+            try PipelineAgentHarness.guardStoryboardDecision(
+                dialog,
+                hasStoryboard: true,
+                creationPath: nil,
+                inputReceived: false
+            )
+        }
+    }
+
+    @Test func userSuppliedStoryboardAcceptsOneBoundedTextIntake() throws {
+        let intake = try AgentDialog.parse([
+            "title": "Provide storyboard sequences",
+            "workflowDecision": "storyboard_input",
+            "textField": [
+                "placeholder": "Paste the step sequences",
+                "multiline": true,
+            ],
+        ])
+        try PipelineAgentHarness.guardStoryboardDecision(
+            intake,
+            hasStoryboard: false,
+            creationPath: .userSupplied,
+            inputReceived: false
+        )
+
+        #expect(throws: ToolError.self) {
+            try PipelineAgentHarness.guardStoryboardDecision(
+                intake,
+                hasStoryboard: false,
+                creationPath: .userSupplied,
+                inputReceived: true
+            )
+        }
+    }
+
     @Test func treatmentStartsWithAgentCreationAsARealChoice() throws {
         let dialog = try AgentDialog.parse([
             "title": "Choose how to develop the treatment",
@@ -83,6 +179,101 @@ struct AgentDialogSubmissionTests {
         #expect(!result.isError)
         #expect(result.turnDisposition == .suspendTurn)
         #expect(harness.editor.agentService.pendingDialog?.title == "Choose")
+    }
+
+    @Test func imageChoicesRequireMediaRefsForEveryOption() throws {
+        #expect(throws: ToolError.self) {
+            try AgentDialog.parse([
+                "title": "Choose the anchor",
+                "sections": [[
+                    "id": "anchor",
+                    "label": "Which image becomes the anchor?",
+                    "type": "choices",
+                    "options": [
+                        ["id": "dusk", "label": "Dusk street", "mediaRef": "image-a"],
+                        ["id": "studio", "label": "Studio portrait"],
+                    ],
+                ]],
+            ])
+        }
+    }
+
+    @Test func imageChoicesResolveToUsableLibraryImages() async throws {
+        let harness = ToolHarness()
+        harness.editor.agentService.newChat()
+        let sessionID = try #require(harness.editor.agentService.currentSessionId)
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let firstID = UUID().uuidString
+        let secondID = UUID().uuidString
+        let firstURL = directory.appendingPathComponent("dusk-street.png")
+        let secondURL = directory.appendingPathComponent("studio-portrait.png")
+        try Data([0]).write(to: firstURL)
+        try Data([0]).write(to: secondURL)
+        harness.editor.mediaAssets = [
+            MediaAsset(id: firstID, url: firstURL, type: .image, name: "Dusk street"),
+            MediaAsset(id: secondID, url: secondURL, type: .image, name: "Studio portrait"),
+        ]
+
+        let result = await harness.executor.execute(
+            name: "show_dialog",
+            args: [
+                "title": "Choose the anchor",
+                "sections": [[
+                    "id": "anchor",
+                    "label": "Which image becomes the anchor?",
+                    "type": "choices",
+                    "options": [
+                        ["id": "dusk", "label": "Dusk street", "mediaRef": String(firstID.prefix(8))],
+                        ["id": "studio", "label": "Studio portrait", "mediaRef": String(secondID.prefix(8))],
+                    ],
+                ]],
+            ],
+            origin: .inAppChat(sessionID: sessionID)
+        )
+
+        #expect(!result.isError)
+        let pending = try #require(harness.editor.agentService.pendingDialog)
+        guard case .choices(let options, _) = pending.sections[0].kind else {
+            Issue.record("Expected image choices")
+            return
+        }
+        #expect(options.compactMap(\.mediaRef) == [firstID, secondID])
+    }
+
+    @Test func imageChoicesRejectNonImageMedia() async throws {
+        let harness = ToolHarness()
+        harness.editor.agentService.newChat()
+        let sessionID = try #require(harness.editor.agentService.currentSessionId)
+        let firstID = UUID().uuidString
+        let secondID = UUID().uuidString
+        harness.editor.mediaAssets = [
+            MediaAsset(id: firstID, url: URL(fileURLWithPath: "/tmp/one.mov"), type: .video, name: "One"),
+            MediaAsset(id: secondID, url: URL(fileURLWithPath: "/tmp/two.mov"), type: .video, name: "Two"),
+        ]
+
+        let result = await harness.executor.execute(
+            name: "show_dialog",
+            args: [
+                "title": "Choose the anchor",
+                "sections": [[
+                    "id": "anchor",
+                    "label": "Which image becomes the anchor?",
+                    "type": "choices",
+                    "options": [
+                        ["id": "one", "label": "One", "mediaRef": firstID],
+                        ["id": "two", "label": "Two", "mediaRef": secondID],
+                    ],
+                ]],
+            ],
+            origin: .inAppChat(sessionID: sessionID)
+        )
+
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("not an image"))
     }
 
     @Test func externalMCPDialogCannotCaptureAnInAppChat() async {

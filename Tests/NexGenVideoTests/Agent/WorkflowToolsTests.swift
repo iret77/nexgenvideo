@@ -1589,6 +1589,32 @@ struct WorkflowToolsTests {
         ]) as? [String: Any])
         #expect((list["files"] as? [String])?.contains("import/characters/mouse/face.png") == true)
 
+        let identityAsStyle = await h.runRaw("copy_project_file", args: [
+            "project_dir": dataRoot.path,
+            "from": "import/characters/mouse/face.png",
+            "to": "production_design/refs/mouse.png",
+        ])
+        #expect(identityAsStyle.isError)
+        #expect(ToolHarness.textOf(identityAsStyle).contains("reserved for Bible identity"))
+
+        let styleURL = dataRoot.appendingPathComponent("import/western.png")
+        try Data("style".utf8).write(to: styleURL)
+        _ = try await h.runOK("copy_project_file", args: [
+            "project_dir": dataRoot.path,
+            "from": "import/western.png",
+            "to": "production_design/refs/western.png",
+        ])
+        #expect(try String(
+            contentsOf: dataRoot.appendingPathComponent(
+                "production_design/refs/western.png"
+            ),
+            encoding: .utf8
+        ) == "style")
+
+        let confirmationURL = dataRoot.appendingPathComponent(
+            PipelineLayout.confirmedIdentityAssetsFile
+        )
+        let confirmationBeforeCopy = try Data(contentsOf: confirmationURL)
         let copy = try #require(try await h.runOK("copy_project_file", args: [
             "project_dir": dataRoot.path,
             "from": "import/characters/mouse/face.png", "to": "bible/refs/mouse/face.png",
@@ -1601,6 +1627,7 @@ struct WorkflowToolsTests {
             "bible/refs/mouse/face.png",
             dataRoot: dataRoot
         ))
+        #expect(try Data(contentsOf: confirmationURL) == confirmationBeforeCopy)
         let variantImport = dataRoot.appendingPathComponent(
             "import/characters/mouse-red/front.png"
         )
@@ -1704,6 +1731,50 @@ struct WorkflowToolsTests {
         ])
         #expect(symlinkEscape.isError == true)
         #expect(!FileManager.default.fileExists(atPath: outside.appendingPathComponent("stolen.png").path))
+    }
+
+    @Test("copy_project_file cannot stage assets across phase boundaries")
+    func projectFileCopyStaysInCurrentPhase() throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let source = dataRoot.appendingPathComponent("import/style.png")
+        try FileManager.default.createDirectory(
+            at: source.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("style".utf8).write(to: source)
+        let futureBibleAsset = dataRoot.appendingPathComponent(
+            "bible/refs/mouse/model_sheet.png"
+        )
+
+        #expect(throws: ToolError.self) {
+            try h.executor.copyProjectFileTool(
+                h.editor,
+                [
+                    "project_dir": dataRoot.path,
+                    "from": "import/style.png",
+                    "to": "bible/refs/mouse/model_sheet.png",
+                ],
+                currentPhase: "production_design"
+            )
+        }
+        #expect(!FileManager.default.fileExists(atPath: futureBibleAsset.path))
+
+        let productionDesignAsset = dataRoot.appendingPathComponent(
+            "production_design/refs/style.png"
+        )
+        #expect(throws: ToolError.self) {
+            try h.executor.copyProjectFileTool(
+                h.editor,
+                [
+                    "project_dir": dataRoot.path,
+                    "from": "import/style.png",
+                    "to": "production_design/refs/style.png",
+                ],
+                currentPhase: "bible"
+            )
+        }
+        #expect(!FileManager.default.fileExists(atPath: productionDesignAsset.path))
     }
 
     @Test("copy_project_file stages generated media with exact pipeline provenance")

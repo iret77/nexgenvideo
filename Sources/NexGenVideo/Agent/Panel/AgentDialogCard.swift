@@ -165,13 +165,26 @@ struct AgentDialogCard: View {
                 Text(section.label)
                     .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
-                FlowChips(options: options,
-                          selected: choiceSelections[section.id] ?? [],
-                          multiSelect: multiSelect,
-                          accent: accent,
-                          focus: $focusedControl,
-                          focusNamespace: section.id) { optionId in
-                    toggleChoice(sectionId: section.id, optionId: optionId, multiSelect: multiSelect)
+                if options.allSatisfy({ $0.mediaRef != nil }) {
+                    MediaChoiceGrid(
+                        options: options,
+                        assets: libraryAssets,
+                        selected: choiceSelections[section.id] ?? [],
+                        accent: accent,
+                        focus: $focusedControl,
+                        focusNamespace: section.id
+                    ) { optionId in
+                        toggleChoice(sectionId: section.id, optionId: optionId, multiSelect: multiSelect)
+                    }
+                } else {
+                    FlowChips(options: options,
+                              selected: choiceSelections[section.id] ?? [],
+                              multiSelect: multiSelect,
+                              accent: accent,
+                              focus: $focusedControl,
+                              focusNamespace: section.id) { optionId in
+                        toggleChoice(sectionId: section.id, optionId: optionId, multiSelect: multiSelect)
+                    }
                 }
                 if section.allowsCustom {
                     dialogField("Other…", text: Binding(
@@ -233,19 +246,20 @@ struct AgentDialogCard: View {
                 dialogField(namePrompt, text: $direction, focus: .direction)
             }
             if pickedFiles.isEmpty {
+                libraryPicker(intake)
                 emptyFileWell(intake)
             } else {
                 ForEach(pickedFiles, id: \.self) { pickedFileChip($0) }
                 if intake.allowsMultiple {
                     chooseButton(intake, label: intake.addFileLabel ?? "Add another file…")
+                    libraryPicker(intake)
                 }
             }
-            libraryPicker(intake)
         }
     }
 
-    /// Library assets that fit this intake, offered for one-click picking below the drop well (#254
-    /// stage 2) — so a song already loaded into the library isn't chosen from disk a second time.
+    /// Library assets that fit this intake, offered for one-click picking before the drop well (#254
+    /// stage 2) — so a song already loaded into the library is visible before disk import.
     /// Hidden once a single-select intake has its file. A pick routes through `addPicked`, the SAME
     /// path as drop/choose, so the answer lands in `pickedFiles` and flows out unchanged. Same picker
     /// component as the composer's Reference button.
@@ -263,7 +277,7 @@ struct AgentDialogCard: View {
                     .foregroundStyle(AppTheme.Text.mutedColor)
                 LibraryAssetPicker(
                     assets: picks,
-                    showsSearch: true,
+                    showsSearch: picks.count > 1,
                     showsTypeTabs: Set(picks.map(\.type.rawValue)).count > 1
                 ) { addPicked($0.url, intake) }
             }
@@ -517,10 +531,17 @@ struct AgentDialogCard: View {
 
     private func submit() {
         var selectedLabels: [String: [String]] = [:]
+        var selectedMediaFilenames: [String: [String: String]] = [:]
         for section in dialog.sections {
             if case .choices(let options, _) = section.kind {
                 let picked = options.filter { (choiceSelections[section.id] ?? []).contains($0.id) }
                 if !picked.isEmpty { selectedLabels[section.id] = picked.map(\.label) }
+                let filenames = picked.reduce(into: [String: String]()) { names, option in
+                    guard let mediaRef = option.mediaRef,
+                          let asset = libraryAssets.first(where: { $0.id == mediaRef }) else { return }
+                    names[option.id] = asset.userFacingFilename
+                }
+                if !filenames.isEmpty { selectedMediaFilenames[section.id] = filenames }
             }
         }
         let customs = customText
@@ -531,13 +552,109 @@ struct AgentDialogCard: View {
             toggles: toggleStates,
             direction: direction.trimmingCharacters(in: .whitespacesAndNewlines),
             customValues: customs,
-            fileURLs: pickedFiles
+            fileURLs: pickedFiles,
+            selectedOptionIDs: choiceSelections,
+            selectedMediaFilenames: selectedMediaFilenames
         ))
     }
 }
 
-/// Wrapping chip rows for choice options — compact controls only; rich visual picking belongs to
-/// the canonical surfaces (canvas projection), not this card.
+private struct MediaChoiceGrid: View {
+    let options: [AgentDialog.Choice]
+    let assets: [MediaAsset]
+    let selected: Set<String>
+    var accent: Color = AppTheme.Accent.primary
+    let focus: FocusState<AgentDialogFocusTarget?>.Binding
+    let focusNamespace: String
+    let onTap: (String) -> Void
+
+    private var columns: [GridItem] {
+        [GridItem(
+            .adaptive(minimum: AppTheme.ComponentSize.agentMediaChoiceMinWidth),
+            spacing: AppTheme.Spacing.sm
+        )]
+    }
+
+    var body: some View {
+        LazyVGrid(columns: columns, alignment: .leading, spacing: AppTheme.Spacing.sm) {
+            ForEach(options) { option in
+                let asset = option.mediaRef.flatMap { ref in
+                    assets.first(where: { $0.id == ref })
+                }
+                let filename = asset?.userFacingFilename ?? "Image unavailable"
+                let isOn = selected.contains(option.id)
+                Button {
+                    onTap(option.id)
+                } label: {
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                                .fill(AppTheme.Background.overlayColor.opacity(AppTheme.Opacity.muted))
+                            if let thumbnail = asset?.thumbnail {
+                                Image(nsImage: thumbnail)
+                                    .resizable()
+                                    .scaledToFit()
+                            } else {
+                                Image(systemName: "photo")
+                                    .interfaceFont(size: AppTheme.Typography.title)
+                                    .foregroundStyle(AppTheme.Text.mutedColor)
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: AppTheme.ComponentSize.agentMediaChoiceThumbnailHeight)
+                        .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
+                        .overlay(alignment: .topTrailing) {
+                            if isOn {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .interfaceFont(size: AppTheme.Typography.ui)
+                                    .foregroundStyle(accent)
+                                    .padding(AppTheme.Spacing.xs)
+                            }
+                        }
+                        Text(option.shortLabel)
+                            .interfaceFont(
+                                size: AppTheme.Typography.ui,
+                                weight: isOn ? AppTheme.FontWeight.semibold : AppTheme.FontWeight.medium
+                            )
+                            .foregroundStyle(AppTheme.Text.primaryColor)
+                            .lineLimit(1)
+                        Text(filename)
+                            .interfaceFont(size: AppTheme.Typography.metadata)
+                            .foregroundStyle(AppTheme.Text.tertiaryColor)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    .padding(AppTheme.Spacing.xs)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: AppTheme.Radius.md)
+                            .fill(isOn
+                                  ? accent.opacity(AppTheme.Opacity.faint)
+                                  : AppTheme.Background.clearColor)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: AppTheme.Radius.md)
+                            .strokeBorder(
+                                isOn ? accent : AppTheme.Border.subtleColor,
+                                lineWidth: isOn
+                                    ? AppTheme.BorderWidth.medium
+                                    : AppTheme.BorderWidth.hairline
+                            )
+                    )
+                    .contentShape(RoundedRectangle(cornerRadius: AppTheme.Radius.md))
+                }
+                .buttonStyle(.plain)
+                .disabled(asset == nil)
+                .focused(focus, equals: .choice("\(focusNamespace):\(option.id)"))
+                .help("\(option.label) — \(filename)")
+                .accessibilityLabel("\(option.shortLabel), \(filename)")
+                .accessibilityValue(isOn ? "Selected" : "Not selected")
+            }
+        }
+    }
+}
+
+/// Wrapping chip rows for compact text choices.
 private struct FlowChips: View {
     let options: [AgentDialog.Choice]
     let selected: Set<String>

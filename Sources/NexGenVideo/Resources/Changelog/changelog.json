@@ -2,6 +2,30 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.5.9",
+      "date": "2026-09-11",
+      "sections": [
+        {
+          "heading": "Workflow",
+          "items": [
+            "Matching Media Library items appear before new-file controls in intake cards, with search shown only when multiple items need filtering.",
+            "Staging a confirmed character or location reference for its Bible no longer invalidates an unchanged approved Brief, and identity references cannot be reassigned as Production Design style.",
+            "Image decisions show selectable thumbnails with descriptive labels and persistent Media Library filenames, and preserve the exact chosen asset for the Agent.",
+            "Storyboard setup distinguishes sequences NexGenVideo creates from sequences the user provides.",
+            "Storyboard derives shot and sheet scope without repeated questions, resumes existing work at review, and prevents earlier phases from staging assets into future phase folders.",
+            "Home project cards are 50 percent larger while keeping their existing text and symbol sizes."
+          ]
+        },
+        {
+          "heading": "Reliability",
+          "items": [
+            "UI hang recording now restarts its helper after an unexpected exit, records the exit status for analysis, and no longer interrupts active work with a modal diagnostic error.",
+            "Saving verifies the project package contents before treating a changed filesystem timestamp as an external edit, while preserving the conflict warning for real file changes."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.5.8",
       "date": "2026-09-11",
       "sections": [

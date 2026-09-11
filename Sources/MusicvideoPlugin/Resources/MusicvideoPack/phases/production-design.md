@@ -88,6 +88,9 @@ via `show_dialog`: "Which of these define the look of the video?"
 For each selected file: `copy_project_file(from: "import/...", to:
 "production_design/refs/<descriptive_name>.<ext>")`. Clean file names,
 lowercase, underscores. The original stays in `import/` (it's a copy).
+Only loose images directly under `import/` are Style-reference candidates.
+Prepared character/location assets keep their intake role and are reserved
+for Bible; the host rejects attempts to stage them as style.
 
 ### 4. Sharpen the style
 
@@ -99,6 +102,11 @@ morning light, warm earth tones"), propose a more precise wording of
 `rewind(target_phase="brief")`, update the Brief through `write_brief`,
 and re-approve it before returning here. Never mutate an approved Brief
 from inside Production Design.
+
+Copying or staging a reference does not change the Brief. Never rewind or
+request another Brief approval unless the user accepted an actual semantic
+change to a Brief field. A lineage refusal is a host error to report, not a
+reason to rewrite byte-equivalent content.
 
 ### 5. Color script (optional, recommended)
 

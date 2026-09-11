@@ -294,7 +294,13 @@ final class ToolExecutor {
                 }
                 try ProjectWorkingCopy.markDirty(key: key)
             }
-            result = try await run(tool, editor, resolved, origin: origin)
+            result = try await run(
+                tool,
+                editor,
+                resolved,
+                guardedPhase: guardedPhase,
+                origin: origin
+            )
             if tool != .runPhase,
                tool != .writeShotlist,
                !result.isError,
@@ -383,6 +389,7 @@ final class ToolExecutor {
         _ tool: ToolName,
         _ editor: EditorViewModel,
         _ args: [String: Any],
+        guardedPhase: String?,
         origin: ToolCallOrigin
     ) async throws -> ToolResult {
         switch tool {
@@ -464,7 +471,12 @@ final class ToolExecutor {
         case .estimateCost:         return try estimateCostTool(editor, args)
         case .showArtifact:         return try showArtifactTool(editor, args)
         case .listProjectFiles:     return try listProjectFilesTool(editor, args)
-        case .copyProjectFile:      return try copyProjectFileTool(editor, args)
+        case .copyProjectFile:
+            return try copyProjectFileTool(
+                editor,
+                args,
+                currentPhase: guardedPhase
+            )
         case .runPhase:             return try await runPhaseTool(editor, args)
         case .attachSong:           return try await attachSongTool(editor, args)
         case .nextRenderShot:       return try await nextRenderShotTool(editor, args)

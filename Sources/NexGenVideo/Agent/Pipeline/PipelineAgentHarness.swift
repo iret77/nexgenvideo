@@ -318,14 +318,24 @@ final class PipelineAgentHarness {
         case custom
     }
 
+    enum StoryboardCreationPath: Equatable {
+        case agentCreated
+        case userSupplied
+        case custom
+    }
+
     private var offered: OfferedIntake?
     private var intakeResolution: IntakeResolution?
     private var treatmentCreationPath: TreatmentCreationPath?
+    private var storyboardCreationPath: StoryboardCreationPath?
+    private var storyboardInputReceived = false
 
     func reset() {
         offered = nil
         intakeResolution = nil
         treatmentCreationPath = nil
+        storyboardCreationPath = nil
+        storyboardInputReceived = false
     }
 
     func workflowIntakePhase(dialogID: String) -> String? {
@@ -478,6 +488,10 @@ final class PipelineAgentHarness {
         }
         if context.phase != "treatment" {
             treatmentCreationPath = nil
+        }
+        if context.phase != "storyboard" {
+            storyboardCreationPath = nil
+            storyboardInputReceived = false
         }
 
         var ledger = IntakeLedger.load(dataRoot: dataRoot)
@@ -784,6 +798,17 @@ final class PipelineAgentHarness {
                     "The user chose an agent-proposed treatment. Create 2–3 variants from the approved analysis, lyrics, Brief, and Production Design; do not request a treatment upload or long-form treatment text."
                 )
             }
+        case "storyboard":
+            let hasStoryboard = try StoryboardStore.load(
+                dataRoot: dataRoot,
+                version: .current
+            ) != nil
+            try Self.guardStoryboardDecision(
+                dialog,
+                hasStoryboard: hasStoryboard,
+                creationPath: storyboardCreationPath,
+                inputReceived: storyboardInputReceived
+            )
         default:
             if dialog.workflowDecision != nil {
                 throw ToolError(
@@ -798,12 +823,31 @@ final class PipelineAgentHarness {
         result: AgentDialogResult,
         selectedOptionIDs: [String: Set<String>]
     ) throws {
-        guard dialog.workflowDecision == .treatmentPath else { return }
-        treatmentCreationPath = try Self.resolveTreatmentCreationPath(
-            dialog,
-            result: result,
-            selectedOptionIDs: selectedOptionIDs
-        )
+        switch dialog.workflowDecision {
+        case .treatmentPath:
+            treatmentCreationPath = try Self.resolveTreatmentCreationPath(
+                dialog,
+                result: result,
+                selectedOptionIDs: selectedOptionIDs
+            )
+        case .storyboardMode:
+            storyboardCreationPath = try Self.resolveStoryboardCreationPath(
+                dialog,
+                result: result,
+                selectedOptionIDs: selectedOptionIDs
+            )
+            storyboardInputReceived = false
+        case .storyboardInput:
+            try Self.validateStoryboardInputDialog(dialog)
+            guard !result.direction.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            ).isEmpty else {
+                throw ToolError("Paste the Storyboard sequences before continuing.")
+            }
+            storyboardInputReceived = true
+        default:
+            return
+        }
     }
 
     static func resolveTreatmentCreationPath(
@@ -850,6 +894,105 @@ final class PipelineAgentHarness {
               options.map(\.id) == ["agent_proposal", "user_supplied"] else {
             throw ToolError(
                 "The Treatment path dialog must contain one single-select treatment_path section with agent_proposal first, user_supplied second, and Other enabled; it must not request text or a file."
+            )
+        }
+    }
+
+    static func resolveStoryboardCreationPath(
+        _ dialog: AgentDialog,
+        result: AgentDialogResult,
+        selectedOptionIDs: [String: Set<String>]
+    ) throws -> StoryboardCreationPath {
+        try validateStoryboardModeDialog(dialog)
+        let explicit = selectedOptionIDs["storyboard_mode"] ?? []
+        let selected: Set<String>
+        if explicit.isEmpty {
+            let labels = Set(result.labels("storyboard_mode"))
+            guard let section = dialog.sections.first,
+                  case .choices(let options, _) = section.kind else {
+                throw ToolError("Choose how the Storyboard should be created.")
+            }
+            selected = Set(options.filter { labels.contains($0.label) }.map(\.id))
+        } else {
+            selected = explicit
+        }
+        if selected == ["agent_created"] {
+            return .agentCreated
+        } else if selected == ["user_supplied"] {
+            return .userSupplied
+        } else if selected.isEmpty,
+                  result.customValues["storyboard_mode"]?
+                    .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            return .custom
+        } else {
+            throw ToolError("Choose one Storyboard mode before continuing.")
+        }
+    }
+
+    static func validateStoryboardModeDialog(_ dialog: AgentDialog) throws {
+        guard dialog.workflowDecision == .storyboardMode,
+              dialog.fileIntake == nil,
+              dialog.textField == nil,
+              dialog.sections.count == 1,
+              let section = dialog.sections.first,
+              section.id == "storyboard_mode",
+              section.allowsCustom,
+              case .choices(let options, let multiSelect) = section.kind,
+              !multiSelect,
+              options.map(\.id) == ["agent_created", "user_supplied"] else {
+            throw ToolError(
+                "The Storyboard mode dialog must contain one single-select storyboard_mode section with agent_created first, user_supplied second, and Other enabled; it must not request text or a file."
+            )
+        }
+    }
+
+    static func guardStoryboardDecision(
+        _ dialog: AgentDialog,
+        hasStoryboard: Bool,
+        creationPath: StoryboardCreationPath?,
+        inputReceived: Bool
+    ) throws {
+        if hasStoryboard {
+            throw ToolError(
+                "A storyboard already exists. Show storyboard/current.yaml and call approve_gate. "
+                    + "Revise it only from an explicit user instruction; do not present a resume, "
+                    + "scope, granularity, sheet-count, or recovery dialog."
+            )
+        }
+        guard let creationPath else {
+            guard dialog.workflowDecision == .storyboardMode else {
+                throw ToolError(
+                    "Before creating the first storyboard, present the Storyboard mode choice with workflowDecision=storyboard_mode: agent_created first (recommended), then user_supplied, with Other enabled."
+                )
+            }
+            try validateStoryboardModeDialog(dialog)
+            return
+        }
+        switch creationPath {
+        case .agentCreated, .custom:
+            throw ToolError(
+                "The Storyboard creation path is already set. Derive step count, framing, "
+                    + "reference demand, and Bible sheet demand from approved project truth; "
+                    + "write the storyboard without another user decision."
+            )
+        case .userSupplied:
+            guard !inputReceived else {
+                throw ToolError(
+                    "The user's Storyboard sequences are already supplied. Validate and write them "
+                        + "without another dialog."
+                )
+            }
+            try validateStoryboardInputDialog(dialog)
+        }
+    }
+
+    static func validateStoryboardInputDialog(_ dialog: AgentDialog) throws {
+        guard dialog.workflowDecision == .storyboardInput,
+              dialog.sections.isEmpty,
+              dialog.fileIntake == nil,
+              dialog.textField?.multiline == true else {
+            throw ToolError(
+                "After user_supplied, request the sequences once with workflowDecision=storyboard_input and one multiline text field; do not add choices or file intake."
             )
         }
     }
