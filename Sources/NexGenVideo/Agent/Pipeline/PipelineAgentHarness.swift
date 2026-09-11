@@ -328,12 +328,14 @@ final class PipelineAgentHarness {
     private var intakeResolution: IntakeResolution?
     private var treatmentCreationPath: TreatmentCreationPath?
     private var storyboardCreationPath: StoryboardCreationPath?
+    private var storyboardInputReceived = false
 
     func reset() {
         offered = nil
         intakeResolution = nil
         treatmentCreationPath = nil
         storyboardCreationPath = nil
+        storyboardInputReceived = false
     }
 
     func workflowIntakePhase(dialogID: String) -> String? {
@@ -489,6 +491,7 @@ final class PipelineAgentHarness {
         }
         if context.phase != "storyboard" {
             storyboardCreationPath = nil
+            storyboardInputReceived = false
         }
 
         var ledger = IntakeLedger.load(dataRoot: dataRoot)
@@ -800,39 +803,12 @@ final class PipelineAgentHarness {
                 dataRoot: dataRoot,
                 version: .current
             ) != nil
-            if hasStoryboard {
-                storyboardCreationPath = nil
-                if dialog.workflowDecision == .storyboardMode {
-                    throw ToolError(
-                        "A storyboard already exists. Offer continue, revise, or restart instead of asking how to create the first storyboard."
-                    )
-                }
-                if dialog.workflowDecision != nil {
-                    throw ToolError(
-                        "The declared workflow decision is not valid during Storyboard."
-                    )
-                }
-                return
-            }
-            if storyboardCreationPath == nil {
-                guard dialog.workflowDecision == .storyboardMode else {
-                    throw ToolError(
-                        "Before creating the first storyboard, present the Storyboard mode choice with workflowDecision=storyboard_mode: agent_created first (recommended), then user_supplied, with Other enabled."
-                    )
-                }
-                try Self.validateStoryboardModeDialog(dialog)
-                return
-            }
-            if dialog.workflowDecision == .storyboardMode {
-                throw ToolError(
-                    "The Storyboard mode is already chosen. Continue with that path instead of asking again."
-                )
-            }
-            if dialog.workflowDecision != nil {
-                throw ToolError(
-                    "The declared workflow decision is not valid during Storyboard."
-                )
-            }
+            try Self.guardStoryboardDecision(
+                dialog,
+                hasStoryboard: hasStoryboard,
+                creationPath: storyboardCreationPath,
+                inputReceived: storyboardInputReceived
+            )
         default:
             if dialog.workflowDecision != nil {
                 throw ToolError(
@@ -860,6 +836,15 @@ final class PipelineAgentHarness {
                 result: result,
                 selectedOptionIDs: selectedOptionIDs
             )
+            storyboardInputReceived = false
+        case .storyboardInput:
+            try Self.validateStoryboardInputDialog(dialog)
+            guard !result.direction.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            ).isEmpty else {
+                throw ToolError("Paste the Storyboard sequences before continuing.")
+            }
+            storyboardInputReceived = true
         default:
             return
         }
@@ -957,6 +942,57 @@ final class PipelineAgentHarness {
               options.map(\.id) == ["agent_created", "user_supplied"] else {
             throw ToolError(
                 "The Storyboard mode dialog must contain one single-select storyboard_mode section with agent_created first, user_supplied second, and Other enabled; it must not request text or a file."
+            )
+        }
+    }
+
+    static func guardStoryboardDecision(
+        _ dialog: AgentDialog,
+        hasStoryboard: Bool,
+        creationPath: StoryboardCreationPath?,
+        inputReceived: Bool
+    ) throws {
+        if hasStoryboard {
+            throw ToolError(
+                "A storyboard already exists. Show storyboard/current.yaml and call approve_gate. "
+                    + "Revise it only from an explicit user instruction; do not present a resume, "
+                    + "scope, granularity, sheet-count, or recovery dialog."
+            )
+        }
+        guard let creationPath else {
+            guard dialog.workflowDecision == .storyboardMode else {
+                throw ToolError(
+                    "Before creating the first storyboard, present the Storyboard mode choice with workflowDecision=storyboard_mode: agent_created first (recommended), then user_supplied, with Other enabled."
+                )
+            }
+            try validateStoryboardModeDialog(dialog)
+            return
+        }
+        switch creationPath {
+        case .agentCreated, .custom:
+            throw ToolError(
+                "The Storyboard creation path is already set. Derive step count, framing, "
+                    + "reference demand, and Bible sheet demand from approved project truth; "
+                    + "write the storyboard without another user decision."
+            )
+        case .userSupplied:
+            guard !inputReceived else {
+                throw ToolError(
+                    "The user's Storyboard sequences are already supplied. Validate and write them "
+                        + "without another dialog."
+                )
+            }
+            try validateStoryboardInputDialog(dialog)
+        }
+    }
+
+    static func validateStoryboardInputDialog(_ dialog: AgentDialog) throws {
+        guard dialog.workflowDecision == .storyboardInput,
+              dialog.sections.isEmpty,
+              dialog.fileIntake == nil,
+              dialog.textField?.multiline == true else {
+            throw ToolError(
+                "After user_supplied, request the sequences once with workflowDecision=storyboard_input and one multiline text field; do not add choices or file intake."
             )
         }
     }

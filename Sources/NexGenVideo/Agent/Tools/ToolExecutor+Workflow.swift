@@ -639,6 +639,23 @@ extension ToolExecutor {
         }
     }
 
+    private static func requirePhaseOwnedCopyDestination(
+        _ relativePath: String,
+        currentPhase: String?
+    ) throws {
+        guard let currentPhase else { return }
+        let destinationPhase = relativePath.hasPrefix("production_design/")
+            ? "production_design"
+            : "bible"
+        guard destinationPhase == currentPhase else {
+            throw ToolError(
+                "copy_project_file cannot stage a \(PhaseDisplay.label(destinationPhase)) asset "
+                    + "during \(PhaseDisplay.label(currentPhase)). Leave the source in import/ "
+                    + "until \(PhaseDisplay.label(destinationPhase)) is the current phase."
+            )
+        }
+    }
+
     func listProjectFilesTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let subdir = try args.requireString("subdir")
@@ -652,7 +669,11 @@ extension ToolExecutor {
         return try jsonResult(["subdir": subdir, "files": files])
     }
 
-    func copyProjectFileTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+    func copyProjectFileTool(
+        _ editor: EditorViewModel,
+        _ args: [String: Any],
+        currentPhase: String? = nil
+    ) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let fromRel = args.string("from")
         let mediaID = args.string("media")
@@ -661,6 +682,10 @@ extension ToolExecutor {
         }
         let toRel = try args.requireString("to")
         try Self.requirePipelineAssetCopyPath(toRel, source: false)
+        try Self.requirePhaseOwnedCopyDestination(
+            toRel,
+            currentPhase: currentPhase
+        )
         if let fromRel {
             try Self.requirePipelineAssetCopyPath(fromRel, source: true)
         }

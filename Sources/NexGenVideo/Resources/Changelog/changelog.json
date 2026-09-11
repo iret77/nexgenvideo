@@ -11,7 +11,8 @@
             "Matching Media Library items appear before new-file controls in intake cards, with search shown only when multiple items need filtering.",
             "Staging a confirmed character or location reference for its Bible no longer invalidates an unchanged approved Brief, and identity references cannot be reassigned as Production Design style.",
             "Image decisions show selectable thumbnails with descriptive labels and persistent Media Library filenames, and preserve the exact chosen asset for the Agent.",
-            "Storyboard setup distinguishes sequences NexGenVideo creates from sequences the user provides."
+            "Storyboard setup distinguishes sequences NexGenVideo creates from sequences the user provides.",
+            "Storyboard derives shot and sheet scope without repeated questions, resumes existing work at review, and prevents earlier phases from staging assets into future phase folders."
           ]
         },
         {

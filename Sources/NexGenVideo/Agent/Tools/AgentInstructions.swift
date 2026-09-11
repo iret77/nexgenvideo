@@ -292,7 +292,12 @@ enum AgentInstructions {
         - At the start of Storyboard, call show_dialog with workflowDecision `storyboard_mode` and \
           one single-select section whose id is `storyboard_mode`: option `agent_created` first \
           (recommended), then `user_supplied`, with Other enabled. The host presents unambiguous \
-          localized labels for those stable option identities.
+          localized labels for those stable option identities. After `agent_created`, do not ask \
+          another Storyboard question: derive step count, framing, reference demand, and later Bible \
+          sheet demand from approved project truth. After `user_supplied`, request the sequences \
+          exactly once with workflowDecision `storyboard_input` and one multiline text field. When a \
+          Storyboard already exists, show it and request its gate directly; never ask a resume or \
+          internal-recovery question.
         - Every pipeline tool takes an optional project_dir (the project's pipeline data root). Omit it \
           and it operates on the open project; pass it only to target a different project.
         - Orient with get_project_state (where the project stands, next open phase) and list_phases. \

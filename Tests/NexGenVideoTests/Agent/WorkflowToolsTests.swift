@@ -1733,6 +1733,50 @@ struct WorkflowToolsTests {
         #expect(!FileManager.default.fileExists(atPath: outside.appendingPathComponent("stolen.png").path))
     }
 
+    @Test("copy_project_file cannot stage assets across phase boundaries")
+    func projectFileCopyStaysInCurrentPhase() throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let source = dataRoot.appendingPathComponent("import/style.png")
+        try FileManager.default.createDirectory(
+            at: source.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("style".utf8).write(to: source)
+        let futureBibleAsset = dataRoot.appendingPathComponent(
+            "bible/refs/mouse/model_sheet.png"
+        )
+
+        #expect(throws: ToolError.self) {
+            try h.executor.copyProjectFileTool(
+                h.editor,
+                [
+                    "project_dir": dataRoot.path,
+                    "from": "import/style.png",
+                    "to": "bible/refs/mouse/model_sheet.png",
+                ],
+                currentPhase: "production_design"
+            )
+        }
+        #expect(!FileManager.default.fileExists(atPath: futureBibleAsset.path))
+
+        let productionDesignAsset = dataRoot.appendingPathComponent(
+            "production_design/refs/style.png"
+        )
+        #expect(throws: ToolError.self) {
+            try h.executor.copyProjectFileTool(
+                h.editor,
+                [
+                    "project_dir": dataRoot.path,
+                    "from": "import/style.png",
+                    "to": "production_design/refs/style.png",
+                ],
+                currentPhase: "bible"
+            )
+        }
+        #expect(!FileManager.default.fileExists(atPath: productionDesignAsset.path))
+    }
+
     @Test("copy_project_file stages generated media with exact pipeline provenance")
     func projectMediaCopyRecordsProvenance() async throws {
         let (h, dataRoot, cleanup) = try scaffold()

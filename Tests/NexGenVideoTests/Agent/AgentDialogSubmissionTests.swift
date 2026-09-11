@@ -43,6 +43,64 @@ struct AgentDialogSubmissionTests {
         ) == .agentCreated)
     }
 
+    @Test func agentCreatedStoryboardRejectsFurtherQuestions() throws {
+        let dialog = try AgentDialog.parse([
+            "title": "Choose the sheet scope",
+            "sections": [[
+                "id": "scope",
+                "label": "How many sheets?",
+                "type": "choices",
+                "options": [
+                    ["id": "lean", "label": "Lean"],
+                    ["id": "full", "label": "Full"],
+                ],
+            ]],
+        ])
+
+        #expect(throws: ToolError.self) {
+            try PipelineAgentHarness.guardStoryboardDecision(
+                dialog,
+                hasStoryboard: false,
+                creationPath: .agentCreated,
+                inputReceived: false
+            )
+        }
+        #expect(throws: ToolError.self) {
+            try PipelineAgentHarness.guardStoryboardDecision(
+                dialog,
+                hasStoryboard: true,
+                creationPath: nil,
+                inputReceived: false
+            )
+        }
+    }
+
+    @Test func userSuppliedStoryboardAcceptsOneBoundedTextIntake() throws {
+        let intake = try AgentDialog.parse([
+            "title": "Provide storyboard sequences",
+            "workflowDecision": "storyboard_input",
+            "textField": [
+                "placeholder": "Paste the step sequences",
+                "multiline": true,
+            ],
+        ])
+        try PipelineAgentHarness.guardStoryboardDecision(
+            intake,
+            hasStoryboard: false,
+            creationPath: .userSupplied,
+            inputReceived: false
+        )
+
+        #expect(throws: ToolError.self) {
+            try PipelineAgentHarness.guardStoryboardDecision(
+                intake,
+                hasStoryboard: false,
+                creationPath: .userSupplied,
+                inputReceived: true
+            )
+        }
+    }
+
     @Test func treatmentStartsWithAgentCreationAsARealChoice() throws {
         let dialog = try AgentDialog.parse([
             "title": "Choose how to develop the treatment",

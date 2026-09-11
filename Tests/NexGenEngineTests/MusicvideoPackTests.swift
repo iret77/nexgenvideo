@@ -463,6 +463,10 @@ struct MusicvideoPackTests {
         #expect(document.contains("`agent_created` — **Create sequences for me**"))
         #expect(document.contains("`user_supplied` — **I'll provide sequences**"))
         #expect(document.contains("first person in an option label denotes the user"))
+        #expect(document.contains("this is the only Storyboard decision"))
+        #expect(document.contains("request its gate directly"))
+        #expect(!document.contains("always run the 3-option resume question"))
+        #expect(!document.contains("Split, or reduce the character-view demand?"))
         #expect(!document.contains("**Claude-only**"))
     }
 

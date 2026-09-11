@@ -141,6 +141,7 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
         case analysisTrackReplacement = "analysis_track_replacement"
         case treatmentPath = "treatment_path"
         case storyboardMode = "storyboard_mode"
+        case storyboardInput = "storyboard_input"
     }
 
     struct Choice: Identifiable, Equatable, Sendable, Codable {

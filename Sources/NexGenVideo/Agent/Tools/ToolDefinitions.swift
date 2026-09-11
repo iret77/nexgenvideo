@@ -251,8 +251,9 @@ enum ToolDefinitions {
                             "analysis_track_replacement",
                             "treatment_path",
                             "storyboard_mode",
+                            "storyboard_input",
                         ],
-                        "description": "Declares a phase-owned bounded decision. Required for Audio Analysis decisions, the initial Treatment path choice, and the initial Storyboard creation-mode choice.",
+                        "description": "Declares a phase-owned bounded decision. Required for Audio Analysis decisions, the initial Treatment path choice, the initial Storyboard creation-mode choice, and the single Storyboard text intake after user_supplied.",
                     ],
                     "textField": [
                         "type": "object",
