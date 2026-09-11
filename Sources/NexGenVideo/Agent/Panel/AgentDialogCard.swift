@@ -233,19 +233,20 @@ struct AgentDialogCard: View {
                 dialogField(namePrompt, text: $direction, focus: .direction)
             }
             if pickedFiles.isEmpty {
+                libraryPicker(intake)
                 emptyFileWell(intake)
             } else {
                 ForEach(pickedFiles, id: \.self) { pickedFileChip($0) }
                 if intake.allowsMultiple {
                     chooseButton(intake, label: intake.addFileLabel ?? "Add another file…")
+                    libraryPicker(intake)
                 }
             }
-            libraryPicker(intake)
         }
     }
 
-    /// Library assets that fit this intake, offered for one-click picking below the drop well (#254
-    /// stage 2) — so a song already loaded into the library isn't chosen from disk a second time.
+    /// Library assets that fit this intake, offered for one-click picking before the drop well (#254
+    /// stage 2) — so a song already loaded into the library is visible before disk import.
     /// Hidden once a single-select intake has its file. A pick routes through `addPicked`, the SAME
     /// path as drop/choose, so the answer lands in `pickedFiles` and flows out unchanged. Same picker
     /// component as the composer's Reference button.
@@ -263,7 +264,7 @@ struct AgentDialogCard: View {
                     .foregroundStyle(AppTheme.Text.mutedColor)
                 LibraryAssetPicker(
                     assets: picks,
-                    showsSearch: true,
+                    showsSearch: picks.count > 1,
                     showsTypeTabs: Set(picks.map(\.type.rawValue)).count > 1
                 ) { addPicked($0.url, intake) }
             }

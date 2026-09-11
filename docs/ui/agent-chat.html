@@ -1205,6 +1205,9 @@
         The Transcript remains a separate sibling scroll view.</li>
       <li>Library results inside intake are bounded and searchable. The intake drop target remains a
         leaf SwiftUI drop target; no parent SwiftUI <code>.onDrop</code> spans nested targets.</li>
+      <li>When accepted library assets exist, they appear before the new-file drop target so the first
+        matching asset is visible without discovering the decision body's scroll. Search appears only
+        when there is more than one matching asset.</li>
       <li>Streaming may replace Send with Stop. A detached paid generation does not take over the
         Dock; its concise state and Cancel remain in Live Status, so composing stays available.</li>
       <li>A completed paid generation resumes the idle owning Agent session in place. Delivering its
@@ -1539,10 +1542,10 @@
         content += "<div class='file-row'><span>▧</span><span class='file-name'>ai-cat-reference-profile.png</span><span>Remove</span></div>" +
           "<div class='text-action' style='margin-top:7px'>Add another image…</div>";
       } else {
-        content += "<div class='drop-target'>Drop the reference images · Choose…</div>" +
-          "<div class='library-search'>Search your library</div><div class='asset-list'>" +
+        content += "<div class='library-search'>Search your library</div><div class='asset-list'>" +
           "<div class='asset'><span class='asset-thumb'></span><span class='asset-name'>AI Cat portrait.png</span></div>" +
-          "<div class='asset'><span class='asset-thumb'></span><span class='asset-name'>Claude Mouse reference.png</span></div></div>";
+          "<div class='asset'><span class='asset-thumb'></span><span class='asset-name'>Claude Mouse reference.png</span></div></div>" +
+          "<div class='drop-target'>Drop the reference images · Choose…</div>";
       }
 
       content += "</div><div class='decision-actions'>";
