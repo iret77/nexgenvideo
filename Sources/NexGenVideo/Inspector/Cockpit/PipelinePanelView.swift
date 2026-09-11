@@ -298,12 +298,13 @@ struct PipelinePanelView: View {
         HStack {
             Text(label)
                 .interfaceFont(size: AppTheme.Typography.ui,
-                              weight: emphasized ? .semibold : .regular)
+                              weight: emphasized ? AppTheme.FontWeight.semibold : AppTheme.FontWeight.regular)
                 .foregroundStyle(emphasized ? AppTheme.Text.secondaryColor : AppTheme.Text.tertiaryColor)
             Spacer()
             Text(String(format: "€%.2f", amount))
-                .font(.system(size: emphasized ? AppTheme.FontSize.md : AppTheme.FontSize.sm,
-                              weight: emphasized ? .semibold : .medium).monospacedDigit())
+                .interfaceFont(size: emphasized ? AppTheme.FontSize.md : AppTheme.FontSize.sm,
+                               weight: emphasized ? AppTheme.FontWeight.semibold : AppTheme.FontWeight.medium)
+                .monospacedDigit()
                 .foregroundStyle(color)
                 .textSelection(.enabled)
         }
@@ -313,12 +314,12 @@ struct PipelinePanelView: View {
         HStack {
             Text(label)
                 .interfaceFont(size: AppTheme.Typography.ui,
-                              weight: emphasized ? .semibold : .regular)
+                              weight: emphasized ? AppTheme.FontWeight.semibold : AppTheme.FontWeight.regular)
                 .foregroundStyle(emphasized ? AppTheme.Text.secondaryColor : AppTheme.Text.tertiaryColor)
             Spacer()
             Text(value)
                 .interfaceFont(size: emphasized ? AppTheme.FontSize.md : AppTheme.FontSize.sm,
-                              weight: emphasized ? .semibold : .medium)
+                              weight: emphasized ? AppTheme.FontWeight.semibold : AppTheme.FontWeight.medium)
                 .foregroundStyle(color)
                 .textSelection(.enabled)
         }
@@ -740,6 +741,11 @@ struct PipelinePanelView: View {
     }
 
     private func load(showProgress: Bool = true) async {
+        if ProcessInfo.processInfo.environment["NGV_DIAGNOSTIC_REPLAY"] != nil {
+            dataRoot = nil
+            state = .loaded(editor.projectState)
+            return
+        }
         guard let dir = editor.workingRoot else {
             dataRoot = nil
             state = .failed(.noProject)

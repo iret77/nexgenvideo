@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Replay authenticated private inputs; publish only counts and encrypted evidence."""
-import base64
 import argparse
 import io
 import json
@@ -12,6 +11,27 @@ import time
 import zipfile
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from replay_key import decode_base64_key
+
+
+def recorded_editor_window(records):
+    windows = [
+        record for record in records
+        if record.get("operation") == "window" and len(record.get("values", [])) >= 3
+    ]
+    if not windows:
+        return None
+    editor_window_number = max(
+        windows,
+        key=lambda record: (
+            record["values"][1] * record["values"][2],
+            record.get("sequence", 0),
+        ),
+    )["values"][0]
+    return max(
+        (record for record in windows if record["values"][0] == editor_window_number),
+        key=lambda record: record.get("sequence", 0),
+    )
 
 
 def main():
@@ -23,7 +43,7 @@ def main():
     args = parser.parse_args()
     app, fixture, output = args.app, args.fixture, args.output
     output.mkdir(parents=True, exist_ok=True)
-    key = base64.b64decode(os.environ["NGV_HANG_FIXTURE_KEY"], validate=True)
+    key = decode_base64_key(os.environ["NGV_HANG_FIXTURE_KEY"])
     encrypted = fixture.read_bytes()
     plain = AESGCM(key).decrypt(encrypted[:12], encrypted[12:], b"NGV_HANG_FIXTURE_V1")
     with tempfile.TemporaryDirectory() as directory:
@@ -36,12 +56,20 @@ def main():
             archive.extractall(root)
         folder, = [p for p in root.iterdir() if p.is_dir()]
         frames = sorted(folder.glob("replay-*.enc"))
-        replay_key = base64.b64decode((root / "replay.key").read_text(), validate=True)
+        replay_key = decode_base64_key((root / "replay.key").read_text())
         decoded = []
         for file in frames:
             data = file.read_bytes()
             decoded.append(json.loads(AESGCM(replay_key).decrypt(data[:12], data[12:], folder.name.encode())))
         duration = decoded[-1]["uptime"] - decoded[0]["uptime"]
+        structural_records = []
+        if args.match_geometry:
+            for event_file in sorted(folder.glob("events-*.json")):
+                structural_records.extend(json.loads(event_file.read_text()))
+        recorded_window = recorded_editor_window(structural_records)
+        replay_delay = len(decoded) * (0.12 if args.match_geometry else 0)
+        settling_delay = 30 if args.match_geometry else 2
+        timeout = duration + replay_delay + settling_delay + 60
         environment = {**os.environ, "NGV_DIAGNOSTIC_REPLAY": str(folder),
                        "NGV_DIAGNOSTIC_KEY_FILE": str(root / "replay.key")}
         environment.pop("NGV_HANG_FIXTURE_KEY", None)
@@ -60,7 +88,7 @@ def main():
             try:
                 while process.poll() is None:
                     elapsed = time.monotonic() - started
-                    if elapsed > duration + 75:
+                    if elapsed > timeout:
                         timed_out = True
                         capture_stack(process.pid, root / "timeout.sample.txt")
                         break
@@ -98,9 +126,14 @@ def main():
         nonce = os.urandom(12)
         (output / "diagnostics.enc").write_bytes(nonce + AESGCM(key).encrypt(
             nonce, evidence.getvalue(), b"NGV_HANG_EVIDENCE_V1"))
-        result = {"frames": len(frames), "recordedSeconds": duration,
+        result = {"frames": len(frames), "firstSequence": decoded[0]["sequence"],
+                  "lastSequence": decoded[-1]["sequence"], "recordedSeconds": duration,
+                  "timeoutSeconds": timeout,
                   "elapsedSeconds": time.monotonic() - started, "exitCode": process.returncode,
                   "timedOut": timed_out, "geometryRequested": args.match_geometry}
+        if recorded_window is not None:
+            result["recordedWindowWidth"] = recorded_window["values"][1]
+            result["recordedWindowHeight"] = recorded_window["values"][2]
         result["maxObservedCPU"] = max((o["cpu"] for o in observations), default=None)
         result["maxRSSKB"] = max((o["rssKB"] for o in observations), default=None)
         result["busySamples"] = captures

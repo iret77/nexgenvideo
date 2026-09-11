@@ -69,7 +69,7 @@ struct AgentTranscriptLayoutTests {
         VStack {
             Text("New chat")
             ScrollView {
-                LazyVStack(alignment: .leading) {
+                AgentTranscriptLayout {
                     AgentTranscriptTurnView(turn: .init(id: turnID, items: [.assistantResult(message)]), toolResults: [:])
                     AgentTranscriptLayout {
                         if imageVisible {

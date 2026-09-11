@@ -4,6 +4,24 @@ import Testing
 
 @Suite("Agent transcript layout policy")
 struct AgentTranscriptLayoutPolicyTests {
+    @Test func transcriptTurnContainerUsesFiniteLayout() throws {
+        let source = try agentPanelSource()
+        let start = try #require(source.range(
+            of: "private func scrollingMessages"
+        ))
+        let end = try #require(source.range(
+            of: "private var errorBanner",
+            range: start.upperBound..<source.endIndex
+        ))
+        let implementation = source[start.lowerBound..<end.lowerBound]
+
+        #expect(implementation.contains(
+            "AgentTranscriptLayout(spacing: AppTheme.Spacing.xl)"
+        ))
+        #expect(!implementation.contains("LazyVStack"))
+        #expect(!implementation.contains("LazyHStack"))
+    }
+
     @Test func observedScrollViewHasNoSecondaryLayerOrAlignmentContainer() throws {
         let source = try agentPanelSource()
         let start = try #require(source.range(

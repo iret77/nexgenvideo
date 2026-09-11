@@ -689,7 +689,7 @@ final class EditorViewModel {
     )
 
     let generationService = GenerationService()
-    let agentService = AgentService()
+    let agentService: AgentService
     let pipelineAgentHarness = PipelineAgentHarness()
     let pipelinePhaseExecution = PipelinePhaseExecutionState()
     let pipelinePhaseRunCoordinator = PipelinePhaseRunCoordinator()
@@ -865,7 +865,8 @@ final class EditorViewModel {
             }
         }
         return .init(timeline: timeline, manifest: manifest, pipeline: projectState,
-                     binding: declaredPluginBinding, revision: engineStateRevision)
+                     binding: declaredPluginBinding, revision: engineStateRevision,
+                     workspaceFocus: workspaceFocus.rawValue, cockpitTab: cockpitTab.rawValue)
     }
 
     func restoreDiagnosticProject(_ snapshot: HangDiagnosticTranscript.ProjectContext) {
@@ -873,6 +874,19 @@ final class EditorViewModel {
         timeline = snapshot.timeline
         mediaManifest = snapshot.manifest
         projectState = snapshot.pipeline
+        activePluginName = snapshot.binding?.id
+        declaredPluginName = snapshot.binding?.id
+        declaredPluginBinding = snapshot.binding
+        engineStateRevision = snapshot.revision
+        hasProductionPipeline = snapshot.pipeline != nil
+        if let rawValue = snapshot.workspaceFocus,
+           let focus = WorkspaceFocus(rawValue: rawValue) {
+            workspaceFocus = focus
+        }
+        if let rawValue = snapshot.cockpitTab,
+           let tab = CockpitTab(rawValue: rawValue) {
+            cockpitTab = tab
+        }
     }
 
     private func performEngineStateRefresh() async {
@@ -980,7 +994,8 @@ final class EditorViewModel {
         refreshMissingMediaCache()
     }
 
-    init() {
+    init(agentService: AgentService = AgentService()) {
+        self.agentService = agentService
         mediaResolver = MediaResolver(
             manifest: { [weak self] in self?.mediaManifest ?? MediaManifest() },
             projectURL: { [weak self] in self?.workingCopyHome }

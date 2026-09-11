@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Fenced code blocks render as styled panels; inline + headings collapse into a single
-/// AttributedString rendered by one Text view to minimize hosted-text count under LazyVStack.
+/// AttributedString rendered by one Text view to minimize hosted-text count in the transcript.
 struct MarkdownText: View {
     let text: String
     @Environment(\.interfaceScale) private var interfaceScale

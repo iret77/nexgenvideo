@@ -530,7 +530,7 @@ struct AgentPanelView: View {
     private func scrollingMessages(turns: [AgentTranscriptTurn]) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
+                AgentTranscriptLayout(spacing: AppTheme.Spacing.xl) {
                     let results = toolResults
                     ForEach(turns) { turn in
                         AgentTranscriptTurnView(turn: turn, toolResults: results)
