@@ -457,6 +457,15 @@ struct MusicvideoPackTests {
         #expect(!starter.prompt.contains("Apply this profile only when `concept_type`"))
     }
 
+    @Test("storyboard setup distinguishes agent-created and user-supplied sequences")
+    func storyboardSetupUsesUserPerspective() throws {
+        let document = try PackKnowledge.phaseDoc(name: "storyboard")
+        #expect(document.contains("`agent_created` — **Create sequences for me**"))
+        #expect(document.contains("`user_supplied` — **I'll provide sequences**"))
+        #expect(document.contains("first person in an option label denotes the user"))
+        #expect(!document.contains("**Claude-only**"))
+    }
+
     @Test("pack registers the analysis UI contract entry")
     func packRegistersUIContract() {
         let reg = PackRegistry()

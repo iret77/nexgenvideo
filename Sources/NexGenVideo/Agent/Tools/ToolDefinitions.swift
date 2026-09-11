@@ -235,7 +235,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .showDialog,
-            description: "Present a native structured dialog in the chat composer for an enumerable user decision instead of asking with an option list in prose. It is the one input surface while open. Keep it focused: at most 3 sections; split larger decisions. Use allowsCustom for a non-exhaustive choice set, textField only for focused typed notes, and costHint when confirmation spends money. When the decision is between concrete image assets, call get_media and give every option its exact mediaRef plus a descriptive shortLabel; the card shows clickable thumbnails and the library filename, so never use bare labels such as v1/v2. Format-pack inputs such as the track, lyrics, scripts, prepared identities, and style references are host-owned hard steps: never ask for, combine, replace, or duplicate them with this tool. During Audio Analysis, workflowDecision is mandatory and the host accepts only its three bounded decisions; story, identity, style, and later-phase questions are rejected. At the start of Treatment, workflowDecision=treatment_path is mandatory and must offer agent_proposal before user_supplied; never require the user to bring a treatment. Use fileIntake only for ad-hoc media-library input the workflow did not declare. The sole recovery exception is replacing a track after run_phase(\"analysis\") proved it undecodable: collect one audio file as ordinary media, then call attach_song(media, replace:true). Only one decision may be pending; after calling, STOP and wait for the user's answer. Use projection.timelineRanges for visible timeline spans and projection.reviewShot to reveal a shot in the Review gallery.",
+            description: "Present a native structured dialog in the chat composer for an enumerable user decision instead of asking with an option list in prose. It is the one input surface while open. Keep it focused: at most 3 sections; split larger decisions. Write every option from the user's point of view: first person always means the user, different actors must be named, and each outcome must be clear without its icon (for example, 'Create sequences for me' versus 'I'll provide sequences'). Use allowsCustom for a non-exhaustive choice set, textField only for focused typed notes, and costHint when confirmation spends money. When the decision is between concrete image assets, call get_media and give every option its exact mediaRef plus a descriptive shortLabel; the card shows clickable thumbnails and the library filename, so never use bare labels such as v1/v2. Format-pack inputs such as the track, lyrics, scripts, prepared identities, and style references are host-owned hard steps: never ask for, combine, replace, or duplicate them with this tool. During Audio Analysis, workflowDecision is mandatory and the host accepts only its three bounded decisions; story, identity, style, and later-phase questions are rejected. At the start of Treatment, workflowDecision=treatment_path is mandatory and must offer agent_proposal before user_supplied; never require the user to bring a treatment. Use fileIntake only for ad-hoc media-library input the workflow did not declare. The sole recovery exception is replacing a track after run_phase(\"analysis\") proved it undecodable: collect one audio file as ordinary media, then call attach_song(media, replace:true). Only one decision may be pending; after calling, STOP and wait for the user's answer. Use projection.timelineRanges for visible timeline spans and projection.reviewShot to reveal a shot in the Review gallery.",
             inputSchema: objectSchema(
                 properties: [
                     "title": ["type": "string", "description": "Short imperative title, e.g. 'Shape the B-roll'."],
@@ -250,8 +250,9 @@ enum ToolDefinitions {
                             "analysis_interpretation_review",
                             "analysis_track_replacement",
                             "treatment_path",
+                            "storyboard_mode",
                         ],
-                        "description": "Declares a phase-owned bounded decision. Required for Audio Analysis decisions and for the initial Treatment path choice.",
+                        "description": "Declares a phase-owned bounded decision. Required for Audio Analysis decisions, the initial Treatment path choice, and the initial Storyboard creation-mode choice.",
                     ],
                     "textField": [
                         "type": "object",
@@ -294,7 +295,7 @@ enum ToolDefinitions {
                                         "additionalProperties": false,
                                         "properties": [
                                             "id": ["type": "string"],
-                                            "label": ["type": "string", "description": "Full option meaning. The chip shows shortLabel, or a host-derived compact label when it is omitted."],
+                                            "label": ["type": "string", "description": "Full option meaning, written from the user's point of view. First person always means the user; name any other actor. The chip shows shortLabel, or a host-derived compact label when it is omitted."],
                                             "shortLabel": [
                                                 "type": "string",
                                                 "maxLength": AgentDialog.maxChoiceDisplayLength,

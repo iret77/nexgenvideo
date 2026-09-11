@@ -116,12 +116,21 @@ sanity check `PATTERN_DRIFT` stays silent.
 
 ### 5. Choose the mode
 
-Ask via `show_dialog` (2 options + Other):
+Ask via `show_dialog` with `workflowDecision: storyboard_mode`, one
+single-select `storyboard_mode` section, and 2 options + Other. Use these
+stable option identities in this order; the host owns their localized
+visible copy:
 
-1. **Claude-only** (**recommended**) — you write the step sequences
-   directly, fast, no external spend.
-2. **User-supplied** — the user delivers the storyboard manually as
-   YAML, you validate and review.
+- Question: **How should the step sequences be created?**
+- `agent_created` — **Create sequences for me** (**recommended**): you
+  create them directly, fast, with no external spend.
+- `user_supplied` — **I'll provide sequences**: the user delivers the
+  storyboard manually as YAML; you validate and review it.
+
+Translate those exact meanings when the interface language is not English.
+In every language, first person in an option label denotes the user. Never
+label the agent-created route “I write them” or any equivalent that makes
+the agent and user routes read as the same action.
 
 ### 6. Build a step sequence per section
 

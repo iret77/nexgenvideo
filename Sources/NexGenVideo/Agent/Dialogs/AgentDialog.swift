@@ -140,6 +140,7 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
         case analysisInterpretationReview = "analysis_interpretation_review"
         case analysisTrackReplacement = "analysis_track_replacement"
         case treatmentPath = "treatment_path"
+        case storyboardMode = "storyboard_mode"
     }
 
     struct Choice: Identifiable, Equatable, Sendable, Codable {
@@ -450,20 +451,81 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
             throw ToolError("show_dialog: give it structure — at least one section, a textField, or a fileIntake; a bare question belongs in prose.")
         }
         let projection = try parseProjection(args["projection"] as? [String: Any])
+        let workflowDecision = (args["workflowDecision"] as? String)
+            .flatMap(WorkflowDecision.init(rawValue:))
+        let display = canonicalWorkflowDisplay(
+            title: title,
+            sections: sections,
+            workflowDecision: workflowDecision
+        )
         return AgentDialog(
             id: UUID().uuidString,
-            title: title,
+            title: display.title,
             symbol: (args["symbol"] as? String) ?? "slider.horizontal.3",
             intro: args["intro"] as? String,
             costHint: args["costHint"] as? String,
             confirmLabel: (args["confirmLabel"] as? String) ?? "Continue",
             textField: textField,
-            sections: sections,
+            sections: display.sections,
             fileIntake: fileIntake,
             projection: projection,
-            workflowDecision: (args["workflowDecision"] as? String)
-                .flatMap(WorkflowDecision.init(rawValue:))
+            workflowDecision: workflowDecision
         )
+    }
+
+    private static func canonicalWorkflowDisplay(
+        title: String,
+        sections: [Section],
+        workflowDecision: WorkflowDecision?
+    ) -> (title: String, sections: [Section]) {
+        guard workflowDecision == .storyboardMode else { return (title, sections) }
+        let canonicalTitle = String(
+            localized: "storyboard.mode.title",
+            defaultValue: "Storyboard setup",
+            comment: "Title for choosing who creates storyboard step sequences"
+        )
+        let canonicalQuestion = String(
+            localized: "storyboard.mode.question",
+            defaultValue: "How should the step sequences be created?",
+            comment: "Question for choosing who creates storyboard step sequences"
+        )
+        let canonicalLabels = [
+            "agent_created": String(
+                localized: "storyboard.mode.agent_created",
+                defaultValue: "Create sequences for me",
+                comment: "Choice asking NexGenVideo to create storyboard step sequences"
+            ),
+            "user_supplied": String(
+                localized: "storyboard.mode.user_supplied",
+                defaultValue: "I'll provide sequences",
+                comment: "Choice indicating the user will provide storyboard step sequences"
+            ),
+        ]
+        let canonicalSections = sections.map { section in
+            guard section.id == "storyboard_mode",
+                  case .choices(let options, let multiSelect) = section.kind else {
+                return section
+            }
+            let canonicalOptions = options.map { option in
+                guard let label = canonicalLabels[option.id] else { return option }
+                return Choice(
+                    id: option.id,
+                    label: label,
+                    shortLabel: label,
+                    symbol: option.symbol,
+                    mediaRef: option.mediaRef,
+                    rangeRef: option.rangeRef
+                )
+            }
+            return Section(
+                id: section.id,
+                label: canonicalQuestion,
+                shortLabel: section.shortLabel,
+                kind: .choices(options: canonicalOptions, multiSelect: multiSelect),
+                allowsCustom: section.allowsCustom
+            )
+        }
+        return (canonicalTitle, canonicalSections)
     }
 
     /// GUARDRAILS for agent-generated dialogs — the vocabulary is fixed and bounded so a card can never

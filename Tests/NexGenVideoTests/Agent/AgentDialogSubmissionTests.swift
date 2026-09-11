@@ -5,6 +5,44 @@ import Testing
 @Suite("Agent dialog submission")
 @MainActor
 struct AgentDialogSubmissionTests {
+    @Test func storyboardModeUsesHostOwnedUnambiguousLabels() throws {
+        let dialog = try AgentDialog.parse([
+            "title": "Storyboard setup",
+            "workflowDecision": "storyboard_mode",
+            "sections": [[
+                "id": "storyboard_mode",
+                "label": "Who writes the step sequences?",
+                "type": "choices",
+                "allowsCustom": true,
+                "options": [
+                    ["id": "agent_created", "label": "I write them"],
+                    ["id": "user_supplied", "label": "I supply it"],
+                ],
+            ]],
+        ])
+
+        try PipelineAgentHarness.validateStoryboardModeDialog(dialog)
+        let section = try #require(dialog.sections.first)
+        #expect(section.label == "How should the step sequences be created?")
+        guard case .choices(let options, _) = section.kind else {
+            Issue.record("Expected Storyboard mode choices")
+            return
+        }
+        #expect(options.map(\.shortLabel) == [
+            "Create sequences for me",
+            "I'll provide sequences",
+        ])
+        #expect(try PipelineAgentHarness.resolveStoryboardCreationPath(
+            dialog,
+            result: AgentDialogResult(
+                selectedLabels: [:],
+                toggles: [:],
+                direction: ""
+            ),
+            selectedOptionIDs: ["storyboard_mode": ["agent_created"]]
+        ) == .agentCreated)
+    }
+
     @Test func treatmentStartsWithAgentCreationAsARealChoice() throws {
         let dialog = try AgentDialog.parse([
             "title": "Choose how to develop the treatment",
