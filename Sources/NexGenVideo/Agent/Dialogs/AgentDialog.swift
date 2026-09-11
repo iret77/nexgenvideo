@@ -13,6 +13,10 @@ struct AgentDialogResult: Sendable, Equatable {
     /// Files the user dropped or picked in a `fileIntake` dialog. The host imports each as a media
     /// asset and hands the agent an @mention — the user never types, and no path travels as prose.
     var fileURLs: [URL] = []
+    /// Exact option identities selected by the card, independent of their display labels.
+    var selectedOptionIDs: [String: Set<String>] = [:]
+    /// Host-resolved filenames for selected media options, keyed by section then option id.
+    var selectedMediaFilenames: [String: [String: String]] = [:]
 
     func labels(_ sectionId: String) -> [String] { selectedLabels[sectionId] ?? [] }
     var allLabels: [String] { selectedLabels.values.flatMap { $0 } }
@@ -145,6 +149,8 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
         let shortLabel: String
         /// SF Symbol name (Workstream B folds in here — every element carries a semantic icon).
         let symbol: String?
+        /// Exact image asset displayed as this choice's selectable thumbnail.
+        let mediaRef: String?
         /// When the choice IS a projected timeline range, its `TimelineRangeCandidate.id` — the card
         /// stays compact and the range is picked on the canvas instead (A3).
         let rangeRef: String?
@@ -154,12 +160,14 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
             label: String,
             shortLabel: String? = nil,
             symbol: String? = nil,
+            mediaRef: String? = nil,
             rangeRef: String? = nil
         ) {
             self.id = id
             self.label = label
             self.shortLabel = Self.compactLabel(shortLabel, fallback: label)
             self.symbol = symbol
+            self.mediaRef = mediaRef
             self.rangeRef = rangeRef
         }
 
@@ -409,11 +417,24 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
                                   label: optLabel,
                                   shortLabel: opt["shortLabel"] as? String,
                                   symbol: opt["symbol"] as? String,
+                                  mediaRef: opt["mediaRef"] as? String,
                                   rangeRef: opt["rangeRef"] as? String)
                 }
                 // GUARDRAIL: enough to be a choice, few enough to scan. Set allowsCustom for open sets.
                 guard options.count >= 2, options.count <= Self.maxOptionsPerSection else {
                     throw ToolError("show_dialog: choices section '\(id)' needs 2…\(Self.maxOptionsPerSection) options (set allowsCustom for an open 'Other…' field).")
+                }
+                let mediaRefs = options.compactMap(\.mediaRef)
+                if !mediaRefs.isEmpty {
+                    guard mediaRefs.count == options.count else {
+                        throw ToolError("show_dialog: image choices in section '\(id)' must give every option a mediaRef.")
+                    }
+                    guard Set(mediaRefs).count == mediaRefs.count else {
+                        throw ToolError("show_dialog: image choices in section '\(id)' must reference distinct media assets.")
+                    }
+                    guard options.allSatisfy({ $0.rangeRef == nil }) else {
+                        throw ToolError("show_dialog: choices in section '\(id)' cannot combine mediaRef with rangeRef.")
+                    }
                 }
                 sections.append(Section(id: id, label: label, shortLabel: shortLabel,
                                         kind: .choices(options: options,

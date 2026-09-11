@@ -133,6 +133,23 @@ struct ToolDefinitionContractTests {
                 .contains("show_dialog.sections[0].options[0].shortLabel: expected at most \(AgentDialog.maxChoiceDisplayLength) character(s)")
         )
 
+        let emptyMediaRef = await harness.runRaw("show_dialog", args: [
+            "title": "Choose",
+            "sections": [[
+                "id": "anchor",
+                "label": "Anchor",
+                "type": "choices",
+                "options": [
+                    ["id": "one", "label": "One", "mediaRef": ""],
+                    ["id": "two", "label": "Two", "mediaRef": "image-two"],
+                ],
+            ]],
+        ])
+        #expect(
+            ToolHarness.textOf(emptyMediaRef)
+                .contains("show_dialog.sections[0].options[0].mediaRef: expected at least 1 character(s)")
+        )
+
         let negativeCost = await harness.runRaw("record_render", args: [
             "phase": "preview",
             "shot_id": "s001",

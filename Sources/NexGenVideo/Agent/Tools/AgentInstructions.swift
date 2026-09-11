@@ -393,6 +393,9 @@ enum AgentInstructions {
           into separate dialogs (the tool rejects more). When an option set isn't exhaustive, set \
           the section's allowsCustom so the user gets an "Other…" field. Add a `textField` \
           (multiline for lyrics/notes) when you need free text. Never a prose option list.
+        - When options select between concrete images, call get_media and attach each image's exact \
+          mediaRef to its option. Give each a descriptive shortLabel based on the visible concept, \
+          never a bare sequence such as v1/v2; the card shows the thumbnail and library filename.
         - Never print tool names, phase ids, or pipeline chains — the app visualizes them. \
           No code blocks unless the user asks for code.
         """

@@ -9,7 +9,8 @@
           "heading": "Workflow",
           "items": [
             "Matching Media Library items appear before new-file controls in intake cards, with search shown only when multiple items need filtering.",
-            "Staging a confirmed character or location reference for its Bible no longer invalidates an unchanged approved Brief, and identity references cannot be reassigned as Production Design style."
+            "Staging a confirmed character or location reference for its Bible no longer invalidates an unchanged approved Brief, and identity references cannot be reassigned as Production Design style.",
+            "Image decisions show selectable thumbnails with descriptive labels and persistent Media Library filenames, and preserve the exact chosen asset for the Agent."
           ]
         },
         {

@@ -85,6 +85,101 @@ struct AgentDialogSubmissionTests {
         #expect(harness.editor.agentService.pendingDialog?.title == "Choose")
     }
 
+    @Test func imageChoicesRequireMediaRefsForEveryOption() throws {
+        #expect(throws: ToolError.self) {
+            try AgentDialog.parse([
+                "title": "Choose the anchor",
+                "sections": [[
+                    "id": "anchor",
+                    "label": "Which image becomes the anchor?",
+                    "type": "choices",
+                    "options": [
+                        ["id": "dusk", "label": "Dusk street", "mediaRef": "image-a"],
+                        ["id": "studio", "label": "Studio portrait"],
+                    ],
+                ]],
+            ])
+        }
+    }
+
+    @Test func imageChoicesResolveToUsableLibraryImages() async throws {
+        let harness = ToolHarness()
+        harness.editor.agentService.newChat()
+        let sessionID = try #require(harness.editor.agentService.currentSessionId)
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let firstID = UUID().uuidString
+        let secondID = UUID().uuidString
+        let firstURL = directory.appendingPathComponent("dusk-street.png")
+        let secondURL = directory.appendingPathComponent("studio-portrait.png")
+        try Data([0]).write(to: firstURL)
+        try Data([0]).write(to: secondURL)
+        harness.editor.mediaAssets = [
+            MediaAsset(id: firstID, url: firstURL, type: .image, name: "Dusk street"),
+            MediaAsset(id: secondID, url: secondURL, type: .image, name: "Studio portrait"),
+        ]
+
+        let result = await harness.executor.execute(
+            name: "show_dialog",
+            args: [
+                "title": "Choose the anchor",
+                "sections": [[
+                    "id": "anchor",
+                    "label": "Which image becomes the anchor?",
+                    "type": "choices",
+                    "options": [
+                        ["id": "dusk", "label": "Dusk street", "mediaRef": String(firstID.prefix(8))],
+                        ["id": "studio", "label": "Studio portrait", "mediaRef": String(secondID.prefix(8))],
+                    ],
+                ]],
+            ],
+            origin: .inAppChat(sessionID: sessionID)
+        )
+
+        #expect(!result.isError)
+        let pending = try #require(harness.editor.agentService.pendingDialog)
+        guard case .choices(let options, _) = pending.sections[0].kind else {
+            Issue.record("Expected image choices")
+            return
+        }
+        #expect(options.compactMap(\.mediaRef) == [firstID, secondID])
+    }
+
+    @Test func imageChoicesRejectNonImageMedia() async throws {
+        let harness = ToolHarness()
+        harness.editor.agentService.newChat()
+        let sessionID = try #require(harness.editor.agentService.currentSessionId)
+        let firstID = UUID().uuidString
+        let secondID = UUID().uuidString
+        harness.editor.mediaAssets = [
+            MediaAsset(id: firstID, url: URL(fileURLWithPath: "/tmp/one.mov"), type: .video, name: "One"),
+            MediaAsset(id: secondID, url: URL(fileURLWithPath: "/tmp/two.mov"), type: .video, name: "Two"),
+        ]
+
+        let result = await harness.executor.execute(
+            name: "show_dialog",
+            args: [
+                "title": "Choose the anchor",
+                "sections": [[
+                    "id": "anchor",
+                    "label": "Which image becomes the anchor?",
+                    "type": "choices",
+                    "options": [
+                        ["id": "one", "label": "One", "mediaRef": firstID],
+                        ["id": "two", "label": "Two", "mediaRef": secondID],
+                    ],
+                ]],
+            ],
+            origin: .inAppChat(sessionID: sessionID)
+        )
+
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("not an image"))
+    }
+
     @Test func externalMCPDialogCannotCaptureAnInAppChat() async {
         let harness = ToolHarness()
         harness.editor.agentService.newChat()
