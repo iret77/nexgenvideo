@@ -13,6 +13,7 @@ on:
       - Sources/NexGenVideo/App/HangDiagnosticReplay.swift
       - Sources/NexGenVideo/Agent/Panel/AgentPanelView.swift
       - Sources/NexGenVideo/Agent/Panel/AgentTranscriptLayout.swift
+      - Sources/NexGenVideo/Agent/Panel/MarkdownText.swift
       - Sources/NexGenVideo/Editor/EditorView.swift
       - Sources/NexGenVideo/Inspector/Cockpit/PipelinePanelView.swift
 
@@ -47,9 +48,13 @@ jobs:
           fetch-depth: 0
       - uses: ./.github/actions/setup-xcode-27
       - uses: ./.github/actions/cache-swiftpm-dependencies
-      - name: Restore affected released transcript container for control
+      - name: Restore released transcript surface for control
         if: matrix.variant == 'baseline'
-        run: git show 6a56826a64faae5df48c24ec3f35311f50aacc7c:Sources/NexGenVideo/Agent/Panel/AgentPanelView.swift > Sources/NexGenVideo/Agent/Panel/AgentPanelView.swift
+        run: |
+          git checkout 6a56826a64faae5df48c24ec3f35311f50aacc7c -- \
+            Sources/NexGenVideo/Agent/Panel/AgentPanelView.swift \
+            Sources/NexGenVideo/Agent/Panel/AgentTranscriptLayout.swift \
+            Sources/NexGenVideo/Agent/Panel/MarkdownText.swift
       - name: Build optimized replay app
         run: |
           scripts/bundle.sh release

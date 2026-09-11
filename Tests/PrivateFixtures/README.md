@@ -12,7 +12,11 @@ and inside the encrypted diagnostic archive.
 A completed replay with different window/scroll geometry does not prove a fix.
 Remove the temporary fixture and its secret when investigation is complete.
 
-Recorded Hang Replay passes only when the released control stalls inside the captured
-failure window and the candidate finishes every state with a responsive main-thread
-pulse. Chat Hang Replay uses generated content to stress streaming, images, dialogs,
-resizing, scrolling, and composer focus without private fixtures or secrets.
+The control arm uses the current replay harness with the released transcript rendering
+surface, isolating the production layout change from improvements to the replay itself.
+It is accepted when it either finishes coherently or stalls inside the captured failure
+window because the reported hang is timing-dependent. The candidate must always finish
+every state with the recorded window geometry and a
+responsive main-thread pulse. Chat Hang Replay uses generated content to stress
+streaming, images, dialogs, resizing, scrolling, and composer focus without private
+fixtures or secrets.

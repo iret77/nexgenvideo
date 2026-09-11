@@ -26,13 +26,17 @@ enum HangDiagnosticReplay {
             let app = NSApplication.shared
             app.setActivationPolicy(.regular)
             BundledFonts.register()
-            AgentBackendPreference.set(.claudeCode)
-            let editor = EditorViewModel()
+            let editor = EditorViewModel(
+                agentService: AgentService(
+                    backend: .claudeCode,
+                    refreshBackendStatusOnInit: false
+                )
+            )
             editor.workspaceFocus = .produce
             editor.agentPanelVisible = true
             let matchGeometry = environment["NGV_DIAGNOSTIC_REPLAY_MATCH_GEOMETRY"] == "1"
             let records = try (matchGeometry ? structuralRecords(in: folder) : [])
-            let recordedWindow = records.last { $0.operation == .window && $0.values.count >= 6 && $0.values[5] == 1 }
+            let recordedWindow = recordedEditorWindow(in: records)
             let recordedScroll = records.last { $0.operation == .scroll && $0.values.count >= 5 }
             let activationTimeline = recordedActivationTimeline(in: records)
             let host = NSHostingController(rootView: EditorWindowContentView().environment(editor).allowsHitTesting(false))
@@ -149,6 +153,18 @@ enum HangDiagnosticReplay {
             .filter { $0.lastPathComponent.hasPrefix("events-") && $0.pathExtension == "json" }
             .flatMap { try JSONDecoder().decode([DiagnosticRecord].self, from: Data(contentsOf: $0)) }
             .sorted { $0.sequence < $1.sequence }
+    }
+
+    static func recordedEditorWindow(in records: [DiagnosticRecord]) -> DiagnosticRecord? {
+        let windows = records.filter { $0.operation == .window && $0.values.count >= 3 }
+        guard let editorWindowNumber = windows.max(by: {
+            let leftArea = $0.values[1] * $0.values[2]
+            let rightArea = $1.values[1] * $1.values[2]
+            return leftArea == rightArea ? $0.sequence < $1.sequence : leftArea < rightArea
+        })?.values[0] else { return nil }
+        return windows
+            .filter { $0.values[0] == editorWindowNumber }
+            .max { $0.sequence < $1.sequence }
     }
 
     struct ActivationSample: Equatable {

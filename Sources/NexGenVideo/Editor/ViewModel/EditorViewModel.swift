@@ -689,7 +689,7 @@ final class EditorViewModel {
     )
 
     let generationService = GenerationService()
-    let agentService = AgentService()
+    let agentService: AgentService
     let pipelineAgentHarness = PipelineAgentHarness()
     let pipelinePhaseExecution = PipelinePhaseExecutionState()
     let pipelinePhaseRunCoordinator = PipelinePhaseRunCoordinator()
@@ -994,7 +994,8 @@ final class EditorViewModel {
         refreshMissingMediaCache()
     }
 
-    init() {
+    init(agentService: AgentService = AgentService()) {
+        self.agentService = agentService
         mediaResolver = MediaResolver(
             manifest: { [weak self] in self?.mediaManifest ?? MediaManifest() },
             projectURL: { [weak self] in self?.workingCopyHome }

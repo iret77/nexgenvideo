@@ -14,6 +14,26 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from replay_key import decode_base64_key
 
 
+def recorded_editor_window(records):
+    windows = [
+        record for record in records
+        if record.get("operation") == "window" and len(record.get("values", [])) >= 3
+    ]
+    if not windows:
+        return None
+    editor_window_number = max(
+        windows,
+        key=lambda record: (
+            record["values"][1] * record["values"][2],
+            record.get("sequence", 0),
+        ),
+    )["values"][0]
+    return max(
+        (record for record in windows if record["values"][0] == editor_window_number),
+        key=lambda record: record.get("sequence", 0),
+    )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("app", type=Path)
@@ -42,6 +62,11 @@ def main():
             data = file.read_bytes()
             decoded.append(json.loads(AESGCM(replay_key).decrypt(data[:12], data[12:], folder.name.encode())))
         duration = decoded[-1]["uptime"] - decoded[0]["uptime"]
+        structural_records = []
+        if args.match_geometry:
+            for event_file in sorted(folder.glob("events-*.json")):
+                structural_records.extend(json.loads(event_file.read_text()))
+        recorded_window = recorded_editor_window(structural_records)
         replay_delay = len(decoded) * (0.12 if args.match_geometry else 0)
         settling_delay = 30 if args.match_geometry else 2
         timeout = duration + replay_delay + settling_delay + 60
@@ -106,6 +131,9 @@ def main():
                   "timeoutSeconds": timeout,
                   "elapsedSeconds": time.monotonic() - started, "exitCode": process.returncode,
                   "timedOut": timed_out, "geometryRequested": args.match_geometry}
+        if recorded_window is not None:
+            result["recordedWindowWidth"] = recorded_window["values"][1]
+            result["recordedWindowHeight"] = recorded_window["values"][2]
         result["maxObservedCPU"] = max((o["cpu"] for o in observations), default=None)
         result["maxRSSKB"] = max((o["rssKB"] for o in observations), default=None)
         result["busySamples"] = captures

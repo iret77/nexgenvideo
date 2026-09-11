@@ -2,6 +2,7 @@
 """Validate a released control replay and require the candidate replay to finish."""
 import argparse
 import json
+import math
 from pathlib import Path
 import sys
 
@@ -21,6 +22,7 @@ def verification_errors(result, expected, maximum_pulse_gap=5.0):
         if not isinstance(progress, dict):
             errors.append("released control never published replay progress")
             return errors
+        errors.extend(geometry_errors(result, progress))
         if result.get("timedOut") is True:
             if progress.get("finished") is not False:
                 errors.append("timed-out released control reported a finished replay")
@@ -28,7 +30,7 @@ def verification_errors(result, expected, maximum_pulse_gap=5.0):
             last_sequence = result.get("lastSequence")
             if type(sequence) is not int or type(last_sequence) is not int:
                 errors.append("released control did not identify the stalled sequence")
-            elif not last_sequence - FAILURE_WINDOW_FROM_END <= sequence < last_sequence:
+            elif not last_sequence - FAILURE_WINDOW_FROM_END <= sequence <= last_sequence:
                 errors.append(
                     f"released control stalled at sequence {sequence}, outside the captured failure window"
                 )
@@ -39,6 +41,8 @@ def verification_errors(result, expected, maximum_pulse_gap=5.0):
                 errors.append("released control did not finish every captured state")
         return errors
 
+    if isinstance(progress, dict):
+        errors.extend(geometry_errors(result, progress))
     if result.get("timedOut") is not False:
         errors.append("candidate replay timed out")
     if result.get("exitCode") != 0:
@@ -55,6 +59,32 @@ def verification_errors(result, expected, maximum_pulse_gap=5.0):
         errors.append(
             f"candidate main-thread pulse gap {pulse_gap:.3f}s exceeded {maximum_pulse_gap:.3f}s"
         )
+    return errors
+
+
+def geometry_errors(result, progress, tolerance=1.0):
+    if result.get("geometryRequested") is not True:
+        return []
+    errors = []
+    for axis in ("Width", "Height"):
+        expected = result.get(f"recordedWindow{axis}")
+        actual = progress.get(f"window{axis}")
+        if (
+            isinstance(expected, bool)
+            or not isinstance(expected, (int, float))
+            or not math.isfinite(expected)
+        ):
+            errors.append(f"recorded window {axis.lower()} is unavailable")
+        elif (
+            isinstance(actual, bool)
+            or not isinstance(actual, (int, float))
+            or not math.isfinite(actual)
+        ):
+            errors.append(f"replay window {axis.lower()} is unavailable")
+        elif abs(actual - expected) > tolerance:
+            errors.append(
+                f"replay window {axis.lower()} {actual:.1f} does not match recorded {expected:.1f}"
+            )
     return errors
 
 

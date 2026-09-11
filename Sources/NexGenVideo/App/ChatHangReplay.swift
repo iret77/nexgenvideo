@@ -8,8 +8,12 @@ enum ChatHangReplay {
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
         BundledFonts.register()
-        AgentBackendPreference.set(.claudeCode)
-        let editor = EditorViewModel()
+        let editor = EditorViewModel(
+            agentService: AgentService(
+                backend: .claudeCode,
+                refreshBackendStatusOnInit: false
+            )
+        )
         editor.workspaceFocus = .produce
         editor.agentPanelVisible = true
         let service = editor.agentService

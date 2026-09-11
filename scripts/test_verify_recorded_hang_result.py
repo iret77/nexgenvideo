@@ -8,10 +8,18 @@ class RecordedHangResultTests(unittest.TestCase):
         result = {
             "timedOut": True,
             "geometryRequested": True,
+            "recordedWindowWidth": 1463,
+            "recordedWindowHeight": 1040,
             "constraintOverflowWarning": True,
             "lastSequence": 247,
-            "progress": {"finished": False, "sequence": 245},
+            "progress": {
+                "finished": False, "sequence": 245,
+                "windowWidth": 1463, "windowHeight": 1040,
+            },
         }
+        self.assertEqual(verification_errors(result, "baseline"), [])
+
+        result["progress"]["sequence"] = 247
         self.assertEqual(verification_errors(result, "baseline"), [])
 
         result["progress"]["sequence"] = None
@@ -25,8 +33,13 @@ class RecordedHangResultTests(unittest.TestCase):
             "timedOut": False,
             "exitCode": 0,
             "geometryRequested": True,
+            "recordedWindowWidth": 1463,
+            "recordedWindowHeight": 1040,
             "lastSequence": 247,
-            "progress": {"finished": True, "sequence": None},
+            "progress": {
+                "finished": True, "sequence": None,
+                "windowWidth": 1463, "windowHeight": 1040,
+            },
         }
         self.assertEqual(verification_errors(result, "baseline"), [])
 
@@ -35,14 +48,25 @@ class RecordedHangResultTests(unittest.TestCase):
             "timedOut": False,
             "exitCode": 0,
             "geometryRequested": True,
+            "recordedWindowWidth": 1463,
+            "recordedWindowHeight": 1040,
             "constraintOverflowWarning": True,
             "progress": {
                 "finished": True,
                 "sequence": None,
+                "windowWidth": 1463,
+                "windowHeight": 1040,
                 "maximumPulseGap": 0.4,
             },
         }
         self.assertEqual(verification_errors(result, "candidate"), [])
+
+        result["progress"]["windowWidth"] = 1200
+        self.assertIn(
+            "replay window width 1200.0 does not match recorded 1463.0",
+            verification_errors(result, "candidate"),
+        )
+        result["progress"]["windowWidth"] = 1463
 
         result["progress"]["maximumPulseGap"] = 8.0
         self.assertIn(
@@ -55,10 +79,14 @@ class RecordedHangResultTests(unittest.TestCase):
             "timedOut": True,
             "exitCode": -9,
             "geometryRequested": True,
+            "recordedWindowWidth": 1463,
+            "recordedWindowHeight": 1040,
             "constraintOverflowWarning": False,
             "progress": {
                 "finished": False,
                 "sequence": 245,
+                "windowWidth": 1463,
+                "windowHeight": 1040,
                 "maximumPulseGap": 0.3,
             },
         }

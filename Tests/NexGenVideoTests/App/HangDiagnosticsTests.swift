@@ -177,6 +177,16 @@ struct HangDiagnosticsTests {
         #expect(decoded.cockpitTab == nil)
     }
 
+    @Test @MainActor func replayUsesInjectedBackendWithoutChangingPreferences() {
+        let service = AgentService(
+            backend: .claudeCode,
+            refreshBackendStatusOnInit: false
+        )
+        let editor = EditorViewModel(agentService: service)
+        #expect(editor.agentService === service)
+        #expect(editor.agentService.backend == .claudeCode)
+    }
+
     @Test @MainActor func replayActivationCombinesWindowsFromTheSameHeartbeat() {
         let records = [
             DiagnosticRecord(sequence: 1, uptime: 1, operation: .window,
@@ -193,5 +203,9 @@ struct HangDiagnosticsTests {
             .init(uptime: 2, active: false),
             .init(uptime: 3, active: true),
         ])
+        let editorWindow = HangDiagnosticReplay.recordedEditorWindow(in: records)
+        #expect(editorWindow?.values[0] == 1)
+        #expect(editorWindow?.values[1] == 1463)
+        #expect(editorWindow?.values[2] == 1040)
     }
 }
