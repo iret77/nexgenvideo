@@ -43,7 +43,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .providers:
             return "Connect the services that supply generation models."
         case .models:
-            return "Choose which runnable models appear in generation tools."
+            return "Choose which models appear in generation tools."
         case .storage:
             return "Manage project locations, temporary files, and on-device search data."
         }
@@ -184,6 +184,8 @@ private struct SettingsDetail: View {
                 }
             }
         }
+        .buttonStyle(.capsule(.secondary, size: .regular))
+        .controlSize(.small)
     }
 }
 
@@ -221,6 +223,7 @@ struct SettingsPage<Content: View>: View {
 
             ScrollView {
                 content
+                .frame(maxWidth: AppTheme.ComponentSize.settingsContentMaxWidth, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, AppTheme.Spacing.xlXxl)
                 .padding(.bottom, AppTheme.Spacing.xlXxl)
@@ -329,17 +332,7 @@ struct SettingsRow<Accessory: View>: View {
     }
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            row(horizontal: true).fixedSize(horizontal: true, vertical: false)
-            row(horizontal: false)
-        }
-        .padding(AppTheme.Spacing.lgXl)
-    }
-
-    private func row(horizontal: Bool) -> some View {
-        let layout = horizontal ? AnyLayout(HStackLayout(alignment: .top, spacing: AppTheme.Spacing.lgXl))
-            : AnyLayout(VStackLayout(alignment: .leading, spacing: AppTheme.Spacing.mdLg))
-        return layout {
+        SettingsRowLayout(minimumLabelWidth: AppTheme.ComponentSize.settingsRowLabelMinWidth * textScale) {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                 Text(title)
                     .interfaceFont(size: AppTheme.Typography.ui)
@@ -351,10 +344,44 @@ struct SettingsRow<Accessory: View>: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            if horizontal { Spacer(minLength: AppTheme.Spacing.lg) }
-            accessory
+            HStack(spacing: AppTheme.Spacing.sm) { accessory }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(AppTheme.Spacing.lgXl)
+    }
+}
+
+struct SettingsRowLayout: Layout {
+    let minimumLabelWidth: CGFloat
+    private let gap = AppTheme.Spacing.lgXl
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width.flatMap { $0.isFinite ? max(0, $0) : nil }
+            ?? AppTheme.ComponentSize.settingsContentMaxWidth
+        let sizes = measurements(width: width, subviews: subviews)
+        return CGSize(width: width, height: sizes.stacked
+            ? sizes.label.height + gap + sizes.control.height
+            : max(sizes.label.height, sizes.control.height))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard subviews.count == 2 else { return }
+        let sizes = measurements(width: bounds.width, subviews: subviews)
+        subviews[0].place(at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(sizes.label))
+        subviews[1].place(
+            at: CGPoint(x: bounds.maxX - sizes.control.width,
+                        y: bounds.minY + (sizes.stacked ? sizes.label.height + gap : 0)),
+            anchor: .topLeading, proposal: ProposedViewSize(sizes.control)
+        )
+    }
+
+    private func measurements(width: CGFloat, subviews: Subviews) -> (label: CGSize, control: CGSize, stacked: Bool) {
+        guard subviews.count == 2 else { return (.zero, .zero, false) }
+        let control = subviews[1].sizeThatFits(.unspecified)
+        let stacked = width < minimumLabelWidth + gap + control.width
+        let labelWidth = stacked ? width : max(0, width - gap - control.width)
+        let label = subviews[0].sizeThatFits(ProposedViewSize(width: labelWidth, height: nil))
+        return (label, subviews[1].sizeThatFits(ProposedViewSize(width: min(width, control.width), height: nil)), stacked)
     }
 }
 

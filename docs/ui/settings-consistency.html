@@ -1,315 +1,54 @@
 <!doctype html>
+<html lang="en">
 <meta charset="utf-8">
-<title>UI-Spec — Settings, Help and provider consistency</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="ui-spec-route" content="/settings,/help">
-<meta name="ui-spec-viewports" content="1440x1120,980x640">
+<meta name="ui-spec-viewports" content="980x640,760x480,1440x1120">
+<title>NexGenVideo — Settings</title>
 <style>
-  :root {
-    --base: #0a0a0a;
-    --surface: #161616;
-    --raised: #1e1e1e;
-    --prominent: #2c2c2c;
-    --border: #ffffff29;
-    --border-subtle: #ffffff1f;
-    --text: #fff;
-    --text-2: #ffffffcc;
-    --text-3: #ffffff9e;
-    --muted: #ffffff80;
-    --accent: #f5efe4;
-    --ok: #4fb85f;
-    --warn: #e89c3e;
-    --error: #e54f4f;
-    --s-xs: 4px;
-    --s-sm: 6px;
-    --s-sm-md: 8px;
-    --s-md: 10px;
-    --s-md-lg: 12px;
-    --s-lg: 14px;
-    --s-lg-xl: 16px;
-    --s-xl: 20px;
-    --s-xl-xxl: 24px;
-    --s-xxl: 28px;
-    --r-sm: 6px;
-    --r-md: 10px;
-  }
-  * { box-sizing: border-box; }
-  html, body {
-    margin: 0;
-    background: #101010;
-    color: var(--text);
-    font: 400 13px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
-  }
-  body { padding: 32px; }
-  .doc { max-width: 1180px; margin: 0 auto; }
-  h1 { margin: 0 0 8px; font-size: 24px; }
-  h2 { margin: 28px 0 10px; font-size: 16px; }
-  p, li { color: var(--text-2); max-width: 90ch; }
-  li { margin: 5px 0; }
-  code { color: var(--accent); }
-  .mock-label { margin: 24px 0 8px; color: var(--text-3); font-size: 12px; }
-  .window {
-    display: grid;
-    grid-template-columns: 220px 1fr;
-    width: 980px;
-    height: 640px;
-    overflow: hidden;
-    border: 1px solid #ffffff24;
-    border-radius: 12px;
-    background: var(--base);
-    box-shadow: 0 18px 50px #000a;
-  }
-  .sidebar {
-    padding: 42px 8px 12px;
-    background: var(--surface);
-    border-right: 1px solid var(--border-subtle);
-  }
-  .side-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    height: 30px;
-    padding: 0 8px;
-    border-radius: var(--r-sm);
-    color: var(--text-2);
-  }
-  .side-row.active { background: var(--prominent); color: var(--text); }
-  .icon { width: 16px; text-align: center; color: var(--text-3); }
-  .detail { background: #00000059; overflow: hidden; }
-  .page-head { padding: 58px 24px 16px; }
-  .page-title { font-size: 28px; font-weight: 300; letter-spacing: -.5px; }
-  .page-subtitle { margin-top: 4px; color: var(--text-3); font-size: 12px; }
-  .scroll { height: 540px; overflow: hidden; padding: 0 24px 24px; }
-  .section + .section { margin-top: 14px; }
-  .section-title { font-weight: 600; }
-  .section-subtitle { margin-top: 3px; color: var(--text-3); font-size: 11px; }
-  .card {
-    margin-top: 8px;
-    overflow: hidden;
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    background: var(--raised);
-  }
-  .row {
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    padding: 12px;
-  }
-  .row + .row { border-top: 1px solid var(--border-subtle); }
-  .row-main { min-width: 0; flex: 1; }
-  .row-title { color: var(--text); }
-  .row-subtitle { margin-top: 4px; color: var(--text-3); font-size: 11px; }
-  .row-actions { display: flex; align-items: center; gap: 8px; }
-  .badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 8px;
-    border-radius: 999px;
-    color: var(--warn);
-    background: #e89c3e14;
-    font-size: 11px;
-    font-weight: 600;
-    white-space: nowrap;
-  }
-  .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-  .button {
-    padding: 6px 12px;
-    border-radius: 999px;
-    background: var(--prominent);
-    color: var(--text);
-    font-size: 11px;
-    white-space: nowrap;
-  }
-  .button.primary { background: var(--accent); color: #1d1b18; font-weight: 600; }
-  .notice { color: var(--text-3); font-size: 11px; }
-  .providers {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
-    margin-top: 8px;
-  }
-  .provider {
-    display: grid;
-    grid-template-rows: 58px minmax(96px, auto);
-    overflow: hidden;
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    background: var(--raised);
-  }
-  .provider-head {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    padding: 12px;
-    border-bottom: 1px solid var(--border-subtle);
-  }
-  .provider-name { font-weight: 600; }
-  .provider-meta { margin-top: 3px; color: var(--text-3); font-size: 11px; }
-  .provider-status {
-    margin-left: auto;
-    color: var(--ok);
-    font-size: 11px;
-    white-space: nowrap;
-  }
-  .provider-status.off { color: var(--text-3); }
-  .provider-body {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    justify-content: center;
-    gap: 7px;
-    min-height: 96px;
-    padding: 10px 12px;
-    color: var(--text-3);
-    font-size: 11px;
-  }
-  .field {
-    width: 100%;
-    padding: 9px 10px;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--r-sm);
-    background: #00000026;
-    color: var(--text-3);
-    font: 11px "SF Mono", monospace;
-  }
-  .mcp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .client { min-height: 102px; }
-  @media (max-width: 1050px) {
-    body { padding: 16px; }
-    .window { width: 100%; }
-  }
+:root{--base:#0a0a0a;--surface:#161616;--raised:#1e1e1e;--border:#ffffff29;--subtle:#ffffff1f;--text:#fff;--secondary:#ffffffcc;--muted:#ffffff9e;--accent:#f5efe4;--warning:#e89c3e;--success:#4fb85f;--scale:1;--gap:16px}
+*{box-sizing:border-box}body{margin:0;background:#101010;color:var(--text);font:calc(13px * var(--scale))/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}button,input,select{font:inherit;color:inherit}button,select{border:0;background:#2c2c2c;border-radius:999px;padding:6px 12px;white-space:nowrap;cursor:pointer}button:hover{background:#373737}button:disabled{color:#ffffff55;background:#ffffff08;cursor:default}button.primary{background:var(--accent);color:#1d1b18}input{border:1px solid var(--border);border-radius:6px;background:#111;padding:8px 10px;min-width:0;width:100%}button.link{padding:0;background:none;color:var(--accent)}p{margin:0;color:var(--muted)}h1{font-size:calc(20px * var(--scale));margin:0;font-weight:600;letter-spacing:-.4px}h2{font-size:calc(13px * var(--scale));font-weight:500;margin:0 0 8px}#spec{padding:28px;max-width:1100px;margin:auto}#spec p{margin:10px 0}#spec li{margin:6px 0;color:var(--secondary)}.toolbar{max-width:980px;margin:24px auto 12px;display:flex;align-items:center;gap:12px}.toolbar span{flex:1;color:var(--muted)}.window{position:relative;display:grid;grid-template-columns:220px minmax(0,1fr);width:980px;height:640px;max-width:100%;margin:0 auto 28px;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--base)}.lights{position:absolute;left:14px;top:13px;display:flex;gap:8px}.lights i{width:12px;height:12px;border-radius:50%;background:#ff5f57}.lights i:nth-child(2){background:#febc2e}.lights i:nth-child(3){background:#28c840}.sidebar{background:var(--surface);padding:44px 8px 12px}.sidebar button{display:flex;align-items:center;gap:8px;width:100%;border-radius:6px;text-align:left;background:none;padding:7px 8px;margin-bottom:2px;font-size:calc(13px * var(--scale))}.sidebar button.active{background:#2c2c2c}.icon{width:16px;text-align:center;color:var(--muted)}.detail{min-width:0;display:flex;flex-direction:column;padding-top:30px}.head{padding:28px 24px 18px}.head p{margin-top:4px}.scroll{overflow:auto;padding:0 24px 24px;flex:1}.content{max-width:760px}.section+.section{margin-top:14px}.card{border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--raised)}.row{display:flex;align-items:flex-start;gap:var(--gap);padding:16px}.row+.row,.notice{border-top:1px solid var(--subtle)}.main{flex:1;min-width:0}.main p{margin-top:4px}.actions{display:flex;align-items:center;gap:6px;flex-shrink:0;justify-content:flex-end}.row.stacked{flex-direction:column}.row.stacked .actions{align-self:flex-end}.badge{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:4px 6px;font-weight:600;background:#ffffff08;color:var(--muted);white-space:nowrap}.badge.ok{color:var(--success);background:#4fb85f12}.badge.warn{color:var(--warning);background:#e89c3e12}.badge:before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor}.switch{padding:0;width:36px;height:20px;background:var(--accent);position:relative;flex-shrink:0}.switch:after{content:'';display:block;position:absolute;right:2px;top:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 3px #0005}.switch[aria-checked=false]{background:#ffffff29}.switch[aria-checked=false]:after{left:2px;right:auto}.notice{padding:10px 16px;color:var(--muted);background:#ffffff04}.search{margin:0 0 14px;padding:10px 12px;background:var(--raised);border-radius:10px}.field{padding:16px;display:flex;align-items:center;gap:10px;border-top:1px solid var(--subtle)}.mono{font-family:ui-monospace,monospace;overflow-wrap:anywhere}.subtitle{margin:-4px 0 8px}.empty{text-align:center;padding:36px 16px}.empty button{margin-top:14px}dialog{color:var(--text);background:var(--raised);border:1px solid var(--border);border-radius:20px;padding:24px;max-width:500px}dialog::backdrop{background:#0008}dialog p{margin:12px 0 24px}dialog .actions{justify-content:space-between}.capture #spec,.capture .toolbar{display:none}.capture .window{margin:0;border:0;border-radius:0;width:100vw;height:100vh}.capture{background:var(--base)}
 </style>
-
-<div class="doc">
-  <section>
-    <h1>Settings, Help and provider consistency</h1>
-    <p>Normative release specification for the Settings/Help shell, Agent runtime status and provider cards.</p>
-    <ul>
-      <li><strong>One window shell:</strong> Settings and Help use the same 980×640 default size, 760×480 minimum, 220-point opaque sidebar, page header, scroll insets and section rhythm.</li>
-      <li><strong>One row for status and action:</strong> Claude Code’s status badge and <em>Check again</em> action share the runtime row. A separate action row exists only when an installation action is required.</li>
-      <li><strong>One provider-card anatomy:</strong> every card has the same header and control-body minimum heights. Transport-specific content changes inside the body; the outer geometry does not.</li>
-      <li><strong>Errors are intentional expansion:</strong> an error notice may add height below the standardized body. Normal states remain equal.</li>
-      <li><strong>SwiftUI owns web authentication:</strong> OAuth uses <code>EnvironmentValues.webAuthenticationSession</code>. No manually retained presentation anchor, unsafe cross-actor AppKit object or callback-thread view mutation remains.</li>
-      <li><strong>Atomic completion:</strong> after OAuth token exchange, the provider snapshot changes once and the catalog notification is emitted after the browser session has returned.</li>
-    </ul>
-  </section>
-
-  <div class="mock-label">Agent — compact runtime state</div>
-  <div class="window">
-    <aside class="sidebar">
-      <div class="side-row"><span class="icon">⚙</span>General</div>
-      <div class="side-row active"><span class="icon">➤</span>Agent</div>
-      <div class="side-row"><span class="icon">◫</span>Format Packs</div>
-      <div class="side-row"><span class="icon">⌘</span>Providers</div>
-      <div class="side-row"><span class="icon">▱</span>Models</div>
-      <div class="side-row"><span class="icon">▰</span>Storage</div>
-    </aside>
-    <main class="detail">
-      <header class="page-head">
-        <div class="page-title">Agent</div>
-        <div class="page-subtitle">Configure the in-app agent, paid render approvals, and local automation.</div>
-      </header>
-      <div class="scroll">
-        <section class="section">
-          <div class="section-title">Agent Runtime</div>
-          <div class="section-subtitle">Choose one backend for the in-app agent.</div>
-          <div class="card">
-            <div class="row">
-              <div class="row-main">
-                <div class="row-title">Run agent with</div>
-                <div class="row-subtitle">Uses your signed-in Claude subscription.</div>
-              </div>
-              <div class="button primary">Claude Code</div>
-              <div class="button">Anthropic API</div>
-            </div>
-            <div class="row">
-              <div class="row-main">
-                <div class="row-title">Claude Code 2.1.207</div>
-                <div class="row-subtitle">Run <code>claude auth login</code> in Terminal, then check again.</div>
-              </div>
-              <div class="row-actions">
-                <div class="badge"><span class="dot"></span>Sign-in required</div>
-                <div class="button">Check again</div>
-              </div>
-            </div>
-            <div class="row notice">▣ Claude Code runs headlessly with Read as its only built-in tool.</div>
-          </div>
-        </section>
-      </div>
-    </main>
-  </div>
-
-  <div class="mock-label">Providers — equal normal-state cards</div>
-  <div class="window">
-    <aside class="sidebar">
-      <div class="side-row"><span class="icon">⚙</span>General</div>
-      <div class="side-row"><span class="icon">➤</span>Agent</div>
-      <div class="side-row"><span class="icon">◫</span>Format Packs</div>
-      <div class="side-row active"><span class="icon">⌘</span>Providers</div>
-      <div class="side-row"><span class="icon">▱</span>Models</div>
-      <div class="side-row"><span class="icon">▰</span>Storage</div>
-    </aside>
-    <main class="detail">
-      <header class="page-head">
-        <div class="page-title">Providers</div>
-        <div class="page-subtitle">Connect the services that supply generation models.</div>
-      </header>
-      <div class="scroll">
-        <div class="section-title">Connected Services</div>
-        <div class="section-subtitle">Credentials are stored in the macOS Keychain.</div>
-        <div class="providers">
-          <div class="provider">
-            <div class="provider-head"><div><div class="provider-name">fal.ai</div><div class="provider-meta">Video · Image · Audio · Get key ↗</div></div><div class="provider-status">● Key saved</div></div>
-            <div class="provider-body"><div class="field">••••••••••••••••••••••••••••••1e9c</div></div>
-          </div>
-          <div class="provider">
-            <div class="provider-head"><div><div class="provider-name">Higgsfield</div><div class="provider-meta">Video · Image · Website ↗</div></div><div class="provider-status off">● Not configured</div></div>
-            <div class="provider-body"><div>30+ video/image models on your subscription.</div><div class="button primary">Sign in with Higgsfield</div></div>
-          </div>
-          <div class="provider">
-            <div class="provider-head"><div><div class="provider-name">Google AI</div><div class="provider-meta">Image · Get key ↗</div></div><div class="provider-status off">● Not configured</div></div>
-            <div class="provider-body"><div class="field">Paste API key…</div></div>
-          </div>
-          <div class="provider">
-            <div class="provider-head"><div><div class="provider-name">ACE Studio</div><div class="provider-meta">Voice · Singing · Website ↗</div></div><div class="provider-status off">● Disabled</div></div>
-            <div class="provider-body"><div>Requires the ACE Studio app running on this Mac.</div><div class="button">Enable</div></div>
-          </div>
-        </div>
-      </div>
-    </main>
-  </div>
-
-  <div class="mock-label">Help / MCP — identical shell and page rhythm</div>
-  <div class="window">
-    <aside class="sidebar">
-      <div class="side-row"><span class="icon">⌨</span>Shortcuts</div>
-      <div class="side-row active"><span class="icon">◎</span>MCP</div>
-    </aside>
-    <main class="detail">
-      <header class="page-head">
-        <div class="page-title">MCP</div>
-        <div class="page-subtitle">Connect external AI clients to the open NexGenVideo project.</div>
-      </header>
-      <div class="scroll">
-        <section class="section">
-          <div class="section-title">Server</div>
-          <div class="section-subtitle">NexGenVideo listens only on this Mac.</div>
-          <div class="card">
-            <div class="row"><div class="row-main"><div class="row-title">Server URL</div><div class="row-subtitle"><code>http://127.0.0.1:19789/mcp</code></div></div><div class="button">Copy</div></div>
-          </div>
-        </section>
-        <section class="section">
-          <div class="section-title">Client Setup</div>
-          <div class="section-subtitle">Choose the client you want to connect.</div>
-          <div class="mcp-grid">
-            <div class="card client"><div class="row"><div class="row-main"><div class="row-title">Cursor</div><div class="row-subtitle">Install the NexGenVideo MCP connection.</div></div><div class="button">Install</div></div></div>
-            <div class="card client"><div class="row"><div class="row-main"><div class="row-title">Claude Desktop</div><div class="row-subtitle">Install the bundled MCP connection.</div></div><div class="button">Install</div></div></div>
-            <div class="card client"><div class="row"><div class="row-main"><div class="row-title">Claude Code</div><div class="row-subtitle">Run once in Terminal.</div></div><div class="button">Copy</div></div></div>
-            <div class="card client"><div class="row"><div class="row-main"><div class="row-title">Codex</div><div class="row-subtitle">Run once in Terminal.</div></div><div class="button">Copy</div></div></div>
-          </div>
-        </section>
-      </div>
-    </main>
-  </div>
-</div>
+<section id="spec">
+<h1>Settings: one layout, native model support</h1>
+<p>Current specification for all six Settings pages. This supersedes the Models capability-research surface. The native application uses AppTheme tokens; this standalone preview illustrates its information hierarchy.</p>
+<ul>
+<li>Settings and Help retain the shared shell: 980×640 default, 760×480 minimum, 220-point sidebar, persistent page header and scrollable content. Content has a 760-point maximum width.</li>
+<li>All setting rows use the same 16-point padding and gap. Descriptions wrap in the available label width. Control placement depends on available width and control size, never the intrinsic width of description text. Controls align to the trailing edge, including in a narrow stacked row.</li>
+<li>Native supported models work from the shipped provider adapters, bundled profiles and validated discovery. Model support never requires a Claude session or accepting a research overlay. Unknown artistic capacities remain internal unknowns; they are not presented as an incomplete model installation.</li>
+<li>Models starts with search and shows Image, Video, Audio and Upscaling groups from connected providers. Each row has a model name, provider names and an accessible visibility switch. Disabled visibility is retained across provider reconnects. Empty and no-match states are distinct.</li>
+<li>Providers use a single column with one header and credential area per service. API key, OAuth and local connections retain their working controls. All controls and errors remain in the same card; credentials stay in Keychain.</li>
+<li>Format Packs groups versions under their pack name. Remove targets the selected id and version, including directories returned by enumeration. Open-project use blocks removal; closed-project use is described before confirmation. Resident removal explains the restart. No project is silently repinned.</li>
+<li>All pages inherit the shared button style. Disabled controls visibly lose active contrast and do not respond to hover. Functional labels remain visible.</li>
+<li>Acceptance covers all six tabs at default and minimum size and 100%, 125%, 150% text scale. Native row tests assert actual control positions with short and long descriptions. Native pack tests use enumerated directories, preserve adjacent versions, and reject metadata replacement and symlink escape.</li>
+</ul>
+</section>
+<div class="toolbar"><span>Layout preview · example data</span><button onclick="resize(760,480)">760 × 480</button><button onclick="resize(980,640)">980 × 640</button><select aria-label="Text size" onchange="setScale(this.value)"><option value="1">100%</option><option value="1.25">125%</option><option value="1.5">150%</option></select></div>
+<section id="mockups"><div class="window"><div class="lights"><i></i><i></i><i></i></div><nav class="sidebar" aria-label="Settings"></nav><main class="detail"><header class="head"><h1 id="title"></h1><p id="subtitle"></p></header><div class="scroll"><div class="content"></div></div></main></div></section>
+<dialog id="removal"><h1 id="removeTitle"></h1><p id="removeMessage"></p><div class="actions"><button onclick="this.closest('dialog').close()">Cancel</button><button class="primary" id="confirmRemove">Remove</button></div></dialog>
+<script>
+const tabs=[['general','⚙','General','Choose how NexGenVideo communicates and shares diagnostics.'],['agent','➤','Agent','Configure the in-app agent, paid render approvals, and local automation.'],['plugins','◫','Format Packs','Manage installed workflow packs and apply available updates.'],['providers','⚿','Providers','Connect the services that supply generation models.'],['models','▱','Models','Choose which models appear in generation tools.'],['storage','▰','Storage','Manage project locations, temporary files, and on-device search data.']];
+const esc=s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
+const button=(s,attr='')=>`<button ${attr}>${s}</button>`;
+const toggle=s=>`<button class="switch" role="switch" aria-checked="true" aria-label="${esc(s)}" onclick="this.setAttribute('aria-checked',this.getAttribute('aria-checked')!=='true')"></button>`;
+const badge=(s,c='')=>`<span class="badge ${c}">${s}</span>`;
+const row=(t,d,a='')=>`<div class="row"><div class="main">${t}${d?`<p>${d}</p>`:''}</div><div class="actions">${a}</div></div>`;
+const section=(title,rows)=>`<section class="section"><h2>${title}</h2><div class="card">${rows}</div></section>`;
+const models=[['Image','Qwen-Image','fal.ai'],['Image','Nano Banana Pro','Google · Runway'],['Image','FLUX.1 [dev]','fal.ai'],['Video','Runway Gen-4.5','Runway'],['Video','Seedance 2.5','fal.ai'],['Audio','ElevenLabs Music','ElevenLabs'],['Audio','ElevenLabs Sound Effects','ElevenLabs'],['Upscaling','Clarity Upscaler','fal.ai']];
+let versions=['0.5.8','0.0.13','0.0.8','0.0.6'];let page='general';
+function modelRows(q=''){const filtered=models.filter(x=>(x[1]+' '+x[2]).toLowerCase().includes(q.toLowerCase()));document.querySelector('#modelRows').innerHTML=filtered.length?['Image','Video','Audio','Upscaling'].map(kind=>{const list=filtered.filter(x=>x[0]===kind).sort((a,b)=>a[1].localeCompare(b[1]));return list.length?section(kind,list.map(x=>row(x[1],x[2],toggle('Show '+x[1]+' in generation tools'))).join('')):''}).join(''):`<div class="card">${row('No models match “'+esc(q)+'”.','')}</div>`;layout()}
+function render(id){page=id;const tab=tabs.find(t=>t[0]===id)||tabs[0];document.querySelector('#title').textContent=tab[2];document.querySelector('#subtitle').textContent=tab[3];document.querySelector('.sidebar').innerHTML=tabs.map(t=>button(`<span class="icon">${t[1]}</span>${t[2]}`,`class="${id===t[0]?'active':''}" onclick="render('${t[0]}')"`)).join('');let content='';
+if(id==='general')content=section('Appearance',row('Interface text','Increase text and controls without changing timeline timing or media.','<select aria-label="Interface text size" onchange="setScale(this.value)"><option value="1">Standard</option><option value="1.25">Larger · 125%</option><option value="1.5">Largest · 150%</option></select>'))+section('Notifications',row('Show system notifications','Notify when generations and background exports finish or fail.',toggle('Show system notifications')))+section('Diagnostics',row('Share crash and error reports','Sends technical diagnostics and coarse project statistics to Sentry. Media files are never attached.',toggle('Share crash and error reports')));
+if(id==='models')content='<h2>Show in generation tools</h2><p class="subtitle">Models from your connected providers are enabled by default.</p><input class="search" aria-label="Search models or providers" placeholder="Search models or providers" oninput="modelRows(this.value)"><div id="modelRows"></div>';
+if(id==='plugins')content=section('Installed Packs',row('Music Video','Music-driven stories, from track to final cut.','<span style="color:var(--muted)">Up to date</span>')+versions.map((v,i)=>row('Version '+v,i===0?'Required by an open project.':'Installed.',button('Remove',i===0?'disabled':`onclick="removeVersion('${v}')"`))).join(''));
+if(id==='providers')content='<h2>Connections</h2><p class="subtitle">API keys and sign-ins are stored in the macOS Keychain.</p>'+[['Runway','Image · Video · Audio','Key saved'],['fal.ai','Image · Video · Audio','Key saved'],['ElevenLabs','Audio','Not configured'],['Google','Image','Not configured']].map(x=>`<section class="section"><div class="card">${row(x[0],x[1],button('Get key','class="link"')+badge(x[2],x[2]==='Key saved'?'ok':''))}<div class="field"><input aria-label="${x[0]} API key" placeholder="${x[2]==='Key saved'?'••••••••••••••••••••••••9a21':'Paste API key'}" type="password">${x[2]==='Key saved'?button('Remove'):button('Save','disabled')}</div></div></section>`).join('')+section('Prompt Processing',row('Allow raw prompts',"Send text directly to generation models without NexGenVideo's translation, context, or consistency passes.",toggle('Allow raw prompts')));
+if(id==='agent')content=section('Agent Runtime',row('Run agent with','Uses your signed-in Claude subscription.','<div class="actions" aria-label="Agent runtime"><button class="primary">Claude Code</button><button>Anthropic API</button></div>')+row('Claude Code','Ready to run the in-app agent through your Claude subscription.',badge('Signed in','ok')+button('Check again'))+'<div class="notice">The agent edits the project through NexGenVideo’s tools. Paid generation follows your approval settings.</div>')+section('Agent Render Approvals',row('Auto-approve paid renders','Ask before every paid render.',button('$0.00　−　+')))+section('Local MCP Bridge',row('NexGenVideo MCP server','Required while Claude Code is the selected agent runtime.',badge('Running','ok')+button('On','disabled'))+row('Connect an MCP client','Setup for Claude Desktop, Claude Code, Codex, and other clients.',button('Setup instructions')))+section('External MCP Servers',row('No external MCP servers','Add a server URL, command, or MCP configuration.',button('Add Server')));
+if(id==='storage')content=section('Projects',row('Projects folder','New projects are created here. Existing projects stay in their current locations.',button('Choose…'))+row('Location','<span class="mono">~/Movies/NexGenVideo</span>'))+section('Temporary Files',row('Playback cache','Previews, waveforms, and filmstrip thumbnails rebuild automatically.',button('Clear cache'))+row('Location','<span class="mono">~/Library/Caches/NexGenVideo</span>','248 MB'))+section('Media Search',row('Index imported media','Builds an on-device visual index so media can be searched by content.',toggle('Index imported media'))+row('Search index','','12 MB'+button('Clear index'))+row('Search model','Visual embeddings','312 MB'+button('Remove model')));
+document.querySelector('.content').innerHTML=content;if(id==='models')modelRows();layout();document.querySelector('.scroll').scrollTop=0}
+function layout(){for(const r of document.querySelectorAll('.row')){r.classList.remove('stacked');const a=r.querySelector('.actions');const w=r.clientWidth-32;const scale=Number(getComputedStyle(document.documentElement).getPropertyValue('--scale'));r.classList.toggle('stacked',w<180*scale+16+a.scrollWidth)}}
+function resize(w,h){document.querySelector('.window').style.width=w+'px';document.querySelector('.window').style.height=h+'px';layout()}
+function setScale(s){document.documentElement.style.setProperty('--scale',s);layout()}
+function removeVersion(v){document.querySelector('#removeTitle').textContent='Remove Music Video '+v+'?';document.querySelector('#removeMessage').textContent='This removes only the selected version. Any other installed versions remain available.';document.querySelector('#confirmRemove').onclick=()=>{versions=versions.filter(x=>x!==v);document.querySelector('#removal').close();render('plugins')};document.querySelector('#removal').showModal()}
+const params=new URLSearchParams(location.search);if(params.has('capture'))document.body.classList.add('capture');setScale(params.get('scale')||1);render(params.get('tab')||'general');window.addEventListener('resize',layout);
+</script>
+</html>

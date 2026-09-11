@@ -23,7 +23,16 @@ struct UpscaleModelConfig: Identifiable, Sendable {
 
     @MainActor
     static func models(for type: ClipType) -> [UpscaleModelConfig] {
-        allModels.filter { $0.supportedTypes.contains(type) }
+        availableModels(in: allModels, for: type,
+                        isEnabled: ModelPreferences.shared.isEnabled,
+                        canRun: { GenerationProvider.canRun(modelId: $0) })
+    }
+
+    static func availableModels(
+        in models: [UpscaleModelConfig], for type: ClipType,
+        isEnabled: (String) -> Bool, canRun: (String) -> Bool
+    ) -> [UpscaleModelConfig] {
+        models.filter { $0.supportedTypes.contains(type) && isEnabled($0.id) && canRun($0.id) }
     }
 
     let entry: CatalogEntry

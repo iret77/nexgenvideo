@@ -71,41 +71,22 @@ struct StoragePane: View {
                     VisualModelLoader.shared.setEnabled(newValue)
                 }
                 SettingsDivider()
-                HStack(spacing: AppTheme.Spacing.sm) {
-                    Text("Search index")
-                        .interfaceFont(size: AppTheme.Typography.ui)
-                        .foregroundStyle(AppTheme.Text.secondaryColor)
-                    Spacer(minLength: AppTheme.Spacing.lg)
+                SettingsRow(title: "Search index") {
                     Text(ByteCountFormatter.string(fromByteCount: indexBytes, countStyle: .file))
                         .interfaceFont(size: AppTheme.Typography.ui).monospacedDigit()
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                     Button("Clear index") { clearIndex() }
-                        .controlSize(.small)
                         .disabled(indexBytes == 0)
                 }
-                .padding(.horizontal, AppTheme.Spacing.mdLg)
-                .padding(.vertical, AppTheme.Spacing.smMd)
 
                 if modelBytes > 0 {
                     SettingsDivider()
-                    HStack(spacing: AppTheme.Spacing.sm) {
-                        VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
-                            Text("Search model")
-                                .interfaceFont(size: AppTheme.Typography.ui)
-                                .foregroundStyle(AppTheme.Text.secondaryColor)
-                            Text(SearchIndexConfig.manifest.model)
-                                .interfaceFont(size: AppTheme.Typography.ui, design: .monospaced)
-                                .foregroundStyle(AppTheme.Text.tertiaryColor)
-                        }
-                        Spacer(minLength: AppTheme.Spacing.lg)
+                    SettingsRow(title: "Search model", subtitle: SearchIndexConfig.manifest.model) {
                         Text(ByteCountFormatter.string(fromByteCount: modelBytes, countStyle: .file))
                             .interfaceFont(size: AppTheme.Typography.ui).monospacedDigit()
                             .foregroundStyle(AppTheme.Text.tertiaryColor)
                         Button("Remove model") { removeModel() }
-                            .controlSize(.small)
                     }
-                    .padding(.horizontal, AppTheme.Spacing.mdLg)
-                    .padding(.vertical, AppTheme.Spacing.smMd)
                 }
             }
         }
@@ -143,7 +124,7 @@ struct StoragePane: View {
                     .foregroundStyle(AppTheme.Text.secondaryColor)
             }
         }
-        .padding(.horizontal, AppTheme.Spacing.mdLg)
+        .padding(.horizontal, AppTheme.Spacing.lgXl)
         .padding(.vertical, AppTheme.Spacing.smMd)
     }
 

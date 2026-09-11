@@ -1,3 +1,5 @@
+> Retired from the application: Models settings and production capability resolution use the shipped adapters, bundled profiles and validated discovery. Local research records are retained on disk but are not loaded or applied by normal startup. The following documents the former subsystem.
+
 # Model capability research subsystem
 
 This subsystem resolves issue #436 without widening the normal agent runtime. It is host-owned and
@@ -92,6 +94,6 @@ authoritative curated value can supersede a local field without deleting the loc
 
 Checked-in fixtures cover image, video, and music capabilities plus a recorded Claude CLI help/init
 contract. CI tests use only those fixtures. They perform no web request, catalog mutation, provider
-request, generation, or deliberately invalid probe. The visual contract is normative in
-[`docs/ui/model-capability-research.html`](ui/model-capability-research.html), and the native SwiftUI
-implementation follows that contract in Models settings.
+request, generation, or deliberately invalid probe. The archived visual contract and native SwiftUI
+implementation document the former Models-settings workflow; neither is wired into current settings
+or production capability resolution.
