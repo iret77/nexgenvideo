@@ -326,6 +326,8 @@ jobs:
         run: |
           ditto -x -k candidate/NexGenVideo.zip candidate
           python3 scripts/verify_hang_startup.py candidate/NexGenVideo.app --output evidence/candidate.json
+      - name: Verify helper recovery during active work
+        run: python3 scripts/hang_diagnostic_acceptance.py candidate/NexGenVideo.app --helper-recovery-only --output evidence
       - uses: actions/upload-artifact@v4
         if: always()
         with:

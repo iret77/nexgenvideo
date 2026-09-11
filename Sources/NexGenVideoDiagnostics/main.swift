@@ -22,7 +22,10 @@ struct CaptureStatus: Codable {
 var state = DiagnosticHangState()
 var incident: URL?
 var status: CaptureStatus?
-var incidentCount = 0
+var incidentCount = ((try? FileManager.default.contentsOfDirectory(
+    at: session,
+    includingPropertiesForKeys: nil
+)) ?? []).filter { $0.lastPathComponent.hasPrefix("incident-") }.count
 let started = ProcessInfo.processInfo.systemUptime
 var lastHeartbeat: DiagnosticHeartbeat?
 while true {
@@ -50,7 +53,15 @@ while true {
             incident = folder
             status = CaptureStatus(startupID: startupID, detectedUptime: now)
             try DiagnosticFiles.replace(status, at: folder.appendingPathComponent("incident.json"))
-        } catch { exit(74) }
+        } catch {
+            let error = error as NSError
+            try? DiagnosticFiles.replace([
+                "code": "incident-setup-failed",
+                "domain": error.domain,
+                "errorCode": String(error.code),
+            ], at: session.appendingPathComponent("helper-error.json"))
+            exit(74)
+        }
     case .sample(let number):
         if let incident {
             if number == 1 { incidentCount += 1 }

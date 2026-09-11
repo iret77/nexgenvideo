@@ -17,10 +17,18 @@ from verify_hang_startup import verify_startup
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("app", type=Path)
-    parser.add_argument("symbols", type=Path)
+    parser.add_argument("symbols", type=Path, nargs="?")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--helper-recovery-only", action="store_true")
     args = parser.parse_args()
-    verify(args)
+    if args.helper_recovery_only:
+        args.output.mkdir(parents=True, exist_ok=True)
+        result = verify_helper_recovery(args.app)
+        (args.output / "helper-recovery.json").write_text(json.dumps(result, indent=2) + "\n")
+    else:
+        if args.symbols is None:
+            parser.error("symbols are required for full diagnostic acceptance")
+        verify(args)
 
 
 def verify(args):
@@ -134,10 +142,44 @@ def verify(args):
             process.kill()
             process.wait(timeout=5)
     retained_recordings.append(folder)
+    results.append(verify_helper_recovery(args.app))
     results.append(verify_startup(args.app, protected_recordings=retained_recordings))
     verify_retained_key(args.app, replay_account, replay_key)
     results.append({"mode": "replay-key-retention", "passed": True})
     (args.output / "result.json").write_text(json.dumps(results, indent=2))
+
+
+def verify_helper_recovery(app):
+    root = Path.home() / "Library/Logs/NexGenVideo/HangIncidents"
+    before = set(root.glob("*"))
+    process = subprocess.Popen(
+        [str(app / "Contents/MacOS/NexGenVideo")],
+        env={**os.environ, "NGV_HANG_SELFTEST": "helper-restart"},
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        process.wait(timeout=65)
+        assert process.returncode == 0, process.returncode
+        folders = set(root.glob("*")) - before
+        assert len(folders) == 1, "helper recovery must create exactly one recording"
+        folder = folders.pop()
+        reports = list(folder.glob("incident-*/incident.json"))
+        assert len(reports) == 1, "restarted helper did not detect the injected hang"
+        report = json.loads(reports[0].read_text())
+        assert len(report["samples"]) == 2 and report.get("recoveredUptime"), report
+        assert len(list(folder.glob("self-*.stacks"))) == 6, "restarted helper missed stack snapshots"
+        issues = json.loads((folder / "capture-error.json").read_text())
+        assert isinstance(issues, list), issues
+        recovery = [item for item in issues if isinstance(item, dict)
+                    and item.get("code") == "helper-exited"
+                    and "restarted=" in (item.get("detail") or "")]
+        assert recovery, "helper exit and recovery were not recorded"
+        return {"mode": "helper-restart", "samples": 6, "issues": recovery, "passed": True}
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
 
 
 def verify_retained_key(app, account, key):

@@ -11,6 +11,12 @@
             "Matching Media Library items appear before new-file controls in intake cards, with search shown only when multiple items need filtering.",
             "Staging a confirmed character or location reference for its Bible no longer invalidates an unchanged approved Brief, and identity references cannot be reassigned as Production Design style."
           ]
+        },
+        {
+          "heading": "Reliability",
+          "items": [
+            "UI hang recording now restarts its helper after an unexpected exit, records the exit status for analysis, and no longer interrupts active work with a modal diagnostic error."
+          ]
         }
       ]
     },

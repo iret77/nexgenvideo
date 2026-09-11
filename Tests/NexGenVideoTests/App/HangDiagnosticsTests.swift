@@ -92,6 +92,16 @@ struct HangDiagnosticsTests {
         #expect(state.tick(now: 61, mainUptime: 0) == nil)
     }
 
+    @Test func helperRestartsWithoutEnteringACrashLoop() {
+        var recovery = DiagnosticHelperRecovery(retryLimit: 2, retryWindow: 60)
+        #expect(recovery.helperExited(now: 10, stopping: false) == .restart(1))
+        #expect(recovery.helperExited(now: 11, stopping: false) == .restart(2))
+        #expect(recovery.helperExited(now: 12, stopping: false) == .backoff(until: 70))
+        #expect(recovery.helperExited(now: 20, stopping: false) == nil)
+        #expect(recovery.helperExited(now: 70, stopping: false) == .restart(1))
+        #expect(recovery.helperExited(now: 71, stopping: true) == nil)
+    }
+
     @Test func replayRequiresExactPredecessor() throws {
         let before = Data("a long transcript with images".utf8)
         let after = Data("a long transcript with two images".utf8)
@@ -126,10 +136,12 @@ struct HangDiagnosticsTests {
         let destination = base.appendingPathComponent("export")
         try DiagnosticFiles.directory(source)
         try DiagnosticFiles.write(Data("[]".utf8), to: source.appendingPathComponent("events-000000000001.json"))
+        try DiagnosticFiles.write(Data("{}".utf8), to: source.appendingPathComponent("helper-error.json"))
         try DiagnosticFiles.write(Data("private".utf8), to: source.appendingPathComponent("unrelated.json"))
         try DiagnosticFiles.write(Data("partial".utf8), to: source.appendingPathComponent("capture.stacks.partial"))
         try DiagnosticFiles.copyRecording(from: source, to: destination)
         #expect(FileManager.default.fileExists(atPath: destination.appendingPathComponent("events-000000000001.json").path))
+        #expect(FileManager.default.fileExists(atPath: destination.appendingPathComponent("helper-error.json").path))
         #expect(!FileManager.default.fileExists(atPath: destination.appendingPathComponent("unrelated.json").path))
         #expect(!FileManager.default.fileExists(atPath: destination.appendingPathComponent("capture.stacks.partial").path))
         let attributes = try FileManager.default.attributesOfItem(atPath: destination.appendingPathComponent("checksums.json").path)
