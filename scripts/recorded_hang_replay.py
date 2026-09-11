@@ -36,7 +36,7 @@ def main():
             archive.extractall(root)
         folder, = [p for p in root.iterdir() if p.is_dir()]
         frames = sorted(folder.glob("replay-*.enc"))
-        replay_key = base64.b64decode((root / "replay.key").read_text(), validate=True)
+        replay_key = base64.b64decode((root / "replay.key").read_text().strip(), validate=True)
         decoded = []
         for file in frames:
             data = file.read_bytes()
