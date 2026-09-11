@@ -46,10 +46,11 @@ struct ProjectPackageRevision: Equatable, Sendable {
         let rootPath = root.path.hasSuffix("/") ? root.path : root.path + "/"
         var entries: [Entry] = []
         while let item = enumerator.nextObject() as? URL {
-            guard item.path.hasPrefix(rootPath) else {
+            let canonicalItem = item.standardizedFileURL.resolvingSymlinksInPath()
+            guard canonicalItem.path.hasPrefix(rootPath) else {
                 throw CocoaError(.fileReadInvalidFileName)
             }
-            let relativePath = String(item.path.dropFirst(rootPath.count))
+            let relativePath = String(canonicalItem.path.dropFirst(rootPath.count))
             if isIncidentalFilesystemMetadata(relativePath) {
                 let values = try item.resourceValues(forKeys: [.isDirectoryKey])
                 if values.isDirectory == true { enumerator.skipDescendants() }
