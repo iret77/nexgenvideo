@@ -321,6 +321,8 @@ enum AppTheme {
         static let homeCardOverlayHeight: CGFloat = 60
         static let packInstallProgressWindow = CGSize(width: 320, height: 80)
         static let settingsSidebarWidth: CGFloat = 220
+        static let settingsRowLabelMinWidth: CGFloat = 180
+        static let settingsContentMaxWidth: CGFloat = 760
         static let settingsProviderCardMinWidth: CGFloat = 320
         static let settingsProviderHeaderMinHeight: CGFloat = 58
         static let settingsProviderControlMinHeight: CGFloat = 96

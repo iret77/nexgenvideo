@@ -6,6 +6,60 @@ import Testing
 @Suite("Format-pack uninstall")
 struct PluginUninstallTests {
     @MainActor
+    @Test("versions selected from directory enumeration can be removed", arguments: [false, true])
+    func removesEnumeratedDirectory(legacy: Bool) throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bundle = legacy ? root.appendingPathComponent("musicvideo.ngvpack")
+            : versionedBundle(root: root, version: "0.0.6")
+        let newer = versionedBundle(root: root, version: "0.0.13")
+        try prepareBundle(bundle, version: "0.0.6")
+        try prepareBundle(newer, version: "0.0.13")
+        let entries = try FileManager.default.contentsOfDirectory(
+            at: bundle.deletingLastPathComponent(), includingPropertiesForKeys: [.isDirectoryKey]
+        )
+        let selected = try #require(entries.first { $0.lastPathComponent == bundle.lastPathComponent })
+
+        try PluginInstaller.uninstall(id: "musicvideo", version: "0.0.6", bundleURL: selected, installDirectory: root)
+
+        #expect(!FileManager.default.fileExists(atPath: bundle.path))
+        #expect(FileManager.default.fileExists(atPath: newer.path))
+    }
+
+    @MainActor
+    @Test("replaced metadata cannot remove a different version")
+    func refusesChangedVersion() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bundle = versionedBundle(root: root, version: "0.0.6")
+        try prepareBundle(bundle, version: "0.0.13")
+
+        #expect(throws: PluginInstaller.InstallError.self) {
+            try PluginInstaller.uninstall(id: "musicvideo", version: "0.0.6", bundleURL: bundle, installDirectory: root)
+        }
+        #expect(FileManager.default.fileExists(atPath: bundle.path))
+    }
+
+    @MainActor
+    @Test("a symlinked version directory cannot remove an external pack")
+    func refusesSymlinkEscape() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let install = root.appendingPathComponent("installed")
+        let external = root.appendingPathComponent("external")
+        let bundle = external.appendingPathComponent("0.0.6.ngvpack")
+        try prepareBundle(bundle, version: "0.0.6")
+        try FileManager.default.createDirectory(at: install, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: install.appendingPathComponent("musicvideo"), withDestinationURL: external)
+
+        #expect(throws: PluginInstaller.InstallError.self) {
+            try PluginInstaller.uninstall(id: "musicvideo", version: "0.0.6",
+                                          bundleURL: versionedBundle(root: install, version: "0.0.6"), installDirectory: install)
+        }
+        #expect(FileManager.default.fileExists(atPath: bundle.path))
+    }
+
+    @MainActor
     @Test("removing one version preserves side-by-side installs")
     func removesOnlySelectedVersion() throws {
         let root = FileManager.default.temporaryDirectory

@@ -17,19 +17,10 @@ struct ProvidersPane: View {
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
             SettingsSection(
-                "Connected Services",
-                subtitle: "Credentials are stored in the macOS Keychain. Each provider shows only its supported connection method."
+                "Connections",
+                subtitle: "API keys and sign-ins are stored in the macOS Keychain."
             ) {
-                LazyVGrid(
-                    columns: [
-                        GridItem(
-                            .adaptive(minimum: AppTheme.ComponentSize.settingsProviderCardMinWidth),
-                            spacing: AppTheme.Spacing.smMd
-                        ),
-                    ],
-                    alignment: .leading,
-                    spacing: AppTheme.Spacing.smMd
-                ) {
+                VStack(spacing: AppTheme.Spacing.smMd) {
                     ForEach(GenerationProvider.allCases) { provider in
                         providerSection(provider)
                     }
@@ -68,12 +59,6 @@ struct ProvidersPane: View {
     private func providerSection(_ provider: GenerationProvider) -> some View {
         SettingsCard {
             providerHeader(provider)
-                .padding(.horizontal, AppTheme.Spacing.mdLg)
-                .padding(.vertical, AppTheme.Spacing.md)
-                .frame(
-                    minHeight: AppTheme.ComponentSize.settingsProviderHeaderMinHeight,
-                    alignment: .topLeading
-                )
             SettingsDivider()
             switch primaryStyle(provider) {
             case .oauth: oauthControl(provider)
@@ -114,20 +99,8 @@ struct ProvidersPane: View {
     }
 
     private func providerHeader(_ provider: GenerationProvider) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-                Text(provider.displayName)
-                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
-                    .foregroundStyle(AppTheme.Text.primaryColor)
-                HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
-                    Text(provider.modalities)
-                        .interfaceFont(size: AppTheme.Typography.ui)
-                        .foregroundStyle(AppTheme.Text.tertiaryColor)
-                        .fixedSize(horizontal: false, vertical: true)
-                    linkButton(provider)
-                }
-            }
-            Spacer(minLength: AppTheme.Spacing.md)
+        SettingsRow(title: provider.displayName, subtitle: provider.modalities) {
+            linkButton(provider)
             statusPill(provider)
         }
     }
@@ -183,50 +156,27 @@ struct ProvidersPane: View {
     private func oauthControl(_ provider: GenerationProvider) -> some View {
         let connected = connectionState(provider).oauthConnected
         let discovery = catalog.providerDiscovery[provider]
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-            if let note = provider.mcpCapability?.note {
-                Text(note)
+        SettingsRow(title: "Account", subtitle: provider.mcpCapability?.note) {
+            if signingIn == provider.id {
+                ProgressView().controlSize(.small)
+                Text("Signing in…")
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            HStack(spacing: AppTheme.Spacing.sm) {
-                if signingIn == provider.id {
-                    ProgressView().controlSize(.small)
-                    Text("Opening \(provider.displayName)…").interfaceFont(size: AppTheme.Typography.ui).foregroundStyle(AppTheme.Text.tertiaryColor)
-                } else if connected {
-                    if case .unavailable = discovery {
-                        Label("Connection failed", systemImage: "exclamationmark.triangle.fill")
-                            .interfaceFont(size: AppTheme.Typography.ui)
-                            .foregroundStyle(AppTheme.Status.errorColor)
-                        Button("Sign in again") { signIn(provider) }
-                            .buttonStyle(.capsule(.prominent, size: .regular))
-                    } else {
-                        Label("Signed in", systemImage: "checkmark.seal.fill")
-                            .interfaceFont(size: AppTheme.Typography.ui)
-                            .foregroundStyle(AppTheme.Accent.primary)
-                    }
-                    Button("Sign out") { ProviderOAuthStore.disconnect(provider); refresh() }
-                        .buttonStyle(.capsule(.secondary, size: .regular))
-                } else {
-                    Button("Sign in with \(provider.displayName)") { signIn(provider) }
+            } else if connected {
+                if case .unavailable = discovery {
+                    Button("Sign in again") { signIn(provider) }
                         .buttonStyle(.capsule(.prominent, size: .regular))
                 }
-            }
-            if let message = discoveryMessage(discovery) {
-                Text(message)
-                    .interfaceFont(size: AppTheme.Typography.ui)
-                    .foregroundStyle(AppTheme.Status.errorColor)
-                    .fixedSize(horizontal: false, vertical: true)
+                Button("Sign out") { ProviderOAuthStore.disconnect(provider); refresh() }
+            } else {
+                Button("Sign in") { signIn(provider) }
+                    .buttonStyle(.capsule(.prominent, size: .regular))
+                    .disabled(signingIn != nil)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, AppTheme.Spacing.mdLg)
-        .padding(.vertical, AppTheme.Spacing.md)
-        .frame(
-            minHeight: AppTheme.ComponentSize.settingsProviderControlMinHeight,
-            alignment: .topLeading
-        )
+        if let message = discoveryMessage(discovery) {
+            SettingsNotice(text: message, systemImage: "exclamationmark.triangle", tone: .warning)
+        }
     }
 
     private func discoveryMessage(_ state: ProviderDiscoveryState?) -> String? {
@@ -237,16 +187,9 @@ struct ProvidersPane: View {
         }
     }
 
-    @ViewBuilder
     private func localAppControl(_ provider: GenerationProvider) -> some View {
-        HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-                Text(provider.mcpCapability?.note ?? "")
-                    .interfaceFont(size: AppTheme.Typography.ui).foregroundStyle(AppTheme.Text.tertiaryColor)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: AppTheme.Spacing.lg)
-            Toggle("", isOn: Binding(
+        SettingsRow(title: "Enable connection", subtitle: provider.mcpCapability?.note) {
+            Toggle("Enable \(provider.displayName)", isOn: Binding(
                 get: { connectionState(provider).localEnabled },
                 set: { on in
                     ProviderMCP.setEndpoint(on ? provider.mcpCapability?.defaultURL.absoluteString : nil, for: provider)
@@ -254,18 +197,13 @@ struct ProvidersPane: View {
                 }))
                 .labelsHidden().toggleStyle(.switch).controlSize(.small)
         }
-        .padding(.horizontal, AppTheme.Spacing.mdLg)
-        .padding(.vertical, AppTheme.Spacing.md)
-        .frame(
-            minHeight: AppTheme.ComponentSize.settingsProviderControlMinHeight,
-            alignment: .topLeading
-        )
     }
 
     private func keyField(_ provider: GenerationProvider) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
             HStack(spacing: AppTheme.Spacing.sm) {
                 SecureField(placeholder(provider), text: draftBinding(provider))
+                    .accessibilityLabel("\(provider.displayName) API key")
                     .textFieldStyle(.plain)
                     .focused($focusedProvider, equals: provider.id)
                     .interfaceFont(size: AppTheme.Typography.ui, design: .monospaced)
@@ -286,23 +224,18 @@ struct ProvidersPane: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(.horizontal, AppTheme.Spacing.mdLg)
-        .padding(.vertical, AppTheme.Spacing.md)
-        .frame(
-            minHeight: AppTheme.ComponentSize.settingsProviderControlMinHeight,
-            alignment: .topLeading
-        )
+        .padding(AppTheme.Spacing.lgXl)
     }
 
     @ViewBuilder
     private func trailingControl(_ provider: GenerationProvider) -> some View {
         let trimmed = (draft[provider.id] ?? "").trimmingCharacters(in: .whitespaces)
         if !trimmed.isEmpty {
-            Button("Save") { save(provider) }.buttonStyle(.capsule(.prominent, size: .regular)).controlSize(.large)
+            Button("Save") { save(provider) }.buttonStyle(.capsule(.prominent, size: .regular)).controlSize(.small)
         } else if connectionState(provider).hasKey {
             Button("Remove", systemImage: "trash") { remove(provider) }
                 .buttonStyle(.capsule(.secondary, size: .regular))
-                .controlSize(.large)
+                .controlSize(.small)
         }
     }
 
