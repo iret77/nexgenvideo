@@ -22,7 +22,7 @@ struct ProjectPackageRevision: Equatable, Sendable {
         at packageURL: URL,
         fileManager: FileManager = .default
     ) throws -> Self {
-        let root = packageURL.standardizedFileURL
+        let root = packageURL.standardizedFileURL.resolvingSymlinksInPath()
         let before = try packageModificationDate(at: root, fileManager: fileManager)
         var enumerationError: Error?
         guard let enumerator = fileManager.enumerator(
