@@ -129,11 +129,7 @@ struct ProjectDocumentIOTests {
         }
 
         let doc = try await VideoProject.load(from: package)
-        let packageDate = try #require(
-            package.resourceValues(
-                forKeys: [.contentModificationDateKey]
-            ).contentModificationDate
-        )
+        let packageDate = try packageModificationDate(at: package)
 
         #expect(doc.fileModificationDate == packageDate)
     }
@@ -157,11 +153,7 @@ struct ProjectDocumentIOTests {
             ofItemAtPath: package.path
         )
         try ProjectIdentity.regenerate(at: package)
-        let hostMutationDate = try #require(
-            package.resourceValues(
-                forKeys: [.contentModificationDateKey]
-            ).contentModificationDate
-        )
+        let hostMutationDate = try packageModificationDate(at: package)
 
         try doc.recordKnownPackageState(at: package)
 
@@ -193,11 +185,7 @@ struct ProjectDocumentIOTests {
                 continuation.resume(returning: $0)
             }
         }
-        let savedPackageDate = try #require(
-            package.resourceValues(
-                forKeys: [.contentModificationDateKey]
-            ).contentModificationDate
-        )
+        let savedPackageDate = try packageModificationDate(at: package)
 
         #expect(saveError == nil)
         #expect(doc.fileModificationDate == savedPackageDate)
@@ -221,9 +209,7 @@ struct ProjectDocumentIOTests {
             [.modificationDate: driftedDate],
             ofItemAtPath: package.path
         )
-        let actualDate = try #require(
-            fm.attributesOfItem(atPath: package.path)[.modificationDate] as? Date
-        )
+        let actualDate = try packageModificationDate(at: package)
 
         #expect(doc.refreshKnownPackageStateIfContentsUnchanged(at: package))
         #expect(doc.fileModificationDate == actualDate)
@@ -257,9 +243,7 @@ struct ProjectDocumentIOTests {
                 continuation.resume(returning: $0)
             }
         }
-        let savedPackageDate = try #require(
-            fm.attributesOfItem(atPath: package.path)[.modificationDate] as? Date
-        )
+        let savedPackageDate = try packageModificationDate(at: package)
 
         #expect(saveError == nil)
         #expect(doc.fileModificationDate == savedPackageDate)
@@ -322,6 +306,12 @@ struct ProjectDocumentIOTests {
         try fm.createDirectory(at: media, withIntermediateDirectories: true)
         try Data("MEDIA".utf8).write(to: media.appendingPathComponent("clip.mp4"))
         try Data("THUMB".utf8).write(to: url.appendingPathComponent(Project.thumbnailFilename))
+    }
+
+    private func packageModificationDate(at url: URL) throws -> Date {
+        try #require(
+            fm.attributesOfItem(atPath: url.path)[.modificationDate] as? Date
+        )
     }
 
     private func unavailableBinding() throws -> ProjectPackBinding {
