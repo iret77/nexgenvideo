@@ -229,6 +229,42 @@ struct ProjectDocumentIOTests {
         #expect(doc.fileModificationDate == actualDate)
     }
 
+    @Test func saveProceedsAfterMetadataOnlyPackageDateDrift() async throws {
+        let root = fm.temporaryDirectory.appendingPathComponent(
+            "pp-save-metadata-drift-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let package = root.appendingPathComponent(
+            "Project.ngv",
+            isDirectory: true
+        )
+        try Fixtures.prepareProjectPackage(at: package)
+        try makePackage(at: package)
+        defer { try? fm.removeItem(at: root) }
+        let doc = configuredDocument(fileURL: package)
+        try doc.recordKnownPackageState(at: package)
+        try fm.setAttributes(
+            [.modificationDate: Date(timeIntervalSinceNow: 30)],
+            ofItemAtPath: package.path
+        )
+
+        let saveError: Error? = await withCheckedContinuation { continuation in
+            doc.save(
+                to: package,
+                ofType: VideoProject.typeIdentifier,
+                for: .saveOperation
+            ) {
+                continuation.resume(returning: $0)
+            }
+        }
+        let savedPackageDate = try #require(
+            fm.attributesOfItem(atPath: package.path)[.modificationDate] as? Date
+        )
+
+        #expect(saveError == nil)
+        #expect(doc.fileModificationDate == savedPackageDate)
+    }
+
     @Test func changedPackageContentKeepsTheConflictBaseline() throws {
         let root = fm.temporaryDirectory.appendingPathComponent(
             "pp-content-change-\(UUID().uuidString)",
