@@ -45,6 +45,9 @@ enum EditAction {
             if asset.isGenerating {
                 return .disabled(reason: "Generation in progress")
             }
+            guard !UpscaleModelConfig.models(for: asset.type).isEmpty else {
+                return .disabled(reason: "No enabled upscaler is available")
+            }
             return .available
 
         case .edit:

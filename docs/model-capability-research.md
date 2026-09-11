@@ -94,6 +94,6 @@ authoritative curated value can supersede a local field without deleting the loc
 
 Checked-in fixtures cover image, video, and music capabilities plus a recorded Claude CLI help/init
 contract. CI tests use only those fixtures. They perform no web request, catalog mutation, provider
-request, generation, or deliberately invalid probe. The visual contract is normative in
-[`docs/ui/model-capability-research.html`](ui/model-capability-research.html), and the native SwiftUI
-implementation follows that contract in Models settings.
+request, generation, or deliberately invalid probe. The archived visual contract and native SwiftUI
+implementation document the former Models-settings workflow; neither is wired into current settings
+or production capability resolution.

@@ -68,8 +68,10 @@ final class ModelCatalog {
     private(set) var providerDiscovery: [GenerationProvider: ProviderDiscoveryState] = [:]
     private(set) var offeringCapabilitiesByModelID:
         [String: [ResolvedOfferingCapabilityProfileV1]] = [:]
-    private(set) var curatedOfferingCapabilitiesByModelID:
-        [String: [ResolvedOfferingCapabilityProfileV1]] = [:]
+    var curatedOfferingCapabilitiesByModelID:
+        [String: [ResolvedOfferingCapabilityProfileV1]] {
+        offeringCapabilitiesByModelID
+    }
     private(set) var isLoaded: Bool = false
     private(set) var lastError: String?
 
@@ -289,8 +291,6 @@ final class ModelCatalog {
         var newInternalByLogical: [String: String] = [:]
         var newOfferingCapabilitiesByModelID:
             [String: [ResolvedOfferingCapabilityProfileV1]] = [:]
-        var newCuratedOfferingCapabilitiesByModelID:
-            [String: [ResolvedOfferingCapabilityProfileV1]] = [:]
         var capabilityErrors: [String] = []
         newVideo.reserveCapacity(entries.count)
         newImage.reserveCapacity(entries.count)
@@ -304,12 +304,8 @@ final class ModelCatalog {
                     for: entry,
                     resolver: capabilityResolver
                 )
-                let capabilities = curatedCapabilities
                 if !curatedCapabilities.isEmpty {
-                    newCuratedOfferingCapabilitiesByModelID[entry.id] = curatedCapabilities
-                }
-                if !capabilities.isEmpty {
-                    newOfferingCapabilitiesByModelID[entry.id] = capabilities
+                    newOfferingCapabilitiesByModelID[entry.id] = curatedCapabilities
                 }
             } catch {
                 capabilityErrors.append("\(entry.id): \(error.localizedDescription)")
@@ -347,7 +343,6 @@ final class ModelCatalog {
         self.offersById = newOffersById
         self.internalByLogical = newInternalByLogical
         self.offeringCapabilitiesByModelID = newOfferingCapabilitiesByModelID
-        self.curatedOfferingCapabilitiesByModelID = newCuratedOfferingCapabilitiesByModelID
         self.lastError = capabilityErrors.first
     }
 
@@ -614,7 +609,6 @@ final class ModelCatalog {
         offersById = [:]
         internalByLogical = [:]
         offeringCapabilitiesByModelID = [:]
-        curatedOfferingCapabilitiesByModelID = [:]
         lastError = error
     }
 
