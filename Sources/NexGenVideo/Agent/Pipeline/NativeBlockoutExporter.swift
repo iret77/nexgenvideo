@@ -5,6 +5,8 @@ import Foundation
 import NexGenEngine
 
 enum NativeBlockoutExporter {
+    static let maximumFrameCount = 18_000
+
     static func frameCount(
         for request: BlockoutRequestV1,
         tool: String = "native_blockout",
@@ -23,6 +25,12 @@ enum NativeBlockoutExporter {
         guard count >= 1 else {
             let field = tool.isEmpty ? path : "\(tool).\(path)"
             throw ToolError("\(field): expected at least one frame")
+        }
+        guard count <= maximumFrameCount else {
+            let field = tool.isEmpty ? path : "\(tool).\(path)"
+            throw ToolError(
+                "\(field): native blockouts support at most 18,000 frames"
+            )
         }
         return count
     }

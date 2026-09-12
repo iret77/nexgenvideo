@@ -336,6 +336,13 @@ extension ToolExecutor {
                 "insert_clips.atFrame + item durations exceeds the supported frame range"
             )
         }
+        try Self.validateRippleInsertRanges(
+            editor,
+            targetTrackIndex: input.trackIndex,
+            atFrame: input.atFrame,
+            pushAmount: totalPush,
+            specs: specs
+        )
         let tracksBefore = editor.timeline.tracks.count
         let ids = editor.rippleInsertClips(specs: specs, trackIndex: input.trackIndex, atFrame: input.atFrame)
         guard !ids.isEmpty else {
@@ -344,6 +351,52 @@ extension ToolExecutor {
         let audioNote = editor.timeline.tracks.count > tracksBefore
             ? " Created an audio track (appended) for the linked audio." : ""
         return .ok("Inserted \(specs.count) clip\(specs.count == 1 ? "" : "s") at frame \(input.atFrame) on track \(input.trackIndex), pushed later clips +\(totalPush)f: \(ids.joined(separator: ", ")).\(audioNote)")
+    }
+
+    private static func validateRippleInsertRanges(
+        _ editor: EditorViewModel,
+        targetTrackIndex: Int,
+        atFrame: Int,
+        pushAmount: Int,
+        specs: [EditorViewModel.RippleInsertSpec]
+    ) throws {
+        let targetIsVideo = editor.timeline.tracks[targetTrackIndex].type == .video
+        let needsLinkedAudio = targetIsVideo && specs.contains {
+            $0.asset.type == .video && $0.asset.hasAudio
+        }
+        let linkedAudioTrackIndex = needsLinkedAudio
+            ? editor.timeline.tracks.firstIndex(where: { $0.type == .audio })
+            : nil
+        let affectedTracks = editor.timeline.tracks.indices.filter {
+            $0 == targetTrackIndex
+                || $0 == linkedAudioTrackIndex
+                || editor.timeline.tracks[$0].syncLocked
+        }
+
+        for trackIndex in affectedTracks {
+            for clip in editor.timeline.tracks[trackIndex].clips {
+                let (endFrame, existingOverflow) = clip.startFrame
+                    .addingReportingOverflow(clip.durationFrames)
+                guard !existingOverflow else {
+                    throw ToolError(
+                        "insert_clips: clip \(clip.id) already exceeds the supported frame range"
+                    )
+                }
+                guard clip.startFrame >= atFrame
+                        || (clip.startFrame < atFrame && atFrame < endFrame) else {
+                    continue
+                }
+                let (_, startOverflow) = clip.startFrame
+                    .addingReportingOverflow(pushAmount)
+                let (_, endOverflow) = endFrame
+                    .addingReportingOverflow(pushAmount)
+                guard !startOverflow, !endOverflow else {
+                    throw ToolError(
+                        "insert_clips: shifting clip \(clip.id) exceeds the supported frame range"
+                    )
+                }
+            }
+        }
     }
 
     // MARK: remove_clips
@@ -541,12 +594,17 @@ extension ToolExecutor {
         let partners: Set<String> = propagatesTiming
             ? editor.timingPropagationPartners(of: Set(input.clipIds))
             : []
+        let selectedIDs = Set(input.clipIds)
         var speedDerivedDurations: [String: Int] = [:]
         if input.durationFrames == nil, let speed = input.speed {
-            for id in Set(input.clipIds).union(partners) {
+            for id in selectedIDs.union(partners) {
                 guard let location = editor.findClip(id: id) else { continue }
                 let clip = editor.timeline.tracks[location.trackIndex]
                     .clips[location.clipIndex]
+                if partners.contains(id), !selectedIDs.contains(id),
+                   clip.mediaType == .text {
+                    continue
+                }
                 let sourceConsumed = Double(clip.durationFrames) * clip.speed
                 let rawDuration = (sourceConsumed / speed).rounded()
                 let duration = try ToolIntegerDecoder.exact(
@@ -560,6 +618,24 @@ extension ToolExecutor {
                     )
                 }
                 speedDerivedDurations[id] = duration
+            }
+        }
+
+        if input.durationFrames != nil || input.speed != nil {
+            for id in selectedIDs.union(partners) {
+                guard let location = editor.findClip(id: id) else { continue }
+                let clip = editor.timeline.tracks[location.trackIndex]
+                    .clips[location.clipIndex]
+                let speedApplies = selectedIDs.contains(id) || clip.mediaType != .text
+                let duration = input.durationFrames
+                    ?? (speedApplies ? speedDerivedDurations[id] : nil)
+                    ?? clip.durationFrames
+                guard !clip.startFrame.addingReportingOverflow(duration).overflow else {
+                    let field = input.durationFrames == nil ? "speed" : "durationFrames"
+                    throw ToolError(
+                        "set_clip_properties.\(field): clip \(id) exceeds the supported frame range"
+                    )
+                }
             }
         }
 

@@ -728,6 +728,45 @@ struct ToolExecutorClipTests {
         #expect(clip.durationFrames == 200)
     }
 
+    @Test func explicitDurationRejectsOverflowingTargetRangeBeforeMutation() async {
+        let originalStart = Int.max - 8
+        let h = ToolHarness(timeline: Fixtures.timeline(tracks: [
+            Fixtures.videoTrack(clips: [
+                Fixtures.clip(id: "c1", start: originalStart, duration: 8),
+            ]),
+        ]))
+
+        let result = await h.runRaw("set_clip_properties", args: [
+            "clipIds": ["c1"],
+            "durationFrames": 9,
+        ])
+
+        #expect(result.isError)
+        let clip = h.editor.timeline.tracks[0].clips[0]
+        #expect(clip.startFrame == originalStart)
+        #expect(clip.durationFrames == 8)
+    }
+
+    @Test func speedDerivedDurationRejectsOverflowingTargetRangeBeforeMutation() async {
+        let originalStart = Int.max - 8
+        let h = ToolHarness(timeline: Fixtures.timeline(tracks: [
+            Fixtures.videoTrack(clips: [
+                Fixtures.clip(id: "c1", start: originalStart, duration: 8),
+            ]),
+        ]))
+
+        let result = await h.runRaw("set_clip_properties", args: [
+            "clipIds": ["c1"],
+            "speed": 0.5,
+        ])
+
+        #expect(result.isError)
+        let clip = h.editor.timeline.tracks[0].clips[0]
+        #expect(clip.startFrame == originalStart)
+        #expect(clip.durationFrames == 8)
+        #expect(clip.speed == 1)
+    }
+
     // MARK: - add_clips
 
     @Test func addClipsPlacesClipOnTrack() async throws {
@@ -811,6 +850,84 @@ struct ToolExecutorClipTests {
         let h = ToolHarness()
         let result = await h.runRaw("add_clips", args: ["entries": []])
         #expect(result.isError)
+    }
+
+    @Test func insertClipsRejectsOverflowingExistingTargetRangeBeforeMutation() async {
+        let existingStart = Int.max - 8
+        let h = ToolHarness(timeline: Fixtures.timeline(tracks: [
+            Fixtures.videoTrack(clips: [
+                Fixtures.clip(id: "existing", start: existingStart, duration: 8),
+            ]),
+        ]))
+        let asset = h.addAsset(type: .video)
+
+        let result = await h.runRaw("insert_clips", args: [
+            "trackIndex": 0,
+            "atFrame": 0,
+            "entries": [["mediaRef": asset.id, "durationFrames": 1]],
+        ])
+
+        #expect(result.isError)
+        #expect(h.editor.timeline.tracks[0].clips.count == 1)
+        #expect(h.editor.timeline.tracks[0].clips[0].startFrame == existingStart)
+        #expect(h.editor.timeline.tracks[0].clips[0].durationFrames == 8)
+    }
+
+    @Test func insertClipsRejectsOverflowingSyncLockedRangeBeforeMutation() async {
+        let existingStart = Int.max - 8
+        var syncTrack = Fixtures.audioTrack(clips: [
+            Fixtures.clip(
+                id: "sync",
+                mediaType: .audio,
+                start: existingStart,
+                duration: 8
+            ),
+        ])
+        syncTrack.syncLocked = true
+        let h = ToolHarness(timeline: Fixtures.timeline(tracks: [
+            Fixtures.videoTrack(),
+            syncTrack,
+        ]))
+        let asset = h.addAsset(type: .video)
+
+        let result = await h.runRaw("insert_clips", args: [
+            "trackIndex": 0,
+            "atFrame": 0,
+            "entries": [["mediaRef": asset.id, "durationFrames": 1]],
+        ])
+
+        #expect(result.isError)
+        #expect(h.editor.timeline.tracks[0].clips.isEmpty)
+        #expect(h.editor.timeline.tracks[1].clips[0].startFrame == existingStart)
+        #expect(h.editor.timeline.tracks[1].clips[0].durationFrames == 8)
+    }
+
+    @Test func insertClipsRejectsOverflowingLinkedAudioRangeBeforeMutation() async {
+        let existingStart = Int.max - 8
+        let h = ToolHarness(timeline: Fixtures.timeline(tracks: [
+            Fixtures.videoTrack(),
+            Fixtures.audioTrack(clips: [
+                Fixtures.clip(
+                    id: "audio",
+                    mediaType: .audio,
+                    start: existingStart,
+                    duration: 8
+                ),
+            ]),
+        ]))
+        let asset = h.addAsset(type: .video, hasAudio: true)
+
+        let result = await h.runRaw("insert_clips", args: [
+            "trackIndex": 0,
+            "atFrame": 0,
+            "entries": [["mediaRef": asset.id, "durationFrames": 1]],
+        ])
+
+        #expect(result.isError)
+        #expect(h.editor.timeline.tracks[0].clips.isEmpty)
+        #expect(h.editor.timeline.tracks[1].clips.count == 1)
+        #expect(h.editor.timeline.tracks[1].clips[0].startFrame == existingStart)
+        #expect(h.editor.timeline.tracks[1].clips[0].durationFrames == 8)
     }
 
     @Test func addClipsAutoCreatesTrackWhenIndexOmitted() async throws {
@@ -1253,6 +1370,35 @@ struct ToolExecutorClipTests {
         let audioClip = h.editor.timeline.tracks[audioLoc.trackIndex].clips[audioLoc.clipIndex]
         #expect(videoClip.durationFrames == 30 && audioClip.durationFrames == 30)
         #expect(videoClip.speed == 2.0 && audioClip.speed == 2.0)
+    }
+
+    @Test func explicitDurationRejectsOverflowingPropagatedRangeBeforeMutation() async {
+        let (h, videoId, audioId) = await setupLinkedPair()
+        guard let audioLocation = h.editor.findClip(id: audioId) else {
+            Issue.record("linked audio setup failed")
+            return
+        }
+        h.editor.timeline.tracks[audioLocation.trackIndex]
+            .clips[audioLocation.clipIndex].startFrame = Int.max - 60
+
+        let result = await h.runRaw("set_clip_properties", args: [
+            "clipIds": [videoId],
+            "durationFrames": 61,
+        ])
+
+        #expect(result.isError)
+        guard let videoLocation = h.editor.findClip(id: videoId),
+              let currentAudioLocation = h.editor.findClip(id: audioId) else {
+            Issue.record("linked clips disappeared")
+            return
+        }
+        let video = h.editor.timeline.tracks[videoLocation.trackIndex]
+            .clips[videoLocation.clipIndex]
+        let audio = h.editor.timeline.tracks[currentAudioLocation.trackIndex]
+            .clips[currentAudioLocation.clipIndex]
+        #expect(video.durationFrames == 60)
+        #expect(audio.startFrame == Int.max - 60)
+        #expect(audio.durationFrames == 60)
     }
 
     @Test func setClipPropertiesOpacityDoesNotPropagateToLinkedPartner() async throws {

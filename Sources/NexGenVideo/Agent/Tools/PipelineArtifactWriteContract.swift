@@ -987,7 +987,13 @@ enum PipelineArtifactWriteContract {
             "width": ["type": "integer", "minimum": 64],
             "height": ["type": "integer", "minimum": 64],
             "fps": ["type": "integer", "minimum": 1],
-            "duration_seconds": ["type": "number", "exclusiveMinimum": 0],
+            "duration_seconds": [
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": mode == .native
+                    ? "Duration in seconds. fps × duration_seconds must not exceed 18,000 frames."
+                    : "Duration in seconds.",
+            ],
         ].merging(extra) { _, new in new }, required: [
             "mode", "width", "height", "fps", "duration_seconds",
         ] + extraRequired)

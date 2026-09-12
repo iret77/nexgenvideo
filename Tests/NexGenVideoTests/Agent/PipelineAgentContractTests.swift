@@ -60,6 +60,30 @@ struct PipelineAgentContractTests {
         }
     }
 
+    @Test("pipeline blockout rejects representable work above its frame ceiling")
+    func blockoutSchemaRejectsExcessiveRepresentableFrameCount() {
+        do {
+            try PipelineArtifactWriteContract.validateBlockoutRequest(
+                [
+                    "mode": "native",
+                    "width": 320,
+                    "height": 180,
+                    "fps": 30,
+                    "duration_seconds": 1e12,
+                ],
+                path: "write_shotlist.spatial_plan.blockout"
+            )
+            Issue.record("Expected the excessive blockout to be rejected.")
+        } catch let error as ToolError {
+            #expect(error.message.contains("18,000"))
+            #expect(error.message.contains(
+                "write_shotlist.spatial_plan.blockout.duration_seconds"
+            ))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
     @Test("every musicvideo phase has one order, gate, instructions, and executable path")
     func completeContract() throws {
         let pack = MusicvideoPack()
