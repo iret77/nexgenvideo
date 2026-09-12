@@ -171,6 +171,55 @@ struct CompositionBuildVideoSourceTimingTests {
 @Suite("CompositionBuilder.build — audio tracks")
 struct CompositionBuildAudioTrackTests {
 
+    @Test func mutedAudioTrackSkipsSourceResolutionAndComposition() async throws {
+        var mutedTrack = Fixtures.audioTrack(clips: [
+            Fixtures.clip(id: "muted", mediaRef: "muted-audio", mediaType: .audio, start: 0, duration: 24),
+        ])
+        mutedTrack.muted = true
+
+        let result = try await CompositionBuilder.build(
+            timeline: Fixtures.timeline(fps: 24, tracks: [mutedTrack]),
+            resolveURL: { _ in
+                Issue.record("resolveURL must not be called for muted audio")
+                return nil
+            },
+            renderSize: CGSize(width: 320, height: 180)
+        )
+
+        #expect(result.trackMappings.filter { !$0.isVideo }.isEmpty)
+        #expect(result.composition.tracks(withMediaType: .audio).isEmpty)
+        #expect(result.audioMix.inputParameters.isEmpty)
+        #expect(result.offlineMediaRefs.isEmpty)
+    }
+
+    @Test func mutedAudioTrackDoesNotExcludeAudibleTracks() async throws {
+        let audioURL = try makeSilentWav(durationSeconds: 2)
+        defer { try? FileManager.default.removeItem(at: audioURL) }
+
+        var mutedTrack = Fixtures.audioTrack(clips: [
+            Fixtures.clip(id: "muted", mediaRef: "muted-audio", mediaType: .audio, start: 0, duration: 24),
+        ])
+        mutedTrack.muted = true
+        let audibleTrack = Fixtures.audioTrack(clips: [
+            Fixtures.clip(id: "audible", mediaRef: "audible-audio", mediaType: .audio, start: 0, duration: 24),
+        ])
+
+        let result = try await CompositionBuilder.build(
+            timeline: Fixtures.timeline(fps: 24, tracks: [mutedTrack, audibleTrack]),
+            resolveURL: { mediaRef in
+                if mediaRef == "audible-audio" { return audioURL }
+                Issue.record("resolveURL must not be called for muted audio")
+                return nil
+            },
+            renderSize: CGSize(width: 320, height: 180)
+        )
+
+        let audioMappings = result.trackMappings.filter { !$0.isVideo }
+        #expect(audioMappings.count == 1)
+        #expect(clipIds(audioMappings[0]) == ["audible"])
+        #expect(result.offlineMediaRefs.isEmpty)
+    }
+
     @Test func normalAudioClipsShareCompositionTrack() async throws {
         let audioURL = try makeSilentWav(durationSeconds: 3)
         defer { try? FileManager.default.removeItem(at: audioURL) }

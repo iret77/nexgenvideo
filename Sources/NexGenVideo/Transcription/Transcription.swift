@@ -78,13 +78,43 @@ enum Transcription {
         return matchLocale(candidates: candidates, supported: supported)
     }
 
+    static func baseLocale(for locale: Locale) -> Locale? {
+        let identifier = locale.identifier(.bcp47)
+        let baseIdentifier = identifier.range(of: "-u-").map { String(identifier[..<$0.lowerBound]) } ?? identifier
+        let base = Locale(identifier: baseIdentifier)
+        guard let language = base.language.languageCode?.identifier.lowercased(),
+              language.range(of: "^[a-z]{2,3}$", options: .regularExpression) != nil,
+              language != "und" else { return nil }
+        return base
+    }
+
     static func matchLocale(candidates: [Locale], supported: [Locale]) -> Locale? {
         for candidate in candidates {
-            guard let lang = candidate.language.languageCode?.identifier else { continue }
-            let sameLang = supported.filter { $0.language.languageCode?.identifier == lang }
-            guard !sameLang.isEmpty else { continue }
-            let region = candidate.region?.identifier
-            return sameLang.first { $0.region?.identifier == region } ?? sameLang.first
+            guard let baseCandidate = baseLocale(for: candidate),
+                  let language = baseCandidate.language.languageCode?.identifier else { continue }
+            let sameLanguage = supported.compactMap { locale -> (locale: Locale, base: Locale)? in
+                guard let base = baseLocale(for: locale),
+                      base.language.languageCode?.identifier == language else { return nil }
+                return (locale, base)
+            }
+            guard !sameLanguage.isEmpty else { continue }
+
+            let script = baseCandidate.language.script?.identifier
+            let region = baseCandidate.region?.identifier
+            if let exact = sameLanguage.first(where: {
+                $0.base.language.script?.identifier == script && $0.base.region?.identifier == region
+            }) {
+                return exact.locale
+            }
+            if let script,
+               let scriptMatch = sameLanguage.first(where: { $0.base.language.script?.identifier == script }) {
+                return scriptMatch.locale
+            }
+            if let region,
+               let regionMatch = sameLanguage.first(where: { $0.base.region?.identifier == region }) {
+                return regionMatch.locale
+            }
+            return sameLanguage[0].locale
         }
         return nil
     }

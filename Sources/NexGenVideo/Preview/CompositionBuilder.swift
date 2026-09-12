@@ -59,6 +59,8 @@ enum CompositionBuilder {
             let isAudio = track.type == .audio
             let mediaType: AVMediaType = isAudio ? .audio : .video
 
+            guard !isAudio || !track.muted else { continue }
+
             if isAudio {
                 var normalTrack: AVMutableCompositionTrack?
                 var normalClipIds = Set<String>()

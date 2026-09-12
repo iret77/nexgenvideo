@@ -120,6 +120,43 @@ struct ExportServiceRoundTripTests {
         #expect(qc.videoCodec == "avc1")
     }
 
+    @Test func h264ExportWithOnlyMutedAudioProducesNoAudioStream() async throws {
+        let renderSize = CGSize(width: 320, height: 180)
+        let blackURL = try await ImageVideoGenerator.blackVideo(size: renderSize)
+        let videoRef = "black-fixture"
+        var manifest = MediaManifest()
+        manifest.entries = [MediaManifestEntry(
+            id: videoRef, name: "black", type: .video,
+            source: .external(absolutePath: blackURL.path), duration: 5.0
+        )]
+        let resolver = MediaResolver(manifest: { manifest }, projectURL: { nil })
+
+        let video = Fixtures.clip(id: "video", mediaRef: videoRef, start: 0, duration: 30)
+        var mutedTrack = Fixtures.audioTrack(clips: [
+            Fixtures.clip(id: "muted", mediaRef: "unresolvable-audio", mediaType: .audio, start: 0, duration: 30),
+        ])
+        mutedTrack.muted = true
+        var timeline = Fixtures.timeline(tracks: [Fixtures.videoTrack(clips: [video]), mutedTrack])
+        timeline.width = Int(renderSize.width)
+        timeline.height = Int(renderSize.height)
+
+        let outURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("muted-audio-export-\(UUID().uuidString).mp4")
+        defer { try? FileManager.default.removeItem(at: outURL) }
+
+        let service = ExportService()
+        await service.export(
+            timeline: timeline, resolver: resolver,
+            format: .h264, resolution: .r720p,
+            outputURL: outURL
+        )
+
+        #expect(service.error == nil, "export reported error: \(service.error ?? \"\")")
+        let asset = AVURLAsset(url: outURL)
+        let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+        #expect(audioTracks.isEmpty)
+    }
+
     /// Regression for the AVFoundation crash where a transform keyframe at clip-offset 0
     /// caused `emitTransform`'s leading setTransform to overlap the first ramp's time range.
     @Test func exportSurvivesTransformKeyframeAtClipOffsetZero() async throws {
