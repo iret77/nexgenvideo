@@ -321,7 +321,7 @@ Compare SwiftUI structure against the HTML `#spec`, verify pointer/keyboard rout
 - Test: `Tests/NexGenVideoTests/Project/ProjectWorkingCopyTests.swift`
 
 **Interfaces:**
-- Produces: new additive `DerivedIdentityAssetV1`/store keyed by owning phase and destination, recording source import path/hash, destination path/hash, role, and timestamp-free deterministic metadata; `ApprovalValidity` separates historical approval from current lineage; internal `HostOperationOutcome` distinguishes rejected, persisted-unvalidated, validated-awaiting-review, approved, and stale.
+- Produces: new additive `DerivedIdentityAssetV1`/store keyed by owning phase and destination, recording source import path/hash, destination path/hash, role, and timestamp-free deterministic metadata; new `PhaseApprovalValidity` values returned alongside the unchanged `ProjectStateBuilder.ProjectState` layout separate historical approval from current lineage; internal `HostOperationOutcome` distinguishes rejected, persisted-unvalidated, validated-awaiting-review, approved, and stale.
 - Consumes: exact-byte cumulative lineage, canonical writer gates, existing pack migration hooks, hidden agent messages, and Task 6 generation readiness.
 
 - [ ] **Step 1: Author provenance regression tests**
@@ -350,7 +350,7 @@ Declare the new Music Video pack version and migration. On an explicit Recovery 
 
 - [ ] **Step 7: Project typed host truth**
 
-Introduce internal outcome/readiness types outside pack ABI. Canonical writers report persistence separately from structural validation. Project historical-approved/current-valid distinctly in `ProjectStateBuilder`, cockpit, pipeline UI, gate cards, transcript activity, and agent tool results. User copy is concise and localized; diagnostic detail is expandable and agent-facing errors name tools/artifacts.
+Introduce internal outcome/readiness types outside pack ABI. Canonical writers report persistence separately from structural validation. Add a separate `ProjectStateBuilder.approvalValidity(...) -> [String: PhaseApprovalValidity]` query without changing the stored layout of `PhaseStatus` or `ProjectState`; consume it in cockpit, pipeline UI, gate cards, transcript activity, and agent tool results. User copy is concise and localized; diagnostic detail is expandable and agent-facing errors name tools/artifacts.
 
 - [ ] **Step 8: Bump pack metadata and commit**
 
