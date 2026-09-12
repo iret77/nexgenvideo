@@ -354,7 +354,7 @@ Introduce internal outcome/readiness types outside pack ABI. Canonical writers r
 
 - [ ] **Step 8: Bump pack metadata and commit**
 
-Update Music Video pack source and `plugins/musicvideo.json` from 0.5.8 to 0.5.9 in the same commit. Record tests as not executed by policy, verify the branch, and commit `fix: separate pipeline provenance from host truth`.
+Update Music Video pack source and `plugins/musicvideo.json` from 0.5.8 to 0.5.9, raise `projectSchema` from `musicvideo/2.0.0` to `musicvideo/2.1.0`, add `musicvideo/2.0.0` to `migratesFrom`, and raise `minAppVersion` from 1.5.8 to 1.5.9 in the same commit. Record tests as not executed by policy, verify the branch, and commit `fix: separate pipeline provenance from host truth`.
 
 ### Task 9: Batch integration, release metadata, and static verification
 
