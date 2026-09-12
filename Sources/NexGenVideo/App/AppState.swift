@@ -136,9 +136,23 @@ final class AppState {
     }
 
     func showEditor(for project: VideoProject) {
-        activeProject = project
-        HomeWindowController.shared.window?.orderOut(nil)
         project.showWindows()
+        project.windowControllers.first?.window?.makeKeyAndOrderFront(nil)
+    }
+
+    func projectWindowDidBecomeKey(_ project: VideoProject) {
+        guard NSDocumentController.shared.documents.contains(where: { $0 === project }) else {
+            return
+        }
+        activeProject = project
+        hideHomeIfEditorIsVisible()
+    }
+
+    func hideHomeIfEditorIsVisible() {
+        guard activeProject?.windowControllers.contains(where: {
+            $0.window?.isVisible == true
+        }) == true else { return }
+        HomeWindowController.shared.window?.orderOut(nil)
     }
 
     func upgradeActiveProjectPack() {
@@ -236,10 +250,7 @@ final class AppState {
             return
         }
 
-        activeProject = project
-        HomeWindowController.shared.window?.orderOut(nil)
-        project.showWindows()
-        project.windowControllers.first?.window?.makeKeyAndOrderFront(nil)
+        showEditor(for: project)
 
         guard let assetId,
               let asset = project.editorViewModel.mediaAssets.first(where: { $0.id == assetId }) else {
@@ -352,7 +363,7 @@ final class AppState {
                 }
                 ProjectRegistry.shared.register(url)
                 doc.makeWindowControllers()
-                doc.showWindows()
+                showEditor(for: doc)
             }
         }
     }
@@ -423,11 +434,11 @@ final class AppState {
             return existing
         }
 
-        doc.makeWindowControllers()
-        doc.showWindows()
         NSDocumentController.shared.addDocument(doc)
         if register { ProjectRegistry.shared.register(resolved) }
         apply(options, to: doc.editorViewModel)
+        doc.makeWindowControllers()
+        showEditor(for: doc)
         return doc
     }
 
@@ -435,9 +446,9 @@ final class AppState {
         if let existing = NSDocumentController.shared.documents
             .compactMap({ $0 as? VideoProject })
             .first(where: { Self.sameFile($0.fileURL, url) }) {
-            showEditor(for: existing)
             if register { ProjectRegistry.shared.register(url) }
             apply(options, to: existing.editorViewModel)
+            showEditor(for: existing)
             return existing
         }
         return nil

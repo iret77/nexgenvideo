@@ -726,14 +726,19 @@ final class VideoProject: NSDocument {
         window.isMovableByWindowBackground = false
         window.backgroundColor = NSColor(AppTheme.Background.surfaceColor)
 
-        let controller = EditorWindowController(editorViewModel: editorViewModel, window: window)
+        let controller = EditorWindowController(
+            editorViewModel: editorViewModel,
+            window: window,
+            onWindowDidBecomeKey: { [weak self] in
+                guard let self else { return }
+                AppState.shared.projectWindowDidBecomeKey(self)
+            }
+        )
         controller.shouldCascadeWindows = true
         controller.installKeyMonitor()
         addWindowController(controller)
 
         window.standardWindowButton(.documentIconButton)?.isHidden = true
-
-        AppState.shared.showEditor(for: self)
 
         if let manifest = loadedManifest {
             editorViewModel.mediaManifest = manifest

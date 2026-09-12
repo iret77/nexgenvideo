@@ -2,18 +2,29 @@ import AppKit
 
 /// Window controller that handles keyboard shortcuts via the responder chain.
 /// Forwards actions to the EditorViewModel owned by VideoProject.
-final class EditorWindowController: NSWindowController {
+final class EditorWindowController: NSWindowController, NSWindowDelegate {
     let editorViewModel: EditorViewModel
     private nonisolated(unsafe) var keyMonitor: Any?
     private nonisolated(unsafe) var mouseMonitor: Any?
+    private let onWindowDidBecomeKey: @MainActor () -> Void
 
-    init(editorViewModel: EditorViewModel, window: NSWindow) {
+    init(
+        editorViewModel: EditorViewModel,
+        window: NSWindow,
+        onWindowDidBecomeKey: @escaping @MainActor () -> Void
+    ) {
         self.editorViewModel = editorViewModel
+        self.onWindowDidBecomeKey = onWindowDidBecomeKey
         super.init(window: window)
+        window.delegate = self
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        onWindowDidBecomeKey()
+    }
 
     /// The visible titlebar is hidden (custom chrome), but the OS window title still feeds the window
     /// switcher, Mission Control, and screenshots — brand it. AppKit refreshes this whenever the
