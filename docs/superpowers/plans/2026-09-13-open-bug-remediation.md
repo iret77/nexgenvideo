@@ -304,6 +304,7 @@ Compare SwiftUI structure against the HTML `#spec`, verify pointer/keyboard rout
 - Modify: `Sources/NexGenVideo/Agent/Panel/AgentTranscriptProjection.swift`
 - Modify: `Sources/NexGenVideo/Agent/Panel/GateApprovalCard.swift`
 - Modify: `Sources/NexGenVideo/Agent/GateApproval.swift`
+- Modify: `Sources/NexGenVideo/Agent/AgentService.swift`
 - Modify: `Sources/NexGenVideo/Agent/Pipeline/PipelineRenderRecordWriter.swift`
 - Modify: `Sources/NexGenVideo/Plugins/ProjectPackMigration.swift`
 - Modify: `Sources/NexGenVideo/Project/ProjectWorkingCopy.swift`
