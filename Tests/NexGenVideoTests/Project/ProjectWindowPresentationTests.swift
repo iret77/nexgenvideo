@@ -1,4 +1,4 @@
-import AppKit
+import Foundation
 import Testing
 
 @testable import NexGenVideo
@@ -6,219 +6,288 @@ import Testing
 @MainActor
 @Suite("Project window presentation", .serialized)
 struct ProjectWindowPresentationTests {
-    @Test("new project construction keeps Home until the editor becomes key")
-    func newProjectWaitsForKeyWindow() throws {
-        let home = resetToHome()
+    @Test("new-project completion registers the recent before constructing and presenting")
+    func newProjectSuccessOrdering() {
+        let state = AppState()
         let project = VideoProject()
-        NSDocumentController.shared.addDocument(project)
-        defer { cleanUp([project]) }
-
-        project.makeWindowControllers()
-
-        #expect(home.isVisible)
-        #expect(AppState.shared.activeProject == nil)
-
-        let controller = try #require(
-            project.windowControllers.first as? EditorWindowController
-        )
-        controller.window?.orderFront(nil)
-        controller.windowDidBecomeKey(keyNotification(for: controller))
-
-        #expect(AppState.shared.activeProject === project)
-        #expect(!home.isVisible)
-    }
-
-    @Test("open success registers the document before editor activation")
-    func openSuccessRequiresRegistrationBeforeActivation() throws {
-        let home = resetToHome()
-        let fixture = editorFixture()
-        defer { cleanUp([fixture.project]) }
-
-        fixture.controller.showWindow(nil)
-        fixture.controller.windowDidBecomeKey(keyNotification(for: fixture.controller))
-
-        #expect(AppState.shared.activeProject == nil)
-        #expect(home.isVisible)
-
-        NSDocumentController.shared.addDocument(fixture.project)
-        fixture.controller.windowDidBecomeKey(keyNotification(for: fixture.controller))
-
-        #expect(AppState.shared.activeProject === fixture.project)
-        #expect(!home.isVisible)
-    }
-
-    @Test("cancelled new project leaves Home visible")
-    func cancelledNewProjectLeavesHomeVisible() {
-        let home = resetToHome()
-
-        AppState.shared.hideHomeIfEditorIsVisible()
-
-        #expect(AppState.shared.activeProject == nil)
-        #expect(home.isVisible)
-    }
-
-    @Test("failed validation cannot activate an unregistered editor")
-    func validationFailureLeavesHomeVisible() {
-        let home = resetToHome()
-        let fixture = editorFixture()
-        defer { cleanUp([fixture.project]) }
-
-        fixture.controller.showWindow(nil)
-        fixture.controller.windowDidBecomeKey(keyNotification(for: fixture.controller))
-
-        #expect(AppState.shared.activeProject == nil)
-        #expect(home.isVisible)
-    }
-
-    @Test("rapid opens select only the editor whose key event arrives")
-    func rapidSuccessiveOpensFollowKeyEventOrder() {
-        let home = resetToHome()
-        let first = editorFixture()
-        let second = editorFixture()
-        register([first.project, second.project])
-        defer { cleanUp([first.project, second.project]) }
-        first.controller.showWindow(nil)
-        second.controller.showWindow(nil)
-
-        second.controller.windowDidBecomeKey(keyNotification(for: second.controller))
-
-        #expect(AppState.shared.activeProject === second.project)
-        #expect(!home.isVisible)
-    }
-
-    @Test("switching key editor switches the active project")
-    func keyWindowSwitchesActiveProject() {
-        _ = resetToHome()
-        let first = editorFixture()
-        let second = editorFixture()
-        register([first.project, second.project])
-        defer { cleanUp([first.project, second.project]) }
-        first.controller.showWindow(nil)
-        second.controller.showWindow(nil)
-
-        first.controller.windowDidBecomeKey(keyNotification(for: first.controller))
-        #expect(AppState.shared.activeProject === first.project)
-
-        second.controller.windowDidBecomeKey(keyNotification(for: second.controller))
-        #expect(AppState.shared.activeProject === second.project)
-
-        first.controller.windowDidBecomeKey(keyNotification(for: first.controller))
-        #expect(AppState.shared.activeProject === first.project)
-    }
-
-    @Test("returning Home and reopening an editor repeats the key-window gate")
-    func reopeningEditorWaitsForKeyWindowAgain() {
-        let home = resetToHome()
-        let fixture = editorFixture()
-        register([fixture.project])
-        defer { cleanUp([fixture.project]) }
-        fixture.controller.showWindow(nil)
-        fixture.controller.windowDidBecomeKey(keyNotification(for: fixture.controller))
-        #expect(!home.isVisible)
-
-        AppState.shared.showHome(persist: false)
-        #expect(home.isVisible)
-        #expect(AppState.shared.activeProject == nil)
-
-        AppState.shared.showEditor(for: fixture.project)
-        #expect(home.isVisible)
-        #expect(AppState.shared.activeProject == nil)
-
-        fixture.controller.windowDidBecomeKey(keyNotification(for: fixture.controller))
-        #expect(AppState.shared.activeProject === fixture.project)
-        #expect(!home.isVisible)
-    }
-
-    @Test("notification reveal waits for its editor key event")
-    func notificationDrivenOpenWaitsForKeyWindow() {
-        let home = resetToHome()
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("notification-\(UUID().uuidString).ngv")
-        let fixture = editorFixture(fileURL: url)
-        register([fixture.project])
-        defer { cleanUp([fixture.project]) }
-
-        AppState.shared.revealGeneratedAssetFromNotification(
-            assetId: nil,
-            projectURL: url
-        )
-
-        #expect(fixture.window.isVisible)
-        #expect(home.isVisible)
-        #expect(AppState.shared.activeProject == nil)
-
-        fixture.controller.windowDidBecomeKey(keyNotification(for: fixture.controller))
-
-        #expect(AppState.shared.activeProject === fixture.project)
-        #expect(!home.isVisible)
-    }
-
-    private func editorFixture(fileURL: URL? = nil) -> EditorFixture {
-        let project = VideoProject()
-        project.fileURL = fileURL
-        project.fileType = VideoProject.typeIdentifier
-        let window = NonKeyEditorWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
-            styleMask: [.titled, .closable],
-            backing: .buffered,
-            defer: false
-        )
-        let controller = EditorWindowController(
-            editorViewModel: project.editorViewModel,
-            window: window,
-            onWindowDidBecomeKey: { [weak project] in
-                guard let project else { return }
-                AppState.shared.projectWindowDidBecomeKey(project)
-            }
-        )
-        project.addWindowController(controller)
-        return EditorFixture(
+        let recorder = PresentationRecorder()
+        let request = ProjectWindowPresentationRequest.newProject(
             project: project,
-            window: window,
-            controller: controller
+            url: URL(fileURLWithPath: "/tmp/New.ngv")
         )
-    }
 
-    private func resetToHome() -> NSWindow {
-        _ = NSApplication.shared
-        AppState.shared.showHome(persist: false)
-        HomeWindowController.shared.showWindow(nil)
-        return HomeWindowController.shared.window!
-    }
-
-    private func register(_ projects: [VideoProject]) {
-        for project in projects {
-            NSDocumentController.shared.addDocument(project)
-        }
-    }
-
-    private func cleanUp(_ projects: [VideoProject]) {
-        AppState.shared.showHome(persist: false)
-        for project in projects {
-            project.windowControllers.forEach { $0.window?.orderOut(nil) }
-            NSDocumentController.shared.removeDocument(project)
-            if let url = project.fileURL {
-                ProjectRegistry.shared.remove(url)
-            }
-        }
-    }
-
-    private func keyNotification(for controller: EditorWindowController) -> Notification {
-        Notification(
-            name: NSWindow.didBecomeKeyNotification,
-            object: controller.window
+        let result = state.completeProjectPresentation(
+            .ready(request),
+            effects: recorder.presentationEffects
         )
+
+        #expect(result == .presented)
+        #expect(recorder.events == [.registerRecent, .createWindows, .present])
+        #expect(state.activeProject == nil)
+    }
+
+    @Test("loaded-project completion registers the document before constructing and presenting")
+    func openProjectSuccessOrdering() {
+        let state = AppState()
+        let project = VideoProject()
+        let recorder = PresentationRecorder()
+        let request = ProjectWindowPresentationRequest.loadedProject(
+            project: project,
+            url: URL(fileURLWithPath: "/tmp/Open.ngv"),
+            registerRecent: true,
+            options: ProjectOpenOptions(startTutorial: true)
+        )
+
+        let result = state.completeProjectPresentation(
+            .ready(request),
+            effects: recorder.presentationEffects
+        )
+
+        #expect(result == .presented)
+        #expect(
+            recorder.events == [
+                .addDocument,
+                .registerRecent,
+                .applyOptions,
+                .createWindows,
+                .present,
+            ]
+        )
+        #expect(state.activeProject == nil)
+    }
+
+    @Test("cancelled new-project completion has no presentation effects")
+    func newProjectCancellationDoesNothing() {
+        let state = AppState()
+        let recorder = PresentationRecorder()
+
+        let result = state.completeProjectPresentation(
+            .cancelled,
+            effects: recorder.presentationEffects
+        )
+
+        #expect(result == .cancelled)
+        #expect(recorder.events.isEmpty)
+        #expect(state.activeProject == nil)
+    }
+
+    @Test("rejected open validation has no document or presentation effects")
+    func openValidationRejectionDoesNothing() {
+        let state = AppState()
+        let recorder = PresentationRecorder()
+
+        let accepted = state.acceptProjectOpenValidation(
+            false,
+            effects: recorder.presentationEffects
+        )
+
+        #expect(!accepted)
+        #expect(!recorder.events.contains(.addDocument))
+        #expect(!recorder.events.contains(.createWindows))
+        #expect(!recorder.events.contains(.present))
+        #expect(state.activeProject == nil)
+    }
+
+    @Test("failed new-project completion unregisters before reporting the error")
+    func newProjectFailureOrdering() {
+        let state = AppState()
+        let project = VideoProject()
+        let recorder = PresentationRecorder()
+
+        let result = state.completeProjectPresentation(
+            .failed(TestFailure.expected, discard: project),
+            effects: recorder.presentationEffects
+        )
+
+        #expect(result == .failed)
+        #expect(recorder.events == [.removeDocument, .reportError])
+        #expect(state.activeProject == nil)
+    }
+
+    @Test("failed open reports the error without registering or presenting")
+    func openFailureDoesNotPresent() {
+        let state = AppState()
+        let recorder = PresentationRecorder()
+
+        let result = state.completeProjectPresentation(
+            .failed(TestFailure.expected, discard: nil),
+            effects: recorder.presentationEffects
+        )
+
+        #expect(result == .failed)
+        #expect(recorder.events == [.reportError])
+        #expect(state.activeProject == nil)
+    }
+
+    @Test("rapid opens follow key-event order, not completion order")
+    func rapidSuccessiveOpensFollowKeyEventOrder() {
+        let state = AppState()
+        let first = VideoProject()
+        let second = VideoProject()
+        let recorder = PresentationRecorder()
+
+        _ = state.completeProjectPresentation(
+            .ready(.existingProject(
+                project: first,
+                url: URL(fileURLWithPath: "/tmp/First.ngv"),
+                registerRecent: true,
+                options: .init()
+            )),
+            effects: recorder.presentationEffects
+        )
+        _ = state.completeProjectPresentation(
+            .ready(.existingProject(
+                project: second,
+                url: URL(fileURLWithPath: "/tmp/Second.ngv"),
+                registerRecent: true,
+                options: .init()
+            )),
+            effects: recorder.presentationEffects
+        )
+        #expect(state.activeProject == nil)
+
+        state.projectWindowDidBecomeKey(
+            second,
+            effects: recorder.activationEffects
+        )
+
+        #expect(state.activeProject === second)
+    }
+
+    @Test("switching key editors updates the active project each time")
+    func keyWindowSwitchesActiveProject() {
+        let state = AppState()
+        let first = VideoProject()
+        let second = VideoProject()
+        let recorder = PresentationRecorder()
+
+        state.projectWindowDidBecomeKey(first, effects: recorder.activationEffects)
+        #expect(state.activeProject === first)
+
+        state.projectWindowDidBecomeKey(second, effects: recorder.activationEffects)
+        #expect(state.activeProject === second)
+
+        state.projectWindowDidBecomeKey(first, effects: recorder.activationEffects)
+        #expect(state.activeProject === first)
+    }
+
+    @Test("returning Home clears the active project and reopening waits for key")
+    func homeThenReopenRepeatsActivationGate() {
+        let state = AppState()
+        let project = VideoProject()
+        let recorder = PresentationRecorder()
+
+        state.projectWindowDidBecomeKey(project, effects: recorder.activationEffects)
+        #expect(state.activeProject === project)
+
+        state.projectWindowPresentationDidEnd(project)
+        #expect(state.activeProject == nil)
+
+        _ = state.completeProjectPresentation(
+            .ready(.existingProject(
+                project: project,
+                url: URL(fileURLWithPath: "/tmp/Reopen.ngv"),
+                registerRecent: true,
+                options: .init()
+            )),
+            effects: recorder.presentationEffects
+        )
+        #expect(state.activeProject == nil)
+
+        state.projectWindowDidBecomeKey(project, effects: recorder.activationEffects)
+        #expect(state.activeProject === project)
+    }
+
+    @Test("notification presentation does not activate before the key callback")
+    func notificationPresentationWaitsForKeyWindow() {
+        let state = AppState()
+        let project = VideoProject()
+        let recorder = PresentationRecorder()
+
+        let result = state.completeProjectPresentation(
+            .ready(.notification(project: project)),
+            effects: recorder.presentationEffects
+        )
+
+        #expect(result == .presented)
+        #expect(recorder.events == [.present])
+        #expect(state.activeProject == nil)
+
+        state.projectWindowDidBecomeKey(project, effects: recorder.activationEffects)
+
+        #expect(state.activeProject === project)
+        #expect(recorder.events.last == .hideHome)
+    }
+
+    @Test("an unregistered key callback cannot activate or hide Home")
+    func unregisteredEditorCannotActivate() {
+        let state = AppState()
+        let project = VideoProject()
+        let recorder = PresentationRecorder()
+        recorder.documentIsRegistered = false
+
+        state.projectWindowDidBecomeKey(project, effects: recorder.activationEffects)
+
+        #expect(state.activeProject == nil)
+        #expect(!recorder.events.contains(.hideHome))
+    }
+
+    @Test("a registered but invisible editor does not hide Home")
+    func invisibleEditorDoesNotHideHome() {
+        let state = AppState()
+        let project = VideoProject()
+        let recorder = PresentationRecorder()
+        recorder.editorIsVisible = false
+
+        state.projectWindowDidBecomeKey(project, effects: recorder.activationEffects)
+
+        #expect(state.activeProject === project)
+        #expect(!recorder.events.contains(.hideHome))
     }
 }
 
 @MainActor
-private struct EditorFixture {
-    let project: VideoProject
-    let window: NSWindow
-    let controller: EditorWindowController
+private final class PresentationRecorder {
+    var events: [PresentationEvent] = []
+    var documentIsRegistered = true
+    var editorIsVisible = true
+
+    var presentationEffects: ProjectWindowPresentationEffects {
+        ProjectWindowPresentationEffects(
+            addDocument: { [weak self] _ in self?.events.append(.addDocument) },
+            removeDocument: { [weak self] _ in self?.events.append(.removeDocument) },
+            registerRecent: { [weak self] _ in self?.events.append(.registerRecent) },
+            applyOptions: { [weak self] _, _ in self?.events.append(.applyOptions) },
+            createWindows: { [weak self] _ in self?.events.append(.createWindows) },
+            present: { [weak self] _ in self?.events.append(.present) },
+            reportError: { [weak self] _ in self?.events.append(.reportError) }
+        )
+    }
+
+    var activationEffects: ProjectWindowActivationEffects {
+        ProjectWindowActivationEffects(
+            documentIsRegistered: { [weak self] _ in
+                self?.documentIsRegistered == true
+            },
+            editorIsVisible: { [weak self] _ in
+                self?.editorIsVisible == true
+            },
+            hideHome: { [weak self] in self?.events.append(.hideHome) }
+        )
+    }
 }
 
-@MainActor
-private final class NonKeyEditorWindow: NSWindow {
-    override var canBecomeKey: Bool { false }
+private enum PresentationEvent: Equatable {
+    case addDocument
+    case removeDocument
+    case registerRecent
+    case applyOptions
+    case createWindows
+    case present
+    case reportError
+    case hideHome
+}
+
+private enum TestFailure: Error {
+    case expected
 }

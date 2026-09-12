@@ -5,6 +5,53 @@ struct ProjectOpenOptions {
     var startTutorial = false
 }
 
+enum ProjectWindowPresentationResult: Equatable {
+    case presented
+    case cancelled
+    case failed
+}
+
+enum ProjectWindowPresentationDecision {
+    case ready(ProjectWindowPresentationRequest)
+    case cancelled
+    case failed(any Error, discard: VideoProject?)
+}
+
+enum ProjectWindowPresentationRequest {
+    case newProject(project: VideoProject, url: URL)
+    case loadedProject(
+        project: VideoProject,
+        url: URL,
+        registerRecent: Bool,
+        options: ProjectOpenOptions
+    )
+    case existingProject(
+        project: VideoProject,
+        url: URL,
+        registerRecent: Bool,
+        options: ProjectOpenOptions
+    )
+    case notification(project: VideoProject)
+}
+
+@MainActor
+struct ProjectWindowPresentationEffects {
+    let addDocument: (VideoProject) -> Void
+    let removeDocument: (VideoProject) -> Void
+    let registerRecent: (URL) -> Void
+    let applyOptions: (ProjectOpenOptions, EditorViewModel) -> Void
+    let createWindows: (VideoProject) -> Void
+    let present: (VideoProject) -> Void
+    let reportError: (any Error) -> Void
+}
+
+@MainActor
+struct ProjectWindowActivationEffects {
+    let documentIsRegistered: (VideoProject) -> Bool
+    let editorIsVisible: (VideoProject) -> Bool
+    let hideHome: () -> Void
+}
+
 @Observable
 @MainActor
 final class AppState {
@@ -17,7 +64,7 @@ final class AppState {
 
     private(set) var mcpService: MCPService?
 
-    private init() {
+    init() {
         backendObserver = NotificationCenter.default.addObserver(
             forName: .agentBackendChanged,
             object: nil,
@@ -113,9 +160,7 @@ final class AppState {
                 ProjectRegistry.shared.register(url)
             }
             project.windowControllers.forEach { $0.window?.orderOut(nil) }
-            if self.activeProject === project {
-                self.activeProject = nil
-            }
+            self.projectWindowPresentationDidEnd(project)
             HomeWindowController.shared.showWindow(nil)
         }
         if persist, project.isDocumentEdited, let url = project.fileURL {
@@ -140,19 +185,116 @@ final class AppState {
         project.windowControllers.first?.window?.makeKeyAndOrderFront(nil)
     }
 
-    func projectWindowDidBecomeKey(_ project: VideoProject) {
-        guard NSDocumentController.shared.documents.contains(where: { $0 === project }) else {
-            return
-        }
+    func projectWindowDidBecomeKey(
+        _ project: VideoProject,
+        effects suppliedEffects: ProjectWindowActivationEffects? = nil
+    ) {
+        let effects = suppliedEffects ?? liveActivationEffects
+        guard effects.documentIsRegistered(project) else { return }
         activeProject = project
-        hideHomeIfEditorIsVisible()
+        hideHomeIfEditorIsVisible(effects: effects)
     }
 
-    func hideHomeIfEditorIsVisible() {
-        guard activeProject?.windowControllers.contains(where: {
-            $0.window?.isVisible == true
-        }) == true else { return }
-        HomeWindowController.shared.window?.orderOut(nil)
+    func hideHomeIfEditorIsVisible(
+        effects suppliedEffects: ProjectWindowActivationEffects? = nil
+    ) {
+        let effects = suppliedEffects ?? liveActivationEffects
+        guard let activeProject,
+              effects.editorIsVisible(activeProject) else { return }
+        effects.hideHome()
+    }
+
+    func projectWindowPresentationDidEnd(_ project: VideoProject) {
+        if activeProject === project {
+            activeProject = nil
+        }
+    }
+
+    @discardableResult
+    func acceptProjectOpenValidation(
+        _ accepted: Bool,
+        effects: ProjectWindowPresentationEffects? = nil
+    ) -> Bool {
+        guard accepted else {
+            completeProjectPresentation(.cancelled, effects: effects)
+            return false
+        }
+        return true
+    }
+
+    @discardableResult
+    func completeProjectPresentation(
+        _ decision: ProjectWindowPresentationDecision,
+        effects suppliedEffects: ProjectWindowPresentationEffects? = nil
+    ) -> ProjectWindowPresentationResult {
+        let effects = suppliedEffects ?? livePresentationEffects
+        switch decision {
+        case .cancelled:
+            return .cancelled
+        case .failed(let error, let project):
+            if let project {
+                effects.removeDocument(project)
+            }
+            effects.reportError(error)
+            return .failed
+        case .ready(let request):
+            completeProjectPresentation(request, effects: effects)
+            return .presented
+        }
+    }
+
+    private func completeProjectPresentation(
+        _ request: ProjectWindowPresentationRequest,
+        effects: ProjectWindowPresentationEffects
+    ) {
+        switch request {
+        case .newProject(let project, let url):
+            effects.registerRecent(url)
+            effects.createWindows(project)
+            effects.present(project)
+        case .loadedProject(let project, let url, let registerRecent, let options):
+            effects.addDocument(project)
+            if registerRecent {
+                effects.registerRecent(url)
+            }
+            effects.applyOptions(options, project.editorViewModel)
+            effects.createWindows(project)
+            effects.present(project)
+        case .existingProject(let project, let url, let registerRecent, let options):
+            if registerRecent {
+                effects.registerRecent(url)
+            }
+            effects.applyOptions(options, project.editorViewModel)
+            effects.present(project)
+        case .notification(let project):
+            effects.present(project)
+        }
+    }
+
+    private var livePresentationEffects: ProjectWindowPresentationEffects {
+        ProjectWindowPresentationEffects(
+            addDocument: { NSDocumentController.shared.addDocument($0) },
+            removeDocument: { NSDocumentController.shared.removeDocument($0) },
+            registerRecent: { ProjectRegistry.shared.register($0) },
+            applyOptions: { [self] options, editor in
+                self.apply(options, to: editor)
+            },
+            createWindows: { $0.makeWindowControllers() },
+            present: { [self] project in self.showEditor(for: project) },
+            reportError: { NSAlert(error: $0).runModal() }
+        )
+    }
+
+    private var liveActivationEffects: ProjectWindowActivationEffects {
+        ProjectWindowActivationEffects(
+            documentIsRegistered: { project in
+                NSDocumentController.shared.documents.contains { $0 === project }
+            },
+            editorIsVisible: { project in
+                project.windowControllers.contains { $0.window?.isVisible == true }
+            },
+            hideHome: { HomeWindowController.shared.window?.orderOut(nil) }
+        )
     }
 
     func upgradeActiveProjectPack() {
@@ -250,7 +392,9 @@ final class AppState {
             return
         }
 
-        showEditor(for: project)
+        completeProjectPresentation(
+            .ready(.notification(project: project))
+        )
 
         guard let assetId,
               let asset = project.editorViewModel.mediaAssets.first(where: { $0.id == assetId }) else {
@@ -333,17 +477,20 @@ final class AppState {
         panel.nameFieldStringValue = Project.defaultProjectName
         panel.directoryURL = Project.storageDirectory
         panel.title = "New Project"
-        panel.begin { response in
-            guard response == .OK, let url = panel.url else { return }
+        panel.begin { [self] response in
+            guard response == .OK, let url = panel.url else {
+                self.completeProjectPresentation(.cancelled)
+                return
+            }
             let doc = VideoProject()
             doc.fileURL = url
             doc.fileType = VideoProject.typeIdentifier
             NSDocumentController.shared.addDocument(doc)
             doc.save(to: url, ofType: VideoProject.typeIdentifier, for: .saveOperation) { error in
                 if let error {
-                    // Don't leave a hidden, window-less document registered — drop it and surface why.
-                    NSDocumentController.shared.removeDocument(doc)
-                    NSAlert(error: error).runModal()
+                    self.completeProjectPresentation(
+                        .failed(error, discard: doc)
+                    )
                     return
                 }
                 do {
@@ -357,23 +504,28 @@ final class AppState {
                     try ProjectIdentity.regenerate(at: url)
                     try doc.recordKnownPackageState(at: url)
                 } catch {
-                    NSDocumentController.shared.removeDocument(doc)
-                    NSAlert(error: error).runModal()
+                    self.completeProjectPresentation(
+                        .failed(error, discard: doc)
+                    )
                     return
                 }
-                ProjectRegistry.shared.register(url)
-                doc.makeWindowControllers()
-                showEditor(for: doc)
+                self.completeProjectPresentation(
+                    .ready(.newProject(project: doc, url: url))
+                )
             }
         }
     }
 
     func openProject(at url: URL, register: Bool = true, options: ProjectOpenOptions = .init()) {
-        Task {
+        Task { [self] in
             do {
-                try await openProjectAsync(at: url, register: register, options: options)
+                try await self.openProjectAsync(
+                    at: url,
+                    register: register,
+                    options: options
+                )
             } catch {
-                NSAlert(error: error).runModal()
+                self.completeProjectPresentation(.failed(error, discard: nil))
             }
         }
     }
@@ -386,7 +538,7 @@ final class AppState {
                     reply = .cancel
                 }
             } catch {
-                NSAlert(error: error).runModal()
+                completeProjectPresentation(.failed(error, discard: nil))
                 reply = .failure
             }
         }
@@ -398,12 +550,23 @@ final class AppState {
     @discardableResult
     private func openProjectAsync(at url: URL, register: Bool = true, options: ProjectOpenOptions = .init()) async throws -> VideoProject? {
         let resolved = url.standardizedFileURL
-        if let existing = showExistingProject(at: resolved, register: register, options: options) {
+        if let existing = existingProject(at: resolved) {
+            completeProjectPresentation(
+                .ready(.existingProject(
+                    project: existing,
+                    url: resolved,
+                    registerRecent: register,
+                    options: options
+                ))
+            )
             return existing
         }
         // Before the document exists: a pack project opened without its pack would come up generic
         // and could be SAVED that way, normalizing it to the wrong shape.
-        guard await ensurePackAvailable(for: resolved) else { return nil }
+        let packAvailable = await ensurePackAvailable(for: resolved)
+        guard acceptProjectOpenValidation(packAvailable) else {
+            return nil
+        }
         let doc: VideoProject
         do {
             doc = try await VideoProject.load(from: resolved)
@@ -419,6 +582,7 @@ final class AppState {
                         options: options
                     )
                 }
+                completeProjectPresentation(.cancelled)
                 return nil
             }
             if ProjectPackMigration.legacyTarget(for: resolved) != nil {
@@ -426,32 +590,38 @@ final class AppState {
                     projectURL: resolved,
                     reason: error.localizedDescription
                 )
+                completeProjectPresentation(.cancelled)
                 return nil
             }
             throw error
         }
-        if let existing = showExistingProject(at: resolved, register: register, options: options) {
+        if let existing = existingProject(at: resolved) {
+            completeProjectPresentation(
+                .ready(.existingProject(
+                    project: existing,
+                    url: resolved,
+                    registerRecent: register,
+                    options: options
+                ))
+            )
             return existing
         }
 
-        NSDocumentController.shared.addDocument(doc)
-        if register { ProjectRegistry.shared.register(resolved) }
-        apply(options, to: doc.editorViewModel)
-        doc.makeWindowControllers()
-        showEditor(for: doc)
+        completeProjectPresentation(
+            .ready(.loadedProject(
+                project: doc,
+                url: resolved,
+                registerRecent: register,
+                options: options
+            ))
+        )
         return doc
     }
 
-    private func showExistingProject(at url: URL, register: Bool, options: ProjectOpenOptions) -> VideoProject? {
-        if let existing = NSDocumentController.shared.documents
+    private func existingProject(at url: URL) -> VideoProject? {
+        NSDocumentController.shared.documents
             .compactMap({ $0 as? VideoProject })
-            .first(where: { Self.sameFile($0.fileURL, url) }) {
-            if register { ProjectRegistry.shared.register(url) }
-            apply(options, to: existing.editorViewModel)
-            showEditor(for: existing)
-            return existing
-        }
-        return nil
+            .first(where: { Self.sameFile($0.fileURL, url) })
     }
 
     private func apply(_ options: ProjectOpenOptions, to editor: EditorViewModel) {
