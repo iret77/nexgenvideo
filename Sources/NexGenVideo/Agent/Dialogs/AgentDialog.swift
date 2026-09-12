@@ -492,9 +492,19 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
         guard let raw else { return Projection() }
         var ranges: [TimelineRangeCandidate] = []
         for (i, r) in ((raw["timelineRanges"] as? [[String: Any]]) ?? []).enumerated() {
-            guard let start = intValue(r["startFrame"]), let end = intValue(r["endFrame"]) else {
+            guard let rawStart = r["startFrame"], let rawEnd = r["endFrame"] else {
                 throw ToolError("show_dialog: projection.timelineRanges[\(i)] needs integer 'startFrame' and 'endFrame'.")
             }
+            let start = try ToolIntegerDecoder.exact(
+                rawStart,
+                tool: "show_dialog",
+                path: "projection.timelineRanges[\(i)].startFrame"
+            )
+            let end = try ToolIntegerDecoder.exact(
+                rawEnd,
+                tool: "show_dialog",
+                path: "projection.timelineRanges[\(i)].endFrame"
+            )
             guard end > start else {
                 throw ToolError("show_dialog: projection.timelineRanges[\(i)] needs endFrame > startFrame.")
             }
@@ -510,11 +520,6 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
                           reviewShot: (reviewShot?.isEmpty == false) ? reviewShot : nil)
     }
 
-    private static func intValue(_ any: Any?) -> Int? {
-        if let i = any as? Int { return i }
-        if let d = any as? Double { return Int(d) }
-        return nil
-    }
 }
 
 extension AgentDialog.FileIntake {

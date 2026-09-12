@@ -442,9 +442,13 @@ extension ToolExecutor {
                   let model = VideoModelConfig.allModels.first(where: {
                 $0.id == selection.modelID
             }) else { return nil }
-            let requirementDuration: VideoDuration = selection.requirement.duration?
-                .preferredSeconds.map { .seconds(Int($0)) }
-                ?? .seconds(durationSeconds)
+            let requirementDuration: VideoDuration
+            if let preferred = selection.requirement.duration?.preferredSeconds {
+                guard let seconds = Int(exactly: preferred) else { return nil }
+                requirementDuration = .seconds(seconds)
+            } else {
+                requirementDuration = .seconds(durationSeconds)
+            }
             guard offeringCapabilities.validate(
                 duration: requirementDuration,
                 aspectRatio: selection.requirement.aspectRatio ?? "",
@@ -1124,7 +1128,11 @@ extension ToolExecutor {
             routedInputs = nil
         }
         let inputAssets = routedInputs?.assets ?? submittedInputAssets
-        let editSeconds = Int((trimmed?.durationSeconds ?? sourceAsset.duration).rounded())
+        let editSeconds = try ToolIntegerDecoder.exact(
+            (trimmed?.durationSeconds ?? sourceAsset.duration).rounded(),
+            tool: "generate_video",
+            path: "source duration"
+        )
         let editDuration = VideoDuration.seconds(editSeconds)
         let editAspectRatio = productionRouting?.selection.requirement.aspectRatio
             ?? args.string("aspectRatio") ?? ""
@@ -1266,10 +1274,12 @@ extension ToolExecutor {
                 let finalTrimmed = selectedRouting == nil ? trimmed : nil
                 let placeholderDuration = finalTrimmed?.durationSeconds
                     ?? (finalSourceAsset.duration > 0 ? finalSourceAsset.duration : 5)
-                let finalDuration = VideoDuration.seconds(
-                    Int((finalTrimmed?.durationSeconds ?? finalSourceAsset.duration).rounded())
+                let finalSeconds = try ToolIntegerDecoder.exact(
+                    (finalTrimmed?.durationSeconds ?? finalSourceAsset.duration).rounded(),
+                    tool: "generate_video",
+                    path: "approved source duration"
                 )
-                let finalSeconds = finalDuration.seconds ?? 0
+                let finalDuration = VideoDuration.seconds(finalSeconds)
                 let finalAspectRatio = selectedRouting?.requirement.aspectRatio
                     ?? editAspectRatio
                 let finalResolution = selectedRouting?.requirement.resolution
@@ -1351,8 +1361,12 @@ extension ToolExecutor {
                 throw ToolError("duration must be an integer number of seconds or 'auto'")
             }
             duration = .automatic
-        } else if let seconds = args.int("duration") {
-            duration = .seconds(seconds)
+        } else if let rawDuration = args["duration"] {
+            duration = .seconds(try ToolIntegerDecoder.exact(
+                rawDuration,
+                tool: "generate_video",
+                path: "duration"
+            ))
         } else {
             duration = offeringCapabilities.durationCapabilities.defaultValue
         }
@@ -2259,8 +2273,10 @@ extension ToolExecutor {
             as? [CFString: Any] else {
             return "cannot be decoded as an image"
         }
-        guard let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
-              let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue,
+        guard let rawWidth = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue,
+              let rawHeight = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue,
+              let width = Int(exactly: rawWidth),
+              let height = Int(exactly: rawHeight),
               width > 0, height > 0 else {
             return "has invalid image dimensions"
         }
@@ -2417,20 +2433,38 @@ extension ToolExecutor {
             }
             videoReference = videoAsset
             persistedVideoReferenceID = videoAsset.id
-        } else if let start = args.int("videoSourceStartFrame"), let end = args.int("videoSourceEndFrame") {
+        } else if args["videoSourceStartFrame"] != nil || args["videoSourceEndFrame"] != nil {
+            guard let rawStart = args["videoSourceStartFrame"],
+                  let rawEnd = args["videoSourceEndFrame"] else {
+                throw ToolError("videoSourceStartFrame and videoSourceEndFrame must be provided together.")
+            }
+            let start = try ToolIntegerDecoder.exact(
+                rawStart,
+                tool: "generate_audio",
+                path: "videoSourceStartFrame"
+            )
+            let end = try ToolIntegerDecoder.exact(
+                rawEnd,
+                tool: "generate_audio",
+                path: "videoSourceEndFrame"
+            )
             guard acceptsVideo else {
                 throw ToolError("Model '\(model.id)' does not accept a video input (see list_models 'inputs').")
             }
             guard start >= 0, end > start else {
                 throw ToolError("videoSourceEndFrame must be greater than videoSourceStartFrame (>= 0).")
             }
-            let seconds = Double(end - start) / Double(max(1, editor.timeline.fps))
+            let (spanFrames, overflow) = end.subtractingReportingOverflow(start)
+            guard !overflow else {
+                throw ToolError("generate_audio.videoSourceEndFrame exceeds the supported frame span")
+            }
+            let seconds = Double(spanFrames) / Double(max(1, editor.timeline.fps))
             if let error = model.validate(spanSeconds: seconds) {
                 throw ToolError(error)
             }
             let mp4 = try await TimelineRenderer.render(
                 timeline: editor.timeline, resolver: editor.mediaResolver,
-                startFrame: start, frameCount: end - start,
+                startFrame: start, frameCount: spanFrames,
                 shortSide: 360, includeAudio: false
             )
             spanSeconds = seconds
@@ -2454,7 +2488,22 @@ extension ToolExecutor {
         }
 
         let instrumental = args.bool("instrumental") ?? false
-        let durationSeconds = args.int("duration") ?? spanSeconds.map { max(1, Int($0.rounded())) }
+        let durationSeconds: Int?
+        if let rawDuration = args["duration"] {
+            durationSeconds = try ToolIntegerDecoder.exact(
+                rawDuration,
+                tool: "generate_audio",
+                path: "duration"
+            )
+        } else if let spanSeconds {
+            durationSeconds = max(1, try ToolIntegerDecoder.exact(
+                spanSeconds.rounded(),
+                tool: "generate_audio",
+                path: "video source duration"
+            ))
+        } else {
+            durationSeconds = nil
+        }
         let voice = model.voices != nil ? (args.string("voice") ?? model.defaultVoice) : nil
         let lyrics = model.supportsLyrics ? args.string("lyrics") : nil
         let styleInstructions = model.supportsStyleInstructions ? args.string("styleInstructions") : nil
@@ -2574,7 +2623,11 @@ extension ToolExecutor {
         let trimmed = try trimmedSource(args, editor: editor, source: asset)
 
         // Cost-Guard (M7): approval before this paid upscale. Upscalers are type-specific, so no swap.
-        let upSeconds = Int((trimmed?.durationSeconds ?? (asset.duration > 0 ? asset.duration : 1)).rounded())
+        let upSeconds = try ToolIntegerDecoder.exact(
+            (trimmed?.durationSeconds ?? (asset.duration > 0 ? asset.duration : 1)).rounded(),
+            tool: "upscale_media",
+            path: "source duration"
+        )
         return try await withSpendApproval(
             editor, currentModelId: model.id, currentModelName: model.displayName,
             credits: CostEstimator.upscaleCost(model: model, durationSeconds: upSeconds),

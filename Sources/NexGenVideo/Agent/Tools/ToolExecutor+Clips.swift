@@ -110,6 +110,7 @@ fileprivate struct AddClipSpec {
     var trackId: String?
     let startFrame: Int
     let durationFrames: Int
+    let endFrame: Int
     let trimStartFrame: Int?
     let trimEndFrame: Int?
 }
@@ -159,13 +160,29 @@ extension ToolExecutor {
             guard entry.startFrame >= 0 else {
                 throw ToolError("entries[\(idx)]: startFrame must be >= 0 (got \(entry.startFrame))")
             }
+            let (endFrame, overflow) = entry.startFrame.addingReportingOverflow(
+                entry.durationFrames
+            )
+            guard !overflow else {
+                throw ToolError(
+                    "add_clips.entries[\(idx)]: startFrame + durationFrames exceeds the supported frame range"
+                )
+            }
             if let t = entry.trimStartFrame, t < 0 {
                 throw ToolError("entries[\(idx)]: trimStartFrame must be >= 0 (got \(t))")
             }
             if let t = entry.trimEndFrame, t < 0 {
                 throw ToolError("entries[\(idx)]: trimEndFrame must be >= 0 (got \(t))")
             }
-            specs.append(.init(asset: asset, trackId: trackId, startFrame: entry.startFrame, durationFrames: entry.durationFrames, trimStartFrame: entry.trimStartFrame, trimEndFrame: entry.trimEndFrame))
+            specs.append(.init(
+                asset: asset,
+                trackId: trackId,
+                startFrame: entry.startFrame,
+                durationFrames: entry.durationFrames,
+                endFrame: endFrame,
+                trimStartFrame: entry.trimStartFrame,
+                trimEndFrame: entry.trimEndFrame
+            ))
         }
 
         // All-or-none for trackIndex: a new track at index 0 would shift any explicit indices.
@@ -222,7 +239,12 @@ extension ToolExecutor {
                 guard let trackIdx = editor.timeline.tracks.firstIndex(where: { $0.id == trackId }) else {
                     throw ToolError("entries[\(i)]: destination track no longer exists")
                 }
-                editor.clearRegion(trackIndex: trackIdx, start: spec.startFrame, end: spec.startFrame + spec.durationFrames, prune: false)
+                editor.clearRegion(
+                    trackIndex: trackIdx,
+                    start: spec.startFrame,
+                    end: spec.endFrame,
+                    prune: false
+                )
                 let ids = editor.placeClip(
                     asset: spec.asset, trackIndex: trackIdx,
                     startFrame: spec.startFrame, durationFrames: spec.durationFrames,
@@ -297,7 +319,23 @@ extension ToolExecutor {
             specs.append(.init(asset: asset, durationFrames: duration, trimStartFrame: entry.trimStartFrame, trimEndFrame: entry.trimEndFrame))
         }
 
-        let totalPush = specs.reduce(0) { $0 + $1.durationFrames }
+        var totalPush = 0
+        for (index, spec) in specs.enumerated() {
+            let (next, overflow) = totalPush.addingReportingOverflow(
+                spec.durationFrames
+            )
+            guard !overflow else {
+                throw ToolError(
+                    "insert_clips.entries[\(index)].durationFrames exceeds the supported total duration"
+                )
+            }
+            totalPush = next
+        }
+        guard !input.atFrame.addingReportingOverflow(totalPush).overflow else {
+            throw ToolError(
+                "insert_clips.atFrame + item durations exceeds the supported frame range"
+            )
+        }
         let tracksBefore = editor.timeline.tracks.count
         let ids = editor.rippleInsertClips(specs: specs, trackIndex: input.trackIndex, atFrame: input.atFrame)
         guard !ids.isEmpty else {
@@ -367,6 +405,39 @@ extension ToolExecutor {
             }
             if let f = m.toFrame, f < 0 {
                 throw ToolError("\(path): toFrame must be >= 0 (got \(f))")
+            }
+            if let toFrame = m.toFrame {
+                let clip = editor.timeline.tracks[loc.trackIndex]
+                    .clips[loc.clipIndex]
+                guard !toFrame.addingReportingOverflow(clip.durationFrames).overflow else {
+                    throw ToolError(
+                        "move_clips.\(path).toFrame + clip duration exceeds the supported frame range"
+                    )
+                }
+                let (delta, deltaOverflow) = toFrame.subtractingReportingOverflow(
+                    clip.startFrame
+                )
+                guard !deltaOverflow else {
+                    throw ToolError(
+                        "move_clips.\(path).toFrame produces an unsupported frame delta"
+                    )
+                }
+                for partnerID in editor.linkedPartnerIds(of: m.clipId) {
+                    guard let partnerLocation = editor.findClip(id: partnerID) else {
+                        continue
+                    }
+                    let partner = editor.timeline.tracks[partnerLocation.trackIndex]
+                        .clips[partnerLocation.clipIndex]
+                    let (partnerFrame, partnerOverflow) = partner.startFrame
+                        .addingReportingOverflow(delta)
+                    guard !partnerOverflow,
+                          !max(0, partnerFrame)
+                            .addingReportingOverflow(partner.durationFrames).overflow else {
+                        throw ToolError(
+                            "move_clips.\(path).toFrame exceeds the linked clip frame range"
+                        )
+                    }
+                }
             }
             parsed.append(ParsedMove(clipId: m.clipId, destTrackId: destTrackId, toFrame: m.toFrame))
         }
@@ -470,6 +541,27 @@ extension ToolExecutor {
         let partners: Set<String> = propagatesTiming
             ? editor.timingPropagationPartners(of: Set(input.clipIds))
             : []
+        var speedDerivedDurations: [String: Int] = [:]
+        if input.durationFrames == nil, let speed = input.speed {
+            for id in Set(input.clipIds).union(partners) {
+                guard let location = editor.findClip(id: id) else { continue }
+                let clip = editor.timeline.tracks[location.trackIndex]
+                    .clips[location.clipIndex]
+                let sourceConsumed = Double(clip.durationFrames) * clip.speed
+                let rawDuration = (sourceConsumed / speed).rounded()
+                let duration = try ToolIntegerDecoder.exact(
+                    rawDuration,
+                    tool: "set_clip_properties",
+                    path: "speed"
+                )
+                guard duration >= 1 else {
+                    throw ToolError(
+                        "set_clip_properties.speed produces a duration below one frame"
+                    )
+                }
+                speedDerivedDurations[id] = duration
+            }
+        }
 
         let setActionName = input.clipIds.count == 1 ? "Set Clip Property (Agent)" : "Set Clip Properties (Agent)"
         let summaries: [String] = withUndoGroup(editor, actionName: setActionName) {
@@ -489,6 +581,7 @@ extension ToolExecutor {
                     fontSize: isText ? input.fontSize : nil,
                     color: isText ? color : nil,
                     alignment: isText ? alignment : nil,
+                    speedDerivedDuration: speedDerivedDurations[id],
                     clipId: id,
                     editor: editor
                 )
@@ -508,6 +601,7 @@ extension ToolExecutor {
                     speed:          partnerIsText ? nil : input.speed,
                     volume: nil, opacity: nil, transform: nil,
                     content: nil, fontName: nil, fontSize: nil, color: nil, alignment: nil,
+                    speedDerivedDuration: speedDerivedDurations[partnerId],
                     clipId: partnerId,
                     editor: editor
                 )
@@ -532,6 +626,7 @@ extension ToolExecutor {
         fontSize: Double?,
         color: TextStyle.RGBA?,
         alignment: TextStyle.Alignment?,
+        speedDerivedDuration: Int?,
         clipId: String,
         editor: EditorViewModel
     ) -> [String] {
@@ -546,9 +641,8 @@ extension ToolExecutor {
             if let v = trimStartFrame { clip.trimStartFrame = v; changed.append("trimStartFrame") }
             if let v = trimEndFrame   { clip.trimEndFrame   = v; changed.append("trimEndFrame") }
             if let v = speed {
-                if durationFrames == nil, v > 0 {
-                    let sourceConsumed = Double(clip.durationFrames) * clip.speed
-                    clip.durationFrames = max(1, Int((sourceConsumed / v).rounded()))
+                if let speedDerivedDuration {
+                    clip.durationFrames = speedDerivedDuration
                     clip.clampKeyframesToDuration()
                     clip.clampFadesToDuration()
                     changed.append("durationFrames")
@@ -634,7 +728,7 @@ extension ToolExecutor {
 
     func splitClip(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
         let clipId = try args.requireString("clipId")
-        let atFrame = try args.requireInt("atFrame")
+        let atFrame = try args.requireInt("atFrame", tool: "split_clip")
         guard let loc = editor.findClip(id: clipId) else { throw ToolError("Clip not found: \(clipId)") }
         let clip = editor.timeline.tracks[loc.trackIndex].clips[loc.clipIndex]
         guard atFrame > clip.startFrame && atFrame < clip.endFrame else {
@@ -686,9 +780,19 @@ extension ToolExecutor {
                     ? v
                     : Double(clip.startFrame) + (v * Double(fps) - Double(clip.trimStartFrame)) / max(clip.speed, 0.0001)
             }
-            for r in input.ranges {
-                let s = max(clip.startFrame, min(clip.endFrame, Int(toFrame(r[0]).rounded())))
-                let e = max(clip.startFrame, min(clip.endFrame, Int(toFrame(r[1]).rounded())))
+            for (index, r) in input.ranges.enumerated() {
+                let rawStart = try ToolIntegerDecoder.exact(
+                    toFrame(r[0]).rounded(),
+                    tool: "ripple_delete_ranges",
+                    path: "ranges[\(index)][0]"
+                )
+                let rawEnd = try ToolIntegerDecoder.exact(
+                    toFrame(r[1]).rounded(),
+                    tool: "ripple_delete_ranges",
+                    path: "ranges[\(index)][1]"
+                )
+                let s = max(clip.startFrame, min(clip.endFrame, rawStart))
+                let e = max(clip.startFrame, min(clip.endFrame, rawEnd))
                 if e > s { frameRanges.append(FrameRange(start: s, end: e)) } else { dropped += 1 }
             }
             guard !frameRanges.isEmpty else {
@@ -703,9 +807,18 @@ extension ToolExecutor {
             guard editor.timeline.tracks.indices.contains(trackIndex) else {
                 throw ToolError("Track index out of range: \(trackIndex)")
             }
-            for r in input.ranges {
-                let s = max(0, Int(r[0].rounded()))
-                let e = Int(r[1].rounded())
+            for (index, r) in input.ranges.enumerated() {
+                let rawStart = try ToolIntegerDecoder.exact(
+                    r[0].rounded(),
+                    tool: "ripple_delete_ranges",
+                    path: "ranges[\(index)][0]"
+                )
+                let e = try ToolIntegerDecoder.exact(
+                    r[1].rounded(),
+                    tool: "ripple_delete_ranges",
+                    path: "ranges[\(index)][1]"
+                )
+                let s = max(0, rawStart)
                 if e > s { frameRanges.append(FrameRange(start: s, end: e)) } else { dropped += 1 }
             }
             guard !frameRanges.isEmpty else {
@@ -788,10 +901,7 @@ extension ToolExecutor {
     }
 
     private static func kfInt(_ raw: Any, at path: String) throws -> Int {
-        if let v = raw as? Int { return v }
-        if let v = raw as? Double { return Int(v) }
-        if let v = raw as? NSNumber { return v.intValue }
-        throw ToolError("\(path): expected integer")
+        try ToolIntegerDecoder.exact(raw, tool: "set_keyframes", path: path)
     }
 
     private static func kfDouble(_ raw: Any, at path: String) throws -> Double {
@@ -824,10 +934,12 @@ extension ToolExecutor {
         var removed: [[String: Any]] = []
         var ids: [String] = []
         var seen = Set<Int>()
-        for entry in raw {
-            guard let i = (entry as? Int) ?? (entry as? NSNumber)?.intValue else {
-                throw ToolError("remove_tracks: trackIndexes must be integers (got \(entry))")
-            }
+        for (index, entry) in raw.enumerated() {
+            let i = try ToolIntegerDecoder.exact(
+                entry,
+                tool: "remove_tracks",
+                path: "trackIndexes[\(index)]"
+            )
             guard seen.insert(i).inserted else { continue }
             guard editor.timeline.tracks.indices.contains(i) else {
                 throw ToolError("remove_tracks: track index \(i) out of range (timeline has \(editor.timeline.tracks.count) tracks)")

@@ -113,6 +113,206 @@ struct ToolExecutorSmokeTests {
     }
 }
 
+@Suite("ToolExecutor — exact numeric boundary")
+@MainActor
+struct ToolExecutorNumericBoundaryTests {
+    @Test func getTimelineRejectsEveryNonExactIntegerWithItsFullPath() async {
+        let cases: [(String, Any)] = [
+            ("nan", Double.nan),
+            ("positive infinity", Double.infinity),
+            ("negative infinity", -Double.infinity),
+            ("fraction", 1.5),
+            ("numeric string", "12"),
+            ("positive overflow", 1e19),
+            ("negative overflow", -1e19),
+        ]
+
+        for (label, value) in cases {
+            let result = await ToolHarness().runRaw(
+                "get_timeline",
+                args: ["startFrame": value]
+            )
+            #expect(result.isError, "accepted \(label)")
+            #expect(
+                ToolHarness.textOf(result).contains("get_timeline.startFrame"),
+                "missing path for \(label): \(ToolHarness.textOf(result))"
+            )
+        }
+    }
+
+    @Test func addClipsRejectsOverflowingFrameRangeBeforeMutation() async {
+        let h = ToolHarness()
+        _ = h.editor.insertTrack(at: 0, type: .video)
+        let asset = h.addAsset(type: .video)
+
+        let result = await h.runRaw("add_clips", args: [
+            "entries": [[
+                "mediaRef": asset.id,
+                "trackIndex": 0,
+                "startFrame": Int.max,
+                "durationFrames": 1,
+            ]],
+        ])
+
+        #expect(result.isError)
+        #expect(h.editor.timeline.tracks.count == 1)
+        #expect(h.editor.timeline.tracks[0].clips.isEmpty)
+    }
+
+    @Test func removeTracksRejectsOverflowingIndexBeforeMutation() async {
+        let h = ToolHarness(timeline: Fixtures.timeline(tracks: [
+            Fixtures.videoTrack(),
+        ]))
+        let originalID = h.editor.timeline.tracks[0].id
+
+        let result = await h.runRaw(
+            "remove_tracks",
+            args: ["trackIndexes": [1e19]]
+        )
+
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("remove_tracks.trackIndexes[0]"))
+        #expect(h.editor.timeline.tracks.map(\.id) == [originalID])
+    }
+
+    @Test func setKeyframesRejectsOverflowingFrameBeforeMutation() async {
+        let h = ToolHarness(timeline: Fixtures.timeline(tracks: [
+            Fixtures.videoTrack(clips: [
+                Fixtures.clip(id: "clip", start: 0, duration: 30),
+            ]),
+        ]))
+
+        let result = await h.runRaw("set_keyframes", args: [
+            "clipId": "clip",
+            "property": "opacity",
+            "keyframes": [[1e19, 0.5]],
+        ])
+
+        #expect(result.isError)
+        #expect(h.editor.timeline.tracks[0].clips[0].opacityTrack == nil)
+    }
+
+    @Test func rippleDeleteRejectsOverflowingFramesBeforeMutation() async {
+        let h = ToolHarness(timeline: Fixtures.timeline(tracks: [
+            Fixtures.videoTrack(clips: [
+                Fixtures.clip(id: "clip", start: 0, duration: 90),
+            ]),
+        ]))
+
+        let result = await h.runRaw("ripple_delete_ranges", args: [
+            "trackIndex": 0,
+            "units": "frames",
+            "ranges": [[1e19, 2e19]],
+        ])
+
+        #expect(result.isError)
+        #expect(h.editor.timeline.tracks[0].clips.count == 1)
+        #expect(h.editor.timeline.tracks[0].clips[0].startFrame == 0)
+        #expect(h.editor.timeline.tracks[0].clips[0].durationFrames == 90)
+    }
+
+    @Test func speedDerivedDurationRejectsOverflowBeforeMutation() async {
+        let h = ToolHarness(timeline: Fixtures.timeline(tracks: [
+            Fixtures.videoTrack(clips: [
+                Fixtures.clip(
+                    id: "clip",
+                    start: 0,
+                    duration: 100,
+                    speed: 1
+                ),
+            ]),
+        ]))
+
+        let result = await h.runRaw("set_clip_properties", args: [
+            "clipIds": ["clip"],
+            "speed": Double.leastNonzeroMagnitude,
+        ])
+
+        #expect(result.isError)
+        #expect(h.editor.timeline.tracks[0].clips[0].speed == 1)
+        #expect(h.editor.timeline.tracks[0].clips[0].durationFrames == 100)
+    }
+
+    @Test func wordSpanSelectionIntersectsBeforeIteration() throws {
+        let selection = try ToolExecutor.boundedWordIndices(
+            [[Int.min, Int.max]],
+            validRange: 0...2
+        )
+
+        #expect(selection == Set([0, 1, 2]))
+    }
+
+    @Test func wordRangeRejectsOverflowBeforeTimelineMutation() async {
+        let h = ToolHarness(timeline: Fixtures.timeline(tracks: [
+            Fixtures.audioTrack(clips: [
+                Fixtures.clip(
+                    id: "speech",
+                    mediaType: .audio,
+                    start: 0,
+                    duration: 90
+                ),
+            ]),
+        ]))
+
+        let result = await h.runRaw(
+            "remove_words",
+            args: ["words": [[0, 1e19]]]
+        )
+
+        #expect(result.isError)
+        #expect(h.editor.timeline.tracks[0].clips.count == 1)
+        #expect(h.editor.timeline.tracks[0].clips[0].id == "speech")
+        #expect(h.editor.timeline.tracks[0].clips[0].durationFrames == 90)
+    }
+
+    @Test func nestedBatchDurationFailsBeforeBatchOrProjectMutation() async {
+        let h = ToolHarness()
+
+        let result = await h.runRaw("prepare_generation_batch", args: [
+            "requestID": UUID().uuidString,
+            "items": [[
+                "tool": "generate_video",
+                "purpose": "Boundary regression",
+                "request": [
+                    "prompt": "compiled",
+                    "shotId": "none",
+                    "duration": 1e19,
+                ],
+            ]],
+        ])
+
+        #expect(result.isError)
+        #expect(
+            ToolHarness.textOf(result).contains(
+                "prepare_generation_batch.items[0].request.duration"
+            )
+        )
+        #expect(h.editor.generationBatchCoordinator.pending == nil)
+        #expect(h.editor.mediaAssets.isEmpty)
+        #expect(h.editor.timeline.tracks.isEmpty)
+    }
+
+    @Test func dialogProjectionRejectsOverflowBeforePresentation() async {
+        let h = ToolHarness()
+
+        let result = await h.runRaw("show_dialog", args: [
+            "title": "Review",
+            "sections": [],
+            "projection": [
+                "timelineRanges": [[
+                    "id": "range",
+                    "label": "Range",
+                    "startFrame": 1e19,
+                    "endFrame": 2e19,
+                ]],
+            ],
+        ])
+
+        #expect(result.isError)
+        #expect(h.editor.agentService.pendingDialog == nil)
+    }
+}
+
 @Suite("ToolExecutor — read-only handlers")
 @MainActor
 struct ToolExecutorReadOnlyTests {

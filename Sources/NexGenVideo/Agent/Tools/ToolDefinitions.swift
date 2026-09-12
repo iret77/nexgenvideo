@@ -637,7 +637,17 @@ enum ToolDefinitions {
                     "words": [
                         "type": "array",
                         "description": "Words to remove, by their get_transcript index. Each element is either a single index (e.g. 42) or an inclusive [startIndex, endIndex] span (e.g. [12, 18] removes words 12 through 18). Mix freely: [3, [12, 18], 40]. Indices come from the current get_transcript; re-read after any edit.",
-                        "items": ["type": ["integer", "array"]],
+                        "items": [
+                            "anyOf": [
+                                ["type": "integer"] as [String: Any],
+                                [
+                                    "type": "array",
+                                    "minItems": 2,
+                                    "maxItems": 2,
+                                    "items": ["type": "integer"],
+                                ] as [String: Any],
+                            ],
+                        ],
                     ],
                     "cutAggressiveness": [
                         "type": "string",
@@ -1735,7 +1745,12 @@ enum ToolDefinitions {
 
     /// One line per non-color effect for apply_effect's description, generated from the registry.
     private static func effectCatalog() -> String {
-        func n(_ v: Double) -> String { v == v.rounded() ? String(Int(v)) : String(format: "%g", v) }
+        func n(_ value: Double) -> String {
+            if value == value.rounded(), let integer = Int(exactly: value) {
+                return String(integer)
+            }
+            return String(format: "%g", value)
+        }
         return EffectRegistry.all
             .filter { !$0.id.hasPrefix("color.") }
             .map { d in

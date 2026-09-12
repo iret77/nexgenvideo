@@ -17,16 +17,15 @@ extension ToolExecutor {
             aggressiveness = a
         } else { aggressiveness = .balanced }
 
+        let spans = try Self.parseWordSpans(rawWords)
         let (allWords, _) = try await timelineWords(editor)
         guard !allWords.isEmpty else { throw ToolError("No transcribable speech on the timeline.") }
 
-        var selected = Set<Int>(), ignored: [Int] = []
         let maxIndex = allWords.count - 1
-        for (a, b) in try Self.parseWordSpans(rawWords) {
-            for idx in min(a, b)...max(a, b) {
-                if (0...maxIndex).contains(idx) { selected.insert(idx) } else { ignored.append(idx) }
-            }
-        }
+        let selected = Self.boundedWordIndices(
+            spans,
+            validRange: 0...maxIndex
+        )
         guard !selected.isEmpty else {
             throw ToolError("None of the requested word indices are in range 0...\(maxIndex). Re-read get_transcript.")
         }
@@ -87,26 +86,59 @@ extension ToolExecutor {
         ]
         let preview = removedTexts.prefix(24).joined(separator: " ")
         if !preview.isEmpty { payload["removedText"] = removedTexts.count > 24 ? preview + " …" : preview }
-        if !ignored.isEmpty { payload["indicesIgnored"] = ignored.sorted() }
         guard let json = Self.jsonString(payload) else { throw ToolError("Failed to encode result") }
         return .ok(json)
     }
 
     static func parseWordSpans(_ raw: [Any]) throws -> [(Int, Int)] {
         try raw.enumerated().map { i, element in
-            if let n = intFromAny(element) { return (n, n) }
-            guard let pair = element as? [Any], pair.count == 2,
-                  let a = intFromAny(pair[0]), let b = intFromAny(pair[1]) else {
+            if !(element is [Any]) {
+                let value = try ToolIntegerDecoder.exact(
+                    element,
+                    tool: "remove_words",
+                    path: "words[\(i)]"
+                )
+                return (value, value)
+            }
+            guard let pair = element as? [Any], pair.count == 2 else {
                 throw ToolError("words[\(i)]: expected an integer index or an [start, end] pair.")
             }
-            return (a, b)
+            return (
+                try ToolIntegerDecoder.exact(
+                    pair[0],
+                    tool: "remove_words",
+                    path: "words[\(i)][0]"
+                ),
+                try ToolIntegerDecoder.exact(
+                    pair[1],
+                    tool: "remove_words",
+                    path: "words[\(i)][1]"
+                )
+            )
         }
     }
 
-    private static func intFromAny(_ v: Any) -> Int? {
-        if let i = v as? Int { return i }
-        if let n = v as? NSNumber { return n.intValue }
-        if let d = v as? Double, d.rounded() == d { return Int(d) }
-        return nil
+    static func boundedWordIndices(
+        _ raw: [Any],
+        validRange: ClosedRange<Int>
+    ) throws -> Set<Int> {
+        boundedWordIndices(
+            try parseWordSpans(raw),
+            validRange: validRange
+        )
+    }
+
+    private static func boundedWordIndices(
+        _ spans: [(Int, Int)],
+        validRange: ClosedRange<Int>
+    ) -> Set<Int> {
+        var selected = Set<Int>()
+        for (first, second) in spans {
+            let lower = max(min(first, second), validRange.lowerBound)
+            let upper = min(max(first, second), validRange.upperBound)
+            guard lower <= upper else { continue }
+            selected.formUnion(lower...upper)
+        }
+        return selected
     }
 }

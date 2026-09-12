@@ -50,6 +50,22 @@ extension ToolExecutor {
               let home = editor.workingRoot, let projectKey = editor.projectId else {
             throw ToolError("A batch needs a saved project, a stable UUID requestID and 1–50 described generation requests.")
         }
+        for (index, entry) in entries.enumerated() {
+            guard let rawTool = entry["tool"] as? String,
+                  let tool = ToolName(rawValue: rawTool),
+                  [.generateImage, .generateVideo].contains(tool),
+                  let request = entry["request"] as? [String: Any],
+                  let schema = ToolDefinitions.all.first(where: {
+                      $0.name == tool
+                  })?.inputSchema else {
+                throw ToolError("prepare_generation_batch.items[\(index)] is incomplete.")
+            }
+            try validateToolInput(
+                in: request,
+                against: schema,
+                path: "prepare_generation_batch.items[\(index)].request"
+            )
+        }
         let requestBytes = try JSONSerialization.data(withJSONObject: args, options: [.sortedKeys, .withoutEscapingSlashes])
         let requestHash = FileDigest.sha256(of: requestBytes)
         let recorded = try await Task.detached(priority: .utility) {

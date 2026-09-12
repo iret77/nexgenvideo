@@ -621,4 +621,84 @@ struct MCPGenerationArgumentsTests {
         let error = MCPProviderClient.ClientError.toolFailed("Invalid params: prompt is required")
         #expect(error.localizedDescription == "Invalid params: prompt is required")
     }
+
+    @Test func numericStringsNeverCoerceIntoProviderNumbers() {
+        for schemaType in ["integer", "number"] {
+            let params = BackendGenerationParams.image(ImageGenerationParams(
+                prompt: "compiled prompt",
+                aspectRatio: "1:1",
+                resolution: nil,
+                quality: "12",
+                imageURLs: [],
+                numImages: 1
+            ))
+            let schema: Value = .object([
+                "properties": .object([
+                    "model": .object(["type": .string("string")]),
+                    "prompt": .object(["type": .string("string")]),
+                    "quality": .object(["type": .string(schemaType)]),
+                ]),
+                "required": .array([
+                    .string("model"), .string("prompt"), .string("quality"),
+                ]),
+            ])
+
+            #expect(throws: MCPGenerationArguments.MappingError.incompatibleField("quality")) {
+                try MCPGenerationArguments.make(
+                    for: params,
+                    model: "image-model",
+                    schema: schema
+                )
+            }
+        }
+    }
+
+    @Test func providerArrayBoundsRequireExactFiniteIntegers() {
+        let invalid: [(String, Value)] = [
+            ("numeric string", .string("1")),
+            ("fraction", .double(1.5)),
+            ("nan", .double(.nan)),
+            ("positive infinity", .double(.infinity)),
+            ("negative infinity", .double(-.infinity)),
+            ("positive overflow", .double(1e19)),
+            ("negative overflow", .double(-1e19)),
+        ]
+        let params = BackendGenerationParams.image(ImageGenerationParams(
+            prompt: "compiled prompt",
+            aspectRatio: "1:1",
+            resolution: nil,
+            quality: nil,
+            imageURLs: ["media-1"],
+            numImages: 1
+        ))
+
+        for (label, bound) in invalid {
+            let schema: Value = .object([
+                "properties": .object([
+                    "model": .object(["type": .string("string")]),
+                    "prompt": .object(["type": .string("string")]),
+                    "image_urls": .object([
+                        "type": .string("array"),
+                        "items": .object(["type": .string("string")]),
+                        "maxItems": bound,
+                    ]),
+                ]),
+                "required": .array([
+                    .string("model"), .string("prompt"),
+                    .string("image_urls"),
+                ]),
+            ])
+
+            #expect(
+                throws: MCPGenerationArguments.MappingError.incompatibleField("image_urls.maxItems"),
+                "accepted \(label)"
+            ) {
+                try MCPGenerationArguments.make(
+                    for: params,
+                    model: "image-model",
+                    schema: schema
+                )
+            }
+        }
+    }
 }

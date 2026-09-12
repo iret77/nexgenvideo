@@ -7,6 +7,72 @@ struct ToolError: LocalizedError, Sendable {
     var errorDescription: String? { message }
 }
 
+enum ToolIntegerDecoder {
+    static func exact(_ value: Any, tool: String, path: String) throws -> Int {
+        let field = fullPath(tool: tool, path: path)
+        guard !(value is Bool) else {
+            throw ToolError("\(field): expected integer")
+        }
+
+        switch value {
+        case let value as Int:
+            return value
+        case let value as Int8:
+            return Int(value)
+        case let value as Int16:
+            return Int(value)
+        case let value as Int32:
+            return Int(value)
+        case let value as Int64:
+            guard let result = Int(exactly: value) else {
+                throw ToolError("\(field): integer is outside the supported range")
+            }
+            return result
+        case let value as UInt:
+            guard let result = Int(exactly: value) else {
+                throw ToolError("\(field): integer is outside the supported range")
+            }
+            return result
+        case let value as UInt8:
+            return Int(value)
+        case let value as UInt16:
+            return Int(value)
+        case let value as UInt32:
+            return Int(value)
+        case let value as UInt64:
+            guard let result = Int(exactly: value) else {
+                throw ToolError("\(field): integer is outside the supported range")
+            }
+            return result
+        case let value as Double:
+            return try exactFloating(value, field: field)
+        case let value as Float:
+            return try exactFloating(Double(value), field: field)
+        case let value as NSNumber:
+            return try exactFloating(value.doubleValue, field: field)
+        default:
+            throw ToolError("\(field): expected integer")
+        }
+    }
+
+    private static func exactFloating(_ value: Double, field: String) throws -> Int {
+        guard value.isFinite else {
+            throw ToolError("\(field): expected finite integer")
+        }
+        guard value.rounded(.towardZero) == value,
+              let result = Int(exactly: value) else {
+            throw ToolError("\(field): expected exactly representable integer")
+        }
+        return result
+    }
+
+    private static func fullPath(tool: String, path: String) -> String {
+        guard !tool.isEmpty else { return path }
+        guard !path.isEmpty else { return tool }
+        return path.hasPrefix("[") ? tool + path : "\(tool).\(path)"
+    }
+}
+
 /// Shared by the MCP server and the in-app agent.
 /// Tool implementations live in the `ToolExecutor+*.swift` extension files.
 @MainActor
@@ -540,7 +606,7 @@ final class ToolExecutor {
     }
 }
 
-private func validateToolInput(
+func validateToolInput(
     in value: Any,
     against schema: [String: Any],
     path: String
@@ -612,10 +678,12 @@ private func validateToolInput(
         guard let values = value as? [Any] else {
             throw ToolError("\(path): expected array")
         }
-        if let minimum = schema["minItems"] as? Int, values.count < minimum {
+        if let minimum = try schemaIntegerConstraint("minItems", in: schema, path: path),
+           values.count < minimum {
             throw ToolError("\(path): expected at least \(minimum) item(s)")
         }
-        if let maximum = schema["maxItems"] as? Int, values.count > maximum {
+        if let maximum = try schemaIntegerConstraint("maxItems", in: schema, path: path),
+           values.count > maximum {
             throw ToolError("\(path): expected at most \(maximum) item(s)")
         }
         guard let itemSchema = schema["items"] as? [String: Any] else {
@@ -632,11 +700,11 @@ private func validateToolInput(
         guard let string = value as? String else {
             throw ToolError("\(path): expected string")
         }
-        if let minimum = schema["minLength"] as? Int,
+        if let minimum = try schemaIntegerConstraint("minLength", in: schema, path: path),
            string.count < minimum {
             throw ToolError("\(path): expected at least \(minimum) character(s)")
         }
-        if let maximum = schema["maxLength"] as? Int,
+        if let maximum = try schemaIntegerConstraint("maxLength", in: schema, path: path),
            string.count > maximum {
             throw ToolError("\(path): expected at most \(maximum) character(s)")
         }
@@ -645,10 +713,12 @@ private func validateToolInput(
             throw ToolError("\(path): does not match required pattern")
         }
     case "integer":
-        guard isJSONNumber(value, integerOnly: true) else {
-            throw ToolError("\(path): expected integer")
-        }
-        try validateNumericBounds(value, schema: schema, path: path)
+        let integer = try ToolIntegerDecoder.exact(
+            value,
+            tool: "",
+            path: path
+        )
+        try validateIntegerBounds(integer, schema: schema, path: path)
     case "number":
         guard isJSONNumber(value, integerOnly: false) else {
             if !(value is Bool), let number = value as? NSNumber,
@@ -713,6 +783,50 @@ private func isJSONNumber(_ value: Any, integerOnly: Bool) -> Bool {
     return double.isFinite && double.rounded(.towardZero) == double
 }
 
+private func schemaIntegerConstraint(
+    _ key: String,
+    in schema: [String: Any],
+    path: String
+) throws -> Int? {
+    guard let raw = schema[key] else { return nil }
+    let value = try ToolIntegerDecoder.exact(
+        raw,
+        tool: "",
+        path: "\(path).\(key)"
+    )
+    guard value >= 0 else {
+        throw ToolError("\(path).\(key): expected a non-negative integer")
+    }
+    return value
+}
+
+private func validateIntegerBounds(
+    _ value: Int,
+    schema: [String: Any],
+    path: String
+) throws {
+    if let rawMinimum = schema["minimum"] {
+        let minimum = try ToolIntegerDecoder.exact(
+            rawMinimum,
+            tool: "",
+            path: "\(path).minimum"
+        )
+        if value < minimum {
+            throw ToolError("\(path): expected at least \(minimum)")
+        }
+    }
+    if let rawMaximum = schema["maximum"] {
+        let maximum = try ToolIntegerDecoder.exact(
+            rawMaximum,
+            tool: "",
+            path: "\(path).maximum"
+        )
+        if value > maximum {
+            throw ToolError("\(path): expected at most \(maximum)")
+        }
+    }
+}
+
 private func validateNumericBounds(
     _ value: Any,
     schema: [String: Any],
@@ -727,6 +841,14 @@ private func validateNumericBounds(
     if let maximum = schema["maximum"] as? NSNumber,
        double > maximum.doubleValue {
         throw ToolError("\(path): expected at most \(maximum)")
+    }
+    if let minimum = schema["exclusiveMinimum"] as? NSNumber,
+       double <= minimum.doubleValue {
+        throw ToolError("\(path): expected greater than \(minimum)")
+    }
+    if let maximum = schema["exclusiveMaximum"] as? NSNumber,
+       double >= maximum.doubleValue {
+        throw ToolError("\(path): expected less than \(maximum)")
     }
 }
 
@@ -830,11 +952,16 @@ extension Dictionary where Key == String, Value == Any {
         return nil
     }
     func int(_ key: String) -> Int? {
-        if let v = self[key] as? Int { return v }
-        if let v = self[key] as? Double { return Int(v) }
-        if let v = self[key] as? NSNumber { return v.intValue }
-        if let v = self[key] as? String { return Int(v) }
-        return nil
+        guard let value = self[key] else { return nil }
+        return try? ToolIntegerDecoder.exact(value, tool: "", path: key)
+    }
+    func exactInt(_ key: String, tool: String, path: String? = nil) throws -> Int? {
+        guard let value = self[key] else { return nil }
+        return try ToolIntegerDecoder.exact(
+            value,
+            tool: tool,
+            path: path ?? key
+        )
     }
     func double(_ key: String) -> Double? {
         if let v = self[key] as? Double { return v }
@@ -856,8 +983,11 @@ extension Dictionary where Key == String, Value == Any {
         guard let v = self[key] as? String else { throw ToolError("Missing required argument: \(key)") }
         return v
     }
-    func requireInt(_ key: String) throws -> Int {
-        guard let v = int(key) else { throw ToolError("Missing required argument: \(key)") }
-        return v
+    func requireInt(_ key: String, tool: String = "") throws -> Int {
+        guard let value = self[key] else {
+            let path = tool.isEmpty ? key : "\(tool).\(key)"
+            throw ToolError("\(path): missing required argument")
+        }
+        return try ToolIntegerDecoder.exact(value, tool: tool, path: key)
     }
 }

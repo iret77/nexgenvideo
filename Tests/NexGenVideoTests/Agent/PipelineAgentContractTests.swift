@@ -37,6 +37,29 @@ struct PipelineAgentContractTests {
         return (dataRoot, cleanup)
     }
 
+    @Test("pipeline blockout schema rejects overflowing work with its full path")
+    func blockoutSchemaRejectsOverflowingFrameCount() {
+        do {
+            try PipelineArtifactWriteContract.validateBlockoutRequest(
+                [
+                    "mode": "native",
+                    "width": 320,
+                    "height": 180,
+                    "fps": 30,
+                    "duration_seconds": 1e19,
+                ],
+                path: "write_shotlist.spatial_plan.blockout"
+            )
+            Issue.record("Expected the overflowing blockout to be rejected.")
+        } catch let error as ToolError {
+            #expect(error.message.contains(
+                "write_shotlist.spatial_plan.blockout.duration_seconds"
+            ))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
     @Test("every musicvideo phase has one order, gate, instructions, and executable path")
     func completeContract() throws {
         let pack = MusicvideoPack()

@@ -5,6 +5,28 @@ import Foundation
 import NexGenEngine
 
 enum NativeBlockoutExporter {
+    static func frameCount(
+        for request: BlockoutRequestV1,
+        tool: String = "native_blockout",
+        path: String = "duration_seconds"
+    ) throws -> Int {
+        let fpsPath = tool.isEmpty ? "fps" : "\(tool).fps"
+        guard request.fps > 0 else {
+            throw ToolError("\(fpsPath): expected a positive integer")
+        }
+        let rawCount = request.durationSeconds * Double(request.fps)
+        let count = try ToolIntegerDecoder.exact(
+            rawCount.rounded(),
+            tool: tool,
+            path: path
+        )
+        guard count >= 1 else {
+            let field = tool.isEmpty ? path : "\(tool).\(path)"
+            throw ToolError("\(field): expected at least one frame")
+        }
+        return count
+    }
+
     static func export(
         setups: [CameraSetupV1],
         layouts: [SpatialLayoutV1],
@@ -12,6 +34,10 @@ enum NativeBlockoutExporter {
         request: BlockoutRequestV1,
         to url: URL
     ) throws {
+        let frameCount = try frameCount(for: request)
+        guard let timescale = CMTimeScale(exactly: request.fps) else {
+            throw ToolError("native_blockout.fps: exceeds the supported time scale")
+        }
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -49,7 +75,6 @@ enum NativeBlockoutExporter {
             writer.cancelWriting()
             throw ToolError("The native blockout pixel-buffer pool is unavailable.")
         }
-        let frameCount = max(1, Int((request.durationSeconds * Double(request.fps)).rounded()))
         for frameIndex in 0..<frameCount {
             while !input.isReadyForMoreMediaData {
                 if writer.status == .failed || writer.status == .cancelled {
@@ -70,7 +95,10 @@ enum NativeBlockoutExporter {
                 progress: Double(frameIndex) / Double(max(1, frameCount - 1)),
                 in: buffer
             )
-            let presentationTime = CMTime(value: CMTimeValue(frameIndex), timescale: CMTimeScale(request.fps))
+            let presentationTime = CMTime(
+                value: CMTimeValue(frameIndex),
+                timescale: timescale
+            )
             guard adaptor.append(buffer, withPresentationTime: presentationTime) else {
                 writer.cancelWriting()
                 throw ToolError(writer.error?.localizedDescription ?? "The native blockout frame could not be written.")
@@ -172,7 +200,8 @@ enum NativeBlockoutExporter {
                 : setup.path.map(\.position)
             let targetIndex = min(
                 points.count - 1,
-                Int((Double(points.count - 1) * progress).rounded())
+                Int(exactly: (Double(points.count - 1) * progress).rounded())
+                    ?? points.count - 1
             )
             for (projection, rect) in [
                 (Projection.plan, viewport.plan),
@@ -228,8 +257,14 @@ enum NativeBlockoutExporter {
     ) -> [String: Viewport] {
         let ordered = layouts.sorted { $0.locationID < $1.locationID }
         let count = max(1, ordered.count)
-        let columns = max(1, Int(ceil(sqrt(Double(count)))))
-        let rows = max(1, Int(ceil(Double(count) / Double(columns))))
+        let columns = max(
+            1,
+            Int(exactly: ceil(sqrt(Double(count)))) ?? count
+        )
+        let rows = max(
+            1,
+            Int(exactly: ceil(Double(count) / Double(columns))) ?? count
+        )
         let cellWidth = bounds.width / CGFloat(columns)
         let cellHeight = bounds.height / CGFloat(rows)
         var result: [String: Viewport] = [:]

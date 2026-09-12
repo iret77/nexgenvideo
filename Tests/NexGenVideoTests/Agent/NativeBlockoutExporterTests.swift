@@ -6,6 +6,37 @@ import Testing
 
 @Suite("Native blockout exporter")
 struct NativeBlockoutExporterTests {
+    @Test("rejects an overflowing frame count before replacing output")
+    func rejectsOverflowBeforeFileMutation() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("blockout-overflow-\(UUID().uuidString)")
+        let output = directory.appendingPathComponent("blockout.mov")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        let original = Data("existing blockout".utf8)
+        try original.write(to: output)
+
+        #expect(throws: ToolError.self) {
+            try NativeBlockoutExporter.export(
+                setups: [],
+                layouts: [],
+                shapes: [],
+                request: BlockoutRequestV1(
+                    mode: .native,
+                    width: 320,
+                    height: 180,
+                    fps: 30,
+                    durationSeconds: 1e19
+                ),
+                to: output
+            )
+        }
+        #expect(try Data(contentsOf: output) == original)
+    }
+
     @Test("exports metric shapes and a camera path as playable video")
     func exportsPlayableGraybox() async throws {
         let output = FileManager.default.temporaryDirectory

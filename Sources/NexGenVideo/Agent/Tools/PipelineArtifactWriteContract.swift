@@ -922,7 +922,7 @@ enum PipelineArtifactWriteContract {
         ]
     ) }
 
-    private static var blockoutRequest: [String: Any] {
+    static var blockoutRequest: [String: Any] {
         ["anyOf": [
             blockoutVariant(.none),
             blockoutVariant(.native),
@@ -932,6 +932,49 @@ enum PipelineArtifactWriteContract {
                 required: ["imported_clip_path"]
             ),
         ]]
+    }
+
+    static func validateBlockoutRequest(_ value: Any, path: String) throws {
+        try validateToolInput(in: value, against: blockoutRequest, path: path)
+        guard let object = value as? [String: Any],
+              object["mode"] as? String == BlockoutSourceModeV1.native.rawValue else {
+            return
+        }
+        guard let rawWidth = object["width"],
+              let rawHeight = object["height"],
+              let rawFPS = object["fps"] else {
+            throw ToolError("\(path): missing native blockout dimensions")
+        }
+        let width = try ToolIntegerDecoder.exact(
+            rawWidth,
+            tool: "",
+            path: "\(path).width"
+        )
+        let height = try ToolIntegerDecoder.exact(
+            rawHeight,
+            tool: "",
+            path: "\(path).height"
+        )
+        let fps = try ToolIntegerDecoder.exact(
+            rawFPS,
+            tool: "",
+            path: "\(path).fps"
+        )
+        guard let duration = object["duration_seconds"] as? NSNumber,
+              !(object["duration_seconds"] is Bool) else {
+            throw ToolError("\(path).duration_seconds: expected number")
+        }
+        _ = try NativeBlockoutExporter.frameCount(
+            for: BlockoutRequestV1(
+                mode: .native,
+                width: width,
+                height: height,
+                fps: fps,
+                durationSeconds: duration.doubleValue
+            ),
+            tool: "",
+            path: "\(path).duration_seconds"
+        )
     }
 
     private static func blockoutVariant(

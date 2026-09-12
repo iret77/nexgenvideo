@@ -81,11 +81,16 @@ extension ToolExecutor {
         }
         var measuredByIndex: [Int: Int] = [:]
         for position in sections.indices {
-            guard let index = (sections[position]["index"] as? NSNumber)?.intValue else {
+            guard let rawIndex = sections[position]["index"] else {
                 throw ToolError(
                     "Measured section \(position) has no integer index; re-run analysis."
                 )
             }
+            let index = try ToolIntegerDecoder.exact(
+                rawIndex,
+                tool: "write_analysis_interpretation",
+                path: "measured.sections[\(position)].index"
+            )
             guard measuredByIndex[index] == nil else {
                 throw ToolError(
                     "Measured analysis contains duplicate section index \(index); re-run analysis."
@@ -97,8 +102,17 @@ extension ToolExecutor {
         var labels: [[String: String]] = []
         var seen: Set<Int> = []
         for (position, raw) in rawLabels.enumerated() {
-            guard let index = (raw["index"] as? NSNumber)?.intValue,
-                  let sectionPosition = measuredByIndex[index] else {
+            guard let rawIndex = raw["index"] else {
+                throw ToolError(
+                    "section_labels[\(position)].index does not name a measured section."
+                )
+            }
+            let index = try ToolIntegerDecoder.exact(
+                rawIndex,
+                tool: "write_analysis_interpretation",
+                path: "section_labels[\(position)].index"
+            )
+            guard let sectionPosition = measuredByIndex[index] else {
                 throw ToolError(
                     "section_labels[\(position)].index does not name a measured section."
                 )
@@ -523,6 +537,13 @@ extension ToolExecutor {
         _ editor: EditorViewModel,
         _ args: [String: Any]
     ) throws -> ToolResult {
+        if let spatialPlan = args["spatial_plan"] as? [String: Any],
+           let blockout = spatialPlan["blockout"] {
+            try PipelineArtifactWriteContract.validateBlockoutRequest(
+                blockout,
+                path: "write_shotlist.spatial_plan.blockout"
+            )
+        }
         let root = try resolveDataRoot(args, editor: editor)
         let brief: Brief
         do {

@@ -6,6 +6,33 @@ import Testing
 
 @Suite("MCP HTTP server", .serialized, .timeLimit(.minutes(2)))
 struct MCPHTTPServerTests {
+    @MainActor
+    @Test("MCP numeric arguments retain exact validation through tool dispatch")
+    func mcpNumericsUseToolBoundary() async {
+        let invalid: [(String, Value)] = [
+            ("nan", .double(.nan)),
+            ("positive infinity", .double(.infinity)),
+            ("negative infinity", .double(-.infinity)),
+            ("fraction", .double(1.5)),
+            ("numeric string", .string("12")),
+            ("positive overflow", .double(1e19)),
+            ("negative overflow", .double(-1e19)),
+        ]
+
+        for (label, value) in invalid {
+            let args = ToolArgsBridge.argsFromMCP(["startFrame": value])
+            let result = await ToolHarness().runRaw(
+                "get_timeline",
+                args: args
+            )
+            #expect(result.isError, "accepted \(label)")
+            #expect(
+                ToolHarness.textOf(result).contains("get_timeline.startFrame"),
+                "missing MCP path for \(label)"
+            )
+        }
+    }
+
     @Test("fragmented request waits for its complete body")
     func fragmentedRequest() throws {
         let partial = Data(
