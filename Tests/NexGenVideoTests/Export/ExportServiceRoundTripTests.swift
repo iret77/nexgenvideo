@@ -14,6 +14,41 @@ import Testing
 @MainActor
 struct ExportServiceRoundTripTests {
 
+    @Test func xmlWriteFailureKeepsProgressIncompleteAndAllowsRetry() async throws {
+        let timeline = Fixtures.timeline()
+        let resolver = MediaResolver(manifest: { MediaManifest() }, projectURL: { nil })
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("xml-service-\(UUID().uuidString)", isDirectory: true)
+        let parent = root.appendingPathComponent("missing", isDirectory: true)
+        let outputURL = parent.appendingPathComponent("timeline.xml")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let service = ExportService()
+        await service.export(
+            timeline: timeline,
+            resolver: resolver,
+            format: .xml,
+            resolution: .matchTimeline,
+            outputURL: outputURL
+        )
+
+        #expect(service.progress < 1.0)
+        #expect(service.error == "Couldn’t write timeline.xml. Choose another location and try again.")
+
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        await service.export(
+            timeline: timeline,
+            resolver: resolver,
+            format: .xml,
+            resolution: .matchTimeline,
+            outputURL: outputURL
+        )
+
+        #expect(service.error == nil)
+        #expect(service.progress == 1.0)
+        #expect(try String(contentsOf: outputURL, encoding: .utf8).contains("<xmeml version=\"4\">"))
+    }
+
     @Test func h264ExportProducesPlayableMp4ContainingVideoTrack() async throws {
         // 1. Generate fixture via production code path.
         let renderSize = CGSize(width: 320, height: 180)

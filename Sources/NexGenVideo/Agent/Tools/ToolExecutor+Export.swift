@@ -95,16 +95,15 @@ extension ToolExecutor {
     }
 
     private func exportXML(_ editor: EditorViewModel, outputURL: URL) throws -> ToolResult {
-        if FileManager.default.fileExists(atPath: outputURL.path) {
-            do {
-                try FileManager.default.removeItem(at: outputURL)
-            } catch {
-                throw ToolError("export_project: \(error.localizedDescription)")
-            }
-        }
-        XMLExporter.export(timeline: editor.timeline, resolver: editor.mediaResolver, outputURL: outputURL)
-        guard FileManager.default.fileExists(atPath: outputURL.path) else {
-            throw ToolError("export_project: XML export failed")
+        do {
+            try XMLExporter.export(timeline: editor.timeline, resolver: editor.mediaResolver, to: outputURL)
+        } catch let writeError as XMLExporter.WriteError {
+            Log.export.error(
+                "agent XML export failed: \(Log.detail(writeError.underlying))",
+                telemetry: "Export failed",
+                data: ["format": "xml", "file": outputURL.lastPathComponent]
+            )
+            throw ToolError("export_project: \(writeError.localizedDescription)")
         }
         return try jsonResult([
             "status": "exported",

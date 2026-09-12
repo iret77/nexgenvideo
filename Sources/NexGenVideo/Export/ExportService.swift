@@ -63,9 +63,25 @@ final class ExportService {
                 telemetry: "Export started",
                 data: ["format": "xml", "tracks": timeline.tracks.count, "clips": timeline.tracks.reduce(0) { $0 + $1.clips.count }]
             )
-            XMLExporter.export(timeline: timeline, resolver: resolver, outputURL: outputURL)
-            progress = 1.0
-            Log.export.notice("export ok format=xml", telemetry: "Export finished", data: ["format": "xml"])
+            do {
+                try XMLExporter.export(timeline: timeline, resolver: resolver, to: outputURL)
+                progress = 1.0
+                Log.export.notice("export ok format=xml", telemetry: "Export finished", data: ["format": "xml"])
+            } catch let writeError as XMLExporter.WriteError {
+                self.error = writeError.localizedDescription
+                Log.export.error(
+                    "export failed format=xml: \(Log.detail(writeError.underlying))",
+                    telemetry: "Export failed",
+                    data: ["format": "xml", "file": outputURL.lastPathComponent]
+                )
+            } catch {
+                self.error = "Couldn’t write \(outputURL.lastPathComponent). Choose another location and try again."
+                Log.export.error(
+                    "export failed format=xml: \(Log.detail(error))",
+                    telemetry: "Export failed",
+                    data: ["format": "xml", "file": outputURL.lastPathComponent]
+                )
+            }
             return
         }
 

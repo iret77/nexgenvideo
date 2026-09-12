@@ -111,6 +111,28 @@ struct ToolExecutorSmokeTests {
         #expect(json?["tracks"] is [Any])
         #expect(json?["currentFrame"] is Int)
     }
+
+    @Test func exportProjectReportsXMLWriteFailureWithFilename() async throws {
+        let h = ToolHarness()
+        let parent = FileManager.default.temporaryDirectory
+            .appendingPathComponent("xml-tool-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        let outputURL = parent.appendingPathComponent("agent-timeline.xml")
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: parent.path)
+            try? FileManager.default.removeItem(at: parent)
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: parent.path)
+
+        let result = await h.runRaw("export_project", args: [
+            "mode": "xml",
+            "outputPath": outputURL.path,
+        ])
+
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("export_project"))
+        #expect(ToolHarness.textOf(result).contains(outputURL.lastPathComponent))
+    }
 }
 
 @Suite("ToolExecutor — exact numeric boundary")

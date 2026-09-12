@@ -38,9 +38,22 @@ import Foundation
 
 enum XMLExporter {
 
-    static func export(timeline: Timeline, resolver: MediaResolver, outputURL: URL) {
+    struct WriteError: LocalizedError {
+        let outputURL: URL
+        let underlying: Error
+
+        var errorDescription: String? {
+            "Couldn’t write \(outputURL.lastPathComponent). Choose another location and try again."
+        }
+    }
+
+    static func export(timeline: Timeline, resolver: MediaResolver, to outputURL: URL) throws {
         let xml = Builder(timeline: timeline, resolver: resolver).build()
-        try? xml.data(using: .utf8)?.write(to: outputURL)
+        do {
+            try Data(xml.utf8).write(to: outputURL, options: .atomic)
+        } catch {
+            throw WriteError(outputURL: outputURL, underlying: error)
+        }
     }
 
     // MARK: - Source timecode
