@@ -424,4 +424,36 @@ enum ProjectPackMigration {
             try VideoProject.validateEditableContents(at: staging)
         }
     }
+
+    static func identityRecoveryPreview(projectURL: URL) throws -> IdentityRecoveryRebind.Preview? {
+        guard let root = DataRootResolver.dataRoot(of: projectURL),
+              case .bound(let binding) = ProjectPluginSettings.bindingResolution(projectURL: projectURL),
+              binding.id == "musicvideo", binding.version == "0.5.9",
+              binding.projectSchema == "musicvideo/2.1.0" else { return nil }
+        _ = try ProjectPackGate.requireLiveMutation(projectURL: projectURL, declaredPack: binding.id, declaredBinding: binding)
+        return try IdentityRecoveryRebind.preview(
+            dataRoot: root, order: PhaseContractRuntime.order(activePack: binding.id),
+            registry: PackCatalog.registry(activePack: binding.id)
+        )
+    }
+
+    static func rebindIdentityRecovery(workingCopyKey: String, reviewed: IdentityRecoveryRebind.Preview, declaredBinding: ProjectPackBinding, executionCoordinator: PipelinePhaseRunCoordinator) throws {
+        let home = ProjectWorkingCopy.home(workingCopyKey)
+        guard let root = DataRootResolver.dataRoot(of: home),
+              declaredBinding.id == "musicvideo", declaredBinding.version == "0.5.9",
+              declaredBinding.projectSchema == "musicvideo/2.1.0" else { throw MigrationError.invalidSource }
+        _ = try ProjectPackGate.requireLiveMutation(projectURL: home, declaredPack: declaredBinding.id, declaredBinding: declaredBinding)
+        guard let mutationID = executionCoordinator.beginMutation(projectRoot: root, label: "Review recovered approvals") else {
+            throw GateBlocked("Finish the running phase before reviewing recovered approvals.")
+        }
+        defer { executionCoordinator.endMutation(projectRoot: root, id: mutationID) }
+        let order = try PhaseContractRuntime.order(activePack: declaredBinding.id)
+        let registry = PackCatalog.registry(activePack: declaredBinding.id)
+        try ProjectWorkingCopy.transact(key: workingCopyKey) { staging in
+            _ = try ProjectPackGate.requireLiveMutation(projectURL: staging, declaredPack: declaredBinding.id, declaredBinding: declaredBinding)
+            guard let stagedRoot = DataRootResolver.dataRoot(of: staging) else { throw MigrationError.invalidSource }
+            try IdentityRecoveryRebind.apply(reviewed, dataRoot: stagedRoot, order: order, registry: registry)
+            try VideoProject.validateEditableContents(at: staging)
+        }
+    }
 }

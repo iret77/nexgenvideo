@@ -15,15 +15,18 @@ struct ToolResult: Sendable {
     let content: [Block]
     let isError: Bool
     let turnDisposition: TurnDisposition
+    let hostOutcome: HostOperationOutcome?
 
     init(
         content: [Block],
         isError: Bool,
-        turnDisposition: TurnDisposition = .continueTurn
+        turnDisposition: TurnDisposition = .continueTurn,
+        hostOutcome: HostOperationOutcome? = nil
     ) {
         self.content = content
         self.isError = isError
         self.turnDisposition = turnDisposition
+        self.hostOutcome = hostOutcome
     }
 
     static func ok(_ text: String) -> ToolResult {
@@ -47,6 +50,25 @@ struct ToolResult: Sendable {
             content: [.text(message)],
             isError: true,
             turnDisposition: .continueTurn
+        )
+    }
+
+    func appendingHostOutcome(_ outcome: HostOperationOutcome) throws -> ToolResult {
+        let text = try outcome.encodedText()
+        return ToolResult(
+            content: content + [.text(text)],
+            isError: isError,
+            turnDisposition: turnDisposition,
+            hostOutcome: outcome
+        )
+    }
+
+    func reportingHostOutcome(_ outcome: HostOperationOutcome) -> ToolResult {
+        ToolResult(
+            content: content,
+            isError: isError,
+            turnDisposition: turnDisposition,
+            hostOutcome: outcome
         )
     }
 }

@@ -69,13 +69,21 @@ struct AgentTranscriptTurn: Identifiable {
 }
 
 enum AgentTranscriptProjection {
-    static func turns(messages: [AgentMessage], isStreaming: Bool) -> [AgentTranscriptTurn] {
+    static func turns(
+        messages: [AgentMessage],
+        isStreaming: Bool,
+        currentApprovalOutcomes: [String: HostOperationOutcome] = [:]
+    ) -> [AgentTranscriptTurn] {
         HangDiagnosticSelfTest.injectReplayControl(messages)
         let diagnosticID = HangDiagnosticRecorder.shared.record(.projection, values: [Double(messages.count)])
         defer { HangDiagnosticRecorder.shared.record(.projection, correlation: diagnosticID, end: true) }
         let messageTurns = splitIntoTurns(messages)
         return messageTurns.enumerated().compactMap { index, messages in
-            project(messages, isRunning: isStreaming && index == messageTurns.count - 1)
+            project(
+                messages,
+                isRunning: isStreaming && index == messageTurns.count - 1,
+                currentApprovalOutcomes: currentApprovalOutcomes
+            )
         }
     }
 
@@ -96,7 +104,8 @@ enum AgentTranscriptProjection {
 
     private static func project(
         _ messages: [AgentMessage],
-        isRunning: Bool
+        isRunning: Bool,
+        currentApprovalOutcomes: [String: HostOperationOutcome]
     ) -> AgentTranscriptTurn? {
         guard let first = messages.first else { return nil }
         let activity = makeActivity(messages, isRunning: isRunning)
@@ -104,10 +113,38 @@ enum AgentTranscriptProjection {
         var resultMessage: AgentMessage?
         var receipts: [AgentTranscriptItem] = []
         var notices: [AgentTranscriptItem] = []
+        var hostOutcome: (id: UUID, value: HostOperationOutcome)?
+        let authoritativeToolUseIDs = Set(messages.flatMap { message in
+            message.blocks.compactMap { block -> String? in
+                guard message.role == .assistant,
+                      case .toolUse(let id, let name, _) = block,
+                      HostOperationOutcome.acceptsResult(from: name) else {
+                    return nil
+                }
+                return id
+            }
+        })
 
         for message in messages {
             switch message.role {
             case .user:
+                for block in message.blocks {
+                    guard case .toolResult(let toolUseID, let content, _) = block,
+                          authoritativeToolUseIDs.contains(toolUseID) else {
+                        continue
+                    }
+                    for resultBlock in content {
+                        guard case .text(let text) = resultBlock else { continue }
+                        do {
+                            hostOutcome = (
+                                message.id,
+                                try HostOperationOutcome.decode(text: text)
+                            )
+                        } catch {
+                            continue
+                        }
+                    }
+                }
                 if !message.hidden, let text = authoredText(message) {
                     intents.append(.userIntent(.init(id: message.id, text: text)))
                 }
@@ -150,9 +187,21 @@ enum AgentTranscriptProjection {
             }
         }
 
+        if let recorded = hostOutcome,
+           (recorded.value.state == .approvedCurrent
+                || recorded.value.state == .staleAfterLineageChange),
+           let current = currentApprovalOutcomes[recorded.value.phase] {
+            hostOutcome = (recorded.id, current)
+        }
+
         let activityItems = activity.map { [AgentTranscriptItem.activity($0)] } ?? []
-        let results = resultMessage.map { [AgentTranscriptItem.assistantResult($0)] } ?? []
-        let output = intents + results + activityItems + receipts + notices
+        let results = hostOutcome == nil
+            ? resultMessage.map { [AgentTranscriptItem.assistantResult($0)] } ?? []
+            : []
+        let hostItems = hostOutcome.map {
+            [AgentTranscriptItem.notice(.init(id: $0.id, text: $0.value.userSummary))]
+        } ?? []
+        let output = intents + results + hostItems + activityItems + receipts + notices
         guard !output.isEmpty else { return nil }
         return AgentTranscriptTurn(id: first.id, items: output)
     }

@@ -23,6 +23,19 @@ enum PipelineRenderRecordError: Error, LocalizedError, Sendable, Equatable {
             return "Unsafe render-record path: \(path)"
         }
     }
+
+    func hostOutcome(phase: String) -> HostOperationOutcome {
+        HostOperationOutcome(
+            state: switch self {
+            case .publicationRollbackFailed:
+                .persistedButStructurallyInvalid
+            default:
+                .rejectedBeforeWrite
+            },
+            phase: phase,
+            diagnostic: errorDescription
+        )
+    }
 }
 
 enum PipelineRenderRecordWriter {
@@ -56,6 +69,16 @@ enum PipelineRenderRecordWriter {
     struct ShotProvenance: Sendable, Equatable {
         let artifact: RenderPublishedArtifactV1
         let proof: RenderShotProvenanceProofV1
+    }
+
+    static func hostOutcome(
+        for publication: RenderRecordPublicationV1
+    ) -> HostOperationOutcome {
+        HostOperationOutcome(
+            state: .validatedAwaitingReview,
+            phase: publication.phase == "final" ? "render" : publication.phase,
+            diagnostic: "Render record transaction \(publication.transactionID) was published."
+        )
     }
 
     private struct EncodedShotProvenance {

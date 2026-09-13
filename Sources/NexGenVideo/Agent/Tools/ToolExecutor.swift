@@ -259,6 +259,10 @@ final class ToolExecutor {
         var guardedRoot: URL?
         var guardedDeclaration: ProjectPackGate.MutationDeclaration?
         var mutationLease: (root: URL, id: UUID)?
+        var hostOutcomePhase: String?
+        let rejectedOutcomePhase = Self.rejectionPhase(tool: tool, args: args)
+        var phaseWriterReturned = false
+        var hostOutcome: HostOperationOutcome?
         defer {
             if let mutationLease {
                 editor.pipelinePhaseRunCoordinator.endMutation(
@@ -319,6 +323,11 @@ final class ToolExecutor {
                     guardedDeclaration = declaration
                 }
             }
+            if let phase = guardedPhase,
+               let root = guardedRoot,
+               tool.writesPhaseArtifact(args: resolved, dataRoot: root) {
+                hostOutcomePhase = phase
+            }
             if tool != .runPhase, let guardedRoot {
                 try requirePhaseIdle(editor, dataRoot: guardedRoot)
             }
@@ -361,6 +370,8 @@ final class ToolExecutor {
                 try ProjectWorkingCopy.markDirty(key: key)
             }
             result = try await run(tool, editor, resolved, origin: origin)
+            phaseWriterReturned = hostOutcomePhase != nil && !result.isError
+            hostOutcome = result.hostOutcome
             if tool != .runPhase,
                tool != .writeShotlist,
                !result.isError,
@@ -392,21 +403,62 @@ final class ToolExecutor {
                 )
                 await editor.refreshEngineState()
             }
+            if let phase = hostOutcomePhase,
+               phaseWriterReturned,
+               let root = guardedRoot,
+               let declaration = guardedDeclaration {
+                try await NativeGateWriter.requireApprovalReady(
+                    projectDir: FrameInventory.projectHome(of: root),
+                    phase: phase,
+                    declaredPack: declaration.packName,
+                    declaredBinding: declaration.binding,
+                    executionCoordinator: editor.pipelinePhaseRunCoordinator,
+                    mutationID: mutationLease?.id
+                )
+                if hostOutcome == nil {
+                    hostOutcome = HostOperationOutcome(
+                        state: .validatedAwaitingReview,
+                        phase: phase,
+                        diagnostic: Self.diagnosticText(from: result)
+                    )
+                }
+            }
             // Record any edit that actually changed the timeline so `undo` can revert it.
             if tool != .undo, !result.isError, editor.timeline != before,
                let actionName = editor.undoManager?.undoActionName {
                 agentUndoStack.append(actionName)
             }
+        } catch let failure as HostOperationFailure {
+            result = .error(failure.localizedDescription)
+            hostOutcome = failure.outcome
         } catch let err as ToolError {
             result = .error(err.message)
+            if let phase = hostOutcomePhase ?? rejectedOutcomePhase {
+                hostOutcome = HostOperationOutcome(
+                    state: phaseWriterReturned
+                        ? .persistedButStructurallyInvalid
+                        : .rejectedBeforeWrite,
+                    phase: phase,
+                    diagnostic: err.message
+                )
+            }
         } catch {
             result = .error(error.localizedDescription)
+            if let phase = hostOutcomePhase ?? rejectedOutcomePhase {
+                hostOutcome = HostOperationOutcome(
+                    state: phaseWriterReturned
+                        ? .persistedButStructurallyInvalid
+                        : .rejectedBeforeWrite,
+                    phase: phase,
+                    diagnostic: error.localizedDescription
+                )
+            }
         }
         // A successful pipeline write diverges the working copy from the saved package — mark the
         // document edited so ⌘S persists it and the user is warned before closing without saving.
-        if !result.isError,
-           result.turnDisposition == .continueTurn,
-           tool.isDurableWrite {
+        let persistedInvalid = hostOutcome?.state == .persistedButStructurallyInvalid
+        if tool.isDurableWrite,
+           (persistedInvalid || (!result.isError && result.turnDisposition == .continueTurn)) {
             editor.onPipelineChanged?()
         }
         feedbackState.record(result, for: tool)
@@ -431,7 +483,35 @@ final class ToolExecutor {
             )
         }
         // Shorten on the post-run state so newly created ids in summaries are shortened too.
-        return shorteningIds(in: result, editor: editor)
+        let shortened = shorteningIds(in: result, editor: editor)
+        guard let hostOutcome else { return shortened }
+        do {
+            return try shortened.appendingHostOutcome(hostOutcome)
+        } catch {
+            return ToolResult(
+                content: shortened.content + [.text(
+                    "The host could not encode the authoritative pipeline outcome: \(error.localizedDescription)"
+                )],
+                isError: true,
+                turnDisposition: shortened.turnDisposition
+            )
+        }
+    }
+
+    private static func rejectionPhase(tool: ToolName, args: [String: Any]) -> String? {
+        guard HostOperationOutcome.acceptsResult(from: tool.rawValue) else { return nil }
+        for value in [tool.advancingPhase(args: args), args["phase"] as? String, args["target_phase"] as? String] {
+            if let phase = value?.trimmingCharacters(in: .whitespacesAndNewlines), !phase.isEmpty { return phase }
+        }
+        return "pipeline"
+    }
+
+    private static func diagnosticText(from result: ToolResult) -> String? {
+        let text = result.content.compactMap { block -> String? in
+            guard case .text(let value) = block else { return nil }
+            return value
+        }.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
     }
 
     private func normalizedToolCallOrigin(

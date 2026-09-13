@@ -103,6 +103,8 @@ struct PipelinePanelView: View {
     @State private var storyboardReviewRequested = false
     /// A user-safe error plus an agent-only diagnostic for click-time races or write failures.
     @State private var gateError: GateErrorState?
+    @State private var recoveryPreview: IdentityRecoveryRebind.Preview?
+    @State private var reviewRecovery = false
 
     private struct GateErrorState: Equatable {
         let message: String
@@ -137,6 +139,26 @@ struct PipelinePanelView: View {
             PipelineStoryboardReviewSheet()
                 .environment(editor)
         }
+        .confirmationDialog("Restore verified phase approvals?", isPresented: $reviewRecovery, titleVisibility: .visible) {
+            if let recoveryPreview {
+                Button("Restore reviewed approvals") {
+                    apply(failureMessage: "The Recovery review changed. Review the current project again.") { _ in
+                        guard let key = editor.openWorkingCopyKey,
+                              let binding = editor.declaredPluginBinding else {
+                            throw ProjectPackMigration.MigrationError.invalidSource
+                        }
+                        try ProjectPackMigration.rebindIdentityRecovery(
+                            workingCopyKey: key, reviewed: recoveryPreview,
+                            declaredBinding: binding,
+                            executionCoordinator: editor.pipelinePhaseRunCoordinator
+                        )
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(recoveryPreview.map { "Verified source and artifact bytes: " + $0.phases.map(PhaseDisplay.label).joined(separator: ", ") + ". Changed phases remain out of date." } ?? "Review the current Recovery copy first.")
+        }
     }
 
     @ViewBuilder
@@ -165,6 +187,19 @@ struct PipelinePanelView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
                     summaryHeader(data)
+                    if let recoveryPreview {
+                        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+                            Text("Recovery review")
+                                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+                            Text("\(recoveryPreview.phases.count) phase approvals have verified source and artifact bytes. \(recoveryPreview.stalePhases.count) remain out of date.")
+                                .interfaceFont(size: AppTheme.Typography.ui)
+                                .foregroundStyle(AppTheme.Text.secondaryColor)
+                            Button("Review recovered approvals") { reviewRecovery = true }
+                                .buttonStyle(.capsule(.secondary, size: .regular))
+                                .disabled(recoveryPreview.phases.isEmpty || gateWriting || runningPhase != nil || editor.agentService.isComposerBlocked)
+                        }
+                        .padding(AppTheme.Spacing.md)
+                    }
                     if let gateError {
                         gateErrorBanner(gateError)
                     }
@@ -413,12 +448,22 @@ struct PipelinePanelView: View {
     }
 
     private func phaseIdentity(_ phase: ProjectPhase, isNext: Bool) -> some View {
-        Text(PhaseDisplay.label(phase.phase))
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+            Text(PhaseDisplay.label(phase.phase))
             .interfaceFont(size: AppTheme.Typography.ui,
                            weight: isNext ? AppTheme.FontWeight.semibold : AppTheme.FontWeight.medium)
             .foregroundStyle(isNext ? AppTheme.Text.primaryColor : AppTheme.Text.secondaryColor)
             .textSelection(.enabled)
             .fixedSize(horizontal: false, vertical: true)
+            if let outcome = phase.hostOutcome,
+               outcome.state != .rejectedBeforeWrite,
+               outcome.state != .approvedCurrent {
+                Text(outcome.userSummary)
+                    .interfaceFont(size: AppTheme.Typography.metadata)
+                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 
     /// Approving a phase is the one action the pipeline cannot advance without — it belongs in the row,
@@ -468,7 +513,7 @@ struct PipelinePanelView: View {
     ) -> some View {
         // The first not-yet-approved phase is the frontier: everything before it is done, it is active,
         // everything after is in the future.
-        let isFuture = !phase.approved && !isNext
+        let isFuture = !phase.historicallyApproved && !isNext
         Menu {
             // Only the active (next) phase is approvable — no approving out of order.
             Button("Approve") {
@@ -500,7 +545,7 @@ struct PipelinePanelView: View {
                     )
                 }
             }
-            .disabled(!phase.approved || !controlsAvailable)
+            .disabled(!phase.historicallyApproved || !controlsAvailable)
             Divider() // app-theme: native-menu-divider
             // Rewind to a phase already reached (active or completed) — never to the future.
             Button("Rewind to here", role: .destructive) {
@@ -676,20 +721,23 @@ struct PipelinePanelView: View {
     private func phaseStatus(_ phase: ProjectPhase, isRunning: Bool, awaitingApproval: Bool) -> some View {
         let label = isRunning ? "In progress"
             : phase.approved ? "Approved"
+            : phase.state == "stale" ? "Approval out of date"
             : phase.state == "needs_revision" ? "Needs revision"
-            : awaitingApproval ? "In progress" : "Not started"
+            : awaitingApproval ? "Ready for review" : "Not started"
         let symbol = isRunning ? "circle.dotted.circle"
             : phase.approved ? "checkmark.circle.fill"
+            : phase.state == "stale" ? "exclamationmark.triangle.fill"
             : phase.state == "needs_revision" ? "exclamationmark.triangle.fill"
             : awaitingApproval ? "circle.dotted.circle" : "circle"
         let color = isRunning ? editor.projectPalette.accent
             : phase.approved ? AppTheme.Status.successColor
+            : phase.state == "stale" ? AppTheme.Status.warningColor
             : phase.state == "needs_revision" ? AppTheme.Status.errorColor : AppTheme.Text.mutedColor
         return Image(systemName: symbol)
             .interfaceFont(size: AppTheme.Typography.ui)
             .foregroundStyle(color)
             .accessibilityLabel(label)
-            .help(phase.notes.map { "\(label): \($0)" } ?? label)
+            .help(label)
     }
 
     private func centeredProgress() -> some View {
@@ -752,6 +800,12 @@ struct PipelinePanelView: View {
             return
         }
         dataRoot = DataRootResolver.dataRoot(of: dir)
+        do {
+            recoveryPreview = try ProjectPackMigration.identityRecoveryPreview(projectURL: dir)
+        } catch {
+            recoveryPreview = nil
+            gateError = GateErrorState(message: "Recovered approvals need review. Restore the source files or rewind the affected phase.", diagnostic: error.localizedDescription)
+        }
         loadToken += 1
         let token = loadToken
         if showProgress {

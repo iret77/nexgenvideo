@@ -7,6 +7,47 @@ import NexGenEngine
 @MainActor
 @Suite("Gate approval — the user's decision (HAX G11)")
 struct GateApprovalTests {
+    @Test("gate preflight refusal has a typed host outcome before a card exists")
+    func gatePreflightFailureIsAuthoritative() async throws {
+        let h = ToolHarness()
+        let result = await h.runRaw("approve_gate", args: ["phase": "brief", "unexpected": true])
+        #expect(result.isError)
+        #expect(h.editor.agentService.pendingGateApproval == nil)
+        let outcome = try #require(result.content.compactMap { block -> HostOperationOutcome? in
+            guard case .text(let text) = block else { return nil }
+            return try? HostOperationOutcome.decode(text: text)
+        }.last)
+        #expect(outcome.state == .rejectedBeforeWrite)
+        #expect(outcome.phase == "brief")
+    }
+
+    @Test("both backend gate results receive the host approval outcome", arguments: [false, true])
+    func typedApprovedOutcome(embedded: Bool) async throws {
+        let (h, root, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let service = h.editor.agentService
+        service.newChat()
+        service.isStreaming = true
+        let session = try #require(service.currentSessionId)
+        let origin: ToolCallOrigin = embedded
+            ? .embeddedRuntime(chatSessionID: session, mcpSessionID: UUID())
+            : .inAppChat(sessionID: session)
+        let pending = await h.executor.execute(name: "approve_gate", args: ["project_dir": root.path, "phase": "project_init"], origin: origin)
+        #expect(!pending.isError)
+        service.messages = [
+            AgentMessage(role: .assistant, blocks: [.toolUse(id: "gate", name: "approve_gate", inputJSON: #"{"phase":"project_init"}"#)]),
+            AgentMessage(role: .user, blocks: [.toolResult(toolUseId: "gate", content: pending.content, isError: false)], hidden: true),
+        ]
+        let result = try #require(await service.resolveGate(.approved))
+        let outcomes = result.content.compactMap { block -> HostOperationOutcome? in
+            guard case .text(let text) = block else { return nil }
+            return try? HostOperationOutcome.decode(text: text)
+        }
+        #expect(outcomes.last?.state == .approvedCurrent)
+        #expect(service.messages.filter { $0.role == .user }.allSatisfy(\.hidden))
+        let projected = AgentTranscriptProjection.turns(messages: service.messages, isStreaming: false).flatMap(\.items)
+        #expect(projected.contains { if case .notice(let notice) = $0 { return notice.text.contains("approved") }; return false })
+    }
 
     // MARK: - Pure model
 
@@ -339,15 +380,30 @@ struct GateApprovalTests {
         let missingRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("missing-gate-root-\(UUID().uuidString)", isDirectory: true)
 
-        _ = try service.requestGateApproval(GateApproval(
-            phase: "project_init",
-            dataRoot: missingRoot
-        ))
+        let approval = GateApproval(phase: "project_init", dataRoot: missingRoot)
+        _ = try service.requestGateApproval(approval)
+        let pending = String(decoding: try JSONSerialization.data(withJSONObject: ["request_id": approval.id]), as: UTF8.self)
+        service.messages = [
+            AgentMessage(role: .assistant, blocks: [.toolUse(id: "failed-gate", name: "approve_gate", inputJSON: #"{"phase":"project_init"}"#)]),
+            AgentMessage(role: .user, blocks: [.toolResult(toolUseId: "failed-gate", content: [.text(pending)], isError: false)], hidden: true),
+        ]
         let result = await service.resolveGate(.approved)
 
         #expect(result?.isError == true)
         #expect(service.pendingGateApproval?.phase == "project_init")
         #expect(service.gateApprovalError?.isEmpty == false)
+        #expect(service.gateApprovalError?.contains(missingRoot.path) == false)
+        #expect(service.gateApprovalDiagnostic?.isEmpty == false)
+        let failedSlot = try #require(service.messages.first { $0.role == .user }?.blocks.first)
+        guard case .toolResult(_, let content, let isError) = failedSlot else {
+            Issue.record("Expected the original host tool-result slot")
+            return
+        }
+        #expect(isError)
+        #expect(content.contains { block in
+            guard case .text(let text) = block else { return false }
+            return (try? HostOperationOutcome.decode(text: text))?.state == .rejectedBeforeWrite
+        })
     }
 
     @Test("An approved gate cannot resume the agent across a host-owned intake card")

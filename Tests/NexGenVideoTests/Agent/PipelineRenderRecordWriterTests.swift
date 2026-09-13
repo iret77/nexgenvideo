@@ -11,6 +11,29 @@ struct PipelineRenderRecordWriterTests {
         case stop
     }
 
+    @Test("Render writer outcomes distinguish rollback failure from rejection")
+    func renderWriterFailureOutcomes() {
+        let rejected: [PipelineRenderRecordError] = [
+            .invalidArtifact("invalid"),
+            .publicationFailed("failed"),
+            .transactionInProgress("frames"),
+            .unsafePath("outside"),
+        ]
+        for error in rejected {
+            let outcome = error.hostOutcome(phase: "frames")
+            #expect(outcome.state == .rejectedBeforeWrite)
+            #expect(outcome.phase == "frames")
+            #expect(outcome.diagnostic == error.errorDescription)
+        }
+
+        let rollback = PipelineRenderRecordError.publicationRollbackFailed(
+            "recovery journal retained"
+        ).hostOutcome(phase: "render")
+        #expect(rollback.state == .persistedButStructurallyInvalid)
+        #expect(rollback.phase == "render")
+        #expect(rollback.diagnostic?.contains("recovery journal retained") == true)
+    }
+
     @Test("Publication rechecks the exact pack binding before canonical writes")
     func publicationRejectsBindingChangeAtCommit() throws {
         PackCatalog.register(MusicvideoPack())
@@ -141,6 +164,11 @@ struct PipelineRenderRecordWriterTests {
             expectedPublicationTransactionID: nil,
             dataRoot: fixture.dataRoot
         )
+
+        let hostOutcome = PipelineRenderRecordWriter.hostOutcome(for: publication)
+        #expect(hostOutcome.state == .validatedAwaitingReview)
+        #expect(hostOutcome.phase == "frames")
+        #expect(hostOutcome.diagnostic?.contains(publication.transactionID) == true)
 
         #expect(publication.renderProof == nil)
         #expect(publication.renderRoutingProof == nil)

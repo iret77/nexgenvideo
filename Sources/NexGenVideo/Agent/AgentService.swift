@@ -1965,6 +1965,7 @@ final class AgentService {
     private(set) var pendingGateApproval: GateApproval?
     private(set) var gateApprovalIsWriting = false
     private(set) var gateApprovalError: String?
+    private(set) var gateApprovalDiagnostic: String?
 
     @ObservationIgnored
     private var pendingGateFollowUp: GateFollowUp?
@@ -2073,6 +2074,7 @@ final class AgentService {
         suspendToolCalls(from: origin)
         pendingGateOrigin = origin
         pendingGateApproval = scoped
+        gateApprovalDiagnostic = nil
         return GateApprovalRequest(approval: scoped, isNew: true, matchesRequestedApproval: true)
     }
 
@@ -2103,20 +2105,34 @@ final class AgentService {
             defer { gateApprovalIsWriting = false }
             do {
                 let payload = try await toolExecutor.commitGateApproval(approval)
+                let outcome: HostOperationOutcome
+                do {
+                    guard let root = approval.dataRoot else { throw ToolError("The approval project is unavailable.") }
+                    let validity = try ProjectStateBuilder.approvalValidity(
+                        dataRoot: root, order: PhaseContractRuntime.order(activePack: approval.declaredPack),
+                        registry: PackCatalog.registry(activePack: approval.declaredPack)
+                    )
+                    guard validity[approval.phase]?.isCurrent == true else { throw ToolError("The approved phase lineage is no longer current.") }
+                    outcome = HostOperationOutcome(state: .approvedCurrent, phase: approval.phase, diagnostic: nil)
+                } catch {
+                    outcome = HostOperationOutcome(state: .staleAfterLineageChange, phase: approval.phase, diagnostic: error.localizedDescription)
+                }
+                recordGateOutcome(outcome, approval: approval)
                 pendingGateApproval = nil
                 pendingGateOrigin = nil
                 gateApprovalError = nil
+                gateApprovalDiagnostic = nil
                 if approval.sessionId != nil {
                     enqueueGateFollowUp(
-                        "The user approved \(approval.phaseLabel), and the host wrote the gate successfully: \(payload) "
+                        "The host recorded this gate outcome: \(try outcome.encodedText()). Gate diagnostic: \(payload) "
                             + "Continue from the updated project state; do not request this approval again.",
                         origin: origin,
-                        includeNextPhaseInstructions: true
+                        includeNextPhaseInstructions: outcome.state == .approvedCurrent
                     )
                 } else {
                     Task { @MainActor [weak self] in await self?.editor?.refreshEngineState() }
                 }
-                return .ok(payload)
+                return try ToolResult.ok(payload).appendingHostOutcome(outcome)
             } catch let error as ToolError {
                 return recordGateApprovalFailure(error.message, approval: approval)
             } catch {
@@ -2127,14 +2143,38 @@ final class AgentService {
 
     private func recordGateApprovalFailure(_ reason: String, approval: GateApproval) -> ToolResult {
         let message = "Couldn't approve \(approval.phaseLabel): \(reason)"
-        gateApprovalError = message
+        gateApprovalError = "\(approval.phaseLabel) is not ready for approval. Review the current phase."
+        gateApprovalDiagnostic = reason
+        let outcome = HostOperationOutcome(state: .rejectedBeforeWrite, phase: approval.phase, diagnostic: reason)
+        recordGateOutcome(outcome, approval: approval)
         enqueueGateFollowUp(
             "The user approved \(approval.phaseLabel), but the host could not write the gate: \(reason) "
                 + "The approval card remains open. Address the stated cause without claiming approval, "
                 + "inventing a support team, or asking the user to restart the app.",
             origin: pendingGateOrigin ?? .direct
         )
-        return .error(message)
+        return (try? ToolResult.error(message).appendingHostOutcome(outcome)) ?? .error(message)
+    }
+
+    private func recordGateOutcome(_ outcome: HostOperationOutcome, approval: GateApproval) {
+        guard approval.sessionId == nil || approval.sessionId == currentSessionId,
+              let encoded = try? outcome.encodedText() else { return }
+        for index in messages.indices where messages[index].role == .user {
+            for blockIndex in messages[index].blocks.indices {
+                guard case .toolResult(let id, let content, _) = messages[index].blocks[blockIndex],
+                      content.contains(where: { block in
+                          guard case .text(let text) = block,
+                                let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else { return false }
+                          return object["request_id"] as? String == approval.id
+                      }) else { continue }
+                let retained = content.filter { block in
+                    guard case .text(let text) = block else { return true }
+                    return (try? HostOperationOutcome.decode(text: text)) == nil
+                }
+                messages[index].blocks[blockIndex] = .toolResult(toolUseId: id, content: retained + [.text(encoded)], isError: outcome.state != .approvedCurrent)
+            }
+        }
+        syncMessagesIntoCurrentSession()
     }
 
     private func enqueueGateFollowUp(

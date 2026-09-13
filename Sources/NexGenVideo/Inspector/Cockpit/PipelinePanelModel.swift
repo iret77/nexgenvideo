@@ -86,11 +86,17 @@ struct ProjectPhase: Codable, Sendable, Equatable, Identifiable {
     var approved: Bool
     var state: String
     var notes: String?
+    var historicallyApproved: Bool
+    var approvalDiagnostic: String?
+    var hostOutcome: HostOperationOutcome?
 
     var id: String { phase }
 
     enum CodingKeys: String, CodingKey {
         case phase, approved, state, notes
+        case historicallyApproved = "historically_approved"
+        case approvalDiagnostic = "approval_diagnostic"
+        case hostOutcome = "host_outcome"
     }
 
     init(from decoder: Decoder) throws {
@@ -99,5 +105,8 @@ struct ProjectPhase: Codable, Sendable, Equatable, Identifiable {
         approved = try c.decodeIfPresent(Bool.self, forKey: .approved) ?? false
         state = try c.decodeIfPresent(String.self, forKey: .state) ?? (approved ? "approved" : "pending")
         notes = try c.decodeIfPresent(String.self, forKey: .notes)
+        historicallyApproved = try c.decodeIfPresent(Bool.self, forKey: .historicallyApproved) ?? approved
+        approvalDiagnostic = try c.decodeIfPresent(String.self, forKey: .approvalDiagnostic)
+        hostOutcome = try c.decodeIfPresent(HostOperationOutcome.self, forKey: .hostOutcome)
     }
 }

@@ -128,11 +128,17 @@ struct GateApprovalCard: View {
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
             if let error {
-                Label(error, systemImage: "exclamationmark.triangle.fill")
+                Label("Review the current phase before approving.", systemImage: "exclamationmark.triangle.fill")
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Status.errorColor)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, AppTheme.Spacing.xxs)
+                DisclosureGroup("Diagnostic details") {
+                    Text(editor.agentService.gateApprovalDiagnostic ?? error)
+                        .interfaceFont(size: AppTheme.Typography.metadata)
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                        .textSelection(.enabled)
+                }
             }
             if isBlocked {
                 Text("Finish the running phase before approving.")

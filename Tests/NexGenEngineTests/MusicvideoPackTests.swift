@@ -428,8 +428,8 @@ struct MusicvideoPackTests {
     func packSatisfiesContract() {
         let pack: Pack = MusicvideoPack()
         #expect(pack.name == "musicvideo")
-        #expect(pack.version == "0.5.8")
-        #expect(pack.manifest.minAppVersion == "1.5.8")
+        #expect(pack.version == "0.5.9")
+        #expect(pack.manifest.minAppVersion == "1.5.9")
     }
 
     @Test("pack exposes gallery manifest and a starter")
@@ -472,12 +472,15 @@ struct MusicvideoPackTests {
         reg.load(MusicvideoPack())
         let migrations = reg.engine.projectSchemaMigrations
         #expect(migrations.contains {
-            $0.from == "musicvideo/legacy" && $0.to == "musicvideo/2.0.0"
+            $0.from == "musicvideo/legacy" && $0.to == "musicvideo/2.1.0"
         })
         #expect(migrations.contains {
-            $0.from == "musicvideo/1.0.0" && $0.to == "musicvideo/2.0.0"
+            $0.from == "musicvideo/1.0.0" && $0.to == "musicvideo/2.1.0"
         })
-        #expect(migrations.count == 2)
+        #expect(migrations.contains {
+            $0.from == "musicvideo/2.0.0" && $0.to == "musicvideo/2.1.0"
+        })
+        #expect(migrations.count == 3)
     }
 
     @Test("measured-structure migration rewinds analysis and downstream approvals")

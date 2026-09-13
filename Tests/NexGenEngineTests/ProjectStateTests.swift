@@ -8,6 +8,55 @@ import Testing
 @Suite("ProjectState")
 struct ProjectStateTests {
 
+    @Test("historical approvals remain readable while current lineage becomes stale")
+    func approvalValidityDoesNotRewriteHistoricalSnapshot() throws {
+        let root = try scaffold()
+        defer { cleanup(root) }
+        let store = YAMLArtifactStore(dataRoot: root)
+        var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+        GatesOperations.approve(&gates, phase: "project_init")
+        GatesOperations.approve(&gates, phase: "brief")
+        try store.save(gates, to: PipelineLayout.gatesFile)
+        let artifact = root.appendingPathComponent("brief.yaml")
+        try Data("original".utf8).write(to: artifact)
+        let registry = EngineRegistry()
+        registry.registerPhaseLineageProvider("brief") { root in
+            PhaseLineageSnapshot(inputFingerprint: "fixed-input", artifactFingerprint: try FileDigest.sha256(of: root.appendingPathComponent("brief.yaml")))
+        }
+        registry.registerGateRequirement("brief") { _ in }
+        try PipelineLineageStore.record(phase: "brief", snapshot: try #require(registry.phaseLineageProviders["brief"])(root), dataRoot: root)
+        let historic = try ProjectStateBuilder.buildSnapshot(dataRoot: root)
+        let current = try ProjectStateBuilder.approvalValidity(dataRoot: root, order: coreGatePhases, registry: registry)
+        #expect(current["brief"]?.isCurrent == true)
+        try Data("replacement".utf8).write(to: artifact, options: .atomic)
+        let stale = try ProjectStateBuilder.approvalValidity(dataRoot: root, order: coreGatePhases, registry: registry)
+        #expect(stale["brief"]?.historicallyApproved == true)
+        #expect(stale["brief"]?.isCurrent == false)
+        #expect(try ProjectStateBuilder.buildSnapshot(dataRoot: root) == historic)
+    }
+
+    @Test("a validated current artifact awaits review and never advances the frontier")
+    func currentUnapprovedArtifactIsNotApproval() throws {
+        let root = try scaffold()
+        defer { cleanup(root) }
+        var gates = Gates(project: "demo")
+        GatesOperations.approve(&gates, phase: "project_init")
+        try YAMLArtifactStore(dataRoot: root).save(gates, to: PipelineLayout.gatesFile)
+        try Data("brief".utf8).write(to: root.appendingPathComponent(PipelineLayout.briefFile))
+        let registry = EngineRegistry()
+        registry.registerPhaseLineageProvider("brief") { root in
+            PhaseLineageSnapshot(inputFingerprint: "inputs", artifactFingerprint: try FileDigest.sha256(of: root.appendingPathComponent(PipelineLayout.briefFile)))
+        }
+        registry.registerGateRequirement("brief") { _ in }
+        try PipelineLineageStore.record(phase: "brief", snapshot: try #require(registry.phaseLineageProviders["brief"])(root), dataRoot: root)
+        let validity = try ProjectStateBuilder.approvalValidity(dataRoot: root, order: coreGatePhases, registry: registry)
+        #expect(validity["brief"]?.historicallyApproved == false)
+        #expect(validity["brief"]?.isCurrent == true)
+        #expect(validity["brief"]?.lineageRecorded == true)
+        #expect(validity["production_design"]?.isCurrent == false)
+        #expect(try ProjectStateBuilder.buildSnapshot(dataRoot: root).nextPhase == "brief")
+    }
+
     private func scaffold(mode: Mode = .beat, budget: Double = 50.0) throws -> URL {
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent("state-\(UUID().uuidString)")

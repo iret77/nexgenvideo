@@ -154,6 +154,37 @@ struct ClaudeCodeEventMapperTests {
         }
     }
 
+    @Test("embedded tool results project the same host-owned outcome as API messages")
+    func embeddedHostOutcomeUsesSharedProjection() throws {
+        let outcome = HostOperationOutcome(
+            state: .persistedButStructurallyInvalid,
+            phase: "shotlist",
+            diagnostic: "data/shotlist/v2.yaml failed fingerprint 1234"
+        )
+        let envelope = try outcome.encodedText()
+        let escaped = String(decoding: try JSONEncoder().encode(envelope), as: UTF8.self)
+        var mapper = ClaudeCodeEventMapper()
+        mapper.ingest(line: #"{"type":"assistant","message":{"id":"writer","content":[{"type":"tool_use","id":"toolu_write","name":"write_shotlist","input":{}}]}}"#)
+        mapper.ingest(line: "{\"type\":\"user\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_write\",\"content\":\(escaped),\"is_error\":true}]}}")
+        mapper.ingest(line: #"{"type":"assistant","message":{"id":"claim","content":[{"type":"text","text":"The Shot List is approved."}]}}"#)
+
+        let turns = AgentTranscriptProjection.turns(
+            messages: mapper.messages,
+            isStreaming: false
+        )
+
+        #expect(turns.count == 1)
+        let notices = turns[0].items.compactMap { item -> String? in
+            guard case .notice(let notice) = item else { return nil }
+            return notice.text
+        }
+        #expect(notices == ["Shot List was saved but is not ready for review."])
+        #expect(!turns[0].items.contains(where: {
+            if case .assistantResult = $0 { return true }
+            return false
+        }))
+    }
+
     @Test func successResultCapturesCostAndNoError() {
         var mapper = ClaudeCodeEventMapper()
         mapper.ingest(line: #"{"type":"result","subtype":"success","is_error":false,"result":"ok","total_cost_usd":0.0123}"#)

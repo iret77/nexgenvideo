@@ -176,7 +176,21 @@ final class PipelineAgentHarness {
 
         var phase: String? { snapshot.nextPhase }
 
+        var stalePhase: String? {
+            let registry = PackCatalog.registry(activePack: packName)
+            guard let validity = try? ProjectStateBuilder.approvalValidity(
+                dataRoot: dataRoot, order: contract.order, registry: registry
+            ) else { return snapshot.phases.first(where: \.approved)?.phase }
+            return snapshot.phases.first {
+                $0.approved && validity[$0.phase]?.isCurrent != true
+            }?.phase
+        }
+
         func agentPrompt() throws -> String? {
+            if let stalePhase {
+                let outcome = HostOperationOutcome(state: .staleAfterLineageChange, phase: stalePhase, diagnostic: nil)
+                return "Host state: \(try outcome.encodedText()). Explain that approval is out of date. The user must explicitly review available Recovery bindings or rewind the affected phase before work can continue. Do not claim that historical approval authorizes execution."
+            }
             let progress = PackProgress(
                 nextPhase: snapshot.nextPhase,
                 approvedPhases: snapshot.phases.filter(\.approved).count,
@@ -478,6 +492,9 @@ final class PipelineAgentHarness {
         }
         if context.phase != "treatment" {
             treatmentCreationPath = nil
+        }
+        if context.stalePhase != nil {
+            return Reconciliation(isReady: true, agentPrompt: try? context.agentPrompt(), failure: nil)
         }
 
         var ledger = IntakeLedger.load(dataRoot: dataRoot)

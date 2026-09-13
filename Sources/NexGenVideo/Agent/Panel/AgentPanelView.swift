@@ -493,7 +493,21 @@ struct AgentPanelView: View {
     private var transcriptTurns: [AgentTranscriptTurn] {
         AgentTranscriptProjection.turns(
             messages: service.messages,
-            isStreaming: service.isStreaming
+            isStreaming: service.isStreaming,
+            currentApprovalOutcomes: Dictionary(uniqueKeysWithValues:
+                (editor.projectState?.phases ?? []).map { phase in
+                    (
+                        phase.phase,
+                        HostOperationOutcome(
+                            state: phase.approved
+                                ? .approvedCurrent
+                                : .staleAfterLineageChange,
+                            phase: phase.phase,
+                            diagnostic: phase.approvalDiagnostic
+                        )
+                    )
+                }
+            )
         )
     }
 

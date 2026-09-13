@@ -32,25 +32,29 @@ enum MusicvideoPipelineLineage {
 
     static func snapshot(
         phase: String,
-        dataRoot: URL
+        dataRoot: URL,
+        legacyIdentityLayout: Bool = false,
+        inputOverrides: [String: Data] = [:]
     ) throws -> PhaseLineageSnapshot {
         guard phases.contains(phase) else {
             throw LineageError.unknownPhase(phase)
         }
         return PhaseLineageSnapshot(
             inputFingerprint: try fingerprint(
-                selectors: inputSelectors(phase: phase, dataRoot: dataRoot),
+                selectors: inputSelectors(phase: phase, dataRoot: dataRoot)
+                    + identitySelectors(phase: phase, artifact: false, legacy: legacyIdentityLayout, dataRoot: dataRoot),
                 dynamicFiles: try dynamicInputFiles(
                     phase: phase,
                     dataRoot: dataRoot
                 ),
-                dataRoot: dataRoot
+                dataRoot: dataRoot,
+                overrides: inputOverrides
             ),
             artifactFingerprint: try fingerprint(
                 selectors: artifactSelectors(
                     phase: phase,
                     dataRoot: dataRoot
-                ),
+                ) + identitySelectors(phase: phase, artifact: true, legacy: legacyIdentityLayout, dataRoot: dataRoot),
                 dynamicFiles: try dynamicArtifactFiles(
                     phase: phase,
                     dataRoot: dataRoot
@@ -58,6 +62,19 @@ enum MusicvideoPipelineLineage {
                 dataRoot: dataRoot
             )
         )
+    }
+
+    private static func identitySelectors(phase: String, artifact: Bool, legacy: Bool, dataRoot: URL) -> [String] {
+        guard !legacy, let index = phases.firstIndex(of: phase) else { return [] }
+        return ["production_design", "bible"].compactMap { owner in
+            guard let ownerIndex = phases.firstIndex(of: owner),
+                  (artifact ? ownerIndex == index : ownerIndex < index),
+                  let path = try? DerivedIdentityAssetStoreV1.relativePath(phase: owner) else { return nil }
+            let url = dataRoot.appendingPathComponent(path)
+            guard FileManager.default.fileExists(atPath: url.path)
+                || (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) != nil else { return nil }
+            return path
+        }
     }
 
     static func requireCurrent(phase: String, dataRoot: URL) throws {
@@ -86,7 +103,8 @@ enum MusicvideoPipelineLineage {
         }
         let projectRoot = FrameInventory.projectHome(of: dataRoot).standardizedFileURL
         var selected: [String: URL] = [:]
-        for selector in artifactSelectors(phase: phase, dataRoot: dataRoot) {
+        for selector in artifactSelectors(phase: phase, dataRoot: dataRoot)
+            + identitySelectors(phase: phase, artifact: true, legacy: false, dataRoot: dataRoot) {
             let url = dataRoot.appendingPathComponent(selector)
             for file in try regularFiles(at: url, inside: projectRoot) {
                 let path = try canonicalPath(
@@ -516,7 +534,8 @@ enum MusicvideoPipelineLineage {
     private static func fingerprint(
         selectors: [String],
         dynamicFiles: [URL],
-        dataRoot: URL
+        dataRoot: URL,
+        overrides: [String: Data] = [:]
     ) throws -> String {
         let home = FrameInventory.projectHome(of: dataRoot).standardizedFileURL
         var hasher = SHA256()
@@ -552,7 +571,8 @@ enum MusicvideoPipelineLineage {
             hasher.update(data: Data([0]))
             do {
                 hasher.update(data: Data(
-                    try FileDigest.sha256(of: url).utf8
+                    try (overrides[path].map { FileDigest.sha256(of: $0) }
+                        ?? FileDigest.sha256(of: url)).utf8
                 ))
             } catch {
                 throw LineageError.unreadableFile(path)

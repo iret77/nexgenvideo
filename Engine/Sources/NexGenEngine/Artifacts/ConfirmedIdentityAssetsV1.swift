@@ -159,16 +159,16 @@ public enum ConfirmedIdentityAssetStoreV1 {
             PipelineLayout.confirmedIdentityAssetsFile,
             in: dataRoot
         )
-        guard FileManager.default.fileExists(atPath: url.path) else {
+        guard FileManager.default.fileExists(atPath: url.path)
+            || (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) != nil else {
             return ConfirmedIdentityAssetManifestV1(
                 project: FrameInventory.projectName(of: dataRoot)
                     ?? dataRoot.lastPathComponent
             )
         }
-        return try JSONArtifactStore(dataRoot: dataRoot).load(
-            ConfirmedIdentityAssetManifestV1.self,
-            at: PipelineLayout.confirmedIdentityAssetsFile
-        )
+        let safe = try ProjectLocalFile.resolve(PipelineLayout.confirmedIdentityAssetsFile, dataRoot: dataRoot)
+        guard safe.standardizedFileURL == url.standardizedFileURL else { throw CocoaError(.fileReadCorruptFile) }
+        return try JSONDecoder().decode(ConfirmedIdentityAssetManifestV1.self, from: Data(contentsOf: safe))
     }
 
     public static func save(
@@ -176,6 +176,13 @@ public enum ConfirmedIdentityAssetStoreV1 {
         dataRoot: URL
     ) throws {
         try validate(manifest, dataRoot: dataRoot)
+        _ = try ProjectLocalFile.ensureDirectory("import", dataRoot: dataRoot)
+        let path = PipelineLayout.confirmedIdentityAssetsFile
+        let url = dataRoot.appendingPathComponent(path)
+        if FileManager.default.fileExists(atPath: url.path)
+            || (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) != nil {
+            _ = try ProjectLocalFile.resolve(path, dataRoot: dataRoot)
+        }
         try JSONArtifactStore(dataRoot: dataRoot).save(
             manifest,
             to: PipelineLayout.confirmedIdentityAssetsFile

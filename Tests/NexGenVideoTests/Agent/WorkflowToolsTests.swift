@@ -241,8 +241,9 @@ struct WorkflowToolsTests {
         let binding = try #require(ProjectPackBinding(
             id: pack,
             version: loaded.version,
-            projectSchema: "\(pack)/2.0.0"
+            projectSchema: "\(pack)/2.1.0"
         ))
+        _ = try ProjectIdentity.uuid(for: home)
         try ProjectPluginSettings.setActivePlugin(binding, projectURL: home)
         return binding
     }
@@ -989,6 +990,74 @@ struct WorkflowToolsTests {
         ]
     }
 
+    @Test("canonical executor reports rejected, persisted-invalid, and review-ready writes")
+    func canonicalWriterHostOutcomes() async throws {
+        let (h, root, cleanup) = try scaffold(enforceHardGates: true)
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        try activatePack("musicvideo", dataRoot: root)
+        let store = YAMLArtifactStore(dataRoot: root)
+        var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+        GatesOperations.approve(&gates, phase: "project_init")
+        try store.save(gates, to: PipelineLayout.gatesFile)
+        _ = try writeMeasuredAnalysis(dataRoot: root)
+        _ = try await h.runOK("write_analysis_interpretation", args: [
+            "project_dir": root.path, "tempo_multiplier": 1.0,
+            "section_labels": [
+                ["index": 0, "label": "intro", "confidence": 0.9],
+                ["index": 1, "label": "verse", "confidence": 0.9],
+            ],
+            "anomalies": [], "overall_character": "Measured pulse with a clear opening and development.",
+        ])
+        GatesOperations.approve(&gates, phase: "analysis")
+        try store.save(gates, to: PipelineLayout.gatesFile)
+        for step in ["brief.script", "brief.characters", "brief.locations", "brief.style"] {
+            try declineIntakeStep(step, dataRoot: root)
+        }
+        func outcome(_ result: ToolResult) throws -> HostOperationOutcome {
+            try #require(result.content.compactMap { block -> HostOperationOutcome? in
+                guard case .text(let text) = block else { return nil }
+                return try? HostOperationOutcome.decode(text: text)
+            }.last)
+        }
+        var changed = 0
+        h.editor.onPipelineChanged = { changed += 1 }
+        var malformed = validBriefArgs(dataRoot: root)
+        malformed["mission"] = nil
+        let schemaRejected = await h.runRaw("write_brief", args: malformed)
+        #expect(schemaRejected.isError)
+        #expect(try outcome(schemaRejected).state == .rejectedBeforeWrite)
+        #expect(changed == 0)
+        var rejectedArgs = validBriefArgs(dataRoot: root)
+        rejectedArgs["visual_medium"] = "2d_animation"
+        let rejected = await h.runRaw("write_brief", args: rejectedArgs)
+        #expect(rejected.isError)
+        #expect(try outcome(rejected).state == .rejectedBeforeWrite)
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent(PipelineLayout.briefFile).path))
+        #expect(changed == 0)
+
+        var invalidArgs = validBriefArgs(dataRoot: root)
+        invalidArgs["target_platform"] = "   "
+        let invalid = await h.runRaw("write_brief", args: invalidArgs)
+        #expect(invalid.isError)
+        #expect(try outcome(invalid).state == .persistedButStructurallyInvalid)
+        #expect(try store.load(Brief.self, at: PipelineLayout.briefFile).targetPlatform == "   ")
+        #expect(changed == 1)
+        let invalidState = try #require(try await h.runOK("get_project_state", args: ["project_dir": root.path]) as? [String: Any])
+        let invalidPhase = try #require((invalidState["phases"] as? [[String: Any]])?.first { $0["phase"] as? String == "brief" })
+        #expect((invalidPhase["host_outcome"] as? [String: Any])?["state"] as? String == "persisted_but_structurally_invalid")
+
+        let valid = await h.runRaw("write_brief", args: validBriefArgs(dataRoot: root))
+        #expect(!valid.isError)
+        #expect(try outcome(valid).state == .validatedAwaitingReview)
+        #expect(try !store.load(Gates.self, at: PipelineLayout.gatesFile).get("brief").approved)
+        #expect(changed == 2)
+        let currentState = try #require(try await h.runOK("get_project_state", args: ["project_dir": root.path]) as? [String: Any])
+        let currentPhase = try #require((currentState["phases"] as? [[String: Any]])?.first { $0["phase"] as? String == "brief" })
+        #expect(currentState["next_phase"] as? String == "brief")
+        #expect(currentPhase["approved"] as? Bool == false)
+        #expect((currentPhase["host_outcome"] as? [String: Any])?["state"] as? String == "validated_awaiting_review")
+    }
+
     private func writeApprovableBible(dataRoot: URL) throws {
         let store = YAMLArtifactStore(dataRoot: dataRoot)
         try store.save(
@@ -1568,6 +1637,60 @@ struct WorkflowToolsTests {
         #expect(ToolHarness.textOf(blockedDialog).contains("host-owned Existing story card"))
     }
 
+    @Test("bound phase copies preserve upstream truth and Storyboard cannot stage", arguments: ["production_design", "bible", "storyboard"])
+    func boundIdentityCopyOwnership(phase: String) async throws {
+        let (h, root, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        try activatePack("musicvideo", dataRoot: root)
+        var gates = Gates(project: "demo")
+        for prior in PipelineAgentContract.musicvideoPhases.prefix(while: { $0 != phase }) {
+            GatesOperations.approve(&gates, phase: prior)
+        }
+        try YAMLArtifactStore(dataRoot: root).save(gates, to: PipelineLayout.gatesFile)
+        let source = "import/characters/mouse/front.png"
+        try ProjectLocalFile.ensureDirectory("import/characters/mouse", dataRoot: root)
+        try Data("identity-image".utf8).write(to: root.appendingPathComponent(source))
+        try ConfirmedIdentityAssetStoreV1.recordIntake(role: .character, identityName: "Mouse", identitySlug: "mouse", paths: [source], dataRoot: root, confirmedAt: "2026-09-09T00:00:00Z")
+        let manifestURL = root.appendingPathComponent(PipelineLayout.confirmedIdentityAssetsFile)
+        let manifestBefore = try Data(contentsOf: manifestURL)
+        let briefBefore = try MusicvideoPipelineLineage.snapshot(phase: "brief", dataRoot: root)
+        let destination = "\(phase == "storyboard" ? "bible" : phase)/refs/mouse/front.png"
+        let result = await h.runRaw("copy_project_file", args: ["project_dir": root.path, "from": source, "to": destination])
+        #expect(result.isError == (phase == "storyboard"))
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent(destination).path) == (phase != "storyboard"))
+        #expect(try Data(contentsOf: manifestURL) == manifestBefore)
+        #expect(try MusicvideoPipelineLineage.snapshot(phase: "brief", dataRoot: root) == briefBefore)
+        if phase == "storyboard" { #expect(ToolHarness.textOf(result).contains("storyboard")) }
+    }
+
+    @Test("failed image proof publication restores destination and phase provenance", arguments: [false, true])
+    func copyFailureRollsBackAllPublishedBytes(existingDestination: Bool) async throws {
+        let (h, root, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let source = "import/characters/mouse/face.png"
+        let destination = "bible/refs/mouse/face.png"
+        let bytes = Data("identity-image".utf8)
+        for path in existingDestination ? [source, destination] : [source] {
+            let url = root.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try bytes.write(to: url)
+        }
+        try ConfirmedIdentityAssetStoreV1.recordIntake(role: .character, identityName: "Mouse", identitySlug: "mouse", paths: [source], dataRoot: root, confirmedAt: "2026-09-09T00:00:00Z")
+        let intakeURL = root.appendingPathComponent(PipelineLayout.confirmedIdentityAssetsFile)
+        let intakeBefore = try Data(contentsOf: intakeURL)
+        let proofURL = root.appendingPathComponent(PipelineLayout.assetProofFile(scope: "bible"))
+        try FileManager.default.createDirectory(at: proofURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let brokenProof = Data("invalid-proof".utf8)
+        try brokenProof.write(to: proofURL)
+        let result = await h.runRaw("copy_project_file", args: ["project_dir": root.path, "from": source, "to": destination])
+        #expect(result.isError)
+        #expect(try Data(contentsOf: intakeURL) == intakeBefore)
+        #expect(try Data(contentsOf: proofURL) == brokenProof)
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent(try DerivedIdentityAssetStoreV1.relativePath(phase: "bible")).path))
+        if existingDestination { #expect(try Data(contentsOf: root.appendingPathComponent(destination)) == bytes) }
+        else { #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent(destination).path)) }
+    }
+
     @Test("list_project_files + copy_project_file stage files and refuse to escape the project")
     func projectFileTools() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
@@ -1589,18 +1712,21 @@ struct WorkflowToolsTests {
         ]) as? [String: Any])
         #expect((list["files"] as? [String])?.contains("import/characters/mouse/face.png") == true)
 
+        let manifestURL = dataRoot.appendingPathComponent(PipelineLayout.confirmedIdentityAssetsFile)
+        let intakeBefore = try Data(contentsOf: manifestURL)
+        let briefBefore = try MusicvideoPipelineLineage.snapshot(phase: "brief", dataRoot: dataRoot)
         let copy = try #require(try await h.runOK("copy_project_file", args: [
             "project_dir": dataRoot.path,
             "from": "import/characters/mouse/face.png", "to": "bible/refs/mouse/face.png",
         ]) as? [String: Any])
         #expect(copy["confirmed_identity_provenance"] as? Bool == true)
+        #expect(try Data(contentsOf: manifestURL) == intakeBefore)
+        #expect(try MusicvideoPipelineLineage.snapshot(phase: "brief", dataRoot: dataRoot) == briefBefore)
         let copiedURL = dataRoot.appendingPathComponent("bible/refs/mouse/face.png")
         #expect(try String(contentsOf: copiedURL, encoding: .utf8) == "x")                 // bytes copied
         #expect(try String(contentsOf: importDir.appendingPathComponent("face.png"), encoding: .utf8) == "x")  // source intact (copy)
-        #expect(try ConfirmedIdentityAssetStoreV1.isCurrent(
-            "bible/refs/mouse/face.png",
-            dataRoot: dataRoot
-        ))
+        #expect(try DerivedIdentityAssetStoreV1.load(phase: "bible", dataRoot: dataRoot)
+            .entries["bible/refs/mouse/face.png"]?.sourcePath == "import/characters/mouse/face.png")
         let variantImport = dataRoot.appendingPathComponent(
             "import/characters/mouse-red/front.png"
         )
@@ -2297,6 +2423,13 @@ struct WorkflowToolsTests {
         #expect(cost?["unpriced_transactions"] as? Int == 1)
         #expect(state?["spend_complete"] as? Bool == false)
         #expect(state?["budget_remaining_eur"] is NSNull)
+        #expect(state?["unpriced_transactions"] as? Int == 1)
+        let (_, package) = try await GenerationPackageFixture.prepare(editor: h.editor,
+            quoteLoader: { _, _ in throw GenerationPricingFailure.unsupportedOption })
+        let batch = try GenerationBatch(payload: .init(nonce: UUID(), projectKey: package.payload.binding.projectKey,
+            phase: nil, items: [.init(id: UUID().uuidString, purpose: "Image", package: package)]))
+        #expect(package.payload.estimate == nil)
+        #expect(!GenerationBatchReviewPolicy(batch: batch, selectedIDs: [], isBusy: false).canApprove)
     }
 
     @Test("pipeline cockpit state reads the same spend journal as estimate_cost")

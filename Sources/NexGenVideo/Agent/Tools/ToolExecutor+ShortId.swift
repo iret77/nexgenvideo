@@ -51,7 +51,8 @@ extension ToolExecutor {
         return ToolResult(
             content: content,
             isError: result.isError,
-            turnDisposition: result.turnDisposition
+            turnDisposition: result.turnDisposition,
+            hostOutcome: result.hostOutcome
         )
     }
 

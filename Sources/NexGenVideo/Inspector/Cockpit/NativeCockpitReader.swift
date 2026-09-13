@@ -217,7 +217,11 @@ enum NativeCockpitReader {
         return try serialize(stateDictionary(
             snapshot,
             spend: spend,
-            budgetStopEur: brief?.budgetStopEur
+            budgetStopEur: brief?.budgetStopEur,
+            validity: ProjectStateBuilder.approvalValidity(
+                dataRoot: dataRoot, order: snapshot.phases.map(\.phase),
+                registry: PackCatalog.registry(activePack: activePack)
+            )
         ))
     }
 
@@ -225,13 +229,17 @@ enum NativeCockpitReader {
     static func stateDictionary(
         _ s: ProjectStateBuilder.ProjectState,
         spend: ProjectSpendSnapshot,
-        budgetStopEur: Double?
+        budgetStopEur: Double?,
+        validity: [String: PhaseApprovalValidity]? = nil
     ) -> [String: Any] {
         let phases: [[String: Any]] = s.phases.map { p in
             [
                 "phase": p.phase,
-                "approved": p.approved,
-                "state": p.state.rawValue,
+                "approved": p.approved && (validity?[p.phase]?.isCurrent ?? true),
+                "historically_approved": p.approved,
+                "state": validity?[p.phase].map { $0.historicallyApproved && !$0.isCurrent ? "stale" : p.state.rawValue } ?? p.state.rawValue,
+                "approval_diagnostic": validity?[p.phase]?.diagnostic.map { $0 as Any } ?? NSNull(),
+                "host_outcome": validity?[p.phase].map { HostOperationOutcome(phase: p.phase, validity: $0).dictionary as Any } ?? NSNull(),
                 "notes": p.notes.map { $0 as Any } ?? NSNull(),
             ]
         }
@@ -258,7 +266,7 @@ enum NativeCockpitReader {
             "unpriced_transactions": spend.unpricedTransactionCount,
             "legacy_generations": spend.legacyGenerationCount,
             "phases": phases,
-            "next_phase": s.nextPhase.map { $0 as Any } ?? NSNull(),
+            "next_phase": (s.phases.first { !$0.approved || validity?[$0.phase]?.isCurrent == false }?.phase).map { $0 as Any } ?? NSNull(),
         ]
     }
 

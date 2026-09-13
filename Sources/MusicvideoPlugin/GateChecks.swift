@@ -508,7 +508,7 @@ enum MusicvideoGateChecks {
                   let identityName = requirement.identityName else {
                 return true
             }
-            return try !ConfirmedIdentityAssetStoreV1.matchesCurrent(
+            return try !DerivedIdentityAssetStoreV1.matchesCurrent(
                 path,
                 role: confirmedRole,
                 identityID: identityID,

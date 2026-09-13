@@ -5,7 +5,7 @@ import NexGenEngine
 /// (id/version/minAppVersion/displayName/tagline) mirrors `plugins/musicvideo.json`,
 /// which the release assembles into the `.ngvpack`'s Info.plist `NGVMinAppVersion` —
 /// the value the load gate checks BEFORE loading this code. Keep the two in lockstep.
-let musicvideoMinAppVersion = "1.5.8"
+let musicvideoMinAppVersion = "1.5.9"
 
 /// The musicvideo pack — registers music-specific behavior into the generic
 /// engine. Port of `nexgen_pack_musicvideo/pack.py`.
@@ -33,7 +33,7 @@ public struct MusicDurationPolicy: DurationPolicy {
 
 public struct MusicvideoPack: Pack, PackResourceRootProviding {
     public let name = "musicvideo"
-    public let version = "0.5.8"
+    public let version = "0.5.9"
 
     static let productionProfiles: [ProductionProfile] = [
         StandardProductionProfiles.generativeFilm,
@@ -374,6 +374,12 @@ public struct MusicvideoPack: Pack, PackResourceRootProviding {
             }
         }
         registry.registerGateRequirement(phase) {
+            if ["production_design", "bible"].contains(phase) {
+                try DerivedIdentityAssetStoreV1.validate(
+                    DerivedIdentityAssetStoreV1.load(phase: phase, dataRoot: $0),
+                    dataRoot: $0
+                )
+            }
             try check($0)
             try MusicvideoPipelineLineage.requireCurrent(
                 phase: phase,
@@ -385,13 +391,18 @@ public struct MusicvideoPack: Pack, PackResourceRootProviding {
     public func register(_ registry: EngineRegistry) {
         registry.registerProjectSchemaMigration(
             from: "musicvideo/legacy",
-            to: "musicvideo/2.0.0",
+            to: "musicvideo/2.1.0",
             migrate: Self.migrateToMeasuredStructure
         )
         registry.registerProjectSchemaMigration(
             from: "musicvideo/1.0.0",
-            to: "musicvideo/2.0.0",
+            to: "musicvideo/2.1.0",
             migrate: Self.migrateToMeasuredStructure
+        )
+        registry.registerProjectSchemaMigration(
+            from: "musicvideo/2.0.0",
+            to: "musicvideo/2.1.0",
+            migrate: MusicvideoIdentityRecovery.prepare
         )
         // Wiring-liveness probe: proves this pack's code is actually installed into the registry the
         // runtime built for a session (not silently absent). See PackWiring.

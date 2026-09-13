@@ -661,6 +661,21 @@ extension ToolExecutor {
         }
         let toRel = try args.requireString("to")
         try Self.requirePipelineAssetCopyPath(toRel, source: false)
+        let phase = try DerivedIdentityAssetStoreV1.owningPhase(destination: toRel)
+        let declaration = try mutationPackDeclaration(editor, dataRoot: root)
+        if declaration.packName == "musicvideo" {
+            if let fromRel,
+               try ConfirmedIdentityAssetStoreV1.load(dataRoot: root).entries[fromRel] != nil {
+                guard declaration.binding?.version == "0.5.9",
+                      declaration.binding?.projectSchema == "musicvideo/2.1.0" else {
+                    throw ToolError("Upgrade this project in a Recovery copy before staging identity assets.")
+                }
+            }
+            try PipelinePhaseAccess.requireCurrentPhaseAndIntake(
+                phase, dataRoot: root, declaredPack: declaration.packName,
+                declaredBinding: declaration.binding
+            )
+        }
         if let fromRel {
             try Self.requirePipelineAssetCopyPath(fromRel, source: true)
         }
@@ -676,59 +691,89 @@ extension ToolExecutor {
             let home = FrameInventory.projectHome(of: root)
                 .standardizedFileURL
                 .resolvingSymlinksInPath()
-            from = sourceAsset.url.standardizedFileURL
-                .resolvingSymlinksInPath()
-            guard from.path.hasPrefix(home.path + "/"),
-                  (try? from.resourceValues(
-                    forKeys: [.isRegularFileKey]
-                  ).isRegularFile) == true else {
+            let sourceURL = sourceAsset.url.standardizedFileURL
+            guard sourceURL.path.hasPrefix(home.path + "/") else {
                 throw ToolError(
                     "Media '\(sourceAsset.id)' is not a ready regular file in the open project."
                 )
             }
+            from = try ProjectLocalFile.resolve(
+                String(sourceURL.path.dropFirst(home.path.count + 1)), dataRoot: home
+            )
         } else {
-            from = try Self.resolveInside(root, fromRel!)
+            from = try ProjectLocalFile.resolve(fromRel!, dataRoot: root)
             guard (try? from.resourceValues(
                 forKeys: [.isRegularFileKey]
             ).isRegularFile) == true else {
                 throw ToolError("Source not found or not a regular file: '\(fromRel!)'.")
             }
         }
-        do {
-            try FileManager.default.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
-            if from.standardizedFileURL != to.standardizedFileURL {
-                if FileManager.default.fileExists(atPath: to.path) { try FileManager.default.removeItem(at: to) }
-                try FileManager.default.copyItem(at: from, to: to)
-            }
-        } catch {
-            throw ToolError(
-                "Couldn't copy '\(fromRel ?? mediaID ?? "?")' → '\(toRel)': "
-                    + error.localizedDescription
+        let sourceBytes = try Data(contentsOf: from)
+        let sourceHash = FileDigest.sha256(of: sourceBytes)
+        let existed = FileManager.default.fileExists(atPath: to.path)
+        let paths = [toRel, try DerivedIdentityAssetStoreV1.relativePath(phase: phase), PipelineLayout.assetProofFile(scope: phase)]
+        return try publishPipelineAssetCopy(paths: paths, dataRoot: root) {
+            _ = try ProjectLocalFile.ensureDirectory(
+                String(toRel[..<toRel.lastIndex(of: "/")!]), dataRoot: root
             )
-        }
-        let proofRecorded = try updatePipelineAssetProof(
-            sourceAsset: sourceAsset,
-            sourceRelativePath: fromRel,
-            destinationRelativePath: toRel,
-            destinationURL: to,
-            dataRoot: root
-        )
-        let confirmedIdentityProvenance = if let fromRel {
-            try ConfirmedIdentityAssetStoreV1.adopt(
-                from: fromRel,
-                to: toRel,
+            if existed || (try? FileManager.default.destinationOfSymbolicLink(atPath: to.path)) != nil {
+                _ = try ProjectLocalFile.requireHash(sourceHash, at: toRel, dataRoot: root)
+            } else {
+                try sourceBytes.write(to: to, options: .atomic)
+            }
+            _ = try ProjectLocalFile.requireHash(sourceHash, at: toRel, dataRoot: root)
+            guard try FileDigest.sha256(of: from) == sourceHash else {
+                throw ToolError("The source image changed while it was being copied.")
+            }
+            let confirmedIdentityProvenance = if let fromRel {
+                try DerivedIdentityAssetStoreV1.record(
+                    phase: phase, from: fromRel, to: toRel, dataRoot: root
+                )
+            } else { false }
+            let proofRecorded = try updatePipelineAssetProof(
+                sourceAsset: sourceAsset,
+                sourceRelativePath: fromRel,
+                destinationRelativePath: toRel,
+                destinationURL: to,
                 dataRoot: root
             )
-        } else {
-            false
+            return try jsonResult([
+                "from": fromRel.map { $0 as Any } ?? NSNull(),
+                "media": mediaID.map { $0 as Any } ?? NSNull(),
+                "to": toRel,
+                "generated_provenance": proofRecorded,
+                "confirmed_identity_provenance": confirmedIdentityProvenance,
+            ])
         }
-        return try jsonResult([
-            "from": fromRel.map { $0 as Any } ?? NSNull(),
-            "media": mediaID.map { $0 as Any } ?? NSNull(),
-            "to": toRel,
-            "generated_provenance": proofRecorded,
-            "confirmed_identity_provenance": confirmedIdentityProvenance,
-        ])
+    }
+
+    private func publishPipelineAssetCopy(paths: [String], dataRoot: URL, publish: () throws -> ToolResult) throws -> ToolResult {
+        let prior = try paths.map { path -> (String, Data?) in
+            let url = dataRoot.appendingPathComponent(path)
+            if FileManager.default.fileExists(atPath: url.path)
+                || (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) != nil {
+                return (path, try Data(contentsOf: ProjectLocalFile.resolve(path, dataRoot: dataRoot)))
+            }
+            return (path, nil)
+        }
+        do { return try publish() }
+        catch {
+            let failure = error
+            do {
+                for (path, bytes) in prior.reversed() {
+                    let url = dataRoot.appendingPathComponent(path)
+                    if let bytes {
+                        if (try? Data(contentsOf: url)) != bytes { try bytes.write(to: url, options: .atomic) }
+                    } else if FileManager.default.fileExists(atPath: url.path) {
+                        _ = try ProjectLocalFile.resolve(path, dataRoot: dataRoot)
+                        try FileManager.default.removeItem(at: url)
+                    }
+                }
+            } catch {
+                throw ToolError("The image copy failed and its prior provenance could not be restored: \(error.localizedDescription)")
+            }
+            throw failure
+        }
     }
 
     private func updatePipelineAssetProof(
@@ -2235,8 +2280,9 @@ extension ToolExecutor {
         } else {
             preparedLastFrame = nil
         }
+        let publication: RenderRecordPublicationV1
         do {
-            try PipelineRenderRecordWriter.publish(
+            publication = try PipelineRenderRecordWriter.publish(
                 manifest: manifest,
                 proof: proof,
                 routingProof: routingProof,
@@ -2258,9 +2304,19 @@ extension ToolExecutor {
                 declaredPack: declaration.packName,
                 declaredBinding: declaration.binding
             )
+        } catch let error as PipelineRenderRecordError {
+            throw HostOperationFailure(
+                outcome: error.hostOutcome(
+                    phase: phase == "final" ? "render" : phase
+                )
+            )
         } catch {
-            throw ToolError(
-                "Nothing was recorded because the render transaction failed: \(error.localizedDescription)"
+            throw HostOperationFailure(
+                outcome: HostOperationOutcome(
+                    state: .rejectedBeforeWrite,
+                    phase: phase == "final" ? "render" : phase,
+                    diagnostic: error.localizedDescription
+                )
             )
         }
         let entry = manifest.entries[shotId]
@@ -2272,7 +2328,9 @@ extension ToolExecutor {
             "reported_cost_eur": entry?.costEur ?? costEur,
             "updated_at": entry?.updatedAt.map { $0 as Any } ?? NSNull(),
             "reported_phase_cost_eur": spent(manifest),
-        ])
+        ]).reportingHostOutcome(
+            PipelineRenderRecordWriter.hostOutcome(for: publication)
+        )
     }
 
     func getRenderManifestTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
