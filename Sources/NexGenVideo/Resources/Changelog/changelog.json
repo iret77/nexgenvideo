@@ -8,7 +8,7 @@
         {
           "heading": "Reliability",
           "items": [
-            "Agent and MCP numeric arguments are accepted only when they are exact, finite, integral and within bounded work limits.",
+            "Integer-valued Agent and MCP arguments require exact, finite, in-range values, and derived operations are bounded before mutation.",
             "XML export reports completion only after an atomic write succeeds, preserves an existing destination after failure and remains retryable.",
             "Muted tracks are excluded before source resolution, and transcription locale matching handles valid BCP-47 extensions without losing script or region preference."
           ]
