@@ -1056,6 +1056,58 @@ struct WorkflowToolsTests {
         #expect(currentState["next_phase"] as? String == "brief")
         #expect(currentPhase["approved"] as? Bool == false)
         #expect((currentPhase["host_outcome"] as? [String: Any])?["state"] as? String == "validated_awaiting_review")
+        let messages = [
+            AgentMessage(role: .assistant, blocks: [.toolUse(id: "brief-write", name: "write_brief", inputJSON: "{}")]),
+            AgentMessage(role: .user, blocks: [.toolResult(toolUseId: "brief-write", content: valid.content, isError: false)]),
+        ]
+        let canonicalURL = root.appendingPathComponent(PipelineLayout.briefFile)
+        var changedBytes = try Data(contentsOf: canonicalURL)
+        changedBytes.append(0x0a)
+        try changedBytes.write(to: canonicalURL, options: .atomic)
+        let live = try NativeCockpitReader.stateJSON(dataRoot: root, activePack: "musicvideo")
+        let liveState = try JSONDecoder().decode(ProjectStateData.self, from: live)
+        let currentOutcomes = Dictionary(uniqueKeysWithValues: liveState.phases.compactMap { phase in
+            phase.hostOutcome.map { (phase.phase, $0) }
+        })
+        let notices = AgentTranscriptProjection.turns(messages: messages, isStreaming: false,
+            currentApprovalOutcomes: currentOutcomes).flatMap(\.items).compactMap { item -> String? in
+                guard case .notice(let notice) = item else { return nil }; return notice.text
+            }
+        #expect(notices == ["Brief was saved but is not ready for review."])
+    }
+
+    @Test("Bible publication reports incomplete rollback and dirties persisted bytes", arguments: [false, true])
+    func biblePublicationRollbackTruth(rollbackFails: Bool) async throws {
+        let (h, root, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let args: [String: Any] = ["project_dir": root.path, "look": ["style": "restrained realism"],
+            "characters": [], "ensembles": [], "props": [], "locations": []]
+        _ = try await h.runOK("write_bible", args: args)
+        let bibleURL = root.appendingPathComponent(PipelineLayout.bibleFile)
+        let variantsURL = root.appendingPathComponent(PipelineLayout.bibleIdentityVariantsFile)
+        let beforeBible = try Data(contentsOf: bibleURL)
+        let beforeVariants = try Data(contentsOf: variantsURL)
+        var changed = 0
+        h.editor.onPipelineChanged = { changed += 1 }
+        var replacement = args
+        replacement["look"] = ["style": "high-contrast realism"]
+        replacement["identity_variants"] = [] as [[String: Any]]
+        let result = await PipelineBiblePublication.$failureProbe.withValue({ stage in
+            if stage == (rollbackFails ? .variantsPersisted : .biblePersisted)
+                || (rollbackFails && stage == .beforeBibleRestore) {
+                throw CocoaError(.fileWriteUnknown)
+            }
+        }) {
+            await h.runRaw("write_bible", args: replacement)
+        }
+        let outcome = try #require(result.content.compactMap { block -> HostOperationOutcome? in
+            guard case .text(let text) = block else { return nil }; return try? HostOperationOutcome.decode(text: text)
+        }.last)
+        #expect(result.isError)
+        #expect(outcome.state == (rollbackFails ? .persistedButStructurallyInvalid : .rejectedBeforeWrite))
+        #expect(changed == (rollbackFails ? 1 : 0))
+        #expect((try Data(contentsOf: bibleURL) == beforeBible) == !rollbackFails)
+        #expect(try Data(contentsOf: variantsURL) == beforeVariants)
     }
 
     private func writeApprovableBible(dataRoot: URL) throws {

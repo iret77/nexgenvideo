@@ -68,9 +68,10 @@ struct HostOperationOutcome: Codable, Sendable, Equatable {
     }
 
     static func acceptsResult(from toolName: String) -> Bool {
-        guard let tool = ToolName(
-            rawValue: ToolRunPresentation.baseName(for: toolName)
-        ) else { return false }
+        let firstPartyPrefix = "mcp__nexgen__"
+        let rawName = toolName.hasPrefix(firstPartyPrefix)
+            ? String(toolName.dropFirst(firstPartyPrefix.count)) : toolName
+        guard let tool = ToolName(rawValue: rawName) else { return false }
         switch tool {
         case .writeAnalysisInterpretation, .writeBrief, .writeProductionDesign,
              .writeTreatment, .writeStoryboard, .writeBible, .writeShotlist,

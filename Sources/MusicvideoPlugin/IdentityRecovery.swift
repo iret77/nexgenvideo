@@ -3,6 +3,12 @@ import NexGenEngine
 
 enum MusicvideoIdentityRecovery {
     static func prepare(projectURL: URL) throws {
+        let registry = EngineRegistry()
+        MusicvideoPack().register(registry)
+        try prepare(projectURL: projectURL, registry: registry)
+    }
+
+    static func prepare(projectURL: URL, registry: EngineRegistry) throws {
         guard let root = DataRootResolver.dataRoot(of: projectURL),
               let binding = try JSONSerialization.jsonObject(with: Data(contentsOf: ProjectLocalFile.resolve("ngv.json", dataRoot: projectURL))) as? [String: Any],
               binding["activePlugin"] as? String == "musicvideo",
@@ -88,8 +94,6 @@ enum MusicvideoIdentityRecovery {
             let originalLineageBytes = try Data(contentsOf: lineageURL)
             var prospective = lineage
             for (phase, binding) in bindings { prospective.phases[phase] = binding.recovered }
-            let registry = EngineRegistry()
-            MusicvideoPack().register(registry)
             do {
                 try JSONArtifactStore(dataRoot: root).save(prospective, to: PipelineLayout.lineageFile)
                 var predecessorValid = gates.get("project_init").approved

@@ -4,6 +4,34 @@ import Testing
 
 @Suite("Agent transcript projection")
 struct AgentTranscriptProjectionTests {
+    @Test("a host outcome retains the structured review report but not operational prose")
+    func writerKeepsStructuredReport() throws {
+        let outcome = HostOperationOutcome(state: .validatedAwaitingReview, phase: "brief", diagnostic: nil)
+        let report = AgentContentBlock.toolUse(id: "report", name: "show_blocks", inputJSON: #"{"version":"1","blocks":[{"type":"text","body":"Review the concept and visual direction."}]}"#)
+        let messages = [
+            AgentMessage(role: .assistant, blocks: [.toolUse(id: "writer", name: "write_brief", inputJSON: "{}")]),
+            AgentMessage(role: .user, blocks: [.toolResult(toolUseId: "writer", content: [.text(try outcome.encodedText())], isError: false)]),
+            AgentMessage(role: .assistant, blocks: [.text("The Brief is approved."), report]),
+        ]
+        let items = AgentTranscriptProjection.turns(messages: messages, isStreaming: false).flatMap(\.items)
+        let retained = items.compactMap { item -> AgentMessage? in
+            guard case .assistantResult(let message) = item else { return nil }; return message
+        }
+        #expect(retained.flatMap(\.blocks) == [report])
+        #expect(items.compactMap(\.notice).map(\.text) == ["Brief is saved and ready for review."])
+    }
+
+    @Test("only first-party MCP writer results can carry host truth", arguments: ["write_brief", "mcp__nexgen__write_brief", "mcp__other__write_brief"])
+    func outcomeTransportTrust(name: String) throws {
+        let outcome = HostOperationOutcome(state: .approvedCurrent, phase: "brief", diagnostic: nil)
+        let messages = [
+            AgentMessage(role: .assistant, blocks: [.toolUse(id: "writer", name: name, inputJSON: "{}")]),
+            AgentMessage(role: .user, blocks: [.toolResult(toolUseId: "writer", content: [.text(try outcome.encodedText())], isError: false)]),
+        ]
+        let notices = AgentTranscriptProjection.turns(messages: messages, isStreaming: false).flatMap(\.items).compactMap(\.notice)
+        #expect(notices.isEmpty == (name == "mcp__other__write_brief"))
+    }
+
     @Test("a user-role tool-use block cannot authenticate a host outcome")
     func userToolUseCannotAuthenticateOutcome() throws {
         let outcome = HostOperationOutcome(state: .approvedCurrent, phase: "brief", diagnostic: nil)

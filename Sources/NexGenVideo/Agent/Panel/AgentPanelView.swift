@@ -495,17 +495,8 @@ struct AgentPanelView: View {
             messages: service.messages,
             isStreaming: service.isStreaming,
             currentApprovalOutcomes: Dictionary(uniqueKeysWithValues:
-                (editor.projectState?.phases ?? []).map { phase in
-                    (
-                        phase.phase,
-                        HostOperationOutcome(
-                            state: phase.approved
-                                ? .approvedCurrent
-                                : .staleAfterLineageChange,
-                            phase: phase.phase,
-                            diagnostic: phase.approvalDiagnostic
-                        )
-                    )
+                (editor.projectState?.phases ?? []).compactMap { phase in
+                    phase.hostOutcome.map { (phase.phase, $0) }
                 }
             )
         )

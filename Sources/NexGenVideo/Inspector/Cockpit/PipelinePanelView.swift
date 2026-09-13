@@ -157,7 +157,12 @@ struct PipelinePanelView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text(recoveryPreview.map { "Verified source and artifact bytes: " + $0.phases.map(PhaseDisplay.label).joined(separator: ", ") + ". Changed phases remain out of date." } ?? "Review the current Recovery copy first.")
+            if let recoveryPreview {
+                let phaseNames = recoveryPreview.phases.map(PhaseDisplay.label).joined(separator: ", ")
+                Text(String(localized: "Verified source and artifact bytes: \(phaseNames). Changed phases remain out of date."))
+            } else {
+                Text("Review the current Recovery copy first.")
+            }
         }
     }
 

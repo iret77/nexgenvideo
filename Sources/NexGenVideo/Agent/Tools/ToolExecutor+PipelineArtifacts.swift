@@ -494,33 +494,12 @@ extension ToolExecutor {
             bible: bible,
             dataRoot: root
         )
-        let bibleURL = PipelineLayout.url(PipelineLayout.bibleFile, in: root)
-        let variantsURL = PipelineLayout.url(
-            PipelineLayout.bibleIdentityVariantsFile,
-            in: root
-        )
-        let previousBible = try? Data(contentsOf: bibleURL)
-        let previousVariants = try? Data(contentsOf: variantsURL)
         try archiveExisting(PipelineLayout.bibleFile, dataRoot: root)
         try archiveExisting(
             PipelineLayout.bibleIdentityVariantsFile,
             dataRoot: root
         )
-        do {
-            try YAMLArtifactStore(dataRoot: root).save(
-                bible,
-                to: PipelineLayout.bibleFile
-            )
-            try BibleIdentityVariantStoreV1.save(
-                variants,
-                bible: bible,
-                dataRoot: root
-            )
-        } catch {
-            try? restoreArtifact(previousBible, at: bibleURL)
-            try? restoreArtifact(previousVariants, at: variantsURL)
-            throw ToolError("Couldn't write bible: \(error)")
-        }
+        try PipelineBiblePublication.publish(bible: bible, variants: variants, dataRoot: root)
         return try jsonResult([
             "written": true,
             "path": PipelineLayout.bibleFile,
@@ -1059,18 +1038,6 @@ extension ToolExecutor {
             try FileManager.default.copyItem(at: source, to: destination)
         } catch {
             throw ToolError("Couldn't preserve the previous \(relative): \(error)")
-        }
-    }
-
-    private func restoreArtifact(_ data: Data?, at url: URL) throws {
-        if let data {
-            try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try data.write(to: url, options: .atomic)
-        } else if FileManager.default.fileExists(atPath: url.path) {
-            try FileManager.default.removeItem(at: url)
         }
     }
 }

@@ -111,6 +111,7 @@ enum AgentTranscriptProjection {
         let activity = makeActivity(messages, isRunning: isRunning)
         var intents: [AgentTranscriptItem] = []
         var resultMessage: AgentMessage?
+        var reportMessage: AgentMessage?
         var receipts: [AgentTranscriptItem] = []
         var notices: [AgentTranscriptItem] = []
         var hostOutcome: (id: UUID, value: HostOperationOutcome)?
@@ -170,6 +171,16 @@ enum AgentTranscriptProjection {
                     }
                 }
             case .assistant:
+                let reportBlocks = message.blocks.filter(isPersistentTool)
+                if !reportBlocks.isEmpty {
+                    if reportMessage == nil {
+                        var report = message
+                        report.blocks = reportBlocks
+                        reportMessage = report
+                    } else {
+                        reportMessage?.blocks.append(contentsOf: reportBlocks)
+                    }
+                }
                 let hasActivityTool = message.blocks.contains(where: isActivityTool)
                 let persistentBlocks = message.blocks.filter { block in
                     guard hasActivityTool else { return true }
@@ -188,16 +199,16 @@ enum AgentTranscriptProjection {
         }
 
         if let recorded = hostOutcome,
-           (recorded.value.state == .approvedCurrent
+           (recorded.value.state == .validatedAwaitingReview
+                || recorded.value.state == .approvedCurrent
                 || recorded.value.state == .staleAfterLineageChange),
            let current = currentApprovalOutcomes[recorded.value.phase] {
             hostOutcome = (recorded.id, current)
         }
 
         let activityItems = activity.map { [AgentTranscriptItem.activity($0)] } ?? []
-        let results = hostOutcome == nil
-            ? resultMessage.map { [AgentTranscriptItem.assistantResult($0)] } ?? []
-            : []
+        let retainedResult = hostOutcome == nil ? resultMessage : reportMessage
+        let results = retainedResult.map { [AgentTranscriptItem.assistantResult($0)] } ?? []
         let hostItems = hostOutcome.map {
             [AgentTranscriptItem.notice(.init(id: $0.id, text: $0.value.userSummary))]
         } ?? []
