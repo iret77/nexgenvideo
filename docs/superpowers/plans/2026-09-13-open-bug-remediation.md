@@ -170,7 +170,7 @@ Audit every Home-hide call and every editor presentation route. Confirm no globa
 ### Task 5: Decoded-frame waveform pipeline (#516)
 
 **Files:**
-- Create: `Sources/NexGenVideo/Timeline/WaveformExtractor.swift`
+- Create: `Sources/NexGenVideo/Audio/WaveformExtractor.swift`
 - Modify: `Sources/NexGenVideo/Timeline/MediaVisualCache.swift`
 - Modify: `Sources/NexGenVideo/Timeline/ClipRenderer.swift`
 - Modify: `Package.swift`
