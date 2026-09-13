@@ -79,4 +79,14 @@ struct GenerationPackageInputs: Codable, Sendable, Equatable {
     }
 
     private static func manifestPath(_ id: String) -> String { "generation-packages/\(id).inputs.json" }
+
+    @MainActor
+    static func persistRepriced(from original: GenerationPackageV1, to updated: GenerationPackageV1,
+                               editor: EditorViewModel) async throws {
+        guard try original.replacingEstimate(updated.payload.estimate) == updated else {
+            throw GenerationRequestError.gate("Pricing retry changed the prepared request.")
+        }
+        let snapshot = try await restore(package: original, editor: editor)
+        try await persist(package: updated, snapshot: snapshot, editor: editor)
+    }
 }

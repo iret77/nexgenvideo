@@ -6,6 +6,119 @@ import Testing
 @Suite("Generation batch single-use execution")
 @MainActor
 struct GenerationBatchTests {
+    private func pendingFixture() async throws -> (URL, EditorViewModel, GenerationBatch) {
+        let (root, editor, priced) = try await fixture()
+        let (generation, unpriced) = try await GenerationPackageFixture.prepare(editor: editor,
+            quoteLoader: { _, _ in throw GenerationPricingFailure.exchangeRateUnavailable })
+        try await GenerationPackageInputs.persist(package: unpriced, snapshot: #require(generation.references), editor: editor)
+        let batch = try GenerationBatch(payload: .init(nonce: UUID(), projectKey: priced.payload.projectKey,
+            phase: nil, items: [
+                .init(id: UUID().uuidString, purpose: "Retry this image", package: unpriced),
+                priced.payload.items[1]
+            ], requestSHA256: String(repeating: "a", count: 64)))
+        editor.agentService.newChat()
+        let chatID = try #require(editor.agentService.currentSessionId)
+        _ = try editor.agentService.presentGenerationBatch(batch, origin: .inAppChat(sessionID: chatID), editor: editor)
+        editor.agentService.isStreaming = true
+        return (root, editor, batch)
+    }
+
+    @Test func quoteRetryPreservesExactRequestAndPricedSiblingWithoutAuthority() async throws {
+        let (root, editor, batch) = try await pendingFixture()
+        defer { cleanup(root) }
+        let home = try #require(editor.workingRoot)
+        var quotes = 0
+        await editor.generationBatchCoordinator.retryPricing(editor: editor, quoteLoader: { target, input in
+            quotes += 1
+            #expect(target == batch.payload.items[0].package.payload.target)
+            #expect(input == (try batch.payload.items[0].package.pricingInput()))
+            await Task.yield()
+            return GenerationPackageFixture.money(0.3)
+        })
+        let updated = try #require(editor.generationBatchCoordinator.pending)
+        #expect(quotes == 1)
+        #expect(updated.id != batch.id)
+        #expect(updated.payload.nonce == batch.payload.nonce)
+        #expect(updated.payload.items[0].id == batch.payload.items[0].id)
+        #expect(updated.payload.items[0].package.id != batch.payload.items[0].package.id)
+        #expect(updated.payload.items[0].package.payload.requestParametersJSON == batch.payload.items[0].package.payload.requestParametersJSON)
+        #expect(updated.payload.items[1] == batch.payload.items[1])
+        #expect(updated.totalEUR == 0.55)
+        #expect(try GenerationPackageV1.load(id: batch.payload.items[0].package.id, home: home) == batch.payload.items[0].package)
+        _ = try await GenerationPackageInputs.restore(package: updated.payload.items[0].package, editor: editor)
+        #expect(try GenerationBatchStore.all(home: home).isEmpty)
+        #expect(editor.generationLog.spendEvents.isEmpty)
+        #expect(editor.mediaAssets.isEmpty)
+    }
+
+    @Test func concurrentQuoteRetriesDoNotCreateDuplicateWork() async throws {
+        let (root, editor, batch) = try await pendingFixture()
+        defer { cleanup(root) }
+        var quotes = 0
+        let loader: GenerationBudgetGuard.QuoteLoader = { _, _ in
+            quotes += 1
+            await Task.yield()
+            throw GenerationPricingFailure.providerPricingUnavailable
+        }
+        async let first: Void = editor.generationBatchCoordinator.retryPricing(editor: editor, quoteLoader: loader)
+        async let second: Void = editor.generationBatchCoordinator.retryPricing(editor: editor, quoteLoader: loader)
+        _ = await (first, second)
+        #expect(quotes == 1)
+        #expect(editor.generationBatchCoordinator.pending == batch)
+        #expect(editor.generationBatchCoordinator.pricingFailure(for: batch.payload.items[0].package) == .providerPricingUnavailable)
+        #expect(editor.generationLog.spendEvents.isEmpty)
+    }
+
+    @Test func repricingCannotRaiseOrReplaceAPricedSibling() async throws {
+        let (root, _, batch) = try await pendingFixture()
+        defer { cleanup(root) }
+        let raised = try batch.payload.items[1].package.replacingEstimate(GenerationPackageFixture.money(0.5))
+        #expect(throws: (any Error).self) {
+            try batch.replacingPackages([batch.payload.items[0].package, raised])
+        }
+    }
+
+    @Test func anotherManifestCannotReuseAnApprovedRequestNonce() async throws {
+        let (root, editor, batch) = try await fixture()
+        defer { cleanup(root) }
+        let approved = try await GenerationBatchStore.approve(batch, editor: editor)
+        let altered = try batch.removing(itemIDs: [batch.payload.items[0].id])
+        await #expect(throws: (any Error).self) { try await GenerationBatchStore.approve(altered, editor: editor) }
+        let home = try #require(editor.workingRoot)
+        #expect(try GenerationBatchStore.load(id: batch.id, home: home).journal == approved.journal)
+        #expect(try GenerationBatchStore.all(home: home).count == 1)
+    }
+
+    @Test func routeChangeRetiresPendingRequestAndCombinesOneReplacementBatch() async throws {
+        let (root, editor, batch) = try await pendingFixture()
+        defer { cleanup(root) }
+        let home = try #require(editor.workingRoot)
+        editor.generationBatchCoordinator.changeRoute(itemIDs: [batch.payload.items[0].id], editor: editor)
+        #expect(editor.generationBatchCoordinator.pending == nil)
+        let recovery = try #require(try GenerationBatchStore.retirement(requestID: batch.payload.nonce, home: home))
+        #expect(recovery.batch == batch)
+        #expect(recovery.continuation.items.map(\.itemID) == [batch.payload.items[0].id])
+        #expect(recovery.continuation.items.map(\.failure) == [.exchangeRateUnavailable])
+        #expect(recovery.continuation.retainedPackageIDs == [batch.payload.items[1].package.id])
+        let result = try await ToolExecutor(editor: editor, enforceHardGates: false)
+            .getGenerationBatches(editor, ["batchID": batch.id])
+        let restoredRecord = try JSONDecoder().decode(GenerationBatchRetirement.self, from: Data(ToolHarness.textOf(result).utf8))
+        #expect(restoredRecord == recovery)
+        let (_, replacement) = try await GenerationPackageFixture.prepare(editor: editor, model: "replacement-image")
+        let combined = try recovery.replacing(packages: [replacement], requestSHA256: String(repeating: "b", count: 64))
+        #expect(combined.payload.items.count == 2)
+        #expect(combined.payload.items[0].id == batch.payload.items[0].id)
+        #expect(combined.payload.items[0].package == replacement)
+        #expect(combined.payload.items[1] == batch.payload.items[1])
+        #expect(combined.id != batch.id)
+        #expect(throws: (any Error).self) { try recovery.replacing(packages: [], requestSHA256: "wrong") }
+        await #expect(throws: (any Error).self) { try await GenerationBatchStore.approve(batch, editor: editor) }
+        editor.generationBatchCoordinator.changeRoute(itemIDs: [batch.payload.items[0].id], editor: editor)
+        #expect(try GenerationBatchStore.retirement(requestID: batch.payload.nonce, home: home) == recovery)
+        #expect(try GenerationBatchStore.all(home: home).isEmpty)
+        #expect(editor.generationLog.spendEvents.isEmpty)
+    }
+
     private func fixture() async throws -> (URL, EditorViewModel, GenerationBatch) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("ngv-batch-\(UUID().uuidString).ngv")
         try Fixtures.prepareProjectPackage(at: root)

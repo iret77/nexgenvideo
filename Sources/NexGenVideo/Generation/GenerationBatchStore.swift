@@ -3,6 +3,67 @@ import NexGenEngine
 
 @MainActor
 enum GenerationBatchStore {
+    nonisolated static func retirement(requestID: UUID, home: URL) throws -> GenerationBatchRetirement? {
+        let path = "generation-batch-retirements/\(requestID.uuidString).json"
+        guard FileManager.default.fileExists(atPath: home.appendingPathComponent(path).path) else { return nil }
+        let bytes = try Data(contentsOf: ProjectLocalFile.resolve(path, dataRoot: home))
+        let record = try JSONDecoder().decode(GenerationBatchRetirement.self, from: bytes)
+        try record.validate()
+        guard record.batch.payload.nonce == requestID, try GenerationPackageV1.canonicalData(record) == bytes else {
+            throw GenerationRequestError.storage("The generation retirement record changed.")
+        }
+        return record
+    }
+
+    nonisolated static func replacement(requestID: UUID, home: URL) throws -> GenerationBatchRetirement? {
+        let matches = try retirements(home: home).filter { $0.continuation.requestID == requestID }
+        guard matches.count <= 1 else { throw GenerationRequestError.storage("The generation replacement identity is duplicated.") }
+        return matches.first
+    }
+
+    nonisolated static func retirement(batchID: String, home: URL) throws -> GenerationBatchRetirement? {
+        try retirements(home: home).first { $0.batch.id == batchID }
+    }
+
+    nonisolated private static func retirements(home: URL) throws -> [GenerationBatchRetirement] {
+        let path = "generation-batch-retirements"
+        guard FileManager.default.fileExists(atPath: home.appendingPathComponent(path).path) else { return [] }
+        let directory = home.appendingPathComponent(path)
+        let values = try directory.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        guard values.isDirectory == true, values.isSymbolicLink != true else {
+            throw GenerationRequestError.storage("The generation retirement directory is unsafe.")
+        }
+        var records: [GenerationBatchRetirement] = []
+        for file in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) {
+            guard file.pathExtension == "json", let id = UUID(uuidString: file.deletingPathExtension().lastPathComponent),
+                  let record = try retirement(requestID: id, home: home) else {
+                throw GenerationRequestError.storage("The generation retirement history is incomplete.")
+            }
+            records.append(record)
+        }
+        return records
+    }
+
+    static func retire(_ record: GenerationBatchRetirement, editor: EditorViewModel) throws {
+        try record.validate()
+        guard let home = editor.workingRoot, record.batch.payload.projectKey == editor.projectId else {
+            throw GenerationRequestError.gate("The generation retirement belongs to another project.")
+        }
+        let scope = try GenerationProjectMutationScope(projectHome: home, editor: editor)
+        if let existing = try retirement(requestID: record.batch.payload.nonce, home: home) {
+            guard existing == record else { throw GenerationRequestError.gate("This batch already has another route change.") }
+            return
+        }
+        guard try all(home: home).allSatisfy({ $0.batch.payload.nonce != record.batch.payload.nonce }) else {
+            throw GenerationRequestError.gate("An approved batch cannot change route. Prepare new work for a separate approval.")
+        }
+        try scope.requireCurrent(editor: editor)
+        try markDirty(editor: editor)
+        let directory = try ProjectLocalFile.ensureDirectory("generation-batch-retirements", dataRoot: home)
+        try GenerationPackageV1.canonicalData(record).write(
+            to: directory.appendingPathComponent(record.batch.payload.nonce.uuidString + ".json"), options: .withoutOverwriting)
+    }
+
     struct Snapshot: Codable, Sendable, Equatable {
         let batch: GenerationBatch
         var journal: GenerationBatchJournal
@@ -86,6 +147,14 @@ enum GenerationBatchStore {
             _ = try await GenerationPackageInputs.restore(package: item.package, editor: editor)
         }
         try scope.requireCurrent(editor: editor)
+        guard try retirement(requestID: batch.payload.nonce, home: home) == nil else {
+            throw GenerationRequestError.gate("This batch was retired for a route change and cannot be approved.")
+        }
+        guard try all(home: home, authority: authority).allSatisfy({
+            $0.batch.payload.nonce != batch.payload.nonce || $0.batch.id == batch.id
+        }) else {
+            throw GenerationRequestError.gate("Another manifest already consumed this generation request's approval.")
+        }
         if try authority.loadIfPresent(projectKey: batch.payload.projectKey, batchID: batch.id) != nil {
             let existing = try load(id: batch.id, home: home, authority: authority)
             guard existing.batch == batch else {

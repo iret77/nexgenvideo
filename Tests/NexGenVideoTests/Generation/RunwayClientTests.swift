@@ -5,6 +5,94 @@ import Testing
 
 @Suite("Runway task transport", .serialized)
 struct RunwayClientTests {
+    @Test @MainActor func exactRunwayPricesUseOfficialCreditsAndReferenceBilling() throws {
+        let fixtures: [(String, String, String?, Int, Int, Int)] = [
+            ("gemini_image3_pro", "1K", nil, 1, 0, 20),
+            ("gemini_image3_pro", "2K", nil, 1, 14, 20),
+            ("gemini_image3_pro", "4K", nil, 1, 1, 40),
+            ("grok_imagine_image_2", "1K", "medium", 4, 2, 26),
+            ("grok_imagine_image_2", "2K", "medium", 4, 3, 35),
+            ("gpt_image_2", "2K", "high", 4, 16, 80),
+            ("gen4_image", "720p", nil, 1, 0, 5),
+            ("gen4_image", "1080p", nil, 1, 3, 8)
+        ]
+        for (model, resolution, quality, count, references, credits) in fixtures {
+            let input = GenerationPricingInput(modelId: "runway/" + model, modality: .image,
+                durationSeconds: nil, outputCount: count, resolution: resolution, quality: quality,
+                promptCharacterCount: 0, generateAudio: nil,
+                referenceRoles: Array(repeating: "image_reference", count: references))
+            #expect(try LiveGenerationPricing.runwayCredits(endpoint: input.modelId, input: input) == credits)
+        }
+    }
+
+    @Test @MainActor func unsupportedPricesAndMissingReferenceFactsRemainTypedStops() {
+        for model in ["gemini_image3.1_flash", "unknown_model", "grok_imagine_image_2"] {
+            let input = GenerationPricingInput(modelId: "runway/" + model, modality: .image,
+                durationSeconds: nil, outputCount: 1, resolution: "1K", quality: nil,
+                promptCharacterCount: 0, generateAudio: nil)
+            #expect(throws: GenerationPricingFailure.unsupportedOption) {
+                try LiveGenerationPricing.runwayCredits(endpoint: input.modelId, input: input)
+            }
+        }
+    }
+
+    @Test @MainActor func pricingUsesTheSamePixelRatioAsTheRunwayRequest() throws {
+        let model = try #require(RunwayModelRegistry.model(for: "runway/gemini_image3_pro"))
+        let params = ImageGenerationParams(prompt: "Fixture", aspectRatio: "16:9", resolution: nil,
+            quality: nil, imageURLs: ["fixture://first", "fixture://second"], numImages: 1)
+        let body = try RunwayClient.textToImageBody(model: model, params: params)
+        let input = GenerationPricingInput.image(modelID: model.entry.id, parameters: params)
+        #expect(body["ratio"] as? String == "1344:768")
+        #expect(input.pixelWidth == 1344)
+        #expect(input.pixelHeight == 768)
+        #expect(input.referenceRoles == ["image_reference", "image_reference"])
+        #expect(try LiveGenerationPricing.runwayCredits(endpoint: model.entry.id, input: input) == 20)
+        let routed = GenerationPricingInput.image(modelID: "provider-neutral-image", parameters: params, endpoint: model.entry.id)
+        #expect(routed.modelId == "provider-neutral-image")
+        #expect(routed.pixelWidth == 1344)
+        #expect(try LiveGenerationPricing.runwayCredits(endpoint: model.entry.id, input: routed) == 20)
+    }
+
+    @Test func pricingTransportAndExchangeFailuresRemainDistinct() async throws {
+        FixtureURLProtocol.reset()
+        defer { FixtureURLProtocol.reset() }
+        let testSession = session()
+        defer { testSession.invalidateAndCancel() }
+        let client = ProviderMoneyClient(session: testSession)
+        let input = GenerationPricingInput(modelId: "fixture", modality: .image, durationSeconds: nil,
+            outputCount: 1, resolution: nil, quality: nil, promptCharacterCount: 0, generateAudio: nil)
+        FixtureURLProtocol.enqueue(method: "GET", pathSuffix: "/models/pricing", result: .urlError(.notConnectedToInternet))
+        await #expect(throws: GenerationPricingFailure.providerPricingUnavailable) {
+            try await client.falQuote(endpoint: "fixture", input: input, apiKey: "fixture-key")
+        }
+        FixtureURLProtocol.enqueue(method: "GET", pathSuffix: "/eurofxref-daily.xml", result: .urlError(.timedOut))
+        await #expect(throws: GenerationPricingFailure.exchangeRateUnavailable) {
+            try await client.normalize(nativeAmount: 0.2, currency: "USD", pricingSource: "fixture://price")
+        }
+        #expect(FixtureURLProtocol.requests().allSatisfy { $0.method == "GET" })
+    }
+
+    @Test @MainActor func imageRerunQuotesExactPixelsAndReferenceCountBeforeDispatch() async throws {
+        let editor = EditorViewModel()
+        let source = MediaAsset(url: URL(fileURLWithPath: "/fixture/generated.png"), type: .image,
+            name: "Generated", duration: 1, generationInput: .init(prompt: "Fixture", model: "runway/grok_imagine_image_2",
+                duration: 0, aspectRatio: "16:9", imageURLs: ["https://example.test/first.png", "https://example.test/second.png"]))
+        var quoted: GenerationPricingInput?
+        await #expect(throws: (any Error).self) {
+            try await EditSubmitter.rerun(asset: source, editor: editor, quoteLoader: { _, input in
+                quoted = input
+                throw GenerationPricingFailure.exchangeRateUnavailable
+            })
+        }
+        let input = try #require(quoted)
+        #expect(input.pixelWidth == 1280)
+        #expect(input.pixelHeight == 720)
+        #expect(input.referenceRoles == ["image_reference", "image_reference"])
+        #expect(try LiveGenerationPricing.runwayCredits(endpoint: source.generationInput!.model, input: input) == 8)
+        #expect(editor.mediaAssets.isEmpty)
+        #expect(editor.generationLog.spendEvents.isEmpty)
+    }
+
     private final class FixtureURLProtocol: URLProtocol, @unchecked Sendable {
         enum StubResult: Sendable {
             case response(status: Int, body: String)

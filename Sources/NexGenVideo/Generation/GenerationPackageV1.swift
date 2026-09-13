@@ -99,6 +99,7 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
                   !estimate.exchangeRateSource.isEmpty, !estimate.exchangeRateDate.isEmpty else {
                 throw GenerationRequestError.optionsInvalid("The package has no valid monetary estimate.")
             }
+            try GenerationBudgetGuard.validate(estimate)
         }
         schema = "generation-package/v1"
         id = FileDigest.sha256(of: try Self.canonicalData(payload))
@@ -110,6 +111,31 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
     func validate() throws {
         let rebuilt = try Self(payload: payload)
         guard self == rebuilt else { throw GenerationRequestError.gate("The generation package changed after review.") }
+    }
+
+    func replacingEstimate(_ estimate: GenerationMoney?) throws -> Self {
+        try validate()
+        try GenerationBudgetGuard.validate(estimate)
+        let p = payload
+        return try Self(payload: .init(target: p.target, modality: p.modality, operation: p.operation, intent: p.intent,
+            prompt: p.prompt, promptRevisionID: p.promptRevisionID, generationInput: p.generationInput, binding: p.binding,
+            compilerInputsSHA256: p.compilerInputsSHA256, recipe: p.recipe, repairPlanID: p.repairPlanID,
+            destination: p.destination, outputCount: p.outputCount, references: p.references, referenceRoles: p.referenceRoles,
+            requestParametersJSON: p.requestParametersJSON, routing: p.routing, routeReceipt: p.routeReceipt, estimate: estimate))
+    }
+
+    func pricingInput() throws -> GenerationPricingInput {
+        let parameters = try restoreParameters()
+        switch parameters.parameters {
+        case .image(let image): return .image(modelID: payload.target.modelId, parameters: image, endpoint: payload.target.endpoint)
+        case .video(let video):
+            return .init(modelId: payload.target.modelId, modality: .video,
+                durationSeconds: video.duration.seconds.map(Double.init) ?? Double(max(1, payload.generationInput.duration)),
+                outputCount: payload.outputCount, resolution: video.resolution, quality: nil,
+                promptCharacterCount: video.prompt.count, generateAudio: video.generateAudio,
+                referenceRoles: payload.referenceRoles)
+        default: throw GenerationPricingFailure.unsupportedOption
+        }
     }
 
     static func canonicalData<T: Encodable>(_ value: T) throws -> Data {

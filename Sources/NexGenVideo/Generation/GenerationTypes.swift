@@ -40,6 +40,29 @@ struct GenerationPricingInput: Sendable, Equatable {
     let quality: String?
     let promptCharacterCount: Int
     let generateAudio: Bool?
+    let pixelWidth: Int?
+    let pixelHeight: Int?
+    let referenceRoles: [String]?
+
+    init(modelId: String, modality: GenerationRequest.Modality, durationSeconds: Double?, outputCount: Int,
+         resolution: String?, quality: String?, promptCharacterCount: Int, generateAudio: Bool?,
+         pixelWidth: Int? = nil, pixelHeight: Int? = nil, referenceRoles: [String]? = nil) {
+        self.modelId = modelId; self.modality = modality; self.durationSeconds = durationSeconds
+        self.outputCount = outputCount; self.resolution = resolution; self.quality = quality
+        self.promptCharacterCount = promptCharacterCount; self.generateAudio = generateAudio
+        self.pixelWidth = pixelWidth; self.pixelHeight = pixelHeight; self.referenceRoles = referenceRoles
+    }
+
+    static func image(modelID: String, parameters: ImageGenerationParams, endpoint: String? = nil) -> Self {
+        let model = RunwayModelRegistry.model(for: endpoint ?? modelID)
+        let ratio = model.flatMap { RunwayModelRegistry.imageRatio(for: $0, aspect: parameters.aspectRatio) }
+        let pixels = ratio?.split(separator: ":").compactMap { Int($0) } ?? []
+        return Self(modelId: modelID, modality: .image, durationSeconds: nil, outputCount: parameters.numImages,
+            resolution: parameters.resolution, quality: parameters.quality,
+            promptCharacterCount: parameters.prompt.count, generateAudio: nil,
+            pixelWidth: pixels.count == 2 ? pixels[0] : nil, pixelHeight: pixels.count == 2 ? pixels[1] : nil,
+            referenceRoles: parameters.imageURLs.map { _ in "image_reference" })
+    }
 }
 
 struct GenerationMoney: Codable, Sendable, Equatable {

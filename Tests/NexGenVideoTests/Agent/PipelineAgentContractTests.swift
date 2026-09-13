@@ -7,6 +7,64 @@ import Testing
 @MainActor
 @Suite("Pipeline agent contract")
 struct PipelineAgentContractTests {
+    @Test func routeContinuationResumesOnlyItsOriginAndNeverAddsAVisibleUserTurn() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ngv-route-agent-\(UUID().uuidString).ngv")
+        try Fixtures.prepareProjectPackage(at: root)
+        defer {
+            if let key = ProjectIdentity.existingKey(for: root) { ProjectWorkingCopy.discard(key: key) }
+            try? FileManager.default.removeItem(at: root)
+        }
+        let editor = EditorViewModel()
+        editor.projectURL = root
+        let (_, package) = try await GenerationPackageFixture.prepare(editor: editor,
+            quoteLoader: { _, _ in throw GenerationPricingFailure.unsupportedOption })
+        let batch = try GenerationBatch(payload: .init(nonce: UUID(), projectKey: package.payload.binding.projectKey,
+            phase: nil, items: [.init(id: UUID().uuidString, purpose: "Image", package: package)]))
+        for embedded in [false, true] {
+            var sent: [String] = []
+            let service = AgentService(backend: embedded ? .claudeCode : .anthropicAPI,
+                refreshBackendStatusOnInit: false,
+                hostFollowUpReadinessOverride: { embedded ? nil : .upstream("Fixture offline") },
+                embeddedHostFollowUpSender: { text, _ in sent.append(text); return true })
+            service.editor = editor
+            service.newChat()
+            let chatID = try #require(service.currentSessionId)
+            let origin: ToolCallOrigin = embedded
+                ? .embeddedRuntime(chatSessionID: chatID, mcpSessionID: UUID()) : .inAppChat(sessionID: chatID)
+            editor.generationBatchCoordinator.pending = nil
+            let suspended = try service.presentGenerationBatch(batch, origin: origin, editor: editor)
+            service.messages = [AgentMessage(role: .user,
+                blocks: [.toolResult(toolUseId: "batch", content: suspended.content, isError: false)], hidden: true)]
+            service.isStreaming = true
+            let continuation = GenerationRouteContinuation(batchID: batch.id, requestID: UUID(),
+                items: [.init(itemID: batch.payload.items[0].id, packageID: package.id, failure: .unsupportedOption)],
+                retainedPackageIDs: [])
+            try service.completeGenerationBatchRouteChange(continuation)
+            try service.completeGenerationBatchRouteChange(continuation)
+            #expect(service.hasPendingHostFollowUp)
+            #expect(service.messages.filter { $0.role == .user && !$0.hidden }.isEmpty)
+            #expect(service.toolCallBlockReason(tool: .generateImage, args: [:], origin: origin) != nil)
+            let text = service.messages.flatMap(\.blocks).compactMap { block -> String? in
+                guard case .toolResult(_, let content, _) = block else { return nil }
+                return content.compactMap { if case .text(let value) = $0 { value } else { nil } }.joined()
+            }.joined()
+            #expect(text.contains(continuation.requestID.uuidString))
+            #expect(text.contains("unsupportedOption"))
+            if embedded {
+                NotificationCenter.default.post(name: .claudeCodeStatusChanged,
+                    object: ClaudeCodeLocator.Status(executableURL: URL(fileURLWithPath: "/usr/bin/true"),
+                        version: "test", isAuthenticated: true))
+                editor.generationBatchCoordinator.pending = nil
+                service.isStreaming = false
+                #expect(service.resumePendingSpendFollowUp())
+                #expect(!service.resumePendingSpendFollowUp())
+                #expect(sent.count == 1)
+                #expect(sent.first?.contains(continuation.requestID.uuidString) == true)
+                #expect(service.messages.filter { $0.role == .user && !$0.hidden }.isEmpty)
+            }
+        }
+    }
+
     private var binding: ProjectPackBinding {
         get throws {
             try #require(ProjectPackBinding(

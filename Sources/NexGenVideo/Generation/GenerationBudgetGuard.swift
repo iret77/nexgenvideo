@@ -1,6 +1,20 @@
 import Foundation
 import NexGenEngine
 
+enum GenerationPricingFailure: String, Error, Codable, Sendable, CaseIterable, LocalizedError {
+    case unsupportedOption, providerPricingUnavailable, exchangeRateUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .unsupportedOption: "Pricing is not verified for these model options. Choose another route."
+        case .providerPricingUnavailable: "Provider pricing is unavailable. Retry pricing or choose another route."
+        case .exchangeRateUnavailable: "The EUR exchange rate is unavailable. Retry pricing."
+        }
+    }
+
+    static func classify(_ error: any Error) -> Self { error as? Self ?? .providerPricingUnavailable }
+}
+
 enum GenerationBudgetError: LocalizedError {
     case blocked(String)
 
@@ -33,9 +47,13 @@ enum GenerationBudgetGuard {
         approvedPackage: GenerationPackageV1? = nil,
         quoteLoader: QuoteLoader = LiveGenerationPricing.quote
     ) async throws -> GenerationAuthorization {
+        let requiresVerifiedPrice = input.modality == .image || input.modality == .video
         if let approvedPackage {
             try approvedPackage.validate()
-            guard approvedPackage.payload.target == target, approvedPackage.payload.outputCount == input.outputCount else {
+            guard approvedPackage.payload.estimate != nil else {
+                throw GenerationBudgetError.blocked("Pricing is unavailable. Prepare a verified estimate before approving generation.")
+            }
+            guard approvedPackage.payload.target == target, try approvedPackage.pricingInput() == input else {
                 throw GenerationBudgetError.blocked("The priced request differs from its generation package.")
             }
         }
@@ -46,10 +64,14 @@ enum GenerationBudgetGuard {
                     + "Restore or reopen the project before generating."
                 )
             }
-            if let ceiling = approvedPackage?.payload.estimate {
+            if requiresVerifiedPrice || approvedPackage?.payload.estimate != nil {
                 let current = try await quoteLoader(target, input)
                 try validate(current)
-                guard current.eurAmount <= ceiling.eurAmount else {
+                try Task.checkCancellation()
+                guard editor.workingRoot == nil, editor.projectURL == nil else {
+                    throw GenerationBudgetError.blocked("The project changed while pricing this request. Prepare generation again.")
+                }
+                if let ceiling = approvedPackage?.payload.estimate, current.eurAmount > ceiling.eurAmount {
                     throw GenerationBudgetError.blocked("The current price exceeds the reviewed estimate. Prepare and review the generation again.")
                 }
                 return GenerationAuthorization(transactionId: nil, target: target, estimate: current)
@@ -68,10 +90,14 @@ enum GenerationBudgetGuard {
             try validate(quoted)
             estimate = quoted
             pricingFailure = nil
-        } catch {
+        } catch is CancellationError { throw CancellationError() }
+        catch {
+            if requiresVerifiedPrice { throw GenerationPricingFailure.classify(error) }
             estimate = nil
             pricingFailure = error.localizedDescription
         }
+
+        try Task.checkCancellation()
 
         if let ceiling = approvedPackage?.payload.estimate {
             guard let estimate, estimate.eurAmount <= ceiling.eurAmount else {
@@ -346,7 +372,7 @@ enum GenerationBudgetGuard {
         }
     }
 
-    nonisolated private static func validate(_ money: GenerationMoney?) throws {
+    nonisolated static func validate(_ money: GenerationMoney?) throws {
         guard let money else { return }
         guard money.nativeAmount.isFinite, money.nativeAmount >= 0,
               money.eurAmount.isFinite, money.eurAmount >= 0,
@@ -354,7 +380,10 @@ enum GenerationBudgetGuard {
               money.nativeCurrency.count == 3,
               !money.exchangeRateDate.isEmpty,
               !money.pricingSource.isEmpty,
-              !money.exchangeRateSource.isEmpty else {
+              !money.exchangeRateSource.isEmpty,
+              (money.nativeAmount * money.eurPerNativeUnit).isFinite,
+              abs(money.eurAmount - money.nativeAmount * money.eurPerNativeUnit)
+                <= max(money.eurAmount.ulp, (money.nativeAmount * money.eurPerNativeUnit).ulp) * 4 else {
             throw corrupt("generation-log.json contains invalid monetary data")
         }
     }
@@ -435,7 +464,7 @@ enum LiveGenerationPricing {
         switch (target.provider, target.transport) {
         case (.fal, .api):
             guard let apiKey = ProviderKeychain.load(.fal) else {
-                throw GenerationBudgetError.blocked("Add a fal.ai API key to retrieve live pricing.")
+                throw GenerationPricingFailure.providerPricingUnavailable
             }
             return try await ProviderMoneyClient.shared.falQuote(
                 endpoint: target.endpoint,
@@ -443,45 +472,75 @@ enum LiveGenerationPricing {
                 apiKey: apiKey
             )
         case (.runway, .api):
-            guard let credits = runwayCredits(endpoint: target.endpoint, input: input) else {
-                throw GenerationBudgetError.blocked(
-                    "Runway pricing is not verified for this exact model and option set."
-                )
-            }
+            let credits = try runwayCredits(endpoint: target.endpoint, input: input)
             return try await ProviderMoneyClient.shared.normalize(
                 nativeAmount: Double(credits) * 0.01,
                 currency: "USD",
                 pricingSource: "https://docs.dev.runwayml.com/guides/pricing/"
             )
         default:
-            throw GenerationBudgetError.blocked(
-                "\(target.provider.displayName) does not expose a verified pre-dispatch monetary estimate."
-            )
+            throw GenerationPricingFailure.unsupportedOption
         }
     }
 
-    private static func runwayCredits(
+    static func runwayCredits(
         endpoint: String,
         input: GenerationPricingInput
-    ) -> Int? {
-        let duration = input.durationSeconds.flatMap {
-            $0 > 0 ? max(1, Int($0.rounded(.up))) : nil
+    ) throws -> Int {
+        guard let model = RunwayModelRegistry.model(for: endpoint), input.outputCount > 0, input.outputCount <= 4 else {
+            throw GenerationPricingFailure.unsupportedOption
         }
-        let model = RunwayModelRegistry.model(for: endpoint)?.apiModel
-        switch model {
+        func duration() throws -> Int {
+            guard let seconds = input.durationSeconds, seconds.isFinite, seconds > 0, seconds <= 600,
+                  input.outputCount == 1, input.modality == .video else { throw GenerationPricingFailure.unsupportedOption }
+            return Int(seconds.rounded(.up))
+        }
+        guard (model.imageRequest != nil) == (input.modality == .image) else { throw GenerationPricingFailure.unsupportedOption }
+        if input.modality == .image {
+            guard case .image(let caps) = model.entry.uiCapabilities, input.outputCount <= caps.maxImages,
+                  input.referenceRoles?.allSatisfy({ $0 == "image_reference" }) != false,
+                  (input.referenceRoles?.count ?? 0) <= caps.maxReferenceImages,
+                  (input.referenceRoles?.count ?? 0) >= caps.minReferenceImages else {
+                throw GenerationPricingFailure.unsupportedOption
+            }
+        }
+        let resolution = try RunwayModelRegistry.pricingResolution(model: model, input: input)
+        let count = input.outputCount
+        switch model.apiModel {
         case "gen4.5":
-            guard let duration else { return nil }
-            return 12 * duration
+            return 12 * (try duration())
         case "gen4_turbo":
-            guard let duration else { return nil }
-            return 5 * duration
+            return 5 * (try duration())
         case "aleph2":
-            guard let duration else { return nil }
-            return max(56, 28 * duration)
+            return max(56, 28 * (try duration()))
         case "gen4_image":
-            return 8 * max(1, input.outputCount)
+            guard ["720p", "1080p"].contains(resolution) else { throw GenerationPricingFailure.unsupportedOption }
+            return (resolution == "720p" ? 5 : 8) * count
+        case "gen4_image_turbo": return 2 * count
+        case "gemini_image3_pro":
+            guard ["1k", "2k", "4k"].contains(resolution) else { throw GenerationPricingFailure.unsupportedOption }
+            return (resolution == "4k" ? 40 : 20) * count
+        case "seedream5_pro":
+            guard ["1k", "2k"].contains(resolution) else { throw GenerationPricingFailure.unsupportedOption }
+            return (resolution == "2k" ? 9 : 5) * count
+        case "seedream5_lite": return 4 * count
+        case "gemini_2.5_flash": return 5 * count
+        case "gpt_image_2":
+            guard ["1k", "2k", "4k", "auto"].contains(resolution) else { throw GenerationPricingFailure.unsupportedOption }
+            let highResolution = resolution == "4k" || resolution == "auto"
+            switch input.quality ?? "high" {
+            case "low": return (highResolution ? 2 : 1) * count
+            case "medium": return (highResolution ? 11 : 5) * count
+            case "high", "auto": return (highResolution ? 41 : 20) * count
+            default: throw GenerationPricingFailure.unsupportedOption
+            }
+        case "grok_imagine_image_2":
+            guard let references = input.referenceRoles, ["1k", "2k", "auto_1k", "auto_2k"].contains(resolution),
+                  ["low", "medium"].contains(input.quality ?? "medium") else { throw GenerationPricingFailure.unsupportedOption }
+            let base = (resolution == "2k" || resolution == "auto_2k" ? 6 : 4) + (input.quality == "low" ? 0 : 2)
+            return max(6, count * base + references.count)
         default:
-            return nil
+            throw GenerationPricingFailure.unsupportedOption
         }
     }
 }
@@ -493,6 +552,9 @@ actor ProviderMoneyClient {
         string: "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml"
     )!
     private var cachedRates: ExchangeRates?
+    private let session: URLSession
+
+    init(session: URLSession = .shared) { self.session = session }
 
     func falQuote(
         endpoint: String,
@@ -506,16 +568,20 @@ actor ProviderMoneyClient {
         }
         var request = URLRequest(url: url)
         request.setValue("Key \(apiKey)", forHTTPHeaderField: "Authorization")
-        let data = try await responseData(for: request, label: "fal.ai pricing")
-        let response = try JSONDecoder().decode(FalPricingResponse.self, from: data)
+        let response: FalPricingResponse
+        do {
+            let data = try await responseData(for: request, label: "fal.ai pricing")
+            response = try JSONDecoder().decode(FalPricingResponse.self, from: data)
+        } catch is CancellationError { throw CancellationError() }
+        catch { throw GenerationPricingFailure.providerPricingUnavailable }
         guard let price = response.prices.first(where: { $0.endpointId == endpoint }),
               price.unitPrice.isFinite,
               price.unitPrice >= 0 else {
-            throw GenerationBudgetError.blocked(
-                "fal.ai returned no current price for \(endpoint)."
-            )
+            throw GenerationPricingFailure.providerPricingUnavailable
         }
-        let quantity = try falQuantity(unit: price.unit, input: input)
+        let quantity: Double
+        do { quantity = try falQuantity(unit: price.unit, input: input) }
+        catch { throw GenerationPricingFailure.unsupportedOption }
         return try await normalize(
             nativeAmount: price.unitPrice * quantity,
             currency: price.currency,
@@ -554,10 +620,13 @@ actor ProviderMoneyClient {
         pricingSource: String
     ) async throws -> GenerationMoney {
         guard nativeAmount.isFinite, nativeAmount >= 0 else {
-            throw GenerationBudgetError.blocked("Provider pricing returned an invalid amount.")
+            throw GenerationPricingFailure.providerPricingUnavailable
         }
         let code = currency.uppercased()
-        let rates = try await exchangeRates()
+        let rates: ExchangeRates
+        do { rates = try await exchangeRates() }
+        catch is CancellationError { throw CancellationError() }
+        catch { throw GenerationPricingFailure.exchangeRateUnavailable }
         let eurPerUnit: Double
         if code == "EUR" {
             eurPerUnit = 1
@@ -565,13 +634,11 @@ actor ProviderMoneyClient {
             guard let unitsPerEuro = rates.unitsPerEuro[code],
                   unitsPerEuro.isFinite,
                   unitsPerEuro > 0 else {
-                throw GenerationBudgetError.blocked(
-                    "ECB has no current EUR reference rate for \(code)."
-                )
+                throw GenerationPricingFailure.exchangeRateUnavailable
             }
             eurPerUnit = 1 / unitsPerEuro
         }
-        return GenerationMoney(
+        let money = GenerationMoney(
             nativeAmount: nativeAmount,
             nativeCurrency: code,
             eurAmount: nativeAmount * eurPerUnit,
@@ -580,6 +647,9 @@ actor ProviderMoneyClient {
             pricingSource: pricingSource,
             exchangeRateSource: Self.ecbURL.absoluteString
         )
+        do { try GenerationBudgetGuard.validate(money) }
+        catch { throw GenerationPricingFailure.providerPricingUnavailable }
+        return money
     }
 
     private func falQuantity(unit: String, input: GenerationPricingInput) throws -> Double {
@@ -661,7 +731,7 @@ actor ProviderMoneyClient {
     }
 
     private func responseData(for request: URLRequest, label: String) async throws -> Data {
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
             throw GenerationBudgetError.blocked("\(label) failed with HTTP \(status).")

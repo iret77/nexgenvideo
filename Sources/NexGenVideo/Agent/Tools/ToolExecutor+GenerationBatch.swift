@@ -8,6 +8,11 @@ extension ToolExecutor {
             if let pending = editor.generationBatchCoordinator.pending, pending.id == id {
                 return .ok(String(decoding: try GenerationPackageV1.canonicalData(pending), as: UTF8.self))
             }
+            let retired = try await Task.detached(priority: .utility) {
+                try GenerationBatchStore.retirement(batchID: id, home: home)
+            }.value
+            guard editor.workingRoot == home else { throw ToolError("The project changed while reading batch recovery.") }
+            if let retired { return .ok(String(decoding: try GenerationPackageV1.canonicalData(retired), as: UTF8.self)) }
             let snapshot = try await Task.detached(priority: .utility) { try GenerationBatchStore.load(id: id, home: home) }.value
             guard editor.workingRoot == home else { throw ToolError("The project changed while reading batch status.") }
             return .ok(String(decoding: try GenerationPackageV1.canonicalData(snapshot), as: UTF8.self))
@@ -68,6 +73,23 @@ extension ToolExecutor {
         }
         let requestBytes = try JSONSerialization.data(withJSONObject: args, options: [.sortedKeys, .withoutEscapingSlashes])
         let requestHash = FileDigest.sha256(of: requestBytes)
+        let recoveryState = try await Task.detached(priority: .utility) {
+            (try GenerationBatchStore.retirement(requestID: nonce, home: home),
+             try GenerationBatchStore.replacement(requestID: nonce, home: home))
+        }.value
+        guard editor.workingRoot == home else { throw ToolError("The project changed while reading generation recovery.") }
+        if let retired = recoveryState.0 {
+            guard retired.batch.payload.requestSHA256 == requestHash else {
+                throw ToolError("This requestID belongs to a retired batch with different requests.")
+            }
+            return .ok(try retired.continuation.hostText())
+        }
+        let recovery = recoveryState.1
+        if let recovery {
+            guard recovery.batch.payload.projectKey == projectKey, entries.count == recovery.continuation.items.count else {
+                throw ToolError("Re-prepare exactly the selected items in the route-change event, in their recorded order.")
+            }
+        }
         let recorded = try await Task.detached(priority: .utility) {
             try GenerationBatchStore.all(home: home).first(where: { $0.batch.payload.nonce == nonce })
         }.value
@@ -112,8 +134,21 @@ extension ToolExecutor {
                 items.append(.init(id: UUID().uuidString, purpose: purpose, package: package))
             }
         }
-        let batch = try GenerationBatch(payload: .init(nonce: nonce, projectKey: projectKey, phase: phase,
-            items: items, requestSHA256: requestHash))
+        let batch: GenerationBatch
+        if let recovery {
+            guard phase == recovery.batch.payload.phase else {
+                throw ToolError("The pipeline phase changed after route recovery. The retired batch cannot continue in another phase.")
+            }
+            batch = try recovery.replacing(packages: items.map(\.package), requestSHA256: requestHash)
+            for item in batch.payload.items {
+                try await item.package.requireCurrentContext(editor: editor)
+                _ = try await GenerationPackageInputs.restore(package: item.package, editor: editor)
+            }
+            try scope.requireCurrent(editor: editor)
+        } else {
+            batch = try GenerationBatch(payload: .init(nonce: nonce, projectKey: projectKey, phase: phase,
+                items: items, requestSHA256: requestHash))
+        }
         editor.agentPanelVisible = true
         return try editor.agentService.presentGenerationBatch(batch, origin: origin, editor: editor)
     }

@@ -60,6 +60,106 @@ struct GenerationBatch: Codable, Sendable, Equatable, Identifiable {
         return try Self(payload: .init(nonce: payload.nonce, projectKey: payload.projectKey,
             phase: payload.phase, items: payload.items.filter { !itemIDs.contains($0.id) }, requestSHA256: payload.requestSHA256))
     }
+
+    func replacingPackages(_ packages: [GenerationPackageV1]) throws -> Self {
+        try validate()
+        guard packages.count == payload.items.count else { throw GenerationPricingFailure.unsupportedOption }
+        let items = try zip(payload.items, packages).map { item, package in
+            guard try item.package.replacingEstimate(package.payload.estimate) == package,
+                  item.package.payload.estimate == nil || item.package == package else {
+                throw GenerationRequestError.gate("Pricing retry cannot change a prepared request or its existing monetary ceiling.")
+            }
+            return Item(id: item.id, purpose: item.purpose, package: package)
+        }
+        return try Self(payload: .init(nonce: payload.nonce, projectKey: payload.projectKey, phase: payload.phase,
+            items: items, requestSHA256: payload.requestSHA256))
+    }
+}
+
+struct GenerationRouteContinuation: Codable, Sendable, Equatable {
+    struct Item: Codable, Sendable, Equatable {
+        let itemID: String
+        let packageID: String
+        let failure: GenerationPricingFailure
+    }
+
+    let kind = "generation_route_change/v1"
+    let batchID: String
+    let requestID: UUID
+    let items: [Item]
+    let retainedPackageIDs: [String]
+
+    static var schema: [String: Any] {
+        let hash: [String: Any] = ["type": "string", "pattern": "^[a-f0-9]{64}$"]
+        let uuid: [String: Any] = ["type": "string", "pattern": "^[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}$"]
+        return ["type": "object", "additionalProperties": false,
+            "required": ["kind", "batchID", "requestID", "items", "retainedPackageIDs"],
+            "properties": [
+                "kind": ["type": "string", "enum": ["generation_route_change/v1"]],
+                "batchID": hash, "requestID": uuid,
+                "items": ["type": "array", "minItems": 1, "maxItems": 50,
+                    "items": ["type": "object", "additionalProperties": false,
+                        "required": ["itemID", "packageID", "failure"],
+                        "properties": ["itemID": uuid, "packageID": hash,
+                            "failure": ["type": "string", "enum": GenerationPricingFailure.allCases.map(\.rawValue)]]]],
+                "retainedPackageIDs": ["type": "array", "maxItems": 50, "items": hash]
+            ]]
+    }
+
+    func validatedData() throws -> Data {
+        let bytes = try GenerationPackageV1.canonicalData(self)
+        try validateToolInput(in: JSONSerialization.jsonObject(with: bytes), against: Self.schema,
+            path: "host_generation_route_change")
+        guard Set(items.map(\.itemID)).count == items.count else {
+            throw GenerationRequestError.gate("The route change repeats a generation item.")
+        }
+        return bytes
+    }
+
+    func hostText() throws -> String {
+        "The pending batch was retired without approval or submission. Re-prepare the selected items in the recorded order "
+            + "with alternative executable routes using prepare_generation_batch and this requestID. The host retains the other "
+            + "packages and will present one complete replacement batch for fresh native approval. This event grants no spend authority. "
+            + "Read get_generation_batches with this batchID to recover the original item purposes and exact packages. "
+            + String(decoding: try validatedData(), as: UTF8.self)
+    }
+}
+
+struct GenerationBatchRetirement: Codable, Sendable, Equatable {
+    let batch: GenerationBatch
+    let continuation: GenerationRouteContinuation
+
+    func validate() throws {
+        try batch.validate()
+        _ = try continuation.validatedData()
+        let selected = Set(continuation.items.map(\.itemID))
+        guard batch.totalEUR == nil, continuation.batchID == batch.id,
+              continuation.requestID != batch.payload.nonce,
+              selected.isSubset(of: Set(batch.payload.items.map(\.id))),
+              continuation.items.map(\.itemID) == batch.payload.items.filter({ selected.contains($0.id) }).map(\.id),
+              continuation.retainedPackageIDs == batch.payload.items.filter({ !selected.contains($0.id) }).map(\.package.id) else {
+            throw GenerationRequestError.gate("The route change does not match the pending batch.")
+        }
+        for item in continuation.items {
+            guard let original = batch.payload.items.first(where: { $0.id == item.itemID }),
+                  original.package.id == item.packageID, original.package.payload.estimate == nil else {
+                throw GenerationRequestError.gate("Only unpriced pending items can change route here.")
+            }
+        }
+    }
+
+    func replacing(packages: [GenerationPackageV1], requestSHA256: String) throws -> GenerationBatch {
+        try validate()
+        guard packages.count == continuation.items.count else {
+            throw GenerationRequestError.gate("Re-prepare exactly the selected route-change items in their recorded order.")
+        }
+        let replacements = Dictionary(uniqueKeysWithValues: zip(continuation.items.map(\.itemID), packages))
+        let items = batch.payload.items.map { original in
+            GenerationBatch.Item(id: original.id, purpose: original.purpose, package: replacements[original.id] ?? original.package)
+        }
+        return try GenerationBatch(payload: .init(nonce: continuation.requestID, projectKey: batch.payload.projectKey,
+            phase: batch.payload.phase, items: items, requestSHA256: requestSHA256))
+    }
 }
 
 struct GenerationBatchJournal: Codable, Sendable, Equatable {

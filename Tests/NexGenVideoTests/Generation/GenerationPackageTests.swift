@@ -9,7 +9,8 @@ enum GenerationPackageFixture {
             exchangeRateDate: "2026-09-09", pricingSource: "fixture://pricing", exchangeRateSource: "fixture://exchange")
     }
 
-    static func prepare(editor: EditorViewModel, model: String = "fixture-image") async throws
+    static func prepare(editor: EditorViewModel, model: String = "fixture-image",
+                        quoteLoader: GenerationBudgetGuard.QuoteLoader = { _, _ in money() }) async throws
         -> (GenerationController.PreparedGeneration, GenerationPackageV1) {
         let target = ResolvedGenerationTarget(modelId: model, provider: .fal, endpoint: model, binding: nil)
         let request = GenerationRequest(modality: .image, modelId: model, intent: "", aspectRatio: "1:1",
@@ -28,7 +29,7 @@ enum GenerationPackageFixture {
                     })
             })
         let generation = try await GenerationController.prepare(request, editor: editor).get()
-        let package = try await GenerationController.prepareReviewPackage(generation, editor: editor, quoteLoader: { _, _ in money() })
+        let package = try await GenerationController.prepareReviewPackage(generation, editor: editor, quoteLoader: quoteLoader)
         return (generation, package)
     }
 }
@@ -36,6 +37,84 @@ enum GenerationPackageFixture {
 @Suite("Generation package approval binding")
 @MainActor
 struct GenerationPackageTests {
+    @Test func preparationRetainsTypedPricingFailureWithoutSpending() async throws {
+        for failure in [GenerationPricingFailure.unsupportedOption, .providerPricingUnavailable, .exchangeRateUnavailable] {
+            let editor = EditorViewModel()
+            let (_, package) = try await GenerationPackageFixture.prepare(editor: editor,
+                quoteLoader: { _, _ in throw failure })
+            #expect(package.payload.estimate == nil)
+            #expect(editor.generationBatchCoordinator.pricingFailure(for: package) == failure)
+            #expect(editor.generationLog.spendEvents.isEmpty)
+            #expect(editor.mediaAssets.isEmpty)
+        }
+    }
+
+    @Test func cancellationDoesNotBecomeAnUnpricedReview() async throws {
+        let editor = EditorViewModel()
+        await #expect(throws: CancellationError.self) {
+            _ = try await GenerationPackageFixture.prepare(editor: editor,
+                quoteLoader: { _, _ in throw CancellationError() })
+        }
+    }
+
+    @Test func invalidMoneyCannotEnableApproval() async throws {
+        let editor = EditorViewModel()
+        let (_, package) = try await GenerationPackageFixture.prepare(editor: editor,
+            quoteLoader: { _, _ in .init(nativeAmount: 1, nativeCurrency: "USD", eurAmount: 0,
+                eurPerNativeUnit: 0.9, exchangeRateDate: "2026-09-13", pricingSource: "fixture://price",
+                exchangeRateSource: "fixture://fx") })
+        #expect(package.payload.estimate == nil)
+        #expect(editor.generationBatchCoordinator.pricingFailure(for: package) == .providerPricingUnavailable)
+    }
+
+    @Test func unpricedIndividualPackageCannotAcquireSpendAuthority() async throws {
+        let editor = EditorViewModel()
+        let (_, package) = try await GenerationPackageFixture.prepare(editor: editor,
+            quoteLoader: { _, _ in throw GenerationPricingFailure.unsupportedOption })
+        var quotes = 0
+        await #expect(throws: (any Error).self) {
+            try await GenerationBudgetGuard.authorize(input: package.pricingInput(), target: package.payload.target,
+                editor: editor, approvedPackage: package, quoteLoader: { _, _ in
+                    quotes += 1
+                    return GenerationPackageFixture.money()
+                })
+        }
+        #expect(quotes == 0)
+        let option = SpendOption(modelId: package.payload.target.modelId, modelName: "Fixture", target: package.payload.target,
+            credits: 10, requiresCatalogAvailability: false)
+        let approval = SpendApproval(id: UUID().uuidString, recommendedOptionId: option.id, options: [option],
+            actionLabel: "Generate image", requiresGenerationPackage: true)
+        var runs = 0
+        _ = try editor.agentService.requestSpendApproval(approval, origin: .direct, editor: editor,
+            prepare: { _, _ in package }, execute: { _, _ in runs += 1; return .ok("unexpected submission") })
+        editor.agentService.prepareSpendOption(option)
+        for _ in 0..<1_000 {
+            if editor.agentService.pendingSpendApproval?.options.first?.generationPackage != nil { break }
+            await Task.yield()
+        }
+        let prepared = try #require(editor.agentService.pendingSpendApproval?.options.first)
+        #expect(prepared.generationPackage == package)
+        await editor.agentService.approveSpend(prepared)
+        #expect(runs == 0)
+        #expect(editor.agentService.pendingSpendApproval != nil)
+        #expect(editor.generationLog.spendEvents.isEmpty)
+    }
+
+    @Test func directVisualRequestsCannotBypassPricingWithoutAReviewOrProject() async throws {
+        let editor = EditorViewModel()
+        let target = ResolvedGenerationTarget(modelId: "fixture", provider: .fal, endpoint: "fixture", binding: nil)
+        for modality in [GenerationRequest.Modality.image, .video] {
+            let input = GenerationPricingInput(modelId: target.modelId, modality: modality, durationSeconds: 5,
+                outputCount: 1, resolution: nil, quality: nil, promptCharacterCount: 0, generateAudio: nil)
+            await #expect(throws: GenerationPricingFailure.providerPricingUnavailable) {
+                try await GenerationBudgetGuard.authorize(input: input, target: target, editor: editor,
+                    quoteLoader: { _, _ in throw GenerationPricingFailure.providerPricingUnavailable })
+            }
+        }
+        #expect(editor.generationLog.spendEvents.isEmpty)
+        #expect(editor.mediaAssets.isEmpty)
+    }
+
     @Test func referenceDataDoesNotInventALiveCheckAndChecksStayBoundToTheirExactRoute() {
         let target = ResolvedGenerationTarget(modelId: "fixture", provider: .fal, endpoint: "endpoint", binding: nil)
         let reference = GenerationRouteReceipt(target: target, checks: [], capabilitySnapshot: nil)
@@ -77,8 +156,7 @@ struct GenerationPackageTests {
     @Test func aHigherPriceCannotConsumeTheReviewedRequest() async throws {
         let editor = EditorViewModel()
         let (generation, package) = try await GenerationPackageFixture.prepare(editor: editor)
-        let pricing = GenerationPricingInput(modelId: generation.target.modelId, modality: .image,
-            durationSeconds: nil, outputCount: 1, resolution: nil, quality: nil, promptCharacterCount: 0, generateAudio: nil)
+        let pricing = try package.pricingInput()
         await #expect(throws: (any Error).self) {
             try await GenerationBudgetGuard.authorize(input: pricing, target: generation.target, editor: editor,
                 approvedPackage: package, quoteLoader: { _, _ in GenerationPackageFixture.money(1) })

@@ -310,12 +310,18 @@ enum EditSubmitter {
             ) {
                 throw RerunError.invalid(err)
             }
+            let target = GenerationService.dispatchTarget(modelId: modelId)
             let authorization = try await authorizeRerun(
                 gen: gen,
                 modality: .image,
                 outputCount: count,
                 editor: editor,
-                quoteLoader: quoteLoader
+                quoteLoader: quoteLoader,
+                target: target,
+                pricing: .image(modelID: modelId,
+                    parameters: .init(prompt: gen.prompt, aspectRatio: gen.aspectRatio, resolution: gen.resolution,
+                        quality: gen.quality, imageURLs: (0..<refCount).map { "ngv-input://\($0)" }, numImages: count),
+                    endpoint: target.endpoint)
             )
             return editor.generationService.generate(
                 genInput: gen,
@@ -442,11 +448,12 @@ enum EditSubmitter {
         generateAudio: Bool? = nil,
         editor: EditorViewModel,
         quoteLoader: GenerationBudgetGuard.QuoteLoader,
-        target: ResolvedGenerationTarget? = nil
+        target: ResolvedGenerationTarget? = nil,
+        pricing: GenerationPricingInput? = nil
     ) async throws -> GenerationAuthorization {
         do {
             return try await GenerationBudgetGuard.authorize(
-                input: GenerationPricingInput(
+                input: pricing ?? GenerationPricingInput(
                     modelId: gen.model,
                     modality: modality,
                     durationSeconds: durationSeconds,

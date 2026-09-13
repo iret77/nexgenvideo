@@ -247,8 +247,17 @@ enum GenerationController {
 
     static func prepareReviewPackage(_ generation: PreparedGeneration, editor: EditorViewModel,
                                     quoteLoader: GenerationBudgetGuard.QuoteLoader = LiveGenerationPricing.quote) async throws -> GenerationPackageV1 {
-        let estimate = try? await quoteLoader(generation.target,
-            pricingInput(generation.request, prepared: generation.submission, compiledPrompt: generation.compiledPrompt))
+        let estimate: GenerationMoney?
+        let failure: GenerationPricingFailure?
+        do {
+            let quoted = try await quoteLoader(generation.target,
+                pricingInput(generation.request, prepared: generation.submission, compiledPrompt: generation.compiledPrompt,
+                    target: generation.target))
+            try GenerationBudgetGuard.validate(quoted)
+            estimate = quoted; failure = nil
+        } catch is CancellationError { throw CancellationError() }
+        catch { estimate = nil; failure = GenerationPricingFailure.classify(error) }
+        try Task.checkCancellation()
         try generation.scope?.requireCurrent(editor: editor)
         try await generation.references?.requireUnchanged()
         guard editor.workingRoot == generation.home else { throw GenerationRequestError.gate("The project changed during request preparation.") }
@@ -258,6 +267,7 @@ enum GenerationController {
         }
         try await package.requireCurrentContext(editor: editor)
         try generation.attachReview(package)
+        editor.generationBatchCoordinator.recordPricing(package: package, failure: failure)
         return package
     }
 
@@ -468,7 +478,7 @@ enum GenerationController {
         let authorization: GenerationAuthorization
         do {
             let priced = try await GenerationBudgetGuard.authorize(
-                input: pricingInput(request, prepared: prepared, compiledPrompt: generation.compiledPrompt),
+                input: pricingInput(request, prepared: prepared, compiledPrompt: generation.compiledPrompt, target: target),
                 target: target, editor: editor, approvedPackage: generation.reviewedPackage, quoteLoader: quoteLoader)
             do {
                 let package = try generation.reviewedPackage ?? makePackage(generation, estimate: priced.estimate)
@@ -649,17 +659,19 @@ enum GenerationController {
     private static func pricingInput(
         _ request: GenerationRequest,
         prepared: PreparedSubmission,
-        compiledPrompt: String
+        compiledPrompt: String,
+        target: ResolvedGenerationTarget
     ) -> GenerationPricingInput {
         var duration = request.durationSeconds
         var outputCount = 1
         var resolution: String?
-        var quality: String?
         var generateAudio: Bool?
+        var referenceRoles: [String]?
 
         switch prepared {
         case .video(let submission, let parameters):
             duration = submission.placeholderDuration
+            referenceRoles = GenerationPackageV1.referenceRoles(parameters: parameters)
             if case .video(let params) = parameters.parameters {
                 duration = params.duration.seconds.map(Double.init) ?? duration
                 resolution = params.resolution
@@ -668,8 +680,7 @@ enum GenerationController {
         case .image(let submission, let parameters):
             outputCount = max(1, submission.numImages)
             if case .image(let params) = parameters.parameters {
-                resolution = params.resolution
-                quality = params.quality
+                return .image(modelID: request.modelId, parameters: params, endpoint: target.endpoint)
             }
         case .audio(let submission):
             let params = submission.params
@@ -686,9 +697,10 @@ enum GenerationController {
             durationSeconds: duration,
             outputCount: outputCount,
             resolution: resolution,
-            quality: quality,
+            quality: nil,
             promptCharacterCount: compiledPrompt.count,
-            generateAudio: generateAudio
+            generateAudio: generateAudio,
+            referenceRoles: referenceRoles
         )
     }
 

@@ -1345,6 +1345,18 @@ final class AgentService {
         enqueueSpendFollowUp(message, origin: stored.origin, result: result)
     }
 
+    func requireGenerationBatchOrigin(_ batchID: String) throws {
+        guard let sessionID = generationBatchOrigins[batchID]?.origin.chatSessionID,
+              sessions.contains(where: { $0.id == sessionID }) else {
+            throw GenerationRequestError.gate("The originating agent conversation is no longer available.")
+        }
+    }
+
+    func completeGenerationBatchRouteChange(_ continuation: GenerationRouteContinuation) throws {
+        let text = try continuation.hostText()
+        completeGenerationBatch(continuation.batchID, message: text)
+    }
+
     @ObservationIgnored
     private var pendingSpendFollowUps: [SpendFollowUp] = []
 
@@ -1616,8 +1628,8 @@ final class AgentService {
             spendApprovalError = "This provider or model is no longer available. Choose another valid option."
             return
         }
-        if approval.requiresGenerationPackage == true, option.generationPackage == nil {
-            spendApprovalError = "Prepare and review this request before approving generation."
+        if approval.requiresGenerationPackage == true, option.generationPackage?.payload.estimate == nil {
+            spendApprovalError = "Prepare and review a verified monetary estimate before approving generation."
             return
         }
         guard let operation = pendingSpendOperation else {

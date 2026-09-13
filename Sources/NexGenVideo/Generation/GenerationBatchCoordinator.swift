@@ -17,6 +17,77 @@ final class GenerationBatchCoordinator {
     private(set) var approving = false
     @ObservationIgnored private var jobs: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var readID = UUID()
+    private(set) var recoveringPricing = false
+    private var pricingFailures: [String: GenerationPricingFailure] = [:]
+
+    func recordPricing(package: GenerationPackageV1, failure: GenerationPricingFailure?) {
+        pricingFailures[package.id] = failure
+    }
+
+    func pricingFailure(for package: GenerationPackageV1) -> GenerationPricingFailure? {
+        package.payload.estimate == nil ? (pricingFailures[package.id] ?? .providerPricingUnavailable) : nil
+    }
+
+    func retryPricing(editor: EditorViewModel,
+                      quoteLoader: GenerationBudgetGuard.QuoteLoader = LiveGenerationPricing.quote) async {
+        guard let manifest = pending, manifest.totalEUR == nil, !approving, !recoveringPricing else { return }
+        recoveringPricing = true
+        defer { recoveringPricing = false }
+        do {
+            guard let home = editor.workingRoot else { throw GenerationRequestError.storage("Open the generation project to retry pricing.") }
+            let scope = try GenerationProjectMutationScope(projectHome: home, editor: editor)
+            var packages: [GenerationPackageV1] = []
+            for item in manifest.payload.items {
+                let original = item.package
+                guard original.payload.estimate == nil else { packages.append(original); continue }
+                try await original.requireCurrentContext(editor: editor)
+                _ = try await GenerationPackageInputs.restore(package: original, editor: editor)
+                let updated: GenerationPackageV1
+                do {
+                    let estimate = try await quoteLoader(original.payload.target, original.pricingInput())
+                    try GenerationBudgetGuard.validate(estimate)
+                    updated = try original.replacingEstimate(estimate)
+                    recordPricing(package: updated, failure: nil)
+                } catch is CancellationError { throw CancellationError() }
+                catch {
+                    updated = original
+                    recordPricing(package: original, failure: GenerationPricingFailure.classify(error))
+                }
+                try Task.checkCancellation()
+                try scope.requireCurrent(editor: editor)
+                guard pending == manifest else { throw GenerationRequestError.gate("The pending generation review changed during pricing.") }
+                if updated != original { try await GenerationPackageInputs.persistRepriced(from: original, to: updated, editor: editor) }
+                packages.append(updated)
+            }
+            try scope.requireCurrent(editor: editor)
+            guard pending == manifest else { throw GenerationRequestError.gate("The pending generation review changed during pricing.") }
+            let updated = try manifest.replacingPackages(packages)
+            editor.agentService.replaceGenerationBatchPresentation(oldID: manifest.id, newID: updated.id)
+            pending = updated
+            error = nil
+        } catch { self.error = error.localizedDescription }
+    }
+
+    func changeRoute(itemIDs: Set<String>, editor: EditorViewModel) {
+        guard let manifest = pending, !approving, !recoveringPricing else { return }
+        do {
+            let selected = manifest.payload.items.filter { itemIDs.contains($0.id) }
+            guard !selected.isEmpty, selected.count == itemIDs.count,
+                  selected.allSatisfy({ $0.package.payload.estimate == nil }) else {
+                throw GenerationRequestError.gate("Select unpriced pending items to change route.")
+            }
+            let continuation = GenerationRouteContinuation(batchID: manifest.id, requestID: UUID(),
+                items: selected.map { .init(itemID: $0.id, packageID: $0.package.id,
+                    failure: pricingFailure(for: $0.package) ?? .providerPricingUnavailable) },
+                retainedPackageIDs: manifest.payload.items.filter({ !itemIDs.contains($0.id) }).map(\.package.id))
+            _ = try continuation.validatedData()
+            try editor.agentService.requireGenerationBatchOrigin(manifest.id)
+            try GenerationBatchStore.retire(.init(batch: manifest, continuation: continuation), editor: editor)
+            pending = nil
+            error = nil
+            try editor.agentService.completeGenerationBatchRouteChange(continuation)
+        } catch { self.error = error.localizedDescription }
+    }
 
     func record(_ snapshot: GenerationBatchStore.Snapshot) {
         readID = UUID()
@@ -25,7 +96,7 @@ final class GenerationBatchCoordinator {
     }
 
     func remove(itemID: String, editor: EditorViewModel) {
-        guard let pending, !approving else { return }
+        guard let pending, !approving, !recoveringPricing else { return }
         if pending.payload.items.count == 1 { decline(editor: editor); return }
         do {
             let updated = try pending.removing(itemIDs: [itemID])
@@ -36,13 +107,13 @@ final class GenerationBatchCoordinator {
     }
 
     func decline(editor: EditorViewModel) {
-        guard !approving, let pending else { return }
+        guard !approving, !recoveringPricing, let pending else { return }
         self.pending = nil; error = nil
         editor.agentService.completeGenerationBatch(pending.id, message: "The user declined the generation batch. No batch item was submitted.")
     }
 
     func approve(editor: EditorViewModel) async {
-        guard let manifest = pending, !approving else { return }
+        guard let manifest = pending, !approving, !recoveringPricing else { return }
         approving = true
         defer { approving = false }
         do {

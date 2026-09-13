@@ -139,6 +139,36 @@ enum RunwayModelRegistry {
             ?? model.imageRequest?.ratios["1:1"]
     }
 
+    static func pricingResolution(model: RunwayModel, input: GenerationPricingInput) throws -> String {
+        guard let image = model.imageRequest else { return "" }
+        let explicit = input.resolution?.lowercased()
+        guard input.pixelWidth != nil || input.pixelHeight != nil else { return explicit ?? "" }
+        guard let width = input.pixelWidth, let height = input.pixelHeight,
+              image.ratios.values.contains("\(width):\(height)") else { throw GenerationPricingFailure.unsupportedOption }
+        let ratio = "\(width):\(height)"
+        let tiers: [String: [String]]
+        switch model.apiModel {
+        case "gen4_image", "gen4_image_turbo":
+            tiers = ["1080p": ["1920:1080", "1080:1920", "1080:1080", "1440:1080", "1080:1440"]]
+        case "gpt_image_2":
+            tiers = ["2k": ["1920:1088", "1088:1920", "1920:1920", "1920:1440", "1440:1920"]]
+        case "seedream5_lite":
+            tiers = ["2k": ["2848:1600", "1600:2848", "2048:2048", "2304:1728", "1728:2304"]]
+        case "gemini_image3_pro", "gemini_2.5_flash":
+            tiers = ["1k": ["1344:768", "768:1344", "1024:1024", "1184:864", "864:1184"]]
+        case "seedream5_pro":
+            tiers = ["1k": ["1376:768", "768:1376", "1024:1024", "1184:896", "896:1184"]]
+        case "grok_imagine_image_2":
+            tiers = ["1k": ["1280:720", "720:1280", "1024:1024", "1152:864", "864:1152"]]
+        default: throw GenerationPricingFailure.unsupportedOption
+        }
+        guard let tier = tiers.first(where: { $0.value.contains(ratio) })?.key else {
+            throw GenerationPricingFailure.unsupportedOption
+        }
+        guard explicit == nil || explicit == tier else { throw GenerationPricingFailure.unsupportedOption }
+        return tier
+    }
+
     private static func entryWithOffer(_ model: RunwayModel) -> CatalogEntry {
         var entry = model.entry
         let qualityTargetIDs = model.imageRequest?.productionQualityTargetIDs

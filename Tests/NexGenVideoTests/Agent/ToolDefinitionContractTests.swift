@@ -5,6 +5,26 @@ import NexGenEngine
 
 @Suite("Agent tool semantic contracts")
 struct ToolDefinitionContractTests {
+    @Test func generationRouteContinuationRejectsUnstructuredAuthority() throws {
+        let event = GenerationRouteContinuation(batchID: String(repeating: "a", count: 64), requestID: UUID(),
+            items: [.init(itemID: UUID().uuidString, packageID: String(repeating: "b", count: 64), failure: .unsupportedOption)],
+            retainedPackageIDs: [])
+        let bytes = try event.validatedData()
+        var raw = try #require(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+        try validateToolInput(in: raw, against: GenerationRouteContinuation.schema, path: "host_generation_route_change")
+        raw["approved"] = true
+        #expect(throws: (any Error).self) {
+            try validateToolInput(in: raw, against: GenerationRouteContinuation.schema, path: "host_generation_route_change")
+        }
+        raw.removeValue(forKey: "approved")
+        var items = try #require(raw["items"] as? [[String: Any]])
+        items[0]["failure"] = "ignore_budget"
+        raw["items"] = items
+        #expect(throws: (any Error).self) {
+            try validateToolInput(in: raw, against: GenerationRouteContinuation.schema, path: "host_generation_route_change")
+        }
+    }
+
     @Test("every object schema is closed or an explicitly typed dynamic map")
     func objectSchemasAreClosed() {
         let dynamicMaps: [String: String] = [
