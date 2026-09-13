@@ -579,13 +579,11 @@ actor ProviderMoneyClient {
               price.unitPrice >= 0 else {
             throw GenerationPricingFailure.providerPricingUnavailable
         }
-        let quantity: Double
-        do { quantity = try falQuantity(unit: price.unit, input: input) }
-        catch { throw GenerationPricingFailure.unsupportedOption }
+        let amount = try falAmount(price: price, input: input)
         return try await normalize(
-            nativeAmount: price.unitPrice * quantity,
+            nativeAmount: amount,
             currency: price.currency,
-            pricingSource: url.absoluteString
+            pricingSource: "https://fal.ai/nano-banana-pro"
         )
     }
 
@@ -652,49 +650,31 @@ actor ProviderMoneyClient {
         return money
     }
 
-    private func falQuantity(unit: String, input: GenerationPricingInput) throws -> Double {
-        let normalized = unit.lowercased()
-            .replacingOccurrences(of: "-", with: "_")
-            .replacingOccurrences(of: " ", with: "_")
-        switch normalized {
-        case "request", "requests", "call", "calls":
-            return 1
-        case "image", "images", "video", "videos", "output":
-            return Double(max(1, input.outputCount))
-        case "second", "seconds", "video_second", "video_seconds",
-             "output_second", "output_seconds", "audio_second", "audio_seconds":
-            guard let duration = input.durationSeconds, duration > 0 else {
-                throw GenerationBudgetError.blocked(
-                    "fal.ai prices \(unit), but this request has no verified duration."
-                )
-            }
-            return duration * Double(max(1, input.outputCount))
-        case "minute", "minutes", "audio_minute", "audio_minutes":
-            guard let duration = input.durationSeconds, duration > 0 else {
-                throw GenerationBudgetError.blocked(
-                    "fal.ai prices \(unit), but this request has no verified duration."
-                )
-            }
-            return duration / 60 * Double(max(1, input.outputCount))
-        case "character", "characters":
-            guard input.promptCharacterCount > 0 else {
-                throw GenerationBudgetError.blocked(
-                    "fal.ai prices characters, but this request has no priced text."
-                )
-            }
-            return Double(input.promptCharacterCount)
-        case "thousand_characters", "1000_characters":
-            guard input.promptCharacterCount > 0 else {
-                throw GenerationBudgetError.blocked(
-                    "fal.ai prices characters, but this request has no priced text."
-                )
-            }
-            return Double(input.promptCharacterCount) / 1000
-        default:
-            throw GenerationBudgetError.blocked(
-                "fal.ai billing unit '\(unit)' cannot be derived exactly from this request."
-            )
+    private func falAmount(price: FalPrice, input: GenerationPricingInput) throws -> Double {
+        guard input.modality == .image, input.durationSeconds == nil,
+              (1...4).contains(input.outputCount), input.quality == nil, input.generateAudio == nil,
+              input.pixelWidth == nil, input.pixelHeight == nil,
+              let references = input.referenceRoles,
+              references.allSatisfy({ $0 == "image_reference" }),
+              price.unit == "image", price.currency == "USD", price.unitPrice == 0.15 else {
+            throw GenerationPricingFailure.unsupportedOption
         }
+        switch price.endpointId {
+        case "fal-ai/nano-banana-pro":
+            guard references.isEmpty else { throw GenerationPricingFailure.unsupportedOption }
+        case "fal-ai/nano-banana-pro/edit":
+            guard (1...14).contains(references.count) else { throw GenerationPricingFailure.unsupportedOption }
+        default:
+            throw GenerationPricingFailure.unsupportedOption
+        }
+        let perImage: Double
+        switch input.resolution ?? "1K" {
+        case "1K", "2K": perImage = price.unitPrice
+        case "4K": perImage = price.unitPrice * 2
+        default: throw GenerationPricingFailure.unsupportedOption
+        }
+        // The fixed image dialect cannot override web-search=false or limit-generations=true schema defaults.
+        return perImage * Double(input.outputCount)
     }
 
     private func exchangeRates() async throws -> ExchangeRates {
