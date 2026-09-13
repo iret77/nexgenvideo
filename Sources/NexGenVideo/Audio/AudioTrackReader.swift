@@ -23,6 +23,33 @@ enum AudioTrackReader {
         range: ClosedRange<Double>? = nil,
         onBuffer: (AVAudioPCMBuffer) throws -> Void
     ) async throws {
+        try await readSamples(from: url, outputSettings: outputSettings, range: range) { sample in
+            guard let desc = CMSampleBufferGetFormatDescription(sample),
+                  let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(desc),
+                  let format = AVAudioFormat(streamDescription: asbd) else {
+                throw ReadError.readFailed("Invalid decoded audio format")
+            }
+            let count = CMSampleBufferGetNumSamples(sample)
+            guard count > 0 else { return }
+            guard count <= Int(Int32.max),
+                  let pcm = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(count)) else {
+                throw ReadError.readFailed("Invalid decoded audio frame count")
+            }
+            pcm.frameLength = AVAudioFrameCount(count)
+            guard CMSampleBufferCopyPCMDataIntoAudioBufferList(
+                sample, at: 0, frameCount: Int32(count), into: pcm.mutableAudioBufferList
+            ) == noErr else { throw ReadError.readFailed("Cannot copy decoded audio") }
+            try onBuffer(pcm)
+        }
+    }
+
+    static func readSamples(
+        from url: URL,
+        outputSettings: [String: Any],
+        range: ClosedRange<Double>? = nil,
+        onBuffer: (CMSampleBuffer) throws -> Void
+    ) async throws {
+        try Task.checkCancellation()
         let asset = AVURLAsset(url: url)
         guard let track = try await asset.loadTracks(withMediaType: .audio).first else {
             throw ReadError.noAudioTrack(url.lastPathComponent)
@@ -38,6 +65,7 @@ enum AudioTrackReader {
             throw ReadError.readFailed("Cannot read audio from \(url.lastPathComponent)")
         }
         reader.add(output)
+        defer { if reader.status == .reading { reader.cancelReading() } }
         if let range {
             reader.timeRange = CMTimeRange(
                 start: CMTime(seconds: range.lowerBound, preferredTimescale: 600),
@@ -50,19 +78,12 @@ enum AudioTrackReader {
         }
 
         while let sample = output.copyNextSampleBuffer() {
-            guard let desc = CMSampleBufferGetFormatDescription(sample),
-                  let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(desc),
-                  let format = AVAudioFormat(streamDescription: asbd) else { continue }
-            let frames = AVAudioFrameCount(CMSampleBufferGetNumSamples(sample))
-            guard frames > 0, let pcm = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames) else { continue }
-            pcm.frameLength = frames
-            CMSampleBufferCopyPCMDataIntoAudioBufferList(
-                sample, at: 0, frameCount: Int32(frames), into: pcm.mutableAudioBufferList
-            )
-            try onBuffer(pcm)
+            try Task.checkCancellation()
+            try onBuffer(sample)
         }
 
-        if reader.status == .failed {
+        try Task.checkCancellation()
+        if reader.status != .completed {
             throw ReadError.readFailed(reader.error?.localizedDescription ?? "Read failed")
         }
     }

@@ -103,9 +103,9 @@ enum ClipRenderer {
         } else if type == .image, let image = cache?.imageThumbnail(for: clip.mediaRef), mainHeight > 4 {
             let thumbRect = CGRect(x: contentX, y: contentY, width: contentWidth, height: mainHeight)
             drawTiledImage(image: image, in: thumbRect, clipRect: rect, cornerRadius: cornerRadius, context: context)
-        } else if type == .audio, allowsEditChrome, let samples = cache?.samples(for: clip.mediaRef), !samples.isEmpty {
+        } else if type == .audio, allowsEditChrome, let waveform = cache?.waveform(for: clip.mediaRef), !waveform.samples.isEmpty {
             let audioRect = CGRect(x: contentX, y: contentY, width: contentWidth, height: mainHeight)
-            drawWaveform(samples: samples, clip: clip, type: colorType, in: audioRect, context: context)
+            drawWaveform(waveform: waveform, clip: clip, type: colorType, in: audioRect, fps: fps, context: context)
         }
 
         if allowsEditChrome {
@@ -207,24 +207,20 @@ enum ClipRenderer {
     // MARK: - Waveform
 
     private static func drawWaveform(
-        samples: [Float],
+        waveform: WaveformEnvelopeV2,
         clip: Clip,
         type: ClipType,
         in drawRect: NSRect,
+        fps: Int,
         context: CGContext
     ) {
         let drawWidth = drawRect.width
         let drawHeight = drawRect.height
         guard drawWidth > 2, drawHeight > 2 else { return }
 
-        // Map visible portion of source to sample indices.
-        let totalSource = clip.sourceDurationFrames
-        guard totalSource > 0 else { return }
-        let startFrac = Double(clip.trimStartFrame) / Double(totalSource)
-        let endFrac = Double(clip.trimStartFrame + clip.sourceFramesConsumed) / Double(totalSource)
-        let sampleStart = max(0, min(samples.count, Int(startFrac * Double(samples.count))))
-        let sampleEnd = max(sampleStart, min(samples.count, Int(endFrac * Double(samples.count))))
-        guard sampleEnd > sampleStart else { return }
+        let sourceStart = Double(clip.trimStartFrame) / Double(max(1, fps))
+        let sourceDuration = Double(clip.sourceFramesConsumed) / Double(max(1, fps))
+        guard sourceDuration > 0 else { return }
 
         let barCount = Int(drawWidth)
         guard barCount > 0 else { return }
@@ -249,7 +245,6 @@ enum ClipRenderer {
 
         let dur = CGFloat(max(1, clip.durationFrames))
         let frameStep = dur / CGFloat(barCount)
-        let visCount = sampleEnd - sampleStart
 
         // Samples are dB-normalized over this range, so volume shifts the dB axis (not multiplies).
         let dbRange: CGFloat = 50
@@ -260,14 +255,10 @@ enum ClipRenderer {
         var bars: [CGRect] = []
         bars.reserveCapacity(lastBar - firstBar)
         for i in firstBar..<lastBar {
-            // Peak-detect (min, since 0=loud) over the bar's range so zero crossings don't flatten loud audio.
-            let sStart = sampleStart + i * visCount / barCount
-            let sEnd = max(sStart + 1, sampleStart + (i + 1) * visCount / barCount)
-            var loudest: Float = 1
-            for j in sStart..<min(sEnd, sampleEnd) {
-                let s = samples[j]
-                if s < loudest { loudest = s }
-            }
+            let loudest = waveform.loudestSample(
+                from: sourceStart + Double(i) / Double(barCount) * sourceDuration,
+                to: sourceStart + Double(i + 1) / Double(barCount) * sourceDuration
+            )
             let dbShift: CGFloat
             if needsPerBarVolume {
                 let posFrames = CGFloat(i) * frameStep

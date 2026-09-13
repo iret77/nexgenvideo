@@ -1,7 +1,6 @@
 import AppKit
 import AVFoundation
 import CryptoKit
-import DSWaveformImage
 import ImageIO
 import UniformTypeIdentifiers
 
@@ -10,7 +9,7 @@ final class MediaVisualCache {
 
     // MARK: - Waveform samples (normalized 0=loud, 1=silence)
 
-    private var waveformSamples: [String: [Float]] = [:]
+    private var waveformSamples: [String: WaveformEnvelopeV2] = [:]
     private var waveformInFlight: Set<String> = []
     /// Cap concurrent waveform extractions to avoid starving playback.
     private static let waveformGate = AsyncSemaphore(value: 2)
@@ -32,7 +31,7 @@ final class MediaVisualCache {
 
     // MARK: - Sync lookups (safe for draw calls)
 
-    nonisolated func samples(for mediaRef: String) -> [Float]? {
+    nonisolated func waveform(for mediaRef: String) -> WaveformEnvelopeV2? {
         MainActor.assumeIsolated { waveformSamples[mediaRef] }
     }
 
@@ -58,7 +57,7 @@ final class MediaVisualCache {
             guard let self else { return }
             await MainActor.run { [self] in
                 self.waveformInFlight.remove(key)
-                if let result {
+                if let result, !Task.isCancelled {
                     self.waveformSamples[key] = result
                     self.timelineView?.needsDisplay = true
                 }
@@ -162,9 +161,12 @@ final class MediaVisualCache {
         return CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions as CFDictionary)
     }
 
-    private nonisolated static func loadOrGenerateWaveform(url: URL) async -> [Float]? {
+    private nonisolated static func loadOrGenerateWaveform(url: URL) async -> WaveformEnvelopeV2? {
+        guard !Task.isCancelled else { return nil }
         let cacheKey = diskCacheKey(for: url)
-        if let cacheKey, let cached = loadWaveform(key: cacheKey) { return cached }
+        if let cacheKey, let cached = loadWaveform(at: diskCache.directory.appendingPathComponent(cacheKey + ".waveform2")) {
+            return cached
+        }
 
         do {
             try await waveformGate.wait()
@@ -173,20 +175,9 @@ final class MediaVisualCache {
         }
         defer { Task { await waveformGate.signal() } }
 
-        let asset = AVURLAsset(url: url)
-        guard (try? await asset.loadTracks(withMediaType: .audio).first) != nil else { return nil }
-
-        let duration = (try? await asset.load(.duration).seconds) ?? 0
-        let count = waveformSampleCount(duration: duration)
-        guard let samples = try? await WaveformAnalyzer().samples(fromAudioAt: url, count: count) else { return nil }
-        if let cacheKey { saveWaveform(samples, key: cacheKey) }
-        return samples
-    }
-
-    private nonisolated static func waveformSampleCount(duration: Double) -> Int {
-        guard duration.isFinite, duration > 0 else { return 4000 }
-        if duration >= Double(20_000) / 150 { return 20_000 }
-        return max(4000, Int(duration * 150))
+        guard let envelope = try? await WaveformExtractor.extract(from: url), !Task.isCancelled else { return nil }
+        if let cacheKey { saveWaveform(envelope, at: diskCache.directory.appendingPathComponent(cacheKey + ".waveform2")) }
+        return envelope
     }
 
     private nonisolated static func videoThumbnailTimes(duration: Double) -> [CMTime] {
@@ -215,15 +206,15 @@ final class MediaVisualCache {
         return digest.prefix(16).map { String(format: "%02x", $0) }.joined()
     }
 
-    private nonisolated static func loadWaveform(key: String) -> [Float]? {
-        let url = diskCache.directory.appendingPathComponent(key + ".waveform")
-        guard let data = try? Data(contentsOf: url), !data.isEmpty, data.count % 4 == 0 else { return nil }
-        return data.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
+    nonisolated static func loadWaveform(at url: URL) -> WaveformEnvelopeV2? {
+        guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+              size <= 8_000_000, let data = try? Data(contentsOf: url) else { return nil }
+        return try? WaveformEnvelopeV2(cacheData: data)
     }
 
-    private nonisolated static func saveWaveform(_ samples: [Float], key: String) {
-        let url = diskCache.directory.appendingPathComponent(key + ".waveform")
-        samples.withUnsafeBytes { try? Data($0).write(to: url) }
+    nonisolated static func saveWaveform(_ envelope: WaveformEnvelopeV2, at url: URL) {
+        guard let data = try? envelope.cacheData() else { return }
+        try? data.write(to: url, options: .atomic)
     }
 
     private struct ThumbnailCacheMeta: Codable {
