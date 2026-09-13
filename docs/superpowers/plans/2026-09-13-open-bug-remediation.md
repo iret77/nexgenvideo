@@ -257,11 +257,12 @@ Audit money arithmetic, ceiling preservation, idempotency, and both Claude backe
 - Create: `docs/ui/generation-batches.html`
 - Modify: `Sources/NexGenVideo/Agent/Panel/GenerationBatchCard.swift`
 - Modify: `Sources/NexGenVideo/Agent/Panel/GenerationPackageReviewView.swift`
+- Modify: `Sources/NexGenVideo/Agent/Panel/SpendApprovalCard.swift`
 - Modify: `Sources/NexGenVideo/UI/AppTheme.swift` only if an absent reusable token is required
 - Test: create or modify generation batch panel/UI policy tests under `Tests/NexGenVideoTests/Agent`
 
 **Interfaces:**
-- Produces: compact numbered row view with row-local expansion, preview strip, and pointer/keyboard Remove action; one body scroll and fixed in-flow summary/actions.
+- Produces: compact numbered row view with row-local expansion, preview strip, and pointer/keyboard Remove action; one body scroll and fixed in-flow summary/actions; fail-closed single-item approval with visible quote retry/re-prepare recovery.
 - Consumes: Task 6 pricing readiness/retry/route actions and existing generation-package display data.
 
 - [ ] **Step 1: Author the normative HTML concept**
@@ -274,7 +275,7 @@ Use an available headless browser to capture the HTML. Inspect density, clipping
 
 - [ ] **Step 3: Author policy and handler tests**
 
-Test 1/13/50 row ordering, stable numbering after removal, total recomputation, unpriced approval disablement, retry/route visibility, and the real remove handler transition from click/keyboard command to pending batch ID and owner session.
+Test 1/13/50 row ordering, stable numbering after removal, total recomputation, batch and single-item unpriced approval disablement, retry/re-prepare/route visibility, and the real remove handler transition from click/keyboard command to pending batch ID and owner session.
 
 - [ ] **Step 4: Record the red gate as deferred**
 
@@ -282,7 +283,7 @@ Do not execute Swift tests locally; identify nested scrolling/full-card renderin
 
 - [ ] **Step 5: Implement the native surface**
 
-Use one bounded scroll for compact rows. Hoist common provider/model metadata, retain per-item purpose/output/price, render thumbnails for image references, and expand technical details on demand. Keep total and actions as in-flow siblings outside the scroll. Use only `AppTheme` values and ensure disabled controls lose active contrast and hover response.
+Use one bounded scroll for compact rows. Hoist common provider/model metadata, retain per-item purpose/output/price, render thumbnails for image references, and expand technical details on demand. Keep total and actions as in-flow siblings outside the scroll. The individual `SpendApprovalCard` must also disable approval whenever the prepared package lacks a verified monetary estimate and expose the matching quote retry/re-prepare recovery. Use only `AppTheme` values and ensure disabled controls lose active contrast and hover response.
 
 - [ ] **Step 6: Review and commit**
 
