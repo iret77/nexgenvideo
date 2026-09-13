@@ -733,7 +733,8 @@ struct AgentPanelView: View {
                     },
                     onDecline: { service.declineSpend() },
                     onRefresh: { service.refreshSpendApproval() },
-                    onPrepare: { service.prepareSpendOption($0) }
+                    onPrepare: { service.prepareSpendOption($0) },
+                    projectHome: editor.workingRoot
                 )
                 .padding(.bottom, AppTheme.Spacing.xs)
             }

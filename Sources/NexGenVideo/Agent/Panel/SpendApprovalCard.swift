@@ -4,6 +4,7 @@ private enum SpendApprovalFocusTarget: Hashable {
     case provider
     case model
     case approve
+    case prepare
 }
 
 struct SpendApprovalCard: View {
@@ -14,9 +15,9 @@ struct SpendApprovalCard: View {
     let onDecline: () -> Void
     let onRefresh: () -> Void
     let onPrepare: (SpendOption) -> Void
+    let projectHome: URL?
 
     @State private var selectedOptionId: String
-    @State private var approvalError: String?
     @FocusState private var focusedControl: SpendApprovalFocusTarget?
 
     init(
@@ -26,7 +27,8 @@ struct SpendApprovalCard: View {
         onApprove: @escaping (SpendOption) -> Void,
         onDecline: @escaping () -> Void,
         onRefresh: @escaping () -> Void = {},
-        onPrepare: @escaping (SpendOption) -> Void = { _ in }
+        onPrepare: @escaping (SpendOption) -> Void = { _ in },
+        projectHome: URL? = nil
     ) {
         self.approval = approval
         self.error = error
@@ -35,6 +37,7 @@ struct SpendApprovalCard: View {
         self.onDecline = onDecline
         self.onRefresh = onRefresh
         self.onPrepare = onPrepare
+        self.projectHome = projectHome
         _selectedOptionId = State(initialValue: approval.recommendedOptionId)
     }
 
@@ -79,20 +82,13 @@ struct SpendApprovalCard: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .scrollBounceBehavior(.basedOnSize)
-            footerRow
+            footerRow.fixedSize(horizontal: false, vertical: true)
         }
         .padding(AppTheme.Spacing.md)
         .frame(maxHeight: AppTheme.ComponentSize.agentDecisionMaxHeight)
         .background(
             RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
                 .fill(AppTheme.Background.raisedColor)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
-                .strokeBorder(
-                    AppTheme.Accent.primary.opacity(AppTheme.Opacity.medium),
-                    lineWidth: AppTheme.BorderWidth.thin
-                )
         )
         .padding(.horizontal, AppTheme.Spacing.mdLg)
         .onAppear {
@@ -120,14 +116,10 @@ struct SpendApprovalCard: View {
             if availableOptions.count > 1 { selectionControls }
             if approval.requiresGenerationPackage == true {
                 if let package = selectedOption?.generationPackage {
-                    GenerationPackageReviewView(package: package)
-                } else if let selectedOption {
+                    GenerationPackageReviewView(package: package, projectHome: projectHome)
+                } else if selectedOption != nil {
                     Text(error == nil ? "Preparing request…" : "Request preparation required")
                         .foregroundStyle(AppTheme.Text.secondaryColor)
-                    if error != nil {
-                        Button("Prepare request again") { onPrepare(selectedOption) }
-                            .buttonStyle(InlineActionButtonStyle()).disabled(isWorking)
-                    }
                 }
             }
             if !availableOptions.isEmpty {
@@ -135,15 +127,16 @@ struct SpendApprovalCard: View {
                     .font(.system(size: AppTheme.FontSize.xxs))
                     .foregroundStyle(AppTheme.Text.mutedColor)
             }
-            ForEach(providerIssues, id: \.self) { message in
-                Text(message)
-                    .font(.system(size: AppTheme.FontSize.xxs))
-                    .foregroundStyle(AppTheme.Status.warningColor)
-            }
-            if let message = approvalError ?? error {
-                Text(message)
+            if error != nil || !providerIssues.isEmpty {
+                Text("Request needs attention. Review the selected provider and model.")
                     .font(.system(size: AppTheme.FontSize.xxs))
                     .foregroundStyle(AppTheme.Status.errorColor)
+                DisclosureGroup("Diagnostic details") {
+                    if let error { Text(error).textSelection(.enabled) }
+                    ForEach(providerIssues, id: \.self) { Text($0).textSelection(.enabled) }
+                }
+                .font(.system(size: AppTheme.FontSize.xxs))
+                .foregroundStyle(AppTheme.Text.secondaryColor)
             } else if availableOptions.isEmpty {
                 Text("No valid provider and model combination is currently available.")
                     .font(.system(size: AppTheme.FontSize.xxs))
@@ -164,9 +157,8 @@ struct SpendApprovalCard: View {
             Button(action: onDecline) {
                 Image(systemName: "xmark")
                     .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(InlineActionButtonStyle())
             .keyboardShortcut(.cancelAction)
             .help("Decline (Esc)")
             .disabled(isWorking)
@@ -181,7 +173,9 @@ struct SpendApprovalCard: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .help(selectedOption?.modelName ?? "")
             if let selectedOption {
-                Text("via \(selectedOption.providerLabel) · \(CostEstimator.format(selectedOption.credits))")
+                Text(approval.requiresGenerationPackage == true || selectedOption.generationPackage != nil
+                    ? String(localized: "via \(selectedOption.providerLabel)")
+                    : "\(selectedOption.providerLabel) · \(CostEstimator.format(selectedOption.credits))")
                     .font(.system(size: AppTheme.FontSize.xxs))
                     .foregroundStyle(AppTheme.Text.mutedColor)
             }
@@ -236,32 +230,69 @@ struct SpendApprovalCard: View {
                 selectedOptionId = matching.first { $0.modelId == currentModelId }?.id
                     ?? matching.first?.id
                     ?? ""
-                approvalError = nil
             }
         )
     }
 
     private var footerRow: some View {
-        HStack(spacing: AppTheme.Spacing.sm) {
-            Button("Decline") { onDecline() }
-                .buttonStyle(.capsule(.secondary, size: .regular))
-                .controlSize(.small)
-                .disabled(isWorking)
-            Spacer()
-            Button(isWorking ? "Generating…" : "\(approval.actionLabel) · \(CostEstimator.format(selectedOption?.credits))") {
-                guard let selectedOption else { return }
-                approvalError = nil
-                onApprove(selectedOption)
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+            if showsPreparationRecovery {
+                Text("Verified estimate required").font(.system(size: AppTheme.FontSize.xxs))
+                    .foregroundStyle(AppTheme.Status.warningColor)
+                Button("Prepare request again", action: prepareSelectionAgain)
+                    .buttonStyle(InlineActionButtonStyle()).disabled(isWorking)
+                    .focused($focusedControl, equals: .prepare)
             }
-            .buttonStyle(.capsule(.prominent, size: .regular))
-            .controlSize(.small)
-            .disabled(selectedOption == nil || isWorking
-                || (approval.requiresGenerationPackage == true && selectedOption?.generationPackage == nil))
-            .focused($focusedControl, equals: .approve)
-            .accessibilityHint(
-                selectedOption == nil ? "Choose an available provider and model" : ""
-            )
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: AppTheme.Spacing.sm) { declineButton; Spacer(minLength: AppTheme.Spacing.sm); approveButton }
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) { approveButton; declineButton }
+            }
         }
+    }
+
+    private var declineButton: some View {
+        Button("Decline", action: onDecline)
+            .buttonStyle(.capsule(.secondary, size: .regular)).controlSize(.small).disabled(isWorking)
+    }
+
+    private var approveButton: some View {
+        Button(approveLabel, action: approveSelection)
+            .buttonStyle(.capsule(.prominent, size: .regular)).controlSize(.small)
+            .disabled(!canApproveSelection).focused($focusedControl, equals: .approve)
+            .accessibilityHint(canApproveSelection ? "" : "Prepare a verified estimate before approving")
+    }
+
+    private var approveLabel: String {
+        if isWorking { return String(localized: "Generating…") }
+        if let package = selectedOption?.generationPackage {
+            guard let estimate = package.payload.estimate else { return approval.actionLabel }
+            let amount = estimate.eurAmount.formatted(.number.precision(.fractionLength(2)))
+            return "\(approval.actionLabel) · €\(amount)"
+        }
+        if approval.requiresGenerationPackage == true { return approval.actionLabel }
+        return "\(approval.actionLabel) · \(CostEstimator.format(selectedOption?.credits))"
+    }
+
+    var canApproveSelection: Bool {
+        guard let selectedOption, !isWorking else { return false }
+        if let package = selectedOption.generationPackage { return package.payload.estimate != nil }
+        return approval.requiresGenerationPackage != true
+    }
+
+    var showsPreparationRecovery: Bool {
+        guard let selectedOption else { return false }
+        if let package = selectedOption.generationPackage { return package.payload.estimate == nil }
+        return approval.requiresGenerationPackage == true && error != nil
+    }
+
+    func approveSelection() {
+        guard canApproveSelection, let selectedOption else { return }
+        onApprove(selectedOption)
+    }
+
+    func prepareSelectionAgain() {
+        guard showsPreparationRecovery, !isWorking, let selectedOption else { return }
+        onPrepare(selectedOption)
     }
 
     private func requestInitialFocus() {
@@ -269,6 +300,8 @@ struct SpendApprovalCard: View {
             .provider
         } else if modelOptions.count > 1 {
             .model
+        } else if showsPreparationRecovery {
+            .prepare
         } else {
             .approve
         }
@@ -281,7 +314,6 @@ struct SpendApprovalCard: View {
     private func normalizeSelection() {
         guard !availableOptions.contains(where: { $0.id == selectedOptionId }) else { return }
         selectedOptionId = availableOptions.first?.id ?? ""
-        approvalError = nil
     }
 
     private func displayName(_ option: SpendOption) -> String {

@@ -80,6 +80,26 @@ struct GenerationPackageInputs: Codable, Sendable, Equatable {
 
     private static func manifestPath(_ id: String) -> String { "generation-packages/\(id).inputs.json" }
 
+    static func previewData(package: GenerationPackageV1, referenceIndex: Int, home: URL) throws -> Data {
+        try package.validate()
+        guard package.payload.references.indices.contains(referenceIndex),
+              package.payload.references[referenceIndex].type == "image" else {
+            throw GenerationRequestError.storage("The image reference is unavailable.")
+        }
+        let manifest = try ProjectLocalFile.resolve(manifestPath(package.id), dataRoot: home)
+        let record = try JSONDecoder().decode(Self.self, from: Data(contentsOf: manifest))
+        guard record.packageID == package.id, record.paths.count == package.payload.references.count,
+              record.paths[referenceIndex].hasPrefix(Project.mediaDirectoryName + "/generation-inputs/" + package.id + "/") else {
+            throw GenerationRequestError.storage("The prepared input archive is incomplete.")
+        }
+        let url = try ProjectLocalFile.resolve(record.paths[referenceIndex], dataRoot: home)
+        let bytes = try Data(contentsOf: url)
+        guard FileDigest.sha256(of: bytes) == package.payload.references[referenceIndex].submittedSHA256 else {
+            throw GenerationRequestError.storage("The prepared image reference changed.")
+        }
+        return bytes
+    }
+
     @MainActor
     static func persistRepriced(from original: GenerationPackageV1, to updated: GenerationPackageV1,
                                editor: EditorViewModel) async throws {
