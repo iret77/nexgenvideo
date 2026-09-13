@@ -42,7 +42,7 @@ struct PipelineRenderRecordWriterTests {
         let trusted = try #require(ProjectPackBinding(
             id: "musicvideo",
             version: MusicvideoPack().version,
-            projectSchema: "musicvideo/2.0.0"
+            projectSchema: "musicvideo/2.1.0"
         ))
         let sibling = try #require(ProjectPackBinding(
             id: trusted.id,

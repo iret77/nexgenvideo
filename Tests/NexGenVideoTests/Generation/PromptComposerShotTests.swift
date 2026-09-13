@@ -80,7 +80,7 @@ struct PromptComposerShotTests {
             let binding = try #require(ProjectPackBinding(
                 id: pack.name,
                 version: pack.version,
-                projectSchema: "musicvideo/2.0.0"
+                projectSchema: "musicvideo/2.1.0"
             ))
             try ProjectPluginSettings.setActivePlugin(binding, projectURL: home)
         }

@@ -131,8 +131,13 @@ host-owned project files, and atomically replaces the working copy only when eve
 succeeds. The source `.ngv` is the rollback source and stays byte-for-byte untouched
 until Save. Upgrade intent remains durable until Save; a crash resumes the target
 Recovery copy, while closing without saving cancels the upgrade.
-The Music Video `musicvideo/2.0.0` migration resets Analysis and every downstream
-approval in the transactional Recovery copy because `analysis/v3` requires a newly
-measured adaptive structure-resolution record with independently gated boundary
-evidence. Existing artifacts remain available for
-inspection but cannot authorize further phase execution.
+The Music Video legacy and `musicvideo/1.0.0` migrations to the current schema reset
+Analysis and every downstream approval in the transactional Recovery copy because
+`analysis/v3` requires a newly measured adaptive structure-resolution record with
+independently gated boundary evidence. Existing artifacts remain available for
+inspection but cannot authorize further phase execution. The declared
+`musicvideo/2.0.0 → musicvideo/2.1.0` migration verifies confirmed-identity aliases,
+moves their provenance into owning-phase sidecars, and records exact old/new lineage in
+the Recovery copy. It never rewrites the saved package or silently reapproves changed
+work; the user reviews a byte-verified rebind before eligible historical approvals
+become current.

@@ -2,6 +2,41 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.5.9",
+      "date": "2026-09-13",
+      "sections": [
+        {
+          "heading": "Reliability",
+          "items": [
+            "Agent and MCP numeric arguments are accepted only when they are exact, finite, integral and within bounded work limits.",
+            "XML export reports completion only after an atomic write succeeds, preserves an existing destination after failure and remains retryable.",
+            "Muted tracks are excluded before source resolution, and transcription locale matching handles valid BCP-47 extensions without losing script or region preference."
+          ]
+        },
+        {
+          "heading": "Editing",
+          "items": [
+            "Home remains visible until the selected editor window becomes active, including canceled, failed and overlapping project opens.",
+            "Timeline waveforms are derived from bounded decoded audio samples and presentation timestamps, including trimmed, gapped and misleading-duration media."
+          ]
+        },
+        {
+          "heading": "Generation",
+          "items": [
+            "Generation approval requires a verified request-specific price. Failed quotes can be retried or routed again without changing an approved request or spending authority.",
+            "Generation batches use compact stable rows, optional previews and one persistent review footer for small and large batches."
+          ]
+        },
+        {
+          "heading": "Pipeline",
+          "items": [
+            "Music Video 0.5.9 records confirmed identity derivations in phase-owned provenance without changing approved upstream inputs. Existing 0.5.8 projects can review a transactional Recovery-copy upgrade.",
+            "Pipeline receipts distinguish rejected, saved, review-ready, approved and stale artifacts from current host validation while preserving structured review content."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.5.8",
       "date": "2026-09-11",
       "sections": [

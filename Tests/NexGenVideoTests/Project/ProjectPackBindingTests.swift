@@ -47,7 +47,7 @@ struct ProjectPackBindingTests {
         let trusted = try #require(ProjectPackBinding(
             id: "musicvideo",
             version: MusicvideoPack().version,
-            projectSchema: "musicvideo/2.0.0"
+            projectSchema: "musicvideo/2.1.0"
         ))
         try ProjectPluginSettings.setActivePlugin(trusted, projectURL: project)
 

@@ -55,7 +55,7 @@ struct ProjectWorkingCopyTests {
 
     private func musicvideoBinding(
         version: String? = nil,
-        schema: String = "musicvideo/2.0.0"
+        schema: String = "musicvideo/2.1.0"
     ) throws -> ProjectPackBinding {
         try #require(ProjectPackBinding(
             id: "musicvideo",
