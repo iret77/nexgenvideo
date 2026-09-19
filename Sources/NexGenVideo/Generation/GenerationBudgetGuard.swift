@@ -442,6 +442,14 @@ enum LiveGenerationPricing {
                 input: input,
                 apiKey: apiKey
             )
+        case (.higgsfield, .api):
+            guard let key = ProviderKeychain.load(.higgsfield), let body = input.providerRequestBody,
+                  let model = HiggsfieldModelRegistry.model(for: target.endpoint) else {
+                throw GenerationBudgetError.blocked("Higgsfield pricing requires the exact prepared request.")
+            }
+            let usd = try await HiggsfieldClient(apiKey: key).estimate(endpoint: model.endpoint, body: body)
+            return try await ProviderMoneyClient.shared.normalize(nativeAmount: usd, currency: "USD",
+                pricingSource: HiggsfieldClient.endpointURL(model.endpoint, estimate: true).absoluteString)
         case (.runway, .api):
             guard let credits = runwayCredits(endpoint: target.endpoint, input: input) else {
                 throw GenerationBudgetError.blocked(

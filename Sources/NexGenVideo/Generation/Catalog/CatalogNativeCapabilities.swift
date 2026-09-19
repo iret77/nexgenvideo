@@ -86,6 +86,8 @@ enum CatalogNativeCapabilities {
                     $0.provider == .runway && $0.providerRef == reference
                 }) == true
             }
+        case .higgsfield:
+            return HiggsfieldModelRegistry.model(for: reference)?.entry
         case .google:
             return GoogleModelRegistry.models.first {
                 $0.entry.id == modelID && $0.apiModelCandidates.contains(reference)

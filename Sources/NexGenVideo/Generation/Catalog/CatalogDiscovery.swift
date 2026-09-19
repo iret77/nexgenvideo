@@ -264,6 +264,11 @@ enum CatalogDiscovery {
             },
             consume: { result in
                 let provider = result.provider
+                if provider == .higgsfield {
+                    let count = publishHiggsfield(result)
+                    if count > 0 { providerCount += 1; modelCount += count }
+                    return
+                }
                 var publishedEntries = result.entries
                 var directState: ProviderDiscoveryState?
                 let retainedCount = ModelCatalog.shared.discoveredModelCount(for: provider)
@@ -359,6 +364,51 @@ enum CatalogDiscovery {
         Log.generation.notice(
             "catalog discovery: \(providerCount) provider(s), \(modelCount) model(s)"
         )
+    }
+
+    static func publishHiggsfield(_ result: ProviderResult, catalog: ModelCatalog = .shared) -> Int {
+        let provider = result.provider
+        var direct = catalog.discoveredEntries(for: provider, transport: .api)
+        var mcp = catalog.discoveredEntries(for: provider, transport: .mcp)
+        let oldChecks = catalog.routeChecks.filter { $0.provider == provider }
+        var checks: [GenerationRouteReceipt.Check] = []
+        let directState: ProviderDiscoveryState
+        switch result.directResult {
+        case .inactive: direct = []; directState = .inactive
+        case .success(let entries):
+            direct = entries
+            directState = .ready(modelCount: entries.count)
+            checks += GenerationRouteReceipt.checks(entries: entries, provider: provider, schemas: [],
+                directObservedAt: result.directObservedAt)
+        case .authenticationFailure(let message):
+            direct = []; directState = .actionRequired(message)
+        case .unavailableFailure(let message):
+            direct = []; directState = .unavailable(message)
+        case .transientFailure(let message):
+            directState = direct.isEmpty ? .unavailable(message) : .stale(modelCount: direct.count, message: message)
+            checks += oldChecks.filter { $0.transport == .api }
+        }
+        let mcpState: ProviderDiscoveryState
+        if !result.mcpConfigured || !result.oauthConnected {
+            mcp = []; mcpState = oauthDisconnectedState(wasConfigured: result.mcpConfigured)
+        } else if !result.mcpModelListingIsComplete {
+            let message = "Model refresh is incomplete. Try again later."
+            mcpState = mcp.isEmpty ? .unavailable(message) : .stale(modelCount: mcp.count, message: message)
+            checks += oldChecks.filter { $0.transport == .mcp }
+        } else {
+            mcp = result.entries
+            mcpState = result.mcpDetailEnrichmentIsComplete ? .ready(modelCount: mcp.count)
+                : .stale(modelCount: mcp.count, message: "Model details are incomplete. Refresh pending.")
+            checks += GenerationRouteReceipt.checks(entries: mcp, provider: provider, schemas: result.mcpSchemaChecks)
+        }
+        catalog.directProviderDiscovery[provider] = directState
+        catalog.mcpProviderDiscovery[provider] = mcpState
+        catalog.applyDiscovered(direct + mcp, for: provider)
+        catalog.recordRouteChecks(checks, for: provider)
+        let count = direct.count + mcp.count
+        catalog.setProviderDiscoveryState(count > 0 ? .ready(modelCount: count)
+            : (ProviderKeychain.load(provider) != nil ? directState : mcpState), for: provider)
+        return count
     }
 
     static func oauthDisconnectedState(

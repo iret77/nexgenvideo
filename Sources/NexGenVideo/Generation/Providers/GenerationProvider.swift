@@ -54,9 +54,9 @@ enum GenerationProvider: String, CaseIterable, Identifiable, Codable, Sendable {
 
     var requiresLiveImageCatalogDiscovery: Bool {
         switch self {
-        case .fal, .runway, .google:
+        case .fal, .runway, .google, .higgsfield:
             return true
-        case .higgsfield, .elevenlabs, .marble, .openart, .ace:
+        case .elevenlabs, .marble, .openart, .ace:
             return false
         }
     }
@@ -66,7 +66,7 @@ enum GenerationProvider: String, CaseIterable, Identifiable, Codable, Sendable {
         case .fal: return URL(string: "https://fal.ai/dashboard/keys")!
         case .runway: return URL(string: "https://dev.runwayml.com")!
         case .google: return URL(string: "https://aistudio.google.com/apikey")!
-        case .higgsfield: return URL(string: "https://higgsfield.ai/mcp")!
+        case .higgsfield: return URL(string: "https://console.higgsfield.ai/api-keys")!
         case .elevenlabs: return URL(string: "https://elevenlabs.io/app/settings/api-keys")!
         case .marble: return URL(string: "https://platform.worldlabs.ai/")!
         case .openart: return URL(string: "https://openart.ai")!
@@ -79,10 +79,8 @@ enum GenerationProvider: String, CaseIterable, Identifiable, Codable, Sendable {
     /// ACE route through NGV as an MCP client, on the user's subscription.
     var supportsDirectAPI: Bool {
         switch self {
-        case .fal, .runway, .google, .elevenlabs, .marble: return true
-        // Higgsfield issues no API keys ("No API keys to manage or configure" — higgsfield.ai/mcp);
-        // it, OpenArt and ACE are reached ONLY over MCP. No API-key field (that would be dead).
-        case .higgsfield, .openart, .ace: return false
+        case .fal, .runway, .google, .higgsfield, .elevenlabs, .marble: return true
+        case .openart, .ace: return false
         }
     }
 

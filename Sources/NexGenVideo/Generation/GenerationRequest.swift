@@ -248,7 +248,7 @@ enum GenerationController {
     static func prepareReviewPackage(_ generation: PreparedGeneration, editor: EditorViewModel,
                                     quoteLoader: GenerationBudgetGuard.QuoteLoader = LiveGenerationPricing.quote) async throws -> GenerationPackageV1 {
         let estimate = try? await quoteLoader(generation.target,
-            pricingInput(generation.request, prepared: generation.submission, compiledPrompt: generation.compiledPrompt))
+            pricingInput(generation))
         try generation.scope?.requireCurrent(editor: editor)
         try await generation.references?.requireUnchanged()
         guard editor.workingRoot == generation.home else { throw GenerationRequestError.gate("The project changed during request preparation.") }
@@ -468,7 +468,7 @@ enum GenerationController {
         let authorization: GenerationAuthorization
         do {
             let priced = try await GenerationBudgetGuard.authorize(
-                input: pricingInput(request, prepared: prepared, compiledPrompt: generation.compiledPrompt),
+                input: pricingInput(generation),
                 target: target, editor: editor, approvedPackage: generation.reviewedPackage, quoteLoader: quoteLoader)
             do {
                 let package = try generation.reviewedPackage ?? makePackage(generation, estimate: priced.estimate)
@@ -644,6 +644,30 @@ enum GenerationController {
             place(request, placeholderId: id, editor: editor)
             return id
         }
+    }
+
+    private static func pricingInput(_ generation: PreparedGeneration) async throws -> GenerationPricingInput {
+        var input = pricingInput(generation.request, prepared: generation.submission, compiledPrompt: generation.compiledPrompt)
+        guard generation.target.provider == .higgsfield, generation.target.transport == .api else { return input }
+        guard let key = ProviderKeychain.load(.higgsfield),
+              let model = HiggsfieldModelRegistry.model(for: generation.target.endpoint) else {
+            throw GenerationBudgetError.blocked("Connect the Higgsfield API to retrieve an estimate.")
+        }
+        let parameters: PreparedProviderParameters
+        switch generation.submission {
+        case .video(_, let prepared), .image(_, let prepared): parameters = prepared
+        default: throw GenerationBudgetError.blocked("Unsupported Higgsfield estimate type.")
+        }
+        try await generation.references?.requireUnchanged()
+        let urls = generation.references?.urls ?? []
+        guard urls.count == parameters.referenceSlots.count else {
+            throw GenerationBudgetError.blocked("Higgsfield pricing requires the exact local reference snapshot.")
+        }
+        let client = try HiggsfieldClient(apiKey: key)
+        var hosted: [String] = []
+        for url in urls { hosted.append(try await client.uploadReference(fileURL: url)) }
+        input.providerRequestBody = try HiggsfieldInputBuilder.body(model: model, params: parameters.bind(hosted))
+        return input
     }
 
     private static func pricingInput(

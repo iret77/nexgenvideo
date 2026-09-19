@@ -1576,7 +1576,21 @@ enum PipelineProductionRouting {
                 }
             }
             return true
-        case .higgsfield, .openart, .ace:
+        case .higgsfield:
+            guard let model = HiggsfieldModelRegistry.model(for: target.endpoint), geometryCount == 0 else { return false }
+            switch model.operation {
+            case .textToVideo:
+                return sourceCount + startCount + endCount + imageCount + videoCount + audioCount == 0
+            case .imageToVideo:
+                return sourceCount == 0 && startCount == 1 && endCount <= 1
+                    && imageCount + videoCount + audioCount == 0
+            case .referenceToVideo:
+                return sourceCount + startCount + endCount == 0 && imageCount + videoCount + audioCount > 0
+            case .edit, .extend:
+                return sourceCount == 1 && startCount + endCount == 0
+            case .image: return false
+            }
+        case .openart, .ace:
             return false
         case .google, .marble, .elevenlabs:
             return false

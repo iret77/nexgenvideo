@@ -120,6 +120,17 @@ final class ModelCatalog {
         rebuild()
     }
 
+    var directProviderDiscovery: [GenerationProvider: ProviderDiscoveryState] = [:]
+    var mcpProviderDiscovery: [GenerationProvider: ProviderDiscoveryState] = [:]
+
+    func discoveredEntries(for provider: GenerationProvider, transport: ProviderTransport) -> [CatalogEntry] {
+        (discoveredByProvider[provider] ?? []).compactMap { entry in
+            var entry = entry
+            entry.offers = entry.offers?.filter { $0.provider == provider && $0.transport == transport }
+            return entry.offers?.isEmpty == false ? entry : nil
+        }
+    }
+
     func discoveredModelCount(for provider: GenerationProvider) -> Int {
         discoveredByProvider[provider]?.count ?? 0
     }
@@ -811,7 +822,9 @@ final class ModelCatalog {
             return GoogleModelRegistry.model(for: binding.providerRef) != nil
         case .marble:
             return MarbleModelRegistry.model(for: binding.providerRef) != nil
-        case .higgsfield, .openart, .ace, .elevenlabs:
+        case .higgsfield:
+            return HiggsfieldModelRegistry.model(for: binding.providerRef)?.operation == .image
+        case .openart, .ace, .elevenlabs:
             return false
         }
     }

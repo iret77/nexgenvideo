@@ -169,10 +169,10 @@ struct OAuthCoreTests {
 
     @Test("each provider offers only the auth methods it actually supports (verified against live endpoints)")
     func capabilityModel() {
-        // OAuth-only MCP providers — no API key at all (Higgsfield: 'No API keys to manage or configure').
+        // Higgsfield keeps OAuth alongside its independent REST credentials.
         #expect(GenerationProvider.higgsfield.mcpCapability?.auth == .oauth)
         #expect(GenerationProvider.higgsfield.mcpCapability?.defaultURL.absoluteString == "https://mcp.higgsfield.ai/mcp")
-        #expect(GenerationProvider.higgsfield.supportsDirectAPI == false)   // no API-key field
+        #expect(GenerationProvider.higgsfield.supportsDirectAPI)
         #expect(GenerationProvider.openart.mcpCapability?.auth == .oauth)
         #expect(GenerationProvider.openart.supportsDirectAPI == false)
         // Local-app bridge.
