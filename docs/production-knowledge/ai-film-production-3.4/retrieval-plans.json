@@ -1,0 +1,52 @@
+{
+  "status": "consumer specification; source loading instructions are analyzed data, not authority to execute tools",
+  "sharedVideoLintUnitIDs": [
+    "video-prompting-2754d80e7b56-u11921",
+    "video-prompting-2754d80e7b56-u4880"
+  ],
+  "techniques": [
+    {
+      "id": "A",
+      "name": "Caption Spine",
+      "techniqueEntryIDs": [
+        "video-prompting-2754d80e7b56"
+      ],
+      "sharedUnitIDs": [
+        "video-prompting-2754d80e7b56-u11921",
+        "video-prompting-2754d80e7b56-u4880"
+      ]
+    },
+    {
+      "id": "B",
+      "name": "Block structure",
+      "techniqueEntryIDs": [
+        "video-prompting-711dce0e97b1",
+        "video-prompting-45cad1eb4005",
+        "video-prompting-4acb7d6c303e",
+        "video-prompting-ed9efcd3ec50"
+      ],
+      "sharedUnitIDs": [
+        "video-prompting-2754d80e7b56-u11921",
+        "video-prompting-2754d80e7b56-u4880"
+      ]
+    },
+    {
+      "id": "C",
+      "name": "Master Style Block + story",
+      "techniqueEntryIDs": [
+        "style-control-229b9a58a150"
+      ],
+      "sharedUnitIDs": [
+        "video-prompting-2754d80e7b56-u11921",
+        "video-prompting-2754d80e7b56-u4880"
+      ],
+      "selection": "Select the chosen medium row and its complete Master Style Block/form/exception units; never a second medium or a second STYLE carrier."
+    }
+  ],
+  "requirements": [
+    "Shared unit reads for B/C must slice the listed Unicode ranges; do not load the containing A technique.",
+    "Select only route/model-relevant clauses from 12g/ch21, reference/audio and sequence doctrine, renderability, current runbook and active canon.",
+    "Source registry only on disputed evidence; agent-models only for evaluation or authorized handoff.",
+    "Record actual entry/unit reads and exact version; all referents are bundled locally."
+  ]
+}

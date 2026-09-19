@@ -1,0 +1,148 @@
+[
+  {
+    "id": "post-audio-legal-5f341753096a",
+    "title": "Post, Audio, Continuity, Legal (ch. 17–20)",
+    "ancestry": [
+      "Post, Audio, Continuity, Legal (ch. 17–20)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "post",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/post-audio-legal.md",
+      "startLine": 1,
+      "endLine": 6,
+      "sha256": "e2c80be1b709d5397b057c9e50af428544269af263a346ba43cdd5966e46ee94",
+      "localDocument": "handbook/post-audio-legal.md"
+    },
+    "contentMarkdown": "# Post, Audio, Continuity, Legal (ch. 17–20)\n\n**Contents — read only the part the spine, checklist or routing row names:** ch. 17 post-production and delivery (upscale ladder, grading, exposure matching, trim rule, master and format strategy) · ch. 18 audio post (music paths and the score rule, in-model voice harvesting, voice consistency, performed music, dub classes, audio finishing) · ch. 19 continuity supervision (ledger, persistence discipline, take verdict order, sign-off checklists, motion ladder) · ch. 20 legal, licensing and disclosure (IP baselines, real people and real-face moderation, output rights, copyrightability, EU AI Act disclosure duty, platform labels, disclosure checklist). Every part applies to techniques A, B and C alike.\n\nTags and confidence labels: legend in sources.md.\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [
+      {
+        "sourceName": "sources.md",
+        "entryIDs": [
+          "sources-1599c8413d5d"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "post-audio-legal-8c72f9e07ed6",
+    "title": "17. Post-production & delivery",
+    "ancestry": [
+      "Post, Audio, Continuity, Legal (ch. 17–20)",
+      "17. Post-production & delivery"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "post",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/post-audio-legal.md",
+      "startLine": 7,
+      "endLine": 19,
+      "sha256": "66c48570a8ee0cff01dc7cbdf056625b68f6da163f428006b36a0b552e8b2fbe",
+      "localDocument": "handbook/post-audio-legal.md"
+    },
+    "contentMarkdown": "## 17. Post-production & delivery\n🟢 **Upscale ladder:** (1) bring the source still to max quality BEFORE video generation (a 4K anchor still gives the model detail budget). (2) Video upscaling as its own pass: Topaz Video AI is reference class; model by material: **Topaz Astra for AI-generated video**, Proteus generic, Iris faces, Starlight heavy degradation, Apollo/Aion interpolation/slow-motion. Alternatives integrated in Resolve/Premiere; open-source Video2X/Real-ESRGAN. Judge one exported frame before batch renders. [W]\n🟡 **Frame-rate caveat on upscale [P34]:** practitioners run Topaz at 4K/60 fps for cartoons — interpolation erases the deliberate 12-fps judder of stop-motion and limited-animation looks; keep the native frame rate for claymation/anime/limited styles, interpolate only for smooth 3D looks.\n🟢 **Grading as the final pass** over the edited film (not per clip) — unifying palette/contrast is the strongest single lever against the \"assembled\" feel.\n🟢 **Exposure matching across generations:** the multi-plate set of a location at ONE shared exposure (platforms-models ch. 13b) + the location's light state named identically in every prompt of that location — the same colour-temperature word, or the same Kelvin value only where the project steers colour temperature as a look control (rule 7, video-prompting ch. 12c) — keep takes gradable; residual mismatch is normal and belongs to the grading pass — never re-generate for exposure alone.\n🟢 **Trim rule:** AI clips have soft starts/ends — trim the first and last ~0.5 s per clip. [H-off] Post step on the assembled cut only: chaining and extension take their boundary frame from the raw export (video-prompting ch. 14). At a chain join both sides hold the same pose, so trim the outgoing soft tail and the incoming soft head as ONE cut point and confirm the action still reads continuous — restore frames if it jumps.\n🟡 **Music bleed in post [P38]:** a dominant real score masks bled model music, but lowering the clip's volume kills its SFX too — re-add SFX manually.\n🟢 **Frame-rate drops in generated takes (Seedance 2.0, feature-scale evidence) [H-off, P47, P49]:** despite \"24 fps\" in the prompt, takes came back stuttering at ~12–18 fps; fix in the NLE by deleting the duplicated frames — the audio track is cut with them, so such takes serve as B-roll only (≈4 s lost per take). Check 2.5 takes frame by frame before assuming the issue is gone.\n🟡 **Anti-plastic finishing pass [P20]:** (1) cut the model's unmotivated slow-motion — it reads as fake; (2) edit-side punch-ins/outs (100 → ~120 % over the clip) as cheap camera moves — only on 2K+/upscaled sources, a 1080p master loses visible resolution; (3) a light noise/grain overlay per clip — the strongest per-clip lever against plastic (the grade stays the film-level lever); (4) subtle edge blur/vignette. Small doses; grain first. Aspect changes (letterboxing) are a master-ratio decision (format strategy below), not a finishing trick.\n🟢 **Master strategy:** master at highest available quality (ProRes/H.265 high bitrate); derive deliveries. Archive original generations + final prompts (re-render capability).\n🟡 **Reframe as the vertical-derivation tool [P61]:** AI reframe tools (Higgsfield Reframe in the NLE plugin and as an MCP tool, platform-ui-workflows §1) recompose a 16:9 master around the subject for 9:16 and recovered a prop that had left the frame — a delivery step after picture lock, judged shot by shot; it does not replace the master-ratio decision below.\n🟡 **Format strategy:** fix the master aspect ratio BEFORE production; plan multi-format derivation (3:4/4:3-near sources allow the widest crops); compose critical content inside the tightest target crop's safe area. For video generations the ratio is a platform setting, never prompt text; image prompts state canvas + ratio first (style-control §2).\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "post-audio-legal-a502592e3e20",
+    "title": "18. Audio post: music, SFX, voices",
+    "ancestry": [
+      "Post, Audio, Continuity, Legal (ch. 17–20)",
+      "18. Audio post: music, SFX, voices"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "post",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/post-audio-legal.md",
+      "startLine": 20,
+      "endLine": 34,
+      "sha256": "29bfa953532a80e90ee76b29f3c716bada8e08011d34809d19ef12641e784085",
+      "localDocument": "handbook/post-audio-legal.md"
+    },
+    "contentMarkdown": "## 18. Audio post: music, SFX, voices\n🟢 **Three legitimate music paths** (choice = rights question, not just sound):\n1. **Self-produced** — DAW/composition route incl. AI-assisted vocal/instrument synthesis (e.g. ACE Studio): full rights, full control, score composed to picture. Cleanest path for ambitious projects.\n2. **Classically licensed** — library/stock music or commissioned score with sync license.\n3. **Generative** (Suno, Udio, ElevenLabs Music, Stable Audio 3, AIVA) — with licensing caution: paid plans grant a **usage license to the output, not copyright ownership**; free tiers exclude commercial use; the legal landscape is in motion (label suits/settlements). Licensing-first options: ElevenLabs Music and Stable Audio 3 (licensed training data; Stable Audio adds an SFX model and open weights), AIVA for orchestral/MIDI export. ⚠️ Udio is currently a walled garden (downloads disabled). Read the terms BEFORE any commercial release. [W]\n🟢 **MiniMax Music 3 (open-weights release Aug 2026):** creative concept + optional lyrics → a complete, structurally coherent song up to 5 min in one generation, 32 kHz/16-bit stereo. Hosted API: `music-3.0` at $0.15/generation (up to 5 min), `music-3.0-free` at 3 req/min, lyrics generation $0.01 — the lowest published per-track price of current frontier music vendors. Family tools: Music 2.5 adds paragraph-level structure control (14+ tags: Intro/Bridge/Hook/Build-up…) and instrumental-only mode; a dedicated cover/remix model reworks 6-s–6-min reference audio with automatic ASR lyric extraction — rights in the source material are YOURS to clear. **Open weights = pipeline ownership** (runs in ComfyUI — the music equivalent of Wan on the video side). ⚠️ Licensing story is thin (training-data provenance undocumented) — apply the same commercial caution as the rest of this bucket. 🟡 Availability on aggregators (Higgsfield, fal & co.) is expected but unverified at time of writing — check current hosting before planning. [W: official MiniMax research blog + ComfyUI + API docs]\n🟢 **Score rule:** never generate music inside the video model (SKILL rule 10) — the score is built over the edited film; the music on the timeline then dictates re-cut needs. Diegetic sound comes from generation; fill gaps via SFX libraries or SFX generators.\n🟢 **In-model voice harvesting (Seedance, production-proven) [P17]:** the FIRST generation sets the voice baseline per character — keeping it consistent afterwards is the actual challenge. Workflow: (1) trim every spoken line of a character out of the generated takes; (2) compile them into ONE per-character voice reference, combined length UNDER 30 s; (3) where the surface has an audio-reference slot, export the compilation as an audio file and attach it as `@Audio`; where the surface takes only video references, export as **MP4 with a black screen — not MP3** — and attach it as `@Video`. Either way it gets the role line from the voice-channel rule (video-prompting ch. 14b) — the black clip must be declared \"voice only, not a motion reference\"; attach it alongside the character sheet in every following generation where the character speaks. Voices then hold across generations and extensions.\n🟢 **Voice consistency as a system:** Route by the fault: voice drifts across takes → harvest a reference (above) or unify by speech-to-speech over the cut (P65); voice fits but the delivery is wrong → perform the line yourself and convert (voice-changer path); a specific external voice is required → TTS/clone re-record, lip-sync tool on camera (dub classes below). Per character one **voice profile** (description in the prompt sheet + where available a cloned/saved voice, e.g. a voice library — this is the reference half of the voice channel; the written description is the text half, both travel together, video-prompting ch. 14b voice channel) instead of re-rolling voices per shot. Accept the native generation voice where it fits (the sheet locks it); for control: re-record the dialogue track via TTS/voice clone and replace in the edit — lip-sync realignment via dedicated tools when on-camera. ElevenLabs `Stability` ≈ 0.25 for acted lines, ≈ 0.4 for narration; the vendor's current flagship speech model (older ones sound flatter). 🟡 **Speech-to-speech over the GENERATED dialogue track [P65]:** export the cut sequence's audio, run it through a voice changer with one saved library voice (ElevenLabs in the source), swap the result back in — one voice across every take without re-recording, while the generation's non-speech sounds (a laugh, footsteps) are kept underneath so the scene still reads as witnessed rather than voiced over; save the voice in the service so the character never loses it. Judge the result on pacing and phrasing, not on timbre alone (\"make sure it doesn't sound like they're performing\"). 🟢 **Voice-changer path for character voicing:** perform the line YOURSELF (timing, emphasis, emotion = directing work) and convert via speech-to-speech into the character voice — preserves intonation and cadence, beats pure TTS for acted scenes; multiple characters from one performer are possible. [W]\n🟡 **Deriving the text half of a voice profile from a sample [P52]:** upload a real recording to the text LLM, ask for the voice description (pitch, timbre, cadence, energy, accent), freeze it verbatim (video-prompting 12b); TTS-generated lines (ElevenLabs, Fish Audio in the source) serve as the reference half where the surface takes audio or black-screen video references — consent and licence terms of that voice apply (ch. 20).\n🟢 **Performed music: the track is the performance, not a guide [H-off, P24]:** a video model will not perform a song — \"rap\" yields a mouth moving to nothing. Record the track first, cut it into ~12-second blocks on the vocalist's breaths (⚠️ exceeds the 5–10 s clip range of 12b/14b — one block per take, check the live upload hint), attach each block as an audio file and declare it in plain words: \"THE TRACK THEY ARE PERFORMING — the audio of this file IS the live performance.\" The explanatory version (\"audio guide, for sync only\") was true and produced nothing. Assign **mouth ownership** explicitly or everyone in frame mouths the verse. (The score rule stands: this is diegetic performance, not underscore.) 🟢 **A hummed melody is enough as the pitch reference [H-off, P69]:** for a character who sings a few bars, a phone voice memo of a friend HUMMING the theme, attached as the audio reference, made the character hit the notes on the first take; without it the model invented a new melody every take (\"audio references aren't a gimmick — they're how you force the model to get the acting right\"). Works with any track as reference. 🟡 **The a-cappella variant [P65, Seedance 2.0 on Higgsfield]:** separate the VOCAL STEM (a stem splitter such as moises.ai), cut it into 4–10-s pieces whose length equals the generation length to the hundredth (\"5.00 s\"), upload each piece as a VIDEO file, not MP3, and tell the LLM/prompt that this clip is what the character sings and that the audio must be exactly this file; with the full mix, or without the exact-length rule, the model invented a different song and the character did not sing. ⚠️ P24 attached the full track in ~12-s blocks cut on breaths and it synced at feature scale; P65 found vocals-only at exact length necessary on 2.0 via Higgsfield — treat the stem + exact-length form as the safer default and the full-mix block as the documented alternative.\n🟡 **The opposite pole — sung lines generated in-model [P32, sponsored] ⚠️ documented exception to the score rule / SKILL rule 10 (animation only, disposable tune):** per-stage lines marked as delivery (`sung, fast and bouncy: {line}` — the ByteDance symbols of 12b: delivery before the braces, the line in `{ }`, which is also the source's own notation) with a SOUND block \"sung in a bright melodic voice rather than spoken; instrumental passages only under non-singing beats\". Use only when the tune is not canon and will not be replaced; when the track IS canon, the P24 recorded-track route is the only one that syncs.\n🟢 **Dub classes (the audio-dub and video-dub routes of the SKILL Workflow step 1 dialogue decision):** audio dub = new voice over the generated timing, no lip sync — animation and off-camera lines; video dub = audio dub plus lip-sync realignment by a dedicated tool — on-camera lines. Consent: ch. 20.\n🟢 **Audio finishing:** loudness-normalize the final mix to the target platform — streaming/online typically **−14 LUFS integrated** (YouTube/Spotify class), EU broadcast **−23 LUFS (EBU R128)**, true peak ≤ −1 dBTP; mix dialogue first, then SFX/ambience, score last; keep stems (dialogue/SFX/music) exported separately for fixes and dubs. [established standards]\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "post-audio-legal-94e3696388e5",
+    "title": "19. Continuity supervision & sign-off templates",
+    "ancestry": [
+      "Post, Audio, Continuity, Legal (ch. 17–20)",
+      "19. Continuity supervision & sign-off templates"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "post",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/post-audio-legal.md",
+      "startLine": 35,
+      "endLine": 44,
+      "sha256": "97145488361caf3c29c9a82154c9220c064d1bf3f017fa524c2b3a2dbca34730",
+      "localDocument": "handbook/post-audio-legal.md"
+    },
+    "contentMarkdown": "## 19. Continuity supervision & sign-off templates\n🟢 **Continuity ledger as a mandatory document** (the script-supervisor role): one table across all shots — character state (which state sheet), key props (whose hand, what state), time of day/weather, light direction, screen direction per character, emotional state (what the character just experienced). Check against the previous row before every generation; a state change spawns a sheet order (production-pipeline ch. 3), never a prompt wish.\n🟡 **Screen-direction repair in the edit [P28]:** when a take violates the stated screen direction (hero right, threat left), mirror the clip in the NLE before regenerating — free, and continuity holds; caveat: mirroring flips readable text and asymmetric props/wardrobe, so check the ledger row first.\n🟢 **Persistence discipline:** what must stay identical across takes travels as a reference with its one job line (rule 5 — the ch. 12b anchor line in the block structure, the 12h job sentence in a Caption Spine) and as a ledger row, never as descriptive sentences repeated in every prompt (economy doctrine). A drifting detail is first checked against its reference and ledger row; then one line changes in the next prompt (rule 15 order); a local fault on the winning take is repaired, not re-prompted (step 3 below).\n🟢 **Copy-ready checklists:**\n- **Take verdict order (binding — every other take rule is subordinate to this):** (1) **Hard rejects first:** a slop tell (production-pipeline ch. 10 — plastic skin, drifting faces between cuts, texture shimmer, hectic cutting at hard motion, floating third-person camera) or a pass-1 identity failure = REJECT as the shot's take regardless of performance; harvest clean 2–4 s as coverage (production-pipeline ch. 10), correction into the NEXT prompt. (2) **Rank the survivors by emotion:** among tell-free, identity-stable takes pick by Murch's ladder (film-craft §4) — the take with the right emotion wins over a cleaner take that feels wrong. (3) **Then repair, never reroll, the winner's local faults:** a pass-2 ledger fault (prop state, screen direction, minor light mismatch, a detail wrong in one region/time window) on the ranked winner is a LOCAL fault → workflows W5 (video_edit, NLE mirror above, cutaway) — this is W5's trigger (a take that passed the hard rejects and won its batch by emotion, with a local fault); only a GLOBAL fault (style, light, physics everywhere) goes back to the prompt.\n- **Still sign-off (before motion test):** identity = sheet? · light motivated + direction noted? · no 3D-game look? · material doctrine met? · reverse need settled? · target-crop safe area clear? · Verify line passes?\n- **Take sign-off (batch of 4, watch FULLY):** pass 1 identity (recognizable after every cut?) · pass 2 continuity (ledger row met? props constant?) · pass 3 timing (actions inside budget, no padding break?) · pass 4 camera (one move, axis held, no quick-cut hiding?) · pass 5 audio (diegetic only; no generated underscore — an attached performed track or a declared sung-line exception counts as diegetic; sync; mouth ownership held) · pass 6 style (every check of the recipe's Verify line in bible section B2 passes? — a clean but off-recipe take is rejected, production-pipeline ch. 1). Correct in the NEXT prompt in the rule-15 order — remove an over-instruction first, change one line second, add only third. Result not viewable → SKILL checklist step 7.\n- **Motion ladder (model/style approval):** identical character through: subtle portrait → head turn → walk → fast action → interaction. Only after passing, commit the production style.\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "post-audio-legal-60a38c77eb53",
+    "title": "20. Legal, licensing & disclosure",
+    "ancestry": [
+      "Post, Audio, Continuity, Legal (ch. 17–20)",
+      "20. Legal, licensing & disclosure"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "post",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/post-audio-legal.md",
+      "startLine": 45,
+      "endLine": 62,
+      "sha256": "d3e216e6646bedcfbba75a691cd43c9b29105c416766937255429bb4b03f5c40",
+      "localDocument": "handbook/post-audio-legal.md"
+    },
+    "contentMarkdown": "## 20. Legal, licensing & disclosure\n🟢 **IP baselines** (consolidated): styles are free; named characters/franchises/songs are not (active enforcement documented across studios, anime rights holders, labels). Prompt-side protection is a content decision, not a standing block: generic settings and unbranded props in the scene description; an exclusion only for an IP element that has actually appeared (rule 6); never a score line (rule 10). Director/DoP names as style references are established; \"in the spirit of, fully original execution\" is the official formula.\n🟡 **In-model music can reproduce existing songs [P56]:** asked for \"a modern pop song\", Seedance 2.5 and 2.0 returned melodies the practitioner recognised as existing chart songs (one clip withheld for fear of a copyright strike). One more reason for the score rule (SKILL rule 10): an in-model score is unlicensable AND may be someone else's — attach a cleared track instead (video-prompting ch. 14b timing input). A model marketed by practitioners for \"copyrighted and unrestricted\" content when run locally (MiniMax H3, [P56]) carries the IP-baseline risk above, not a licence.\n🟢 **Real people:** photos only with consent as references; voice cloning only with documented consent; no recognizable third parties without a release.\n🟢 **Disclosure in practice [H-off, P67]:** the vendor's own tutorial with a generated presenter states the disclosure inside the opening and the demonstration (\"if you are publishing a realistic generated presenter, make that clear to your audience\") — the human-readable half of the EU AI Act duty below, placed where the viewer meets the face. 🟢 **Real photos in sheets on Higgsfield [H-off, P69]:** the vendor's wedding short used two real people's photographs as the face source (hybrid sheet, production-pipeline ch. 3) on its own platform in Aug 2026 — consent implied by the brief; the moderation note below still applies to every other surface and to your own account's live check.\n🟢 **Real-face moderation is a production risk even WITH rights [W, P19]:** most hosted video models and aggregators reject references that contain a real human face — the filter cannot see your release. Plan for it at casting time:\n1. **Test acceptance first** — one cheap generation with the sheet on the target platform BEFORE a scene is built around a licensed likeness.\n2. **Registry entry** — the person's sheet, the release, and the platform's terms sit together in the bible's asset registry.\n3. **Alternative route budgeted** — 🟡 enterprise tiers of aggregators can switch the restriction off for verified customers (practitioner report, [P19]); 🟡 less restrictive individual tools exist (TopView AI, Oxen AI named Sep 2026 — unverified; check terms and output rights first).\n4. **Terms caveat, said once** — ⚠️ bypassing a platform's face filter may breach that platform's terms even when the likeness is licensed; the release settles the rights question, not the terms question. Name it to the director once, then follow their call.\n5. 🟡 **Face-grid fallback — this IS the terms risk from step 4 (practitioner test on Seedance 2.5 via a third-party aggregator, Sep 2026) [P19]:** a light scratch/grid pattern laid over the face in the character sheet (as if veiled) gets the reference accepted, and the generated character keeps ≈80–85 % of the likeness — the unmodified sheet consistently produced the more accurate character in every paired test (wide two-shot, location scene, dialogue scene). Usable only when exact likeness is not essential: a distinctive costume or silhouette carries identity, the person appears briefly, wides and mediums. NOT for close-ups, dialogue-heavy scenes, or a character that must match exactly across shots — there the loss is visible. A temporary workaround for a legitimate, released production, never the first choice; record it in the decision log.\nNote: 🟢 a moderation error can be a false positive from the PROSE, not the images — the vendor's own team cleared an NSFW block by having the LLM rewrite the prompt; failed runs were not charged (Seedance 2.0, [H-off, P49]). 🟡 Moderation reportedly runs in layers on Seedance 2.5 — prompt check plus output check — and blocks violence/blood/horror, brand names and real persons [P39, unverified]; the riskiest beat is generated FIRST (production-pipeline ch. 10).\n🟡 **Higgsfield terms rewrite, 2026-07-24 [P65, secondary — read the live terms]:** after a July 2026 terms update the practitioner reports, after meeting the team, that Higgsfield claims no ownership of outputs, keeps private inputs/outputs private, and grants users personal and commercial use of their generations; the wording was being rewritten for clarity at the time. A creator's report of a conversation, not the document — the current terms page is the receipt.\n🟢 **Commercial output rights per platform:** rights hang on the plan (free tiers often non-commercial) and change — read the current terms of the generation platform AND music/voice services before release; budget for moderation/eligibility checks.\n🟢 **Copyrightability of AI output:** under current US Copyright Office guidance, purely AI-generated output is **not copyrightable**; protection requires human authorship — creative selection, arrangement, editing, or substantial human-authored elements can be protected as such. EU member states similarly require human creative input. Practical rule: **document your human creative contribution** (treatment, shot design, prompt authorship, edit decisions) — it is your protectable layer and your evidence. [established guidance]\n🟢 **Disclosure duty (EU AI Act Art. 50, effective 2026-08-02):** synthetic content that could pass as real needs (a) human-readable disclosure and (b) machine-readable marking; the EU practice code names **C2PA Content Credentials** as the primary technical solution (plus invisible watermarks like SynthID). Applies to anyone whose content reaches EU audiences.\n🟢 **Platform labels as a second mandatory layer:** Meta \"AI Info\", TikTok AIGC labels, YouTube disclosure, LinkedIn CR badge partly read C2PA automatically — but some platforms **strip C2PA manifests on upload** (documented): file metadata alone is insufficient; set the native platform label as well. AI disclosure does not replace ad disclosure and vice versa. Keep an archive copy WITH the manifest. [W] **Disclosure checklist per delivery:** (1) in-content statement where the viewer meets the synthetic element — e.g. `This film uses AI-generated imagery and voices.` in the opening or credits; (2) C2PA manifest embedded + archive copy with manifest; (3) native platform label set on upload (Meta AI Info · TikTok AIGC · YouTube altered-content).\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  }
+]

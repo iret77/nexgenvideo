@@ -1,0 +1,170 @@
+[
+  {
+    "id": "agent-models-133089c76cc8",
+    "title": "Agent Models: Which Model Runs This Skill Well",
+    "ancestry": [
+      "Agent Models: Which Model Runs This Skill Well"
+    ],
+    "kind": "evidence",
+    "applicationContract": "agent-evaluation",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/agent-models.md",
+      "startLine": 1,
+      "endLine": 4,
+      "sha256": "81ffac1b398ca7e10518177fea3f4a43025ee9056332363f880f7f696da23e46",
+      "localDocument": "handbook/agent-models.md"
+    },
+    "contentMarkdown": "# Agent Models: Which Model Runs This Skill Well\n\nTags and confidence labels: legend in sources.md. Read this file when the director asks which model to run a session on, or before skill work is handed to a subagent or a batch run. Everything in the table is first-party measurement [PP 2026-09-18, registry entry in sources.md]: a fresh agent got only the task and the instruction to read SKILL.md first and then what the loading map names; it was judged on the delivery and on the files it actually opened. One to three runs per cell, the last of them on the condensed SKILL.md of 2026-09-18 — a result shows what a model CAN do with this skill, never a rate. Model versions age fast: a row is valid for the named version and for v3.4 of this skill.\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [
+      {
+        "sourceName": "SKILL.md",
+        "entryIDs": [
+          "skill-e95c6b6ec27f",
+          "skill-9ffe468b606c",
+          "skill-4a44d9499c8d",
+          "skill-6642a21f648a",
+          "skill-d730ca46bf0b",
+          "skill-994fe30637cd",
+          "skill-fff4c78a6d2f",
+          "skill-4fac30be2012",
+          "skill-703bc2391669",
+          "skill-7aba262bd322",
+          "skill-8c509e8b725a"
+        ]
+      },
+      {
+        "sourceName": "sources.md",
+        "entryIDs": [
+          "sources-1599c8413d5d"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "agent-models-20ab701c24f7",
+    "title": "Measured",
+    "ancestry": [
+      "Agent Models: Which Model Runs This Skill Well",
+      "Measured"
+    ],
+    "kind": "evidence",
+    "applicationContract": "agent-evaluation",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/agent-models.md",
+      "startLine": 5,
+      "endLine": 14,
+      "sha256": "027c01d6dcbc492d6094457332ebab5b2b18e6bf2dd98b2474ef82c5345b5d2d",
+      "localDocument": "handbook/agent-models.md"
+    },
+    "contentMarkdown": "## Measured\n\n| Model (harness) | One prompt, Caption Spine (W3) | Dialogue prompt, block structure (W3) | New-project intake (W1) | Review of an over-instructed prompt | Loading discipline |\n|---|---|---|---|---|---|\n| Claude Fable 5.1 (Claude Code subagent) | passed, three runs — full slate, real lint count, a redundant reference left out with its reason | passed, two runs — ONE audio notation, the music exclusion as a plain sentence, the line written once, an acting block | passed, two runs — one grouped question, the full technique menu with a reasoned recommendation and the draft-batch offer; as a subagent it took the director as unavailable and shipped every open item as `ASSUMED`, with a bible draft | passed | named parts only; of the other technique's chapter only the Lint paragraph |\n| GPT-5.6 Sol, medium effort (Codex CLI) | passed, three runs — lint counts within one word | passed, two runs — ONE notation (prose with the quoted line), cause before reaction, the vendor-verbatim lock string, lint count exact | passed, two runs — one grouped question, the full technique menu, a reasoned recommendation; the draft-batch offer in one of the two runs | not measured | ranged reads only: the exact minimal set in one run; in another it opened files by their first hundred lines and saw more |\n| GPT-5.6 Terra, medium effort (Codex CLI) | passed, three runs — lint counts within three words | passed on the third run — vendor symbols only, the line written once, the music exclusion as a plain sentence; the first run mixed the two notations until the rule said \"never mix\" in so many words, the second wrote the spoken line again in ACTION | partial, two runs — one grouped question and a reasoned recommendation; the alternatives of the menu listed only in the second run; no draft-batch offer, defaults not marked `ASSUMED` | not measured | reads wider than the map names (look and reference-protocol files), never a large file whole |\n\nEvery other model and version: not measured.\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "agent-models-a8616804de62",
+    "title": "What follows for sessions and subagents (🟡 derived from single runs)",
+    "ancestry": [
+      "Agent Models: Which Model Runs This Skill Well",
+      "What follows for sessions and subagents (🟡 derived from single runs)"
+    ],
+    "kind": "evidence",
+    "applicationContract": "agent-evaluation",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/agent-models.md",
+      "startLine": 15,
+      "endLine": 21,
+      "sha256": "0d1b8ce8beeaf605ab9da9befe0a0796fadbaac810b868d40296104dafc8681b",
+      "localDocument": "handbook/agent-models.md"
+    },
+    "contentMarkdown": "## What follows for sessions and subagents (🟡 derived from single runs)\n\n- **Lead session** — intake, the technique decision, canon questions, reviews, a repair that touches the rules: the strongest model the director has. The intake carries the decisions that are expensive to reverse, and the smaller of two same-family models dropped a decision duty exactly there. The same model followed a rule only once it was spelled out as a concrete do and don't — a skill rule that a mid-tier agent must follow states HOW, not only THAT.\n- **Subagent or batch work on a running project** — shot prompts from an approved treatment, slates, lint, risk register: a mid-tier model is sufficient once the bible frame is complete (technique decided in bible section B1, assets registered, canon approved). Hand over: the bible frame, the canon passage, the Shot IDs, and the sentence \"read SKILL.md first, then only what its loading map names\". The lead session recounts the Lint row and re-reads every returned prompt against the canon (checklist step 5) before delivery.\n- **Never delegated:** status moves, approvals and PROPOSAL picks (SKILL rules 12 and 14) — they wait for the director, not for another agent.\n- **An unmeasured model or a new version:** before it works unattended, run the cold tests below once — a matter of minutes. Offer this once; the director decides.\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [
+      {
+        "sourceName": "SKILL.md",
+        "entryIDs": [
+          "skill-e95c6b6ec27f",
+          "skill-9ffe468b606c",
+          "skill-4a44d9499c8d",
+          "skill-6642a21f648a",
+          "skill-d730ca46bf0b",
+          "skill-994fe30637cd",
+          "skill-fff4c78a6d2f",
+          "skill-4fac30be2012",
+          "skill-703bc2391669",
+          "skill-7aba262bd322",
+          "skill-8c509e8b725a"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "agent-models-e2150f12d125",
+    "title": "The cold-test protocol",
+    "ancestry": [
+      "Agent Models: Which Model Runs This Skill Well",
+      "The cold-test protocol"
+    ],
+    "kind": "evidence",
+    "applicationContract": "agent-evaluation",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/agent-models.md",
+      "startLine": 22,
+      "endLine": 29,
+      "sha256": "218f4d9e7a789a49844b671e7436a3266626a372a7d0fe57f0e23eb8d6621882",
+      "localDocument": "handbook/agent-models.md"
+    },
+    "contentMarkdown": "## The cold-test protocol\n\nHarness, verbatim: `Follow the skill exactly as an agent would when it is triggered: read SKILL.md first, then only what its loading map and routing tell you to read. Do not generate anything on any platform. Deliver exactly what the skill requires. At the end, list every file and chapter you actually read, in order.` Keep the wording identical across models: a sentence such as \"the director cannot answer\" switches the agent to the ASSUMED path of the interaction contract and tests something else.\n\n- **Prompt test:** a running-project frame (technique decided, two or three registered @assets, one treatment passage) and \"write the video prompt for shot X as a complete delivery\". Passed when the agent read the runbook, the project's technique chapter, renderability §2–3 and the platform's section — no large file whole, no second technique chapter — and delivered a Render Slate with a Lint row that survives a recount, Crew choices in two halves, a receipt state, a risk register, and cause before reaction in the beats.\n- **Dialogue test:** the same frame with technique B decided, two characters and one spoken line in the treatment. Passed when the AUDIO block uses ONE notation (video-prompting 12b), the music exclusion is a plain sentence, the speech count lock is present and the line is written once.\n- **Intake test:** a rough idea with format, look and video model named, and \"get me started\". Passed when the agent read W1, the genre baseline and story-structures ch. 23a, and answered with ONE grouped question that holds the story-gate gaps and the technique menu — three entries, a recommendation with its reason, the draft-batch offer — with defaults marked ASSUMED and bible section B1 named as the place the decision is kept.\n- Check the files opened against the harness's own log where it keeps one, and count the lint yourself: a self-reported reading list and a claimed word count are claims, not measurements.\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [
+      {
+        "sourceName": "SKILL.md",
+        "entryIDs": [
+          "skill-e95c6b6ec27f",
+          "skill-9ffe468b606c",
+          "skill-4a44d9499c8d",
+          "skill-6642a21f648a",
+          "skill-d730ca46bf0b",
+          "skill-994fe30637cd",
+          "skill-fff4c78a6d2f",
+          "skill-4fac30be2012",
+          "skill-703bc2391669",
+          "skill-7aba262bd322",
+          "skill-8c509e8b725a"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  }
+]

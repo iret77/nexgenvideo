@@ -1,0 +1,186 @@
+{
+  "status": "3.4 NGV adaptation specification; current locked contracts preserved; baseline consumer issues are closed",
+  "sourcePrecedence": "handbook/skill.md — Precedence",
+  "order": [
+    "Explicit current user instruction within the authorized task",
+    "Locked NGV host/pack contracts; unresolved contradictions require an explicit decision before implementation",
+    "Approved project canon within its phase and lineage",
+    "Applicable NGV adaptation below",
+    "Source always-rules plus explicitly scoped source exceptions",
+    "Model/platform/scenario-specific reference rule and original evidence confidence",
+    "Examples and templates"
+  ],
+  "overrides": [
+    {
+      "id": "ngv-phase-order",
+      "sourceBehavior": "Source W1/W10 and intake ordering",
+      "ngvApplication": "The active pack owns phase order. Musicvideo remains Track → optional Lyrics → Init → approved Analysis → optional existing material → story. Use W10 knowledge inside the relevant existing phases; a replacement phase graph requires an explicit decision.",
+      "baselineIssues": [
+        483,
+        447
+      ]
+    },
+    {
+      "id": "ngv-canon",
+      "sourceBehavior": "One production bible as source truth",
+      "ngvApplication": "Map bible roles to NGV canonical writers/artifacts and cumulative exact-byte lineage. Do not create an independent markdown authority. Draft/proposal and approval remain different states; phase edits require explicit rewind.",
+      "baselineIssues": [
+        438,
+        440,
+        484
+      ]
+    },
+    {
+      "id": "ngv-greenfield",
+      "sourceBehavior": "Story comes from user; missing story intake",
+      "ngvApplication": "Musicvideo may be greenfield: propose story or nonnarrative concept from approved audio analysis and optional lyrics. Missing existing story files never block development. Execution prompts cannot silently invent unapproved beats.",
+      "baselineIssues": [
+        484,
+        489
+      ]
+    },
+    {
+      "id": "ngv-language",
+      "sourceBehavior": "Conversation follows user language; supplied prompt stays verbatim",
+      "ngvApplication": "App interaction follows explicit app localization or an explicit language request. Generated model prompts remain English with literal dialogue in the declared dialogue language. Preserve user-supplied text as input/provenance; the normal route still precompiles it, never bypasses the prompt engine.",
+      "baselineIssues": [
+        439,
+        486
+      ]
+    },
+    {
+      "id": "ngv-hybrid",
+      "sourceBehavior": "Skill excludes live-action and real-footage editing",
+      "ngvApplication": "Reusable craft, coverage, structure, review and finishing also apply to imported/live_action/ai_enhanced shots. Generation-only anchors, paid routes and draft renders are conditional on source mode. Retain zero-generation musicvideo/film workflows.",
+      "baselineIssues": [
+        437,
+        490,
+        491
+      ]
+    },
+    {
+      "id": "ngv-anchor-modes",
+      "sourceBehavior": "Source prefers reference anchor and native video extension",
+      "ngvApplication": "Current locked NGV contract supports explicit frame continuation OR verified native video extension. Frame continuation binds the exact predecessor last frame; native extension binds exact approved predecessor video plus executable mode. Never combine mechanisms or substitute a reference image. Source clean-boundary trimming requires a new immutable derived source and exact timestamp/frame lineage.",
+      "baselineIssues": [
+        485
+      ]
+    },
+    {
+      "id": "ngv-provider-evidence",
+      "sourceBehavior": "Source green labels, model versions, UI controls and capacities",
+      "ngvApplication": "These are dated source claims, not live verified capabilities. Keep original date/confidence/route. Executability comes from enabled providers intersected with actual route support. Never transplant a UI field into an API or enable a provider from this corpus.",
+      "baselineIssues": [
+        434,
+        436,
+        437
+      ]
+    },
+    {
+      "id": "ngv-spend",
+      "sourceBehavior": "Default batches of four and 10–15 iterations",
+      "ngvApplication": "3.4 counts one batch of four as an iteration; three or four failures on the same axis fail it, one or two odd rolls do not. One failed run permits one steer/first exclusion; two justify the scoped restatement. Preserve remove → change → add, non-growing repair word count, protected successful lines and clean rewrite/channel change after three failed iterations. Paid batches, tests and 10-of-10 lead stress tests require existing budget authorization; no automatic spend.",
+      "baselineIssues": [
+        442,
+        480
+      ]
+    },
+    {
+      "id": "ngv-style-scope",
+      "sourceBehavior": "Recipe Verify lines described as binary reroll gates",
+      "ngvApplication": "Preserve source [edit] tags as assembly-only criteria: they never trigger a generation reroll. Other Verify clauses require frame/clip evidence under their actual applicability; status remains not_observed without it. Selected style controls compile according to project technique A/B/C only where deliberately steered.",
+      "baselineIssues": [
+        442,
+        443
+      ]
+    },
+    {
+      "id": "ngv-performance-audio",
+      "sourceBehavior": "Diegetic-only generation, no generated music; musical examples",
+      "ngvApplication": "Musicvideo master audio is the original track. Referenced segments can drive performance/lip sync without becoming replacement soundtrack. Singing, spoken dialogue, VO, ambience and score are separate roles with explicit mouth ownership; keep scope of music-bleed exception.",
+      "baselineIssues": [
+        488
+      ]
+    },
+    {
+      "id": "ngv-documentary",
+      "sourceBehavior": "Source AI interviews author soundbites before generation",
+      "ngvApplication": "For actual documentary, paper edit selects attributed, consented source transcript ranges; no invented witness quote or synthetic footage passed off as evidence. Authored or reenacted interviews are a separately declared synthetic mode, preserving source/disclosure provenance.",
+      "baselineIssues": [
+        491
+      ]
+    },
+    {
+      "id": "ngv-abi-and-pins",
+      "sourceBehavior": "New knowledge entities and metadata fields",
+      "ngvApplication": "Use versioned resources/new extension artifacts under existing registration and loader. Do not add stored fields to compatible public V1 value types. Existing projects retain pinned pack/profile/library versions; migration is explicit and transactional.",
+      "baselineIssues": [
+        482,
+        440
+      ]
+    },
+    {
+      "id": "ngv-style-risk",
+      "sourceBehavior": "UGC/handheld/elliptical styles tolerate artifacts",
+      "ngvApplication": "A deliberate style may accept a named aesthetic imperfection; it does not excuse wrong identity, anatomy, unapproved canon changes or provenance gaps. Distinguish intentional camera following from accidental floating camera.",
+      "baselineIssues": [
+        442,
+        490
+      ]
+    },
+    {
+      "id": "ngv-examples",
+      "sourceBehavior": "Worked examples and templates contain invented project names and parameters",
+      "ngvApplication": "Keep example and template content available in full, but instantiate only from actual project data and verified route. Never promote example light/weather/plot, prices, IDs or account names into canon.",
+      "baselineIssues": [
+        448,
+        486
+      ]
+    },
+    {
+      "id": "ngv-legal",
+      "sourceBehavior": "Source legal/licensing statements",
+      "ngvApplication": "Preserve attribution, consent, rights and disclosure procedures and the source date. Do not compile jurisdiction-specific legal conclusions into an automatic green gate. No additional legal research or advice is asserted by this extraction.",
+      "baselineIssues": [
+        445,
+        491
+      ]
+    },
+    {
+      "id": "ngv-knowledge-scope",
+      "sourceBehavior": "Complete knowledge vs selective context",
+      "ngvApplication": "Conserve the full archive, but select task/phase/technique sections or required units. Do not load large source files wholesale or a second technique chapter. Shared 12h Lint paragraph is available to B/C without loading A; source registry is loaded when evidence is disputed. Context traces prove actual retrieval.",
+      "baselineIssues": [
+        482
+      ]
+    },
+    {
+      "id": "ngv-readable-overlays",
+      "sourceBehavior": "Footage-authenticity timecode/REC tells and recipe chapter cards vs source red-list readable-text ban",
+      "ngvApplication": "Exact text goes to post by default. Preserve 3.4 renderability section 2 documented exceptions separately: master-plate-locked short text, official H3 quoted-text channel and a dedicated template/motion-design route. Each needs actual route support and observed text stability; no blanket ban and no blanket reliability claim.",
+      "baselineIssues": [
+        439,
+        444,
+        482
+      ]
+    },
+    {
+      "id": "ngv-project-technique",
+      "sourceBehavior": "Rule 4 technique menu A/B/C with no universal default",
+      "ngvApplication": "Choose and persist one technique per project with the director at the applicable creative intake after approved music analysis; no additional pre-analysis step. Unanswered choices remain explicitly ASSUMED with the menu and rationale. One-off W3 assumed A is a scoped exception, not a global default. Technique changes require an explicit versioned decision and downstream invalidation.",
+      "baselineIssues": []
+    },
+    {
+      "id": "ngv-economy",
+      "sourceBehavior": "Model owns composition/cutting/body mechanics/material/light behaviour by default",
+      "ngvApplication": "Agent retains canon, scene/beat/end states, reference jobs and required continuity. Only explicit canon, deliberate look or a failed batch on this take licenses a control on a model-owned axis. Record reason and source in Crew choices; do not serialize all populated IR fields unconditionally. Deterministic source provenance and canonical approval gates still apply.",
+      "baselineIssues": []
+    },
+    {
+      "id": "ngv-agent-measurements",
+      "sourceBehavior": "New agent-models cold-test table and delegation advice",
+      "ngvApplication": "Store named model/harness/skill versions, sample count and unmeasured cells as historical evidence, not a current ranking or success rate. Adapt fixtures to local NGV context. Never infer permission for agent delegation, model switching, spending, approvals or PROPOSAL picks from this source.",
+      "baselineIssues": []
+    }
+  ]
+}
