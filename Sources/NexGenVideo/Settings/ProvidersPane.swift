@@ -140,33 +140,33 @@ struct ProvidersPane: View {
             case .inactive, .none: (label, tone) = ready ? ("Not verified", .warning) : ("Not configured", .neutral)
             }
         } else {
-        switch primaryStyle(provider) {
-        case .oauth:
-            switch catalog.providerDiscovery[provider] {
-            case .checking: (label, tone) = ("Checking…", .neutral)
-            case .actionRequired: (label, tone) = ("Sign in again", .warning)
-            case .unavailable: (label, tone) = ("Connection failed", .error)
-            case .stale: (label, tone) = ("Refresh pending", .warning)
-            case .ready: (label, tone) = ("Signed in", .success)
-            case .inactive, .none:
-                (label, tone) = ready ? ("Signed in", .success) : ("Not configured", .neutral)
+            switch primaryStyle(provider) {
+            case .oauth:
+                switch catalog.providerDiscovery[provider] {
+                case .checking: (label, tone) = ("Checking…", .neutral)
+                case .actionRequired: (label, tone) = ("Sign in again", .warning)
+                case .unavailable: (label, tone) = ("Connection failed", .error)
+                case .stale: (label, tone) = ("Refresh pending", .warning)
+                case .ready: (label, tone) = ("Signed in", .success)
+                case .inactive, .none:
+                    (label, tone) = ready ? ("Signed in", .success) : ("Not configured", .neutral)
+                }
+            case .localApp:
+                (label, tone) = ready ? ("Enabled", .success) : ("Disabled", .neutral)
+            case .apiKey:
+                switch catalog.providerDiscovery[provider] {
+                case .checking where connectionState(provider).hasKey:
+                    (label, tone) = ("Checking…", .neutral)
+                case .unavailable where connectionState(provider).hasKey:
+                    (label, tone) = ("Connection failed", .error)
+                case .actionRequired where connectionState(provider).hasKey:
+                    (label, tone) = ("Key rejected", .error)
+                case .stale where connectionState(provider).hasKey:
+                    (label, tone) = ("Refresh pending", .warning)
+                default:
+                    (label, tone) = ready ? ("Key saved", .success) : ("Not configured", .neutral)
+                }
             }
-        case .localApp:
-            (label, tone) = ready ? ("Enabled", .success) : ("Disabled", .neutral)
-        case .apiKey:
-            switch catalog.providerDiscovery[provider] {
-            case .checking where connectionState(provider).hasKey:
-                (label, tone) = ("Checking…", .neutral)
-            case .unavailable where connectionState(provider).hasKey:
-                (label, tone) = ("Connection failed", .error)
-            case .actionRequired where connectionState(provider).hasKey:
-                (label, tone) = ("Key rejected", .error)
-            case .stale where connectionState(provider).hasKey:
-                (label, tone) = ("Refresh pending", .warning)
-            default:
-                (label, tone) = ready ? ("Key saved", .success) : ("Not configured", .neutral)
-            }
-        }
         }
         return SettingsStatusBadge(text: label, tone: tone)
     }

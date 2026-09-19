@@ -231,6 +231,11 @@ enum CatalogDiscovery {
                 for: provider
             )
         }
+        ModelCatalog.shared.directProviderDiscovery[.higgsfield] = ProviderKeychain.load(.higgsfield) == nil ? .inactive : .checking
+        ModelCatalog.shared.mcpProviderDiscovery[.higgsfield] = ProviderMCP.hasConfig(.higgsfield) ? .checking : .inactive
+        if ProviderKeychain.load(.higgsfield) != nil || ProviderMCP.hasConfig(.higgsfield) {
+            ModelCatalog.shared.setProviderDiscoveryState(.checking, for: .higgsfield)
+        }
         var modelCount = 0
         var providerCount = 0
         await forEachProviderResult(

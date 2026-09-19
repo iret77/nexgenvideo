@@ -99,6 +99,32 @@ struct HiggsfieldMappingTests {
         #expect(catalog.discoveredEntries(for: .higgsfield, transport: .mcp).count == 1)
     }
 
+    @Test @MainActor func discoveredRoutesReachTheHostCatalogAndKeepExactBindings() throws {
+        let catalog = ModelCatalog()
+        catalog.load(entries: [])
+        let entries = HiggsfieldModelRegistry.discoveredEntries(
+            availableModelIDs: Set(HiggsfieldModelRegistry.models.map(\.endpoint)))
+        _ = CatalogDiscovery.publishHiggsfield(.init(provider: .higgsfield, mcpConfigured: false,
+            oauthConnected: false, entries: [], directResult: .success(entries),
+            directObservedAt: "2026-09-19T00:00:00Z"), catalog: catalog)
+        #expect(catalog.lastError == nil)
+        #expect(catalog.video.count == 5)
+        #expect(catalog.image.count == 1)
+        for entry in entries {
+            let binding = try #require(ProviderManifest.bindings(forModelId: entry.id, catalog: catalog).first)
+            #expect(binding.provider == .higgsfield)
+            #expect(binding.transport == .api)
+            #expect(binding.providerRef == HiggsfieldModelRegistry.model(for: entry.id)?.endpoint)
+            #expect(catalog.offeringCapabilitiesByModelID[entry.id]?.isEmpty == false)
+        }
+        _ = CatalogDiscovery.publishHiggsfield(.init(provider: .higgsfield, mcpConfigured: false,
+            oauthConnected: false, entries: [], directResult: .transientFailure("offline")), catalog: catalog)
+        #expect(catalog.discoveredEntries(for: .higgsfield, transport: .api).count == 6)
+        _ = CatalogDiscovery.publishHiggsfield(.init(provider: .higgsfield, mcpConfigured: false,
+            oauthConnected: false, entries: [], directResult: .success([])), catalog: catalog)
+        #expect(catalog.byId.isEmpty)
+    }
+
     @Test @MainActor func sourceContractsAndHostingAreNative() throws {
         for model in HiggsfieldModelRegistry.models where model.operation != .image {
             let caps = try #require(model.entry.offers?.first?.resolvedVideoCapabilities)
