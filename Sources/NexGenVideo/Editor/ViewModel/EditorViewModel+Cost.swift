@@ -128,6 +128,7 @@ extension EditorViewModel {
         kind: GenerationSpendEvent.Kind,
         providerRequestId: String? = nil,
         providerRequestResumable: Bool? = nil,
+        providerReceipt: HiggsfieldJobReceipt? = nil,
         money: GenerationMoney? = nil,
         note: String? = nil
     ) throws {
@@ -145,7 +146,8 @@ extension EditorViewModel {
             providerRequestId: providerRequestId,
             providerRequestResumable: providerRequestResumable,
             money: money,
-            note: note
+            note: note,
+            providerReceipt: providerReceipt
         )
         generationLog.spendEvents.append(event)
         do {

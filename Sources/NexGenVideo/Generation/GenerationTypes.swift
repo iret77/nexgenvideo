@@ -40,6 +40,7 @@ struct GenerationPricingInput: Sendable, Equatable {
     let quality: String?
     let promptCharacterCount: Int
     let generateAudio: Bool?
+    var providerRequestBody: Data? = nil
 }
 
 struct GenerationMoney: Codable, Sendable, Equatable {
@@ -72,6 +73,7 @@ struct GenerationSpendEvent: Codable, Sendable, Equatable, Identifiable {
     let money: GenerationMoney?
     let note: String?
     let createdAt: Date
+    let providerReceipt: HiggsfieldJobReceipt?
 
     init(
         id: String = UUID().uuidString,
@@ -85,7 +87,8 @@ struct GenerationSpendEvent: Codable, Sendable, Equatable, Identifiable {
         providerRequestResumable: Bool? = nil,
         money: GenerationMoney? = nil,
         note: String? = nil,
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        providerReceipt: HiggsfieldJobReceipt? = nil
     ) {
         self.id = id
         self.transactionId = transactionId
@@ -99,6 +102,7 @@ struct GenerationSpendEvent: Codable, Sendable, Equatable, Identifiable {
         self.money = money
         self.note = note
         self.createdAt = createdAt
+        self.providerReceipt = providerReceipt
     }
 }
 

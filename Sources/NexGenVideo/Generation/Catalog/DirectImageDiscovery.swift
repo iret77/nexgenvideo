@@ -49,6 +49,9 @@ enum DirectImageDiscovery {
             case .google:
                 let ids = try await GoogleImageClient(apiKey: apiKey).availableModelIds()
                 entries = GoogleModelRegistry.entries(availableModelIds: ids)
+            case .higgsfield:
+                let ids = try await HiggsfieldClient(apiKey: apiKey).availableModelIDs()
+                entries = HiggsfieldModelRegistry.discoveredEntries(availableModelIDs: ids)
             case .runway:
                 let ids = try await RunwayClient(apiKey: apiKey).availableModelIds()
                 entries = RunwayModelRegistry.discoveredEntries(availableModelIds: ids)
@@ -59,7 +62,7 @@ enum DirectImageDiscovery {
         } catch {
             Log.generation.notice(
                 "direct image discovery failed for \(provider.rawValue): \(error.localizedDescription)")
-            if Self.isAuthenticationFailure(error) {
+            if Self.isAuthenticationFailure(error, provider: provider) {
                 return .authenticationFailure(
                     "The saved key was rejected. Replace it to refresh this provider's models."
                 )
@@ -75,12 +78,12 @@ enum DirectImageDiscovery {
         }
     }
 
-    static func isAuthenticationFailure(_ error: Error) -> Bool {
+    static func isAuthenticationFailure(_ error: Error, provider: GenerationProvider? = nil) -> Bool {
         guard let backendError = error as? GenerationBackendError,
               case .api(let status, _, _) = backendError else {
             return false
         }
-        return status == 401 || status == 403
+        return status == 401 || (status == 403 && provider != .higgsfield)
     }
 
     static func isTransientFailure(_ error: Error) -> Bool {
