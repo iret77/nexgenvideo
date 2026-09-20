@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MediaTab: View {
     @Environment(EditorViewModel.self) var editor
+    let workspace: EditorViewModel.WorkspaceFocus
 
     // Toolbar state
     @State var sortMode: SortMode = .dateAdded
@@ -136,22 +137,24 @@ struct MediaTab: View {
         .onExitCommand { if editor.pendingSwapClipId != nil { editor.cancelMediaSwap() } }
         .background(KeyCommandSink(onNewFolder: createNewFolderInCurrent, onNavigateUp: navigateUp))
         .onChange(of: editor.folders.map(\.id)) { _, _ in pruneStaleFolderState() }
-        .onChange(of: editor.mediaPanelRevealAssetId) { _, target in
-            guard let target else { return }
+        .onChange(of: editor.mediaPanelRevealAssetId, initial: true) { _, target in
+            guard workspace == editor.workspaceFocus, let target else { return }
             revealAsset(id: target)
             editor.mediaPanelRevealAssetId = nil
         }
-        .onChange(of: editor.mediaPanelOpenFolderId) { _, target in
-            guard let target else { return }
+        .onChange(of: editor.mediaPanelOpenFolderId, initial: true) { _, target in
+            guard workspace == editor.workspaceFocus, let target else { return }
             openFolder(id: target)
             editor.mediaPanelOpenFolderId = nil
         }
         .onChange(of: editor.mediaPanelPasteRequestTick) { _, _ in
+            guard workspace == editor.workspaceFocus else { return }
             handleClipboardPaste()
         }
         .onChange(of: currentFolderId, initial: true) { _, folderId in
-            editor.mediaPanelCurrentFolderId = folderId
+            editor.publishMediaPanelFolder(folderId, for: workspace)
         }
+        .onAppear { editor.publishMediaPanelFolder(currentFolderId, for: workspace) }
     }
 
     private var swapBanner: some View {

@@ -100,10 +100,8 @@ extension EditorViewModel {
     private func syncSelectionToActiveTab() {
         switch activePreviewTab {
         case .timeline:
-            selectedMediaAssetIds.removeAll()
+            break
         case .mediaAsset(let id, _, _):
-            selectedClipIds.removeAll()
-            selectedFolderIds.removeAll()
             selectedMediaAssetIds = [id]
         }
     }

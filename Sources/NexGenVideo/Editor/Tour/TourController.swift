@@ -25,6 +25,14 @@ enum TourTarget: Equatable {
         case .element(let id): return id.hostPanel
         }
     }
+
+    var workspace: EditorViewModel.WorkspaceFocus {
+        switch hostPanel {
+        case .media: .media
+        case .agent, .project: .production
+        case .inspector, .timeline, .preview: .edit
+        }
+    }
 }
 
 /// Pinpointable controls. Add a case + its `hostPanel`, then tag the view with
@@ -105,10 +113,13 @@ final class TourController {
     /// Ensure a spotlight step's host panel is visible
     private func applyStep(_ index: Int) {
         guard let editor, steps.indices.contains(index) else { return }
-        editor.maximizedPanel = nil
         if case .spotlight(let target) = steps[index].kind {
+            editor.setWorkspaceFocus(target.workspace)
+            editor.maximizedPanel = nil
             switch target.hostPanel {
-            case .media: editor.mediaPanelVisible = true
+            case .media:
+                editor.mediaPanelVisible = true
+                editor.leftSidebarTab = .media
             case .agent: editor.agentPanelVisible = true
             case .inspector: editor.inspectorPanelVisible = true
             case .project: editor.revealCockpit(editor.cockpitTab)

@@ -15,7 +15,7 @@ extension EditorViewModel {
     func beginMediaSwap(clipId: String) {
         guard findClip(id: clipId) != nil else { return }
         pendingSwapClipId = clipId
-        showMediaPanelMediaTab()
+        revealMediaTools()
     }
 
     func cancelMediaSwap() {

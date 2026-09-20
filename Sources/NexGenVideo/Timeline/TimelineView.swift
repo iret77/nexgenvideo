@@ -1033,6 +1033,7 @@ final class TimelineView: NSView {
     // MARK: - Drop target (drag from media panel)
 
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        guard editor.allowsTimelineEditChrome else { return [] }
         let point = convert(sender.draggingLocation, from: nil)
         let geo = geometry
         if externalDragAssets == nil, let urlString = sender.draggingPasteboard.string(forType: .string) {
@@ -1048,6 +1049,7 @@ final class TimelineView: NSView {
     }
 
     override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        guard editor.allowsTimelineEditChrome else { return [] }
         let point = convert(sender.draggingLocation, from: nil)
         let geo = geometry
         externalDropTarget = geo.dropTargetAt(y: point.y)
@@ -1093,6 +1095,7 @@ final class TimelineView: NSView {
     }
 
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        guard editor.allowsTimelineEditChrome else { return false }
         let geo = geometry
         let point = convert(sender.draggingLocation, from: nil)
         let cursorTarget = geo.dropTargetAt(y: point.y)

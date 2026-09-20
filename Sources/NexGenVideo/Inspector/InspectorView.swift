@@ -47,6 +47,9 @@ struct InspectorView: View {
         .onChange(of: editor.selectedMediaAssetIds) { _, _ in
             promoteSelection()
         }
+        .onChange(of: editor.activePreviewTabId) { _, _ in
+            promoteSelection()
+        }
         .onChange(of: editor.isMarqueeSelecting) { _, selecting in
             if !selecting { resolvePreferredTab() }
             promoteSelection()
@@ -60,7 +63,9 @@ struct InspectorView: View {
     /// A multi-clip timeline selection — the one documented exception to the single-inspected-object
     /// rule. Batch editing across selected clips stays a first-class NLE feature.
     private var isMultiClipSelection: Bool {
-        !editor.isMarqueeSelecting && editor.selectedClipIds.count > 1
+        editor.activePreviewTab == .timeline
+            && !editor.isMarqueeSelecting
+            && editor.selectedClipIds.count > 1
     }
 
     @ViewBuilder
