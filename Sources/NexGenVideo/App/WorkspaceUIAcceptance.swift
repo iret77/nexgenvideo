@@ -91,9 +91,12 @@ enum WorkspaceUIAcceptance {
                 }
                 guard await waitUntil(timeout: .seconds(5), {
                     host.layoutSubtreeIfNeeded()
+                    let frames = visiblePanelFrames(in: host)
                     return editor.workspaceFocus == workspace
                         && probeState(identifier: identifier, in: window) == true
                         && visiblePanelIDs(in: host) == expectedPanels(for: workspace)
+                        && defaultPanelWidthsAreValid(workspace: workspace, frames: frames)
+                        && previewTimecodeIsSingleLine(in: window, scale: scale)
                 }) else {
                     let diagnosticName = "scale-\(scaleLabel(scale))-\(workspace.rawValue)-failed"
                     _ = snapshot(
@@ -115,7 +118,7 @@ enum WorkspaceUIAcceptance {
                         ]
                     )
                     fail(
-                        "workspace did not render \(workspace.rawValue); focus="
+                        "workspace did not settle \(workspace.rawValue); focus="
                             + "\(editor.workspaceFocus.rawValue), panels="
                             + "\(visiblePanelIDs(in: host).sorted()), sidebar="
                             + "\(editor.isSidebarPresented), inspector="
