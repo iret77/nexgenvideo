@@ -47,6 +47,9 @@ enum WorkspaceUIAcceptance {
             }
             let editor = document.editorViewModel
             window.setContentSize(NSSize(width: 1470, height: 950))
+            if scale == 1.5 {
+                window.appearance = NSAppearance(named: .accessibilityHighContrastDarkAqua)
+            }
             window.makeKeyAndOrderFront(nil)
             app.activate(ignoringOtherApps: true)
             editor.setWorkspaceFocus(.production)
@@ -222,9 +225,11 @@ enum WorkspaceUIAcceptance {
     }
 
     private static func makeProjectFixture(scale: Double) throws -> URL {
+        let title = scale == 1.25
+            ? "An exceptionally long project name for the final picture lock"
+            : "Ein außergewöhnlich langes Projekt für den finalen Filmschnitt"
         let projectURL = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "Ein außergewöhnlich langes Projekt für den finalen Filmschnitt "
-                + "\(scaleLabel(scale))-\(UUID().uuidString).ngv",
+            "\(title) \(scaleLabel(scale))-\(UUID().uuidString).ngv",
             isDirectory: true
         )
         try FileManager.default.createDirectory(
