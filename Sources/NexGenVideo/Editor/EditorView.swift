@@ -67,6 +67,18 @@ class PaddedDividerSplitViewController: NSSplitViewController {
         splitView = PanelDividerSplitView()
     }
 
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        guard splitView !== view, splitView.superview === view else { return }
+        splitView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            splitView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            splitView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            splitView.topAnchor.constraint(equalTo: view.topAnchor),
+            splitView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+    }
+
     override func splitView(
         _ splitView: NSSplitView,
         effectiveRect proposedEffectiveRect: NSRect,
