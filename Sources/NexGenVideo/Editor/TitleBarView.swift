@@ -99,6 +99,13 @@ struct TitleBarView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel(focus.label)
                 .accessibilityAddTraits(selected ? .isSelected : [])
+                .background {
+                    if WorkspaceUIAcceptance.isRequested {
+                        AppRelaunchClickProbe(identifier: "editor.workspace.\(focus.rawValue)")
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .allowsHitTesting(false)
+                    }
+                }
             }
         }
         .padding(AppTheme.Spacing.xxs)
@@ -166,6 +173,13 @@ struct TitleBarView: View {
         .accessibilityLabel(label)
         .accessibilityValue(isVisible ? "Shown" : "Hidden")
         .accessibilityAddTraits(isVisible ? .isSelected : [])
+        .background {
+            if WorkspaceUIAcceptance.isRequested {
+                AppRelaunchClickProbe(identifier: "editor.panel.\(label.lowercased())")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
+            }
+        }
         .help("\(isVisible ? "Hide" : "Show") \(label.lowercased())")
     }
 }
