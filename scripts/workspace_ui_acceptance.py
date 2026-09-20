@@ -73,8 +73,10 @@ def run_scale(executable, output, scale):
         and len(workspace_rows) == len(EXPECTED_WORKSPACES)
         and len(hidden) == 1
         and len(invariants) == 1
+        and invariants[0].get("liveStateUnchanged") is True
         and invariants[0].get("projectBytesUnchanged") is True
         and invariants[0].get("undoUnchanged") is True
+        and invariants[0].get("workingCopyUnchanged") is True
         and len(screenshots) == 6
         and valid_images
     )

@@ -291,6 +291,8 @@ struct AgentPanelView: View {
         Button { service.startNewConversation() } label: {
             Label("New", systemImage: "plus")
                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
         }
         .buttonStyle(.capsule(.secondary, size: .small))
         .controlSize(.small)
@@ -308,6 +310,8 @@ struct AgentPanelView: View {
         } label: {
             Label("Latest", systemImage: "arrow.down")
                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
         }
         .buttonStyle(.capsule(.secondary, size: .small))
         .controlSize(.small)
@@ -338,6 +342,8 @@ struct AgentPanelView: View {
         } label: {
             Label("More", systemImage: "ellipsis")
                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
         }
         .buttonStyle(.capsule(.secondary, size: .small))
         .controlSize(.small)

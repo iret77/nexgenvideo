@@ -51,6 +51,17 @@ enum WorkspaceUIAcceptance {
             app.activate(ignoringOtherApps: true)
             editor.setWorkspaceFocus(.production)
             try? await Task.sleep(for: .milliseconds(500))
+            guard let workingRoot = editor.workingRoot,
+                  let originalWorkingCopy = try? treeSnapshot(at: workingRoot) else {
+                fail("the project working copy was unavailable", scale: scale)
+            }
+            let originalTimeline = editor.timeline
+            let originalManifest = editor.mediaManifest
+            let originalGenerationLog = editor.generationLog
+            let originalPipelineState = editor.projectState
+            let originalDocumentEdited = document.isDocumentEdited
+            let originalCanUndo = document.undoManager?.canUndo ?? false
+            let originalUndoName = document.undoManager?.undoActionName ?? ""
             for workspace in EditorViewModel.WorkspaceFocus.allCases {
                 let identifier = "editor.workspace.\(workspace.rawValue)"
                 guard click(identifier: identifier, in: window) == nil else {
@@ -61,7 +72,14 @@ enum WorkspaceUIAcceptance {
                     return editor.workspaceFocus == workspace
                         && visiblePanelIDs(in: host) == expectedPanels(for: workspace)
                 }) else {
-                    fail("workspace did not render \(workspace.rawValue)", scale: scale)
+                    fail(
+                        "workspace did not render \(workspace.rawValue); focus="
+                            + "\(editor.workspaceFocus.rawValue), panels="
+                            + "\(visiblePanelIDs(in: host).sorted()), sidebar="
+                            + "\(editor.isSidebarPresented), inspector="
+                            + "\(editor.isInspectorPresented)",
+                        scale: scale
+                    )
                 }
                 let visiblePanels = visiblePanelIDs(in: host)
                 let name = "scale-\(scaleLabel(scale))-\(workspace.rawValue)"
@@ -134,15 +152,26 @@ enum WorkspaceUIAcceptance {
                   }) else {
                 fail("panel controls did not restore their panels", scale: scale)
             }
-            guard !document.isDocumentEdited,
-                  document.undoManager?.canUndo != true,
+            guard editor.timeline == originalTimeline,
+                  editor.mediaManifest == originalManifest,
+                  editor.generationLog == originalGenerationLog,
+                  editor.projectState == originalPipelineState,
+                  (try? treeSnapshot(at: workingRoot)) == originalWorkingCopy,
+                  document.isDocumentEdited == originalDocumentEdited,
+                  (document.undoManager?.canUndo ?? false) == originalCanUndo,
+                  (document.undoManager?.undoActionName ?? "") == originalUndoName,
                   (try? projectSnapshot(at: projectURL)) == originalProject else {
                 fail("workspace navigation mutated project or undo state", scale: scale)
             }
             emit(
                 "invariants",
                 scale: scale,
-                fields: ["projectBytesUnchanged": true, "undoUnchanged": true]
+                fields: [
+                    "liveStateUnchanged": true,
+                    "projectBytesUnchanged": true,
+                    "undoUnchanged": true,
+                    "workingCopyUnchanged": true,
+                ]
             )
             emit("completed", scale: scale)
             window.orderOut(nil)
@@ -179,15 +208,27 @@ enum WorkspaceUIAcceptance {
     }
 
     private static func projectSnapshot(at projectURL: URL) throws -> [String: Data] {
-        let names = [
-            Project.timelineFilename,
-            Project.manifestFilename,
-            Project.generationLogFilename,
-            ProjectPluginSettings.filename,
-        ]
-        return try Dictionary(uniqueKeysWithValues: names.map { name in
-            (name, try Data(contentsOf: projectURL.appendingPathComponent(name)))
-        })
+        try treeSnapshot(at: projectURL)
+    }
+
+    private static func treeSnapshot(at root: URL) throws -> [String: Data] {
+        let keys: Set<URLResourceKey> = [.isRegularFileKey]
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: Array(keys),
+            options: []
+        ) else {
+            throw CocoaError(.fileReadUnknown)
+        }
+        let prefix = root.standardizedFileURL.path + "/"
+        var snapshot: [String: Data] = [:]
+        for case let url as URL in enumerator {
+            guard try url.resourceValues(forKeys: keys).isRegularFile == true else { continue }
+            let path = url.standardizedFileURL.path
+            guard path.hasPrefix(prefix) else { throw CocoaError(.fileReadInvalidFileName) }
+            snapshot[String(path.dropFirst(prefix.count))] = try Data(contentsOf: url)
+        }
+        return snapshot
     }
 
     private static func resetWorkspaceDefaults(scale: Double) {
