@@ -260,6 +260,7 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         workspace: EditorViewModel.WorkspaceFocus
     ) {
         pendingPositioning = nil
+        detachPanelHosts()
 
         while !splitViewItems.isEmpty {
             removeSplitViewItem(splitViewItems.last!)
@@ -311,6 +312,20 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         if view.bounds.width > 0 {
             view.layoutSubtreeIfNeeded()
             runPendingPositioning()
+        }
+    }
+
+    private func detachPanelHosts() {
+        let hosts = panelHosts
+        for panelHost in hosts {
+            guard let controller = panelHost as? NSViewController,
+                  let parent = controller.parent as? NSSplitViewController,
+                  let item = parent.splitViewItems.first(where: {
+                      $0.viewController === controller
+                  }) else { continue }
+            // Never persist the transient geometry produced while dismantling the old tree.
+            parent.splitView.autosaveName = nil
+            parent.removeSplitViewItem(item)
         }
     }
 
