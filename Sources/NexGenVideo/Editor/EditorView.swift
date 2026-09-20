@@ -25,18 +25,27 @@ struct EditorView: NSViewControllerRepresentable {
     }
 
     func updateNSViewController(_ controller: EditorSplitViewController, context: Context) {
+        let layoutPreset = editor.layoutPreset
+        let workspaceFocus = editor.workspaceFocus
+        let focusedPanel = editor.focusedPanel
+        let mediaPanelVisible = editor.mediaPanelVisible
+        let inspectorPanelVisible = editor.inspectorPanelVisible
+        let theaterActive = editor.theaterActive
+        let maximizedPanel = editor.maximizedPanel
+        let tourStepIndex = editor.tour.stepIndex
+        let tourAnchorRevision = editor.tour.anchorRevision
         let layoutIsCurrent = controller.applyLayoutIfNeeded(
-            editor.layoutPreset,
-            workspace: editor.workspaceFocus
+            layoutPreset,
+            workspace: workspaceFocus
         )
-        controller.applyPanelFocus(editor.focusedPanel)
+        controller.applyPanelFocus(focusedPanel)
         guard layoutIsCurrent else { return }
-        controller.applyMediaVisibility(editor.mediaPanelVisible)
-        controller.applyInspectorVisibility(editor.inspectorPanelVisible)
+        controller.applyMediaVisibility(mediaPanelVisible)
+        controller.applyInspectorVisibility(inspectorPanelVisible)
         // Theater collapses everything to the single player, in any stage — reusing the maximize
         // path so the one video engine stays put. Exiting restores the user's real maximize state.
-        controller.applyMaximize(editor.theaterActive ? .preview : editor.maximizedPanel)
-        controller.updateTourFrame(stepIndex: editor.tour.stepIndex, anchorRevision: editor.tour.anchorRevision)
+        controller.applyMaximize(theaterActive ? .preview : maximizedPanel)
+        controller.updateTourFrame(stepIndex: tourStepIndex, anchorRevision: tourAnchorRevision)
     }
 }
 
