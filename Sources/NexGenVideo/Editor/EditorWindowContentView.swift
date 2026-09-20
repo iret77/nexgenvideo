@@ -21,6 +21,13 @@ struct EditorWindowContentView: View {
                     .focusEffectDisabled()
                     .frame(width: geometry.size.width, height: geometry.size.height)
             }
+            .background {
+                if WorkspaceUIAcceptance.isRequested {
+                    AppRelaunchClickProbe(identifier: "editor.geometry")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .allowsHitTesting(false)
+                }
+            }
         }
         .sheet(isPresented: $editor.showExportDialog) {
             ExportView().environment(editor)

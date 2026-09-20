@@ -10,7 +10,9 @@ struct EditorView: NSViewControllerRepresentable {
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsViewController: EditorSplitViewController,
                       context: Context) -> CGSize? {
-        Self.containerSize(for: proposal)
+        let result = Self.containerSize(for: proposal)
+        WorkspaceUIAcceptance.recordEditorSizeProbe(proposal: proposal, result: result)
+        return result
     }
 
     // The window allocates the editor; unbounded probes must not preserve a previous window size.

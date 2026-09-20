@@ -3,6 +3,8 @@ import SwiftUI
 
 @MainActor
 enum WorkspaceUIAcceptance {
+    private static var editorSizeProbes: [[String: String]] = []
+
     static var isRequested: Bool {
         ProcessInfo.processInfo.environment["NGV_WORKSPACE_UI_ACCEPTANCE"] == "1"
     }
@@ -16,6 +18,7 @@ enum WorkspaceUIAcceptance {
             fail("invalid acceptance configuration")
         }
 
+        editorSizeProbes = []
         resetWorkspaceDefaults(scale: scale)
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
@@ -46,6 +49,11 @@ enum WorkspaceUIAcceptance {
                 fail("could not open the project fixture: \(error.localizedDescription)", scale: scale)
             }
             let editor = document.editorViewModel
+            emit(
+                "window-before-resize",
+                scale: scale,
+                fields: ["window": windowDiagnostics(window, contentView: host)]
+            )
             window.setContentSize(NSSize(width: 1470, height: 950))
             if scale == 1.5 {
                 window.appearance = NSAppearance(named: .accessibilityHighContrastDarkAqua)
@@ -54,6 +62,16 @@ enum WorkspaceUIAcceptance {
             app.activate(ignoringOtherApps: true)
             editor.setWorkspaceFocus(.production)
             try? await Task.sleep(for: .milliseconds(500))
+            host.layoutSubtreeIfNeeded()
+            emit(
+                "window-after-resize",
+                scale: scale,
+                fields: [
+                    "window": windowDiagnostics(window, contentView: host),
+                    "viewChain": editorViewChainDiagnostics(in: host),
+                    "sizeProbes": editorSizeProbes,
+                ]
+            )
             guard let workingRoot = editor.workingRoot,
                   let originalWorkingCopy = try? treeSnapshot(at: workingRoot) else {
                 fail("the project working copy was unavailable", scale: scale)
@@ -91,6 +109,8 @@ enum WorkspaceUIAcceptance {
                             "splits": splitDiagnostics(in: host),
                             "window": windowDiagnostics(window, contentView: host),
                             "viewChain": editorViewChainDiagnostics(in: host),
+                            "geometry": geometryDiagnostics(in: host),
+                            "sizeProbes": editorSizeProbes,
                         ]
                     )
                     fail(
@@ -401,16 +421,38 @@ enum WorkspaceUIAcceptance {
         _ window: NSWindow,
         contentView: NSView
     ) -> [String: Any] {
-        [
+        let currentContentView = window.contentView
+        let controllerView = window.contentViewController?.view
+        return [
+            "capturedContentID": String(describing: ObjectIdentifier(contentView)),
+            "currentContentID": currentContentView.map {
+                String(describing: ObjectIdentifier($0))
+            } ?? "",
+            "controllerViewID": controllerView.map {
+                String(describing: ObjectIdentifier($0))
+            } ?? "",
+            "capturedIsCurrentContent": currentContentView === contentView,
+            "capturedIsControllerView": controllerView === contentView,
             "contentBounds": frameDescription(contentView.bounds),
             "contentFrame": frameDescription(contentView.frame),
+            "contentVisibleRect": frameDescription(contentView.visibleRect),
+            "contentRectForFrame": frameDescription(window.contentRect(forFrameRect: window.frame)),
             "contentLayoutRect": frameDescription(window.contentLayoutRect),
             "contentMinSize": sizeDescription(window.contentMinSize),
             "contentMaxSize": sizeDescription(window.contentMaxSize),
             "frame": frameDescription(window.frame),
+            "backingScaleFactor": Double(window.backingScaleFactor),
+            "screenVisibleFrame": frameDescription(window.screen?.visibleFrame ?? .zero),
             "minSize": sizeDescription(window.minSize),
             "maxSize": sizeDescription(window.maxSize),
         ]
+    }
+
+    private static func geometryDiagnostics(in root: NSView) -> [String: Any] {
+        guard let probe = findProbe(in: root, identifier: "editor.geometry") else {
+            return ["available": false]
+        }
+        return ["available": true, "view": viewLayoutDiagnostics(probe, in: root)]
     }
 
     private static func editorViewChainDiagnostics(in root: NSView) -> [[String: Any]] {
@@ -429,7 +471,8 @@ enum WorkspaceUIAcceptance {
                 "bounds": frameDescription(view.bounds),
                 "frame": frameDescription(view.frame),
                 "frameInContent": frameDescription(view.convert(view.bounds, to: root)),
-                "translatesAutoresizingMask": view.translatesAutoresizingMaskIntoConstraints,
+            "translatesAutoresizingMask": view.translatesAutoresizingMaskIntoConstraints,
+            "autoresizesSubviews": view.autoresizesSubviews,
             ])
             current = view.superview
         }
@@ -447,6 +490,16 @@ enum WorkspaceUIAcceptance {
 
     private static func sizeDescription(_ size: NSSize) -> [String: Double] {
         ["width": Double(size.width), "height": Double(size.height)]
+    }
+
+    static func recordEditorSizeProbe(proposal: ProposedViewSize, result: CGSize) {
+        guard isRequested, editorSizeProbes.count < 32 else { return }
+        editorSizeProbes.append([
+            "proposalWidth": String(describing: proposal.width),
+            "proposalHeight": String(describing: proposal.height),
+            "resultWidth": String(describing: result.width),
+            "resultHeight": String(describing: result.height),
+        ])
     }
 
     private static func snapshot(_ view: NSView, at url: URL) -> Bool {
