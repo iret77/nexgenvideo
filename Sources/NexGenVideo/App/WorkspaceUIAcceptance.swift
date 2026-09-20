@@ -89,6 +89,8 @@ enum WorkspaceUIAcceptance {
                             "screenshot": "\(diagnosticName).png",
                             "panels": panelDiagnostics(in: host),
                             "splits": splitDiagnostics(in: host),
+                            "window": windowDiagnostics(window, contentView: host),
+                            "viewChain": editorViewChainDiagnostics(in: host),
                         ]
                     )
                     fail(
@@ -368,6 +370,45 @@ enum WorkspaceUIAcceptance {
         return result
     }
 
+    private static func windowDiagnostics(
+        _ window: NSWindow,
+        contentView: NSView
+    ) -> [String: Any] {
+        [
+            "contentBounds": frameDescription(contentView.bounds),
+            "contentFrame": frameDescription(contentView.frame),
+            "contentLayoutRect": frameDescription(window.contentLayoutRect),
+            "contentMinSize": sizeDescription(window.contentMinSize),
+            "contentMaxSize": sizeDescription(window.contentMaxSize),
+            "frame": frameDescription(window.frame),
+            "minSize": sizeDescription(window.minSize),
+            "maxSize": sizeDescription(window.maxSize),
+        ]
+    }
+
+    private static func editorViewChainDiagnostics(in root: NSView) -> [[String: Any]] {
+        func firstSplit(in view: NSView) -> NSSplitView? {
+            if let split = view as? NSSplitView { return split }
+            for child in view.subviews {
+                if let split = firstSplit(in: child) { return split }
+            }
+            return nil
+        }
+        var result: [[String: Any]] = []
+        var current: NSView? = firstSplit(in: root)
+        while let view = current {
+            result.append([
+                "class": String(describing: type(of: view)),
+                "bounds": frameDescription(view.bounds),
+                "frame": frameDescription(view.frame),
+                "frameInContent": frameDescription(view.convert(view.bounds, to: root)),
+                "translatesAutoresizingMask": view.translatesAutoresizingMaskIntoConstraints,
+            ])
+            current = view.superview
+        }
+        return result
+    }
+
     private static func frameDescription(_ frame: NSRect) -> [String: Double] {
         [
             "x": Double(frame.minX),
@@ -375,6 +416,10 @@ enum WorkspaceUIAcceptance {
             "width": Double(frame.width),
             "height": Double(frame.height),
         ]
+    }
+
+    private static func sizeDescription(_ size: NSSize) -> [String: Double] {
+        ["width": Double(size.width), "height": Double(size.height)]
     }
 
     private static func snapshot(_ view: NSView, at url: URL) -> Bool {
