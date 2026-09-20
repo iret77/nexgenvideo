@@ -402,7 +402,7 @@ enum WorkspaceUIAcceptance {
         let maximumHeight = AppTheme.Typography.ui * CGFloat(scale) + AppTheme.Spacing.md
         return probes(in: root, identifier: "preview.timecode").contains { probe in
             let frame = probe.convert(probe.bounds, to: root)
-            probe.window === window
+            return probe.window === window
                 && !probe.isHiddenOrHasHiddenAncestor
                 && frame.width > 0
                 && frame.height > 0
