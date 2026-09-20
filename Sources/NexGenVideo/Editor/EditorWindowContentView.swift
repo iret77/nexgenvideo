@@ -16,9 +16,11 @@ struct EditorWindowContentView: View {
             if let broken = editor.packWiringBroken {
                 PackWiringBanner(result: broken)
             }
-            EditorView()
-                .focusEffectDisabled()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            GeometryReader { geometry in
+                EditorView()
+                    .focusEffectDisabled()
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+            }
         }
         .sheet(isPresented: $editor.showExportDialog) {
             ExportView().environment(editor)
