@@ -123,7 +123,10 @@ struct MediaTab: View {
             .onChange(of: searchQuery) { _, _ in scheduleMomentSearch() }
 
             if editor.showGenerationPanel && !mediaAreaCollapsed {
-                GenerationView(maxPanelHeight: generationPanelMaxHeight)
+                GenerationView(
+                    maxPanelHeight: generationPanelMaxHeight,
+                    workspace: workspace
+                )
                     .frame(maxHeight: CGFloat(generationPanelMaxHeight), alignment: .bottom)
                     .tourAnchor(.generation)
                     .transition(.move(edge: .bottom).combined(with: .opacity))

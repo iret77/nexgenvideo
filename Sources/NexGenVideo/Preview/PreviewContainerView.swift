@@ -78,18 +78,44 @@ struct PreviewContainerView: View {
         let fps = editor.timeline.fps
         let durationTimecode = formatTimecode(frame: duration, fps: fps)
 
-        return HStack(spacing: AppTheme.Spacing.sm) {
+        return ViewThatFits(in: .horizontal) {
+            transportRow(
+                duration: duration,
+                fps: fps,
+                durationTimecode: durationTimecode,
+                compact: false
+            )
+            transportRow(
+                duration: duration,
+                fps: fps,
+                durationTimecode: durationTimecode,
+                compact: true
+            )
+        }
+        .frame(height: AppTheme.ComponentSize.previewToolbarHeight)
+    }
+
+    private func transportRow(
+        duration: Int,
+        fps: Int,
+        durationTimecode: String,
+        compact: Bool
+    ) -> some View {
+        HStack(spacing: compact ? AppTheme.Spacing.xs : AppTheme.Spacing.sm) {
             PreviewTimecodeText(
                 isTimeline: isTimeline,
                 fps: fps,
-                durationTimecode: durationTimecode
+                durationTimecode: durationTimecode,
+                showsDuration: !compact
             )
 
             Spacer()
 
-            HStack(spacing: AppTheme.Spacing.md) {
+            HStack(spacing: compact ? AppTheme.Spacing.sm : AppTheme.Spacing.md) {
                 transportButton("backward.end.fill") { seekTo(0) }
-                transportButton("backward.frame.fill") { seekTo(playheadFrame - 1) }
+                if !compact {
+                    transportButton("backward.frame.fill") { seekTo(playheadFrame - 1) }
+                }
                 transportButton(editor.isPlaying ? "pause.fill" : "play.fill") {
                     if isTimeline {
                         editor.togglePlayback()
@@ -97,7 +123,9 @@ struct PreviewContainerView: View {
                         editor.toggleSourcePlayback()
                     }
                 }
-                transportButton("forward.frame.fill") { seekTo(playheadFrame + 1) }
+                if !compact {
+                    transportButton("forward.frame.fill") { seekTo(playheadFrame + 1) }
+                }
                 transportButton("forward.end.fill") { seekTo(duration) }
             }
 
@@ -108,8 +136,7 @@ struct PreviewContainerView: View {
             }
             settingsMenuButton(label: zoomBadgeLabel, help: "Canvas Zoom") { zoomMenuItems }
         }
-        .padding(.horizontal, AppTheme.Spacing.lg)
-        .frame(height: AppTheme.ComponentSize.previewToolbarHeight)
+        .padding(.horizontal, compact ? AppTheme.Spacing.sm : AppTheme.Spacing.lg)
     }
 
     // MARK: - Image settings bar
@@ -736,19 +763,31 @@ private struct PreviewTimecodeText: View {
     let isTimeline: Bool
     let fps: Int
     let durationTimecode: String
+    let showsDuration: Bool
 
     var body: some View {
         let frame = isTimeline ? editor.playheadState.timelineFrame : editor.playheadState.sourceFrame
         HStack(spacing: AppTheme.Spacing.none) {
             Text(formatTimecode(frame: frame, fps: fps))
                 .foregroundStyle(AppTheme.Accent.timecodeColor)
-            Text(" / ")
-                .foregroundStyle(AppTheme.Text.tertiaryColor)
-            Text(durationTimecode)
-                .foregroundStyle(AppTheme.Text.secondaryColor)
+            if showsDuration {
+                Text(" / ")
+                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+                Text(durationTimecode)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+            }
         }
         .monospacedDigit()
         .interfaceFont(size: AppTheme.Typography.ui, design: .monospaced)
+        .lineLimit(1)
+        .fixedSize(horizontal: true, vertical: false)
+        .background {
+            if WorkspaceUIAcceptance.isRequested {
+                AppRelaunchClickProbe(identifier: "preview.timecode")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
+            }
+        }
     }
 }
 

@@ -62,6 +62,10 @@ private final class PanelDividerSplitView: NSSplitView {
     }
 }
 
+private extension NSLayoutConstraint.Priority {
+    static let editorFixedPanel = Self(rawValue: defaultLow.rawValue + 1)
+}
+
 /// Neutral divider with a larger hit area for panel resizing.
 class PaddedDividerSplitViewController: NSSplitViewController {
     fileprivate var hadSavedFrames = false
@@ -332,10 +336,7 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         addSplitViewItem(presetItem)
         applyCurrentPresentationState()
         view.needsLayout = true
-        if view.bounds.width > 0 {
-            view.layoutSubtreeIfNeeded()
-            runPendingPositioning()
-        }
+        schedulePendingPositioning(revision: layoutRevision)
     }
 
     private func disableAutosave(in controller: NSSplitViewController) {
@@ -410,17 +411,20 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         target.addSplitViewItem(centerItem)
         let rightItem = NSSplitViewItem(viewController: rightSplit)
         rightItem.minimumThickness = AppTheme.Layout.produceRightColumnMinWidth
+        rightItem.holdingPriority = .editorFixedPanel
         target.addSplitViewItem(rightItem)
 
         applyAfterLayout { [weak self, weak target, weak rightSplit, weak centerSplit] in
             guard let self, let target, let rightSplit, let centerSplit else { return }
             let targetW = target.view.bounds.width
-            let rightH = rightSplit.view.bounds.height
             self.positionIfUnsaved(target) {
                 $0.setPosition(AppTheme.Layout.mediaPanelDefault, ofDividerAt: 0)
                 $0.setPosition(targetW - AppTheme.Layout.producePreviewDefaultWidth, ofDividerAt: 1)
             }
+            target.view.layoutSubtreeIfNeeded()
+            let rightH = rightSplit.view.bounds.height
             self.positionIfUnsaved(rightSplit) { $0.setPosition(round(rightH * 0.35), ofDividerAt: 0) }
+            rightSplit.view.layoutSubtreeIfNeeded()
             let centerH = centerSplit.view.bounds.height
             self.positionIfUnsaved(centerSplit) {
                 $0.setPosition(max(0, centerH - AppTheme.Layout.produceTimelineStripDefault), ofDividerAt: 0)
@@ -452,11 +456,12 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         applyAfterLayout { [weak self, weak target, weak centerSplit] in
             guard let self, let target, let centerSplit else { return }
             let width = target.view.bounds.width
-            let height = centerSplit.view.bounds.height
             self.positionIfUnsaved(target) {
                 $0.setPosition(AppTheme.Layout.mediaPanelDefault, ofDividerAt: 0)
                 $0.setPosition(width - AppTheme.Layout.inspectorDefault, ofDividerAt: 1)
             }
+            target.view.layoutSubtreeIfNeeded()
+            let height = centerSplit.view.bounds.height
             self.positionIfUnsaved(centerSplit) {
                 $0.setPosition(round(height * AppTheme.Layout.finishPreviewFraction), ofDividerAt: 0)
             }
@@ -505,8 +510,9 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         applyAfterLayout { [weak self, weak target, weak hSplit] in
             guard let self, let target, let hSplit else { return }
             let targetH = target.view.bounds.height
-            let hW = hSplit.view.bounds.width
             self.positionIfUnsaved(target) { $0.setPosition(round(targetH * 0.7), ofDividerAt: 0) }
+            target.view.layoutSubtreeIfNeeded()
+            let hW = hSplit.view.bounds.width
             self.positionIfUnsaved(hSplit) {
                 $0.setPosition(AppTheme.Layout.mediaPanelDefault, ofDividerAt: 0)
                 $0.setPosition(hW - AppTheme.Layout.inspectorDefault, ofDividerAt: 1)
@@ -536,10 +542,12 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         applyAfterLayout { [weak self, weak target, weak rightSplit, weak topSplit] in
             guard let self, let target, let rightSplit, let topSplit else { return }
             let targetW = target.view.bounds.width
-            let rightH = rightSplit.view.bounds.height
-            let topW = topSplit.view.bounds.width
             self.positionIfUnsaved(target) { $0.setPosition(round(targetW * 0.3), ofDividerAt: 0) }
+            target.view.layoutSubtreeIfNeeded()
+            let rightH = rightSplit.view.bounds.height
             self.positionIfUnsaved(rightSplit) { $0.setPosition(round(rightH * 0.55), ofDividerAt: 0) }
+            rightSplit.view.layoutSubtreeIfNeeded()
+            let topW = topSplit.view.bounds.width
             self.positionIfUnsaved(topSplit) { $0.setPosition(topW - AppTheme.Layout.inspectorDefault, ofDividerAt: 0) }
         }
     }
@@ -564,9 +572,11 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         applyAfterLayout { [weak self, weak target, weak leftSplit, weak topSplit] in
             guard let self, let target, let leftSplit, let topSplit else { return }
             let targetW = target.view.bounds.width
-            let leftH = leftSplit.view.bounds.height
             self.positionIfUnsaved(target) { $0.setPosition(round(targetW * 0.5), ofDividerAt: 0) }
+            target.view.layoutSubtreeIfNeeded()
+            let leftH = leftSplit.view.bounds.height
             self.positionIfUnsaved(leftSplit) { $0.setPosition(round(leftH * 0.55), ofDividerAt: 0) }
+            leftSplit.view.layoutSubtreeIfNeeded()
             self.positionIfUnsaved(topSplit) { $0.setPosition(AppTheme.Layout.mediaPanelDefault, ofDividerAt: 0) }
         }
     }
@@ -598,6 +608,7 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
     ) -> NSSplitViewItem {
         let item = NSSplitViewItem(viewController: host)
         item.minimumThickness = minimumThickness
+        item.holdingPriority = .editorFixedPanel
         item.canCollapse = false
         item.isCollapsed = !editor.mediaPanelVisible
         mediaSplitItem = item
@@ -615,6 +626,7 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
     private func makeInspectorItem() -> NSSplitViewItem {
         let item = NSSplitViewItem(viewController: inspectorHC)
         item.minimumThickness = AppTheme.Layout.inspectorMin
+        item.holdingPriority = .editorFixedPanel
         item.canCollapse = false
         item.isCollapsed = !editor.inspectorPanelVisible
         inspectorSplitItem = item
@@ -624,6 +636,7 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
     private func makeTimelineItem() -> NSSplitViewItem {
         let item = NSSplitViewItem(viewController: timelineHC)
         item.minimumThickness = AppTheme.Layout.timelineMinHeight
+        item.holdingPriority = .editorFixedPanel
         timelineSplitItem = item
         return item
     }
@@ -649,7 +662,9 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
 
     override func viewDidLayout() {
         super.viewDidLayout()
-        runPendingPositioning()
+        if pendingPositioning != nil {
+            schedulePendingPositioning(revision: layoutRevision)
+        }
         updateTourFrame()   // see EditorSplitViewController+Tour.swift
     }
 
@@ -660,6 +675,15 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
             self.applyCurrentPresentationState()
         }
         view.needsLayout = true
+    }
+
+    private func schedulePendingPositioning(revision: UInt) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.layoutRevision == revision else { return }
+            self.view.layoutSubtreeIfNeeded()
+            self.runPendingPositioning()
+            self.view.layoutSubtreeIfNeeded()
+        }
     }
 
     private func runPendingPositioning() {

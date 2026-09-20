@@ -83,6 +83,7 @@ enum WorkspaceUIAcceptance {
             let originalDocumentEdited = document.isDocumentEdited
             let originalCanUndo = document.undoManager?.canUndo ?? false
             let originalUndoName = document.undoManager?.undoActionName ?? ""
+            var initialEditFrames: [String: NSRect]?
             for workspace in EditorViewModel.WorkspaceFocus.allCases {
                 let identifier = "editor.workspace.\(workspace.rawValue)"
                 guard click(identifier: identifier, in: window) == nil else {
@@ -128,10 +129,13 @@ enum WorkspaceUIAcceptance {
                 guard editor.workspaceFocus == workspace,
                       probeState(identifier: identifier, in: window) == true,
                       visiblePanelIDs(in: host) == expectedPanels(for: workspace),
-                      visiblePanelFrames(in: host) == renderedFrames else {
+                      visiblePanelFrames(in: host) == renderedFrames,
+                      defaultPanelWidthsAreValid(workspace: workspace, frames: renderedFrames),
+                      previewTimecodeIsSingleLine(in: window, scale: scale) else {
                     fail("workspace layout did not settle for \(workspace.rawValue)", scale: scale)
                 }
                 let visiblePanels = visiblePanelIDs(in: host)
+                if workspace == .edit { initialEditFrames = renderedFrames }
                 let name = "scale-\(scaleLabel(scale))-\(workspace.rawValue)"
                 guard snapshot(host, at: evidenceURL.appendingPathComponent("\(name).png")) else {
                     fail("could not capture \(name)", scale: scale)
@@ -143,6 +147,7 @@ enum WorkspaceUIAcceptance {
                         "workspace": workspace.rawValue,
                         "screenshot": "\(name).png",
                         "panels": visiblePanels.sorted(),
+                        "frames": renderedFrames.mapValues { frameDescription($0) },
                     ]
                 )
             }
@@ -161,7 +166,9 @@ enum WorkspaceUIAcceptance {
             host.layoutSubtreeIfNeeded()
             guard probeState(identifier: "editor.workspace.edit", in: window) == true,
                   visiblePanelIDs(in: host) == expectedPanels(for: .edit),
-                  visiblePanelFrames(in: host) == returnedFrames else {
+                  visiblePanelFrames(in: host) == returnedFrames,
+                  let initialEditFrames,
+                  returnedFrames == initialEditFrames else {
                 fail("edit workspace did not settle before panel controls", scale: scale)
             }
             guard click(identifier: "editor.panel.sidebar", in: window) == nil,
@@ -363,6 +370,56 @@ enum WorkspaceUIAcceptance {
             view.subviews.forEach(visit)
         }
         visit(root)
+        return result
+    }
+
+    private static func defaultPanelWidthsAreValid(
+        workspace: EditorViewModel.WorkspaceFocus,
+        frames: [String: NSRect]
+    ) -> Bool {
+        let tolerance = AppTheme.Spacing.md
+        func matches(_ panel: String, _ width: CGFloat) -> Bool {
+            guard let frame = frames[panel] else { return false }
+            return abs(frame.width - width) <= tolerance
+        }
+        switch workspace {
+        case .media, .edit:
+            return matches("mediaPanel", AppTheme.Layout.mediaPanelDefault)
+                && matches("inspectorPanel", AppTheme.Layout.inspectorDefault)
+        case .production:
+            return matches("agentPanel", AppTheme.Layout.mediaPanelDefault)
+                && matches("previewPanel", AppTheme.Layout.producePreviewDefaultWidth)
+                && matches("inspectorPanel", AppTheme.Layout.producePreviewDefaultWidth)
+        case .postproduction, .export:
+            return matches("projectPanel", AppTheme.Layout.mediaPanelDefault)
+                && matches("inspectorPanel", AppTheme.Layout.inspectorDefault)
+        }
+    }
+
+    private static func previewTimecodeIsSingleLine(in window: NSWindow, scale: Double) -> Bool {
+        guard let root = window.contentView,
+              let previewFrame = visiblePanelFrames(in: root)["previewPanel"] else { return false }
+        let maximumHeight = AppTheme.Typography.ui * CGFloat(scale) + AppTheme.Spacing.md
+        return probes(in: root, identifier: "preview.timecode").contains { probe in
+            let frame = probe.convert(probe.bounds, to: root)
+            probe.window === window
+                && !probe.isHiddenOrHasHiddenAncestor
+                && frame.width > 0
+                && frame.height > 0
+                && frame.height <= maximumHeight
+                && previewFrame.insetBy(dx: -AppTheme.BorderWidth.thin, dy: -AppTheme.BorderWidth.thin)
+                    .contains(frame)
+        }
+    }
+
+    private static func probes(in view: NSView, identifier: String) -> [NSView] {
+        var result: [NSView] = []
+        if view is AppRelaunchClickProbeView, view.identifier?.rawValue == identifier {
+            result.append(view)
+        }
+        for child in view.subviews {
+            result.append(contentsOf: probes(in: child, identifier: identifier))
+        }
         return result
     }
 
