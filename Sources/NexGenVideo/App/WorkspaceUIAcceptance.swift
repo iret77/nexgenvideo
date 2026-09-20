@@ -151,9 +151,18 @@ enum WorkspaceUIAcceptance {
                   await waitUntil(timeout: .seconds(5), {
                       host.layoutSubtreeIfNeeded()
                       return editor.workspaceFocus == .edit
+                          && probeState(identifier: "editor.workspace.edit", in: window) == true
                           && visiblePanelIDs(in: host) == expectedPanels(for: .edit)
                   }) else {
                 fail("could not return to edit", scale: scale)
+            }
+            let returnedFrames = visiblePanelFrames(in: host)
+            try? await Task.sleep(for: .milliseconds(300))
+            host.layoutSubtreeIfNeeded()
+            guard probeState(identifier: "editor.workspace.edit", in: window) == true,
+                  visiblePanelIDs(in: host) == expectedPanels(for: .edit),
+                  visiblePanelFrames(in: host) == returnedFrames else {
+                fail("edit workspace did not settle before panel controls", scale: scale)
             }
             guard click(identifier: "editor.panel.sidebar", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
@@ -163,7 +172,13 @@ enum WorkspaceUIAcceptance {
                           && visiblePanelIDs(in: host)
                               == ["previewPanel", "inspectorPanel", "timelinePanel"]
                   }) else {
-                fail("sidebar click did not hide the panel", scale: scale)
+                fail(
+                    "sidebar click did not hide the panel; sidebar="
+                        + "\(editor.isSidebarPresented), inspector=\(editor.isInspectorPresented), "
+                        + "probe=\(String(describing: probeState(identifier: "editor.panel.sidebar", in: window))), "
+                        + "panels=\(visiblePanelIDs(in: host).sorted())",
+                    scale: scale
+                )
             }
             guard click(identifier: "editor.panel.inspector", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
