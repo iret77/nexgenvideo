@@ -72,6 +72,21 @@ enum WorkspaceUIAcceptance {
                     return editor.workspaceFocus == workspace
                         && visiblePanelIDs(in: host) == expectedPanels(for: workspace)
                 }) else {
+                    let diagnosticName = "scale-\(scaleLabel(scale))-\(workspace.rawValue)-failed"
+                    _ = snapshot(
+                        host,
+                        at: evidenceURL.appendingPathComponent("\(diagnosticName).png")
+                    )
+                    emit(
+                        "layout-diagnostic",
+                        scale: scale,
+                        fields: [
+                            "workspace": workspace.rawValue,
+                            "screenshot": "\(diagnosticName).png",
+                            "panels": panelDiagnostics(in: host),
+                            "splits": splitDiagnostics(in: host),
+                        ]
+                    )
                     fail(
                         "workspace did not render \(workspace.rawValue); focus="
                             + "\(editor.workspaceFocus.rawValue), panels="
@@ -275,6 +290,54 @@ enum WorkspaceUIAcceptance {
         }
         visit(root)
         return result
+    }
+
+    private static func panelDiagnostics(in root: NSView) -> [[String: Any]] {
+        var result: [[String: Any]] = []
+        func visit(_ view: NSView) {
+            let identifier = view.accessibilityIdentifier()
+            if identifier.hasSuffix("Panel") {
+                let frame = view.convert(view.bounds, to: root)
+                result.append([
+                    "id": identifier,
+                    "frame": frameDescription(frame),
+                    "hidden": view.isHidden,
+                    "hiddenAncestor": view.isHiddenOrHasHiddenAncestor,
+                    "hasWindow": view.window != nil,
+                ])
+            }
+            view.subviews.forEach(visit)
+        }
+        visit(root)
+        return result
+    }
+
+    private static func splitDiagnostics(in root: NSView) -> [[String: Any]] {
+        var result: [[String: Any]] = []
+        func visit(_ view: NSView) {
+            if let split = view as? NSSplitView {
+                result.append([
+                    "autosave": split.autosaveName ?? "",
+                    "frame": frameDescription(split.convert(split.bounds, to: root)),
+                    "vertical": split.isVertical,
+                    "subviews": split.subviews.map {
+                        frameDescription($0.convert($0.bounds, to: root))
+                    },
+                ])
+            }
+            view.subviews.forEach(visit)
+        }
+        visit(root)
+        return result
+    }
+
+    private static func frameDescription(_ frame: NSRect) -> [String: Double] {
+        [
+            "x": Double(frame.minX),
+            "y": Double(frame.minY),
+            "width": Double(frame.width),
+            "height": Double(frame.height),
+        ]
     }
 
     private static func snapshot(_ view: NSView, at url: URL) -> Bool {
