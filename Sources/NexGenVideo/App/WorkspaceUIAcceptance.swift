@@ -355,19 +355,46 @@ enum WorkspaceUIAcceptance {
         var result: [[String: Any]] = []
         func visit(_ view: NSView) {
             if let split = view as? NSSplitView {
-                result.append([
+                var row: [String: Any] = [
                     "autosave": split.autosaveName ?? "",
                     "frame": frameDescription(split.convert(split.bounds, to: root)),
                     "vertical": split.isVertical,
                     "subviews": split.subviews.map {
                         frameDescription($0.convert($0.bounds, to: root))
                     },
-                ])
+                ]
+                if let controller = split.delegate as? NSSplitViewController {
+                    row["controllerViewIsSplit"] = controller.view === split
+                    row["controllerView"] = viewLayoutDiagnostics(controller.view, in: root)
+                    row["splitView"] = viewLayoutDiagnostics(split, in: root)
+                }
+                result.append(row)
             }
             view.subviews.forEach(visit)
         }
         visit(root)
         return result
+    }
+
+    private static func viewLayoutDiagnostics(
+        _ view: NSView,
+        in root: NSView
+    ) -> [String: Any] {
+        [
+            "id": String(describing: ObjectIdentifier(view)),
+            "class": String(describing: type(of: view)),
+            "bounds": frameDescription(view.bounds),
+            "frame": frameDescription(view.frame),
+            "frameInContent": frameDescription(view.convert(view.bounds, to: root)),
+            "superviewID": view.superview.map {
+                String(describing: ObjectIdentifier($0))
+            } ?? "",
+            "autoresizingMask": Int(view.autoresizingMask.rawValue),
+            "translatesAutoresizingMask": view.translatesAutoresizingMaskIntoConstraints,
+            "horizontalConstraints": view.constraintsAffectingLayout(for: .horizontal).map(\.description),
+            "verticalConstraints": view.constraintsAffectingLayout(for: .vertical).map(\.description),
+            "parentConstraints": view.superview?.constraints.map(\.description) ?? [],
+        ]
     }
 
     private static func windowDiagnostics(
