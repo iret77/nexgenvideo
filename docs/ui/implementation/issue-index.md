@@ -1,0 +1,62 @@
+# Implementierungs-Issues und Ausführungsreihenfolge
+
+Übergeordnet: [Epic #550](https://github.com/iret77/nexgenvideo/issues/550). 24 neue Teil-Issues, vier präzisierte UI-Aufträge und bestehende fachliche Epics. Jeder Auftrag enthält konkrete Code-Einstiege, Arbeitsschritte, Grenzen und Abnahmeszenarien.
+
+## Start und Aufteilung
+
+- Zuerst #506 (Shell) und #559 (gezielter Vertragsentwurf, noch keine Implementierung genehmigter Specs).
+- Danach #507 (gemeinsame Komponenten), #551 (Auswahlvertrag), #476 (Budget); dann Medien und Workspace-Presenter entlang der unten genannten Abhängigkeiten.
+- #559 und #572 sind Entscheidungsvorlagen. Ihre Implementierungsfolgen starten erst nach ausdrücklich dokumentierter Zustimmung zum konkreten Vertrag.
+- PR #549 besitzt die parallele Higgsfield-Anbindung. #548 liefert Wissen, #547 die Runtime-Migration. Nicht doppelt implementieren.
+- FilmFlow und Clay bleiben optionale Fähigkeiten. Ihre vollständige Integrationsabnahme setzt tatsächlich gelieferte externe/Engine-Verträge voraus; bestehender generischer Import/Schnitt/Export bleibt unabhängig bedienbar.
+- Einzelne geprüfte PRs, ein abgestimmter Release-Batch; keine automatischen Zwischenreleases.
+
+## Aufgaben und direkte Abhängigkeiten
+
+| Issue | Auftrag | Beginnen nach |
+|---|---|---|
+| [#506](https://github.com/iret77/nexgenvideo/issues/506) | [UI/01] Fünf native Workspaces und durchgehenden Editor-Chrome integrieren | Grundlagenarbeit |
+| [#507](https://github.com/iret77/nexgenvideo/issues/507) | [UI/02] Gemeinsame Inspector- und Formular-Komponenten adaptieren | [#506](https://github.com/iret77/nexgenvideo/issues/506) |
+| [#551](https://github.com/iret77/nexgenvideo/issues/551) | [UI/03] Schnittauswahl, Medienvorschau und Clip-Inspector eindeutig koppeln | [#506](https://github.com/iret77/nexgenvideo/issues/506) |
+| [#552](https://github.com/iret77/nexgenvideo/issues/552) | [UI/04] Medien-Workspace und kompakte Quellen-Picker aus einer Bibliothek bauen | [#506](https://github.com/iret77/nexgenvideo/issues/506), [#551](https://github.com/iret77/nexgenvideo/issues/551), [#507](https://github.com/iret77/nexgenvideo/issues/507) |
+| [#508](https://github.com/iret77/nexgenvideo/issues/508) | [UI/05] Asset-Inspector mit Identität, Herkunft und ausführbaren KI-Aktionen integrieren | [#551](https://github.com/iret77/nexgenvideo/issues/551), [#507](https://github.com/iret77/nexgenvideo/issues/507), [#552](https://github.com/iret77/nexgenvideo/issues/552) |
+| [#553](https://github.com/iret77/nexgenvideo/issues/553) | [UI/06] Manuelle Mediengenerierung mit vollständigen nativen Eingabeslots einbetten | [#552](https://github.com/iret77/nexgenvideo/issues/552), [#507](https://github.com/iret77/nexgenvideo/issues/507) |
+| [#554](https://github.com/iret77/nexgenvideo/issues/554) | [UI/07] Native Menüs, Kontextaktionen und Tastatur an denselben Befehlen ausrichten | [#551](https://github.com/iret77/nexgenvideo/issues/551), [#507](https://github.com/iret77/nexgenvideo/issues/507), [#552](https://github.com/iret77/nexgenvideo/issues/552) |
+| [#555](https://github.com/iret77/nexgenvideo/issues/555) | [UI/08] Packgesteuerte Produktionsnavigation und Phasendock anbinden | [#506](https://github.com/iret77/nexgenvideo/issues/506), [#507](https://github.com/iret77/nexgenvideo/issues/507) |
+| [#556](https://github.com/iret77/nexgenvideo/issues/556) | [UI/09] Strukturierte Aufträge und Entscheidungen statt Chatoberfläche anbieten | [#555](https://github.com/iret77/nexgenvideo/issues/555), [#507](https://github.com/iret77/nexgenvideo/issues/507), [#554](https://github.com/iret77/nexgenvideo/issues/554) |
+| [#557](https://github.com/iret77/nexgenvideo/issues/557) | [UI/10] Musicvideo-Intake und visuelle Audioanalyse im Produktionsworkspace erhalten | [#555](https://github.com/iret77/nexgenvideo/issues/555), [#556](https://github.com/iret77/nexgenvideo/issues/556), [#552](https://github.com/iret77/nexgenvideo/issues/552) |
+| [#558](https://github.com/iret77/nexgenvideo/issues/558) | [UI/11] Briefing, Gestaltung und Treatment als konkrete Artefaktflächen erschließen | [#555](https://github.com/iret77/nexgenvideo/issues/555), [#556](https://github.com/iret77/nexgenvideo/issues/556), [#507](https://github.com/iret77/nexgenvideo/issues/507) |
+| [#559](https://github.com/iret77/nexgenvideo/issues/559) | [UI/12 · Entscheidung] Zielworkflow und additive Produktionsartefakte spezifizieren | Grundlagenarbeit |
+| [#560](https://github.com/iret77/nexgenvideo/issues/560) | [UI/13] Genehmigten Skriptvertrag mit Writer und schlanker Szenenansicht implementieren | [#559](https://github.com/iret77/nexgenvideo/issues/559), [#558](https://github.com/iret77/nexgenvideo/issues/558) |
+| [#561](https://github.com/iret77/nexgenvideo/issues/561) | [UI/14] Genehmigten Shot-Timing- und Sketch-Moment-Vertrag implementieren | [#559](https://github.com/iret77/nexgenvideo/issues/559) |
+| [#562](https://github.com/iret77/nexgenvideo/issues/562) | [UI/15] Visuelles Storyboard mit mehreren Momenten und echtem Animatic anbinden | [#555](https://github.com/iret77/nexgenvideo/issues/555), [#561](https://github.com/iret77/nexgenvideo/issues/561), [#552](https://github.com/iret77/nexgenvideo/issues/552), [#554](https://github.com/iret77/nexgenvideo/issues/554) |
+| [#563](https://github.com/iret77/nexgenvideo/issues/563) | [UI/16] Technische Shotplanung mit Draft-zu-Render-Bindung ausbauen | [#559](https://github.com/iret77/nexgenvideo/issues/559), [#561](https://github.com/iret77/nexgenvideo/issues/561), [#555](https://github.com/iret77/nexgenvideo/issues/555), [#507](https://github.com/iret77/nexgenvideo/issues/507) |
+| [#564](https://github.com/iret77/nexgenvideo/issues/564) | [UI/17] Gerenderte References und Shot-Anker als getrennte Rollen präsentieren | [#555](https://github.com/iret77/nexgenvideo/issues/555), [#552](https://github.com/iret77/nexgenvideo/issues/552), [#507](https://github.com/iret77/nexgenvideo/issues/507), [#563](https://github.com/iret77/nexgenvideo/issues/563) |
+| [#565](https://github.com/iret77/nexgenvideo/issues/565) | [UI/18] Pre-Render-Review visuell an Shotzustände und echte Bildbefunde binden | [#555](https://github.com/iret77/nexgenvideo/issues/555), [#564](https://github.com/iret77/nexgenvideo/issues/564), [#533](https://github.com/iret77/nexgenvideo/issues/533) |
+| [#566](https://github.com/iret77/nexgenvideo/issues/566) | [UI/19] Visuelle Take-Arbeitsfläche mit Batchfreigabe, Sichtung und Schnittübergabe integrieren | [#555](https://github.com/iret77/nexgenvideo/issues/555), [#556](https://github.com/iret77/nexgenvideo/issues/556), [#564](https://github.com/iret77/nexgenvideo/issues/564), [#565](https://github.com/iret77/nexgenvideo/issues/565), [#553](https://github.com/iret77/nexgenvideo/issues/553) |
+| [#567](https://github.com/iret77/nexgenvideo/issues/567) | [UI/20] Postproduction mit bestehendem Inspector und Sequenzreview zusammensetzen | [#506](https://github.com/iret77/nexgenvideo/issues/506), [#551](https://github.com/iret77/nexgenvideo/issues/551), [#507](https://github.com/iret77/nexgenvideo/issues/507), [#554](https://github.com/iret77/nexgenvideo/issues/554) |
+| [#568](https://github.com/iret77/nexgenvideo/issues/568) | [UI/21] Eigenständigen Exportworkspace an vorhandene Delivery-Dienste binden | [#506](https://github.com/iret77/nexgenvideo/issues/506), [#567](https://github.com/iret77/nexgenvideo/issues/567), [#507](https://github.com/iret77/nexgenvideo/issues/507) |
+| [#569](https://github.com/iret77/nexgenvideo/issues/569) | [UI/22] Generisches Vorschaubild pro Export als gebundenen Sidecar ausgeben | [#568](https://github.com/iret77/nexgenvideo/issues/568), [#553](https://github.com/iret77/nexgenvideo/issues/553) |
+| [#570](https://github.com/iret77/nexgenvideo/issues/570) | [UI/23] Getrennte KI- und Exportaktivität mit echten Jobdetails anzeigen | [#506](https://github.com/iret77/nexgenvideo/issues/506), [#556](https://github.com/iret77/nexgenvideo/issues/556), [#568](https://github.com/iret77/nexgenvideo/issues/568) |
+| [#476](https://github.com/iret77/nexgenvideo/issues/476) | [UI/24] Budget dauerhaft in Statusleiste und Detailpopover erschließen | [#506](https://github.com/iret77/nexgenvideo/issues/506) |
+| [#571](https://github.com/iret77/nexgenvideo/issues/571) | [UI/25] Settings und App-Einstiege in das gemeinsame native Formularraster überführen | [#507](https://github.com/iret77/nexgenvideo/issues/507), [#554](https://github.com/iret77/nexgenvideo/issues/554) |
+| [#572](https://github.com/iret77/nexgenvideo/issues/572) | [Interop/01 · Entscheidung] Optionalen FilmFlow-Snapshot-Importvertrag festlegen | [#559](https://github.com/iret77/nexgenvideo/issues/559) |
+| [#573](https://github.com/iret77/nexgenvideo/issues/573) | [Interop/02] Genehmigten FilmFlow-MCP-Snapshot transaktional importieren | [#572](https://github.com/iret77/nexgenvideo/issues/572), [#560](https://github.com/iret77/nexgenvideo/issues/560), [#561](https://github.com/iret77/nexgenvideo/issues/561), [#563](https://github.com/iret77/nexgenvideo/issues/563), [#552](https://github.com/iret77/nexgenvideo/issues/552) |
+| [#574](https://github.com/iret77/nexgenvideo/issues/574) | [UI/26] Native Workbench auf Funktionsparität und vollständige Arbeitswege abnehmen | [#506](https://github.com/iret77/nexgenvideo/issues/506), [#507](https://github.com/iret77/nexgenvideo/issues/507), [#551](https://github.com/iret77/nexgenvideo/issues/551), [#552](https://github.com/iret77/nexgenvideo/issues/552), [#508](https://github.com/iret77/nexgenvideo/issues/508), [#553](https://github.com/iret77/nexgenvideo/issues/553), [#554](https://github.com/iret77/nexgenvideo/issues/554), [#555](https://github.com/iret77/nexgenvideo/issues/555), [#556](https://github.com/iret77/nexgenvideo/issues/556), [#557](https://github.com/iret77/nexgenvideo/issues/557), [#558](https://github.com/iret77/nexgenvideo/issues/558), [#560](https://github.com/iret77/nexgenvideo/issues/560), [#561](https://github.com/iret77/nexgenvideo/issues/561), [#562](https://github.com/iret77/nexgenvideo/issues/562), [#563](https://github.com/iret77/nexgenvideo/issues/563), [#564](https://github.com/iret77/nexgenvideo/issues/564), [#565](https://github.com/iret77/nexgenvideo/issues/565), [#566](https://github.com/iret77/nexgenvideo/issues/566), [#567](https://github.com/iret77/nexgenvideo/issues/567), [#568](https://github.com/iret77/nexgenvideo/issues/568), [#569](https://github.com/iret77/nexgenvideo/issues/569), [#570](https://github.com/iret77/nexgenvideo/issues/570), [#476](https://github.com/iret77/nexgenvideo/issues/476), [#571](https://github.com/iret77/nexgenvideo/issues/571), [#217](https://github.com/iret77/nexgenvideo/issues/217), [#540](https://github.com/iret77/nexgenvideo/issues/540), [#547](https://github.com/iret77/nexgenvideo/issues/547) |
+
+## Bereits vorhandene fachliche Arbeit
+
+| Issue / PR | Zuständigkeit |
+|---|---|
+| [#533](https://github.com/iret77/nexgenvideo/issues/533) | Shotzustände/Weltchronologie/semantischer Text-Bild-Review; #565 ist der UI-Consumer. |
+| [#540](https://github.com/iret77/nexgenvideo/issues/540), #541–#546 | Optionales Clay-Blocking, echte Runtime/3D-Daten/Renderausgaben und Provenienz. Kein zweiter UI-Renderer. |
+| [#217](https://github.com/iret77/nexgenvideo/issues/217) | Vorhandene Musicvideo-Album-Utility erschließen; nicht generischer Preview-Sidecar. |
+| [#528](https://github.com/iret77/nexgenvideo/issues/528) | Echte Export-Queue; #570 ist nur Presentation. |
+| [#509](https://github.com/iret77/nexgenvideo/issues/509) | Upstream-Codepakete #510–#528; selektive native Integration, kein Cherry-pick des ganzen Upstreams. |
+| [#547](https://github.com/iret77/nexgenvideo/issues/547) / [#548](https://github.com/iret77/nexgenvideo/pull/548) | Runtime-Migration vs Wissenslieferung für Skill 3.4. |
+| [PR #549](https://github.com/iret77/nexgenvideo/pull/549) | Higgsfield REST neben MCP mit eigenen Ausführungs-/Kostenverträgen. |
+| [#529–#532](https://github.com/iret77/nexgenvideo/issues/529) | Bestehende Batch-/Kosten-/Revision-/Resume-Fehler; Regressionfälle für neue Oberfläche. |
+
+## Abnahmekriterium je PR
+
+Funktionsmatrix-Zuordnung, tatsächlicher nativer Handler, Daten-/Undo-/Revisionsfolgen, aussagekräftige Tests und visuelle Bedienprüfung. Kein Mockup-Haken ersetzt Engine-Evidenz. Nicht ausgeführte Prüfungen und noch fehlende Dependencies ausdrücklich benennen.
