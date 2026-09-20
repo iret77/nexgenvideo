@@ -18,6 +18,7 @@ struct EditorWindowContentView: View {
             }
             EditorView()
                 .focusEffectDisabled()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .sheet(isPresented: $editor.showExportDialog) {
             ExportView().environment(editor)

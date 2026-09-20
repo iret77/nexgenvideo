@@ -70,6 +70,7 @@ enum WorkspaceUIAcceptance {
                 guard await waitUntil(timeout: .seconds(5), {
                     host.layoutSubtreeIfNeeded()
                     return editor.workspaceFocus == workspace
+                        && probeState(identifier: identifier, in: window) == true
                         && visiblePanelIDs(in: host) == expectedPanels(for: workspace)
                 }) else {
                     let diagnosticName = "scale-\(scaleLabel(scale))-\(workspace.rawValue)-failed"
@@ -95,6 +96,15 @@ enum WorkspaceUIAcceptance {
                             + "\(editor.isInspectorPresented)",
                         scale: scale
                     )
+                }
+                let renderedFrames = visiblePanelFrames(in: host)
+                try? await Task.sleep(for: .milliseconds(300))
+                host.layoutSubtreeIfNeeded()
+                guard editor.workspaceFocus == workspace,
+                      probeState(identifier: identifier, in: window) == true,
+                      visiblePanelIDs(in: host) == expectedPanels(for: workspace),
+                      visiblePanelFrames(in: host) == renderedFrames else {
+                    fail("workspace layout did not settle for \(workspace.rawValue)", scale: scale)
                 }
                 let visiblePanels = visiblePanelIDs(in: host)
                 let name = "scale-\(scaleLabel(scale))-\(workspace.rawValue)"
@@ -139,8 +149,14 @@ enum WorkspaceUIAcceptance {
                   }) else {
                 fail("inspector click did not hide the panel", scale: scale)
             }
+            let collapsedFrames = visiblePanelFrames(in: host)
+            try? await Task.sleep(for: .milliseconds(300))
+            host.layoutSubtreeIfNeeded()
             let collapsedName = "scale-\(scaleLabel(scale))-edit-panels-hidden"
-            guard visiblePanelIDs(in: host) == ["previewPanel", "timelinePanel"],
+            guard probeState(identifier: "editor.panel.sidebar", in: window) == false,
+                  probeState(identifier: "editor.panel.inspector", in: window) == false,
+                  visiblePanelIDs(in: host) == ["previewPanel", "timelinePanel"],
+                  visiblePanelFrames(in: host) == collapsedFrames,
                   snapshot(host, at: evidenceURL.appendingPathComponent("\(collapsedName).png")) else {
                 fail("collapsed panel state was not rendered", scale: scale)
             }
@@ -166,6 +182,15 @@ enum WorkspaceUIAcceptance {
                           && visiblePanelIDs(in: host) == expectedPanels(for: .edit)
                   }) else {
                 fail("panel controls did not restore their panels", scale: scale)
+            }
+            let restoredFrames = visiblePanelFrames(in: host)
+            try? await Task.sleep(for: .milliseconds(300))
+            host.layoutSubtreeIfNeeded()
+            guard probeState(identifier: "editor.panel.sidebar", in: window) == true,
+                  probeState(identifier: "editor.panel.inspector", in: window) == true,
+                  visiblePanelIDs(in: host) == expectedPanels(for: .edit),
+                  visiblePanelFrames(in: host) == restoredFrames else {
+                fail("restored panel layout did not settle", scale: scale)
             }
             guard editor.timeline == originalTimeline,
                   editor.mediaManifest == originalManifest,
@@ -275,15 +300,22 @@ enum WorkspaceUIAcceptance {
     }
 
     private static func visiblePanelIDs(in root: NSView) -> Set<String> {
-        var result: Set<String> = []
+        Set(visiblePanelFrames(in: root).keys)
+    }
+
+    private static func visiblePanelFrames(in root: NSView) -> [String: NSRect] {
+        var result: [String: NSRect] = [:]
         func visit(_ view: NSView) {
             let identifier = view.accessibilityIdentifier()
             if identifier.hasSuffix("Panel"),
                view.window != nil,
                !view.isHiddenOrHasHiddenAncestor {
                 let frame = view.convert(view.bounds, to: root)
-                if frame.width >= 1, frame.height >= 1, root.bounds.intersects(frame) {
-                    result.insert(identifier)
+                let visibleBounds = root.bounds.insetBy(dx: -1, dy: -1)
+                if frame.width >= AppTheme.Layout.timelineMinHeight,
+                   frame.height >= AppTheme.Layout.timelineMinHeight,
+                   visibleBounds.contains(frame) {
+                    result[identifier] = frame
                 }
             }
             view.subviews.forEach(visit)
@@ -405,6 +437,13 @@ enum WorkspaceUIAcceptance {
             if let match = findProbe(in: child, identifier: identifier) { return match }
         }
         return nil
+    }
+
+    private static func probeState(identifier: String, in window: NSWindow) -> Bool? {
+        guard let root = window.contentView,
+              let probe = findProbe(in: root, identifier: identifier)
+                as? AppRelaunchClickProbeView else { return nil }
+        return probe.acceptanceState
     }
 
     private static func waitUntil(

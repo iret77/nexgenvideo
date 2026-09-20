@@ -13,14 +13,13 @@ struct EditorView: NSViewControllerRepresentable {
         Self.containerSize(for: proposal)
     }
 
-    // The window allocates the editor; measuring nested hosting views feeds content back into its size.
+    // The window allocates the editor; unbounded probes must not preserve a previous window size.
     static func containerSize(for proposal: ProposedViewSize) -> CGSize {
-        func dimension(_ value: CGFloat?, fallback: CGFloat) -> CGFloat {
-            guard let value, value.isFinite else { return fallback }
+        func dimension(_ value: CGFloat?) -> CGFloat {
+            guard let value, value.isFinite else { return AppTheme.Spacing.none }
             return max(0, value)
         }
-        return CGSize(width: dimension(proposal.width, fallback: AppTheme.Window.projectDefault.width),
-                      height: dimension(proposal.height, fallback: AppTheme.Window.projectDefault.height))
+        return CGSize(width: dimension(proposal.width), height: dimension(proposal.height))
     }
 
     func updateNSViewController(_ controller: EditorSplitViewController, context: Context) {
@@ -54,6 +53,8 @@ private final class PanelDividerSplitView: NSSplitView {
 
 /// Neutral divider with a larger hit area for panel resizing.
 class PaddedDividerSplitViewController: NSSplitViewController {
+    fileprivate var hadSavedFrames = false
+
     override init(nibName nibNameOrNil: NSNib.Name?, bundle nibBundleOrNil: Bundle?) {
         super.init(nibName: nibNameOrNil, bundle: nibBundleOrNil)
         splitView = PanelDividerSplitView()
@@ -79,7 +80,6 @@ class PaddedDividerSplitViewController: NSSplitViewController {
 
 /// Autosave keys for the editor splits, defined once so call sites can't drift.
 private enum SplitAutosave {
-    static let root          = "editor.root"
     static let defaultH      = "editor.default.h"
     static let mediaTop      = "editor.media.top"
     static let mediaRight    = "editor.media.right"
@@ -145,7 +145,6 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         splitView.dividerStyle = .thin
-        splitView.autosaveName = SplitAutosave.root
         layoutRevision &+= 1
         buildLayout(editor.layoutPreset, workspace: editor.workspaceFocus)
     }
@@ -308,7 +307,6 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         let presetItem = NSSplitViewItem(viewController: presetRoot)
         presetItem.minimumThickness = AppTheme.Layout.previewMinWidth
         addSplitViewItem(presetItem)
-        splitView.autosaveName = SplitAutosave.root
         applyCurrentPresentationState()
         view.needsLayout = true
         if view.bounds.width > 0 {
@@ -556,13 +554,17 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         let vc = PaddedDividerSplitViewController()
         vc.splitView.isVertical = isVertical
         vc.splitView.dividerStyle = .thin
+        vc.hadSavedFrames = SplitAutosave.hasSavedFrames(autosave)
         vc.splitView.autosaveName = autosave
         return vc
     }
 
     /// Default positions apply per split: each is skipped independently once it has autosaved frames.
     private func positionIfUnsaved(_ controller: NSSplitViewController, _ apply: (NSSplitView) -> Void) {
-        guard !SplitAutosave.hasSavedFrames(controller.splitView.autosaveName) else { return }
+        guard let controller = controller as? PaddedDividerSplitViewController,
+              !controller.hadSavedFrames else {
+            return
+        }
         apply(controller.splitView)
     }
 

@@ -101,9 +101,12 @@ struct TitleBarView: View {
                 .accessibilityAddTraits(selected ? .isSelected : [])
                 .background {
                     if WorkspaceUIAcceptance.isRequested {
-                        AppRelaunchClickProbe(identifier: "editor.workspace.\(focus.rawValue)")
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .allowsHitTesting(false)
+                        AppRelaunchClickProbe(
+                            identifier: "editor.workspace.\(focus.rawValue)",
+                            acceptanceState: selected
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .allowsHitTesting(false)
                     }
                 }
             }
@@ -175,9 +178,12 @@ struct TitleBarView: View {
         .accessibilityAddTraits(isVisible ? .isSelected : [])
         .background {
             if WorkspaceUIAcceptance.isRequested {
-                AppRelaunchClickProbe(identifier: "editor.panel.\(label.lowercased())")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .allowsHitTesting(false)
+                AppRelaunchClickProbe(
+                    identifier: "editor.panel.\(label.lowercased())",
+                    acceptanceState: isVisible
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
             }
         }
         .help("\(isVisible ? "Hide" : "Show") \(label.lowercased())")
