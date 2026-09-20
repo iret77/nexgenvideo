@@ -260,6 +260,7 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         workspace: EditorViewModel.WorkspaceFocus
     ) {
         pendingPositioning = nil
+        disableAutosave(in: self)
         detachPanelHosts()
 
         while !splitViewItems.isEmpty {
@@ -307,11 +308,21 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         let presetItem = NSSplitViewItem(viewController: presetRoot)
         presetItem.minimumThickness = AppTheme.Layout.previewMinWidth
         addSplitViewItem(presetItem)
+        splitView.autosaveName = SplitAutosave.root
         applyCurrentPresentationState()
         view.needsLayout = true
         if view.bounds.width > 0 {
             view.layoutSubtreeIfNeeded()
             runPendingPositioning()
+        }
+    }
+
+    private func disableAutosave(in controller: NSSplitViewController) {
+        controller.splitView.autosaveName = nil
+        for item in controller.splitViewItems {
+            if let child = item.viewController as? NSSplitViewController {
+                disableAutosave(in: child)
+            }
         }
     }
 
@@ -323,8 +334,6 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
                   let item = parent.splitViewItems.first(where: {
                       $0.viewController === controller
                   }) else { continue }
-            // Never persist the transient geometry produced while dismantling the old tree.
-            parent.splitView.autosaveName = nil
             parent.removeSplitViewItem(item)
         }
     }
