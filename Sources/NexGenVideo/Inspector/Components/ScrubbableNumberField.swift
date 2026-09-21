@@ -27,6 +27,7 @@ struct ScrubbableNumberField: View {
     @State private var dragStartValue: Double = 0
     @State private var liveValue: Double = 0
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.interfaceScale) private var interfaceScale
 
     private var isMixed: Bool { value == nil && !isDragging }
     private var sourceValue: Double { isDragging ? liveValue : (value ?? liveValue) }
@@ -65,7 +66,7 @@ struct ScrubbableNumberField: View {
                         .lineLimit(1)
                 }
             }
-            .frame(width: fieldWidth, alignment: .trailing)
+            .frame(width: fieldWidth * CGFloat(interfaceScale), alignment: .trailing)
             .padding(.horizontal, AppTheme.Spacing.sm)
             .padding(.vertical, AppTheme.Spacing.xxs)
             .inspectorControlChrome(focused: isEditing, mixed: isMixed, error: hasError)

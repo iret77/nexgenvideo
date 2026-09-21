@@ -39,12 +39,14 @@ extension View {
 }
 
 private struct InspectorFormLayout: Layout {
+    let scale: CGFloat
+    let stacked: Bool
     private var gap: CGFloat { AppTheme.Spacing.sm }
-    private var labelWidth: CGFloat { AppTheme.ComponentSize.inspectorLabelWidth }
+    private var labelWidth: CGFloat { AppTheme.ComponentSize.inspectorLabelWidth * scale }
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let width = proposal.width.flatMap { $0.isFinite ? max(0, $0) : nil }
-            ?? AppTheme.ComponentSize.inspectorInlineMinWidth
+            ?? AppTheme.ComponentSize.inspectorInlineMinWidth * scale
         guard subviews.count == 2 else {
             let height = subviews.first?.sizeThatFits(ProposedViewSize(width: width, height: nil)).height ?? 0
             return CGSize(width: width, height: height)
@@ -87,7 +89,7 @@ private struct InspectorFormLayout: Layout {
     }
 
     private func measuredSizes(width: CGFloat, subviews: Subviews) -> (label: CGSize, control: CGSize, inline: Bool) {
-        let inline = width >= AppTheme.ComponentSize.inspectorInlineMinWidth
+        let inline = !stacked && width >= AppTheme.ComponentSize.inspectorInlineMinWidth * scale
         let controlWidth = inline ? max(0, width - labelWidth - gap) : width
         let inlineControl = subviews[1].sizeThatFits(ProposedViewSize(width: controlWidth, height: nil))
         let fitsInline = inline && inlineControl.width <= controlWidth
@@ -103,10 +105,12 @@ struct InspectorFormRow<Trailing: View>: View {
     let label: String
     var icon: String? = nil
     var labelHelp: String? = nil
+    var stacked = false
     @ViewBuilder var trailing: () -> Trailing
+    @Environment(\.interfaceScale) private var interfaceScale
 
     var body: some View {
-        InspectorFormLayout() {
+        InspectorFormLayout(scale: CGFloat(interfaceScale), stacked: stacked) {
             labelContent
             trailing()
         }
@@ -119,7 +123,7 @@ struct InspectorFormRow<Trailing: View>: View {
                 Image(systemName: icon)
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
-                    .frame(width: AppTheme.IconSize.xxs, alignment: .leading)
+                    .frame(width: AppTheme.IconSize.md, alignment: .leading)
                     .accessibilityHidden(true)
             }
             Text(label)

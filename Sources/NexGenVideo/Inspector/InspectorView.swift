@@ -657,13 +657,16 @@ struct InspectorView: View {
     private func plainMetadataRow(
         label: String,
         value: String,
-        valueHelp: String? = nil
+        valueHelp: String? = nil,
+        stacked: Bool = false
     ) -> some View {
-        InspectorFormRow(label: label) {
+        InspectorFormRow(label: label, stacked: stacked) {
             Text(value)
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .multilineTextAlignment(.trailing)
+                .lineLimit(stacked ? 3 : nil)
+                .truncationMode(stacked ? .middle : .tail)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
                 .help(valueHelp ?? value)
@@ -1313,7 +1316,8 @@ struct InspectorView: View {
             }
             plainMetadataRow(
                 label: "Path",
-                value: asset.url.path
+                value: asset.url.path,
+                stacked: true
             )
         }
     }
