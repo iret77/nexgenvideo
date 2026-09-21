@@ -30,12 +30,12 @@ struct GenerationBatchReviewProjection: Equatable {
                 .first
                 .map(String.init)
             switch leading {
-            case "character", "characters": .character
-            case "ensemble", "ensembles": .ensemble
-            case "location", "locations": .location
-            case "prop", "props": .prop
-            case "look": .look
-            default: .other
+            case "character", "characters": return .character
+            case "ensemble", "ensembles": return .ensemble
+            case "location", "locations": return .location
+            case "prop", "props": return .prop
+            case "look": return .look
+            default: return .other
             }
         }
     }
