@@ -81,7 +81,7 @@ final class GenerationService {
         onComplete: (@MainActor (MediaAsset) -> Void)? = nil,
         onFailure: (@MainActor () -> Void)? = nil
     ) -> String {
-        let count = max(1, min(4, numImages))
+        let count = max(1, min(10, numImages))
         var authorizedGenInput = genInput
         authorizedGenInput.spendTransactionId = authorization.transactionId
         authorizedGenInput.takeRepairPlanID = authorization.takeRepairPlanID

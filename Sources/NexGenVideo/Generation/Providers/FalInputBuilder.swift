@@ -14,7 +14,17 @@ enum FalInputBuilder {
         var input: [String: Any] = ["prompt": p.prompt]
         if count > 1 { input["num_images"] = count }   // 1 is every model's default; omit so edit models never see an unsupported field
         switch model.imageSize {
-        case .imageSizeEnum: input["image_size"] = imageSizeEnum(p.aspectRatio)
+        case .imageSizeEnum:
+            if model.imageUsesCustomSize {
+                if p.resolution == "auto" {
+                    input["image_size"] = "auto"
+                } else if let resolution = p.resolution,
+                          let dimensions = ImageModelConfig.parseWxH(resolution) {
+                    input["image_size"] = ["width": dimensions.0, "height": dimensions.1]
+                }
+            } else {
+                input["image_size"] = imageSizeEnum(p.aspectRatio)
+            }
         case .aspectRatio:   input["aspect_ratio"] = p.aspectRatio
         case .none:          break
         }
@@ -28,6 +38,14 @@ enum FalInputBuilder {
         case .none:   break
         case .single: if let first = p.imageURLs.first { input["image_url"] = first }
         case .array:  if !p.imageURLs.isEmpty { input["image_urls"] = p.imageURLs }
+        }
+        if model.imageSendsMask, let maskURL = p.maskURL { input["mask_url"] = maskURL }
+        if model.imageSendsOutputOptions {
+            if let background = p.background { input["background"] = background }
+            if let outputFormat = p.outputFormat { input["output_format"] = outputFormat }
+            if let outputCompression = p.outputCompression {
+                input["output_compression"] = outputCompression
+            }
         }
         return input
     }

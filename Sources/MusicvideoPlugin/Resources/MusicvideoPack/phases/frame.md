@@ -121,6 +121,13 @@ consistency demands use `brief.bible_image_model`. Both fall back to
   composition emphasis → `composite_image_model` (reasoning-strong).
 - Otherwise: the `frame_image_model` default.
 
+When GPT Image 2.5 appears in the live catalog, use Flare for default frame
+drafts and composites. Reserve Sunburst for precision-critical hero frames,
+identity-sensitive edits, fine detail, or unusually strict instruction
+following. Use the corresponding edit route when references or masks are
+present. Neither provider completion nor premium routing makes a frame
+render-ready: F2.5 and the vision audit still decide acceptance.
+
 **Identity-anchor pattern (MANDATORY for multi-shot character
 sequences):** the **first character shot per section** is implicitly the
 "identity anchor" for all further shots of the same section with the

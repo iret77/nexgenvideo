@@ -34,10 +34,15 @@ struct CatalogNativeCapabilitiesTests {
     }
 
     @Test func discoveredAliasesUseTheSameNativeImageAdapter() throws {
-        let entry = try #require(FalModelRegistry.discoveredEntries(availableModelIds: ["openai/gpt-image-2/edit"]).first)
+        let endpoint = "openai/gpt-image-2.5/flare/edit"
+        let entry = try #require(FalModelRegistry.discoveredEntries(availableModelIds: [endpoint]).first)
         let capability = try #require(ModelCatalog.offeringCapabilities(for: entry, resolver: resolver()).first)
         #expect(capability.effective.fields.integers[CapabilityFieldIDV1.imageReferences]?.origin.kind == .endpointOverlay)
-        #expect(capability.effective.fields.integers[CapabilityFieldIDV1.imageReferences]?.origin.endpointID == "openai/gpt-image-2/edit")
+        #expect(capability.effective.fields.integers[CapabilityFieldIDV1.imageReferences]?.origin.endpointID == endpoint)
+        #expect(capability.effective.fields.integers[CapabilityFieldIDV1.imageReferences]?.value == 16)
+        #expect(capability.effective.fields.integers[CapabilityFieldIDV1.imageOutputsPerRequest]?.value == 10)
+        #expect(capability.effective.fields.integers[CapabilityFieldIDV1.promptCharacters]?.value == 32_000)
+        #expect(capability.effective.fields.booleans[CapabilityFieldIDV1.imageMask]?.value == true)
     }
 
     @Test func nativeDefaultsCannotExpandUnrecognizedOrMCPBindings() throws {

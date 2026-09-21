@@ -113,6 +113,11 @@ struct GenerationInput: Codable, Sendable, Equatable {
     var referenceReceipts: [GenerationReferenceReceipt]? = nil
     var generationPackageID: String? = nil
     var frameReferencePlan: FrameReferencePlanV1? = nil
+    var imageMaskAssetId: String? = nil
+    var imageBackground: String? = nil
+    var imageOutputFormat: String? = nil
+    var imageOutputCompression: Int? = nil
+    var imageMaskURL: String? = nil
 }
 
 struct GenerationCompileRecipe: Codable, Sendable, Equatable {

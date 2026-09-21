@@ -124,6 +124,25 @@ struct BriefWriteContractTests {
         #expect(project.budgetEur == brief.budgetEur)
     }
 
+    @Test("GPT Image 2.5 routes are schema-valid and round-trip through write_brief")
+    func gptImage25RoutesRoundTrip() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        var args = validArgs(dataRoot: dataRoot)
+        args["frame_image_model"] = FrameImageModel.falGptImage25FlareEdit.rawValue
+        args["bible_image_model"] = FrameImageModel.falGptImage25SunburstEdit.rawValue
+        args["composite_image_model"] = FrameImageModel.falGptImage25Flare.rawValue
+
+        _ = try await h.runOK("write_brief", args: args)
+        let brief = try YAMLArtifactStore(dataRoot: dataRoot).load(
+            Brief.self,
+            at: PipelineLayout.briefFile
+        )
+        #expect(brief.frameImageModel == .falGptImage25FlareEdit)
+        #expect(brief.bibleImageModel == .falGptImage25SunburstEdit)
+        #expect(brief.compositeImageModel == .falGptImage25Flare)
+    }
+
     @Test("an invalid enum value is rejected and names the field")
     func invalidEnumRejected() async throws {
         let (h, dataRoot, cleanup) = try scaffold()

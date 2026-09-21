@@ -81,7 +81,7 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
     }
 
     init(payload: Payload) throws {
-        guard payload.outputCount > 0, payload.outputCount <= 4,
+        guard payload.outputCount > 0, payload.outputCount <= 10,
               !payload.target.modelId.isEmpty, !payload.target.endpoint.isEmpty,
               payload.generationInput.model == payload.target.modelId, payload.generationInput.prompt == payload.prompt,
               payload.generationInput.referenceReceipts == payload.references,
@@ -128,7 +128,7 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
     static func referenceRoles(parameters: PreparedProviderParameters) -> [String] {
         parameters.referenceSlots.map { slot in
             switch parameters.parameters {
-            case .image: return "image_reference"
+            case .image(let image): return image.maskURL == slot ? "image_mask" : "image_reference"
             case .video(let video):
                 if video.sourceVideoURL == slot { return "source_video" }
                 if video.startFrameURL == slot { return "start_frame" }
@@ -145,6 +145,7 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
         var value = input
         value.createdAt = nil; value.spendTransactionId = nil; value.generationPackageID = nil
         value.imageURLs = nil; value.referenceImageURLs = nil; value.referenceVideoURLs = nil; value.referenceAudioURLs = nil
+        value.imageMaskURL = nil
         return value
     }
 
