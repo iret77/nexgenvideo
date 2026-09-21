@@ -503,6 +503,9 @@ struct Transform: Codable, Sendable, Equatable {
 
 /// Per-clip crop as edge insets in normalized (0–1) source coordinates.
 struct Crop: Codable, Sendable, Equatable {
+    static let minimumVisibleFraction = 0.05
+    static let coordinateSpace = "displayOrientedSource"
+
     var left: Double = 0
     var top: Double = 0
     var right: Double = 0
@@ -511,6 +514,12 @@ struct Crop: Codable, Sendable, Equatable {
     var isIdentity: Bool { left == 0 && top == 0 && right == 0 && bottom == 0 }
     var visibleWidthFraction: Double { max(0, 1 - left - right) }
     var visibleHeightFraction: Double { max(0, 1 - top - bottom) }
+
+    var isValid: Bool {
+        [left, top, right, bottom].allSatisfy { $0.isFinite && (0...1).contains($0) }
+            && visibleWidthFraction + .ulpOfOne >= Self.minimumVisibleFraction
+            && visibleHeightFraction + .ulpOfOne >= Self.minimumVisibleFraction
+    }
 }
 
 /// Aspect-ratio constraint for the Crop overlay.

@@ -53,6 +53,7 @@ fileprivate struct SetClipPropertiesInput: DecodableToolArgs {
     let volume: Double?
     let opacity: Double?
     let transform: ParsedTransform?
+    let crop: ParsedCrop?
     let content: String?
     let fontName: String?
     let fontSize: Double?
@@ -63,14 +64,14 @@ fileprivate struct SetClipPropertiesInput: DecodableToolArgs {
         "clipIds",
         "durationFrames", "trimStartFrame", "trimEndFrame", "speed",
         "volume", "opacity",
-        "transform",
+        "transform", "crop",
         "content", "fontName", "fontSize", "color", "alignment",
     ]
 
     var hasAnyProperty: Bool {
         durationFrames != nil || trimStartFrame != nil || trimEndFrame != nil
             || speed != nil || volume != nil || opacity != nil
-            || transform != nil
+            || transform?.hasAnyField == true || crop?.hasAnyField == true
             || content != nil || fontName != nil || fontSize != nil
             || color != nil || alignment != nil
     }
@@ -102,6 +103,33 @@ struct ParsedTransform: Decodable {
     var hasAnyField: Bool {
         centerX != nil || centerY != nil || width != nil || height != nil
             || flipHorizontal != nil || flipVertical != nil
+    }
+}
+
+struct ParsedCrop: Decodable {
+    var left: Double?
+    var top: Double?
+    var right: Double?
+    var bottom: Double?
+
+    var hasAnyField: Bool {
+        left != nil || top != nil || right != nil || bottom != nil
+    }
+
+    func merged(onto current: Crop, path: String) throws -> Crop {
+        var crop = current
+        if let left { crop.left = left }
+        if let top { crop.top = top }
+        if let right { crop.right = right }
+        if let bottom { crop.bottom = bottom }
+        guard crop.isValid else {
+            throw ToolError(
+                "\(path) insets must each be between 0 and 1 and leave at least "
+                    + "\(Crop.minimumVisibleFraction) of the display-oriented source visible on each axis "
+                    + "(got width \(crop.visibleWidthFraction), height \(crop.visibleHeightFraction))"
+            )
+        }
+        return crop
     }
 }
 
@@ -443,11 +471,14 @@ extension ToolExecutor {
         let color = try parseColorHex(input.color, path: "set_clip_properties")
         let alignment = try parseAlignment(input.alignment, path: "set_clip_properties")
 
-        // Resolve clipIds + collect types so we can reject text-only fields on non-text clips.
+        // Resolve every target before any mutation.
         var clipTypes: [String: ClipType] = [:]
+        var targetClips: [String: Clip] = [:]
         for id in input.clipIds {
             guard let loc = editor.findClip(id: id) else { throw ToolError("Clip not found: \(id)") }
-            clipTypes[id] = editor.timeline.tracks[loc.trackIndex].clips[loc.clipIndex].mediaType
+            let clip = editor.timeline.tracks[loc.trackIndex].clips[loc.clipIndex]
+            clipTypes[id] = clip.mediaType
+            targetClips[id] = clip
         }
         let textOnlyUsed = [
             input.content   != nil ? "content"   : nil,
@@ -460,6 +491,24 @@ extension ToolExecutor {
             let nonText = clipTypes.filter { $0.value != .text }.map { $0.key }.sorted()
             if !nonText.isEmpty {
                 throw ToolError("text-only fields '\(textOnlyUsed.joined(separator: "', '"))' rejected on non-text clips: \(nonText.joined(separator: ", "))")
+            }
+        }
+
+        var resolvedCrops: [String: Crop] = [:]
+        if let crop = input.crop, crop.hasAnyField {
+            let unsupported = targetClips.filter { !$0.value.mediaType.isVisual || $0.value.mediaType == .text }
+                .map(\.key).sorted()
+            guard unsupported.isEmpty else {
+                throw ToolError("crop only applies to video, image, and Lottie clips: \(unsupported.joined(separator: ", "))")
+            }
+            for id in input.clipIds {
+                guard let clip = targetClips[id] else { continue }
+                let lastFrame = max(clip.startFrame, clip.endFrame - 1)
+                let sampleFrame = min(max(editor.activeFrame, clip.startFrame), lastFrame)
+                resolvedCrops[id] = try crop.merged(
+                    onto: clip.cropAt(frame: sampleFrame),
+                    path: "set_clip_properties.crop"
+                )
             }
         }
 
@@ -484,6 +533,7 @@ extension ToolExecutor {
                     volume: input.volume,
                     opacity: input.opacity,
                     transform: input.transform,
+                    crop: resolvedCrops[id],
                     content: isText ? input.content : nil,
                     fontName: isText ? input.fontName : nil,
                     fontSize: isText ? input.fontSize : nil,
@@ -507,6 +557,7 @@ extension ToolExecutor {
                     trimEndFrame:   partnerIsText ? nil : input.trimEndFrame,
                     speed:          partnerIsText ? nil : input.speed,
                     volume: nil, opacity: nil, transform: nil,
+                    crop: nil,
                     content: nil, fontName: nil, fontSize: nil, color: nil, alignment: nil,
                     clipId: partnerId,
                     editor: editor
@@ -527,6 +578,7 @@ extension ToolExecutor {
         volume: Double?,
         opacity: Double?,
         transform: ParsedTransform?,
+        crop: Crop?,
         content: String?,
         fontName: String?,
         fontSize: Double?,
@@ -572,6 +624,11 @@ extension ToolExecutor {
                 clip.transform = next
                 changed.append("transform")
             }
+            if let crop {
+                clip.crop = crop
+                clip.cropTrack = nil
+                changed.append("crop")
+            }
             if content != nil || fontName != nil || fontSize != nil || color != nil || alignment != nil {
                 if let c = content { clip.textContent = c; changed.append("content") }
                 var style = clip.textStyle ?? TextStyle()
@@ -597,8 +654,12 @@ extension ToolExecutor {
         guard Self.keyframePropertyNames.contains(input.property) else {
             throw ToolError("Unknown property '\(input.property)'. Expected one of: \(Self.keyframePropertyNames.sorted().joined(separator: ", "))")
         }
-        guard editor.findClip(id: input.clipId) != nil else {
+        guard let location = editor.findClip(id: input.clipId) else {
             throw ToolError("Clip not found: \(input.clipId)")
+        }
+        let clip = editor.timeline.tracks[location.trackIndex].clips[location.clipIndex]
+        if input.property == "crop" && (!clip.mediaType.isVisual || clip.mediaType == .text) {
+            throw ToolError("crop keyframes only apply to video, image, and Lottie clips")
         }
 
         try withUndoGroup(editor, actionName: "Set Keyframes (Agent)") {
@@ -772,9 +833,16 @@ extension ToolExecutor {
     }
 
     fileprivate static func parseCropKeyframes(_ rows: [Any], path: String) throws -> KeyframeTrack<Crop> {
-        try parseKeyframes(rows, path: path, fieldNames: ["top", "right", "bottom", "left"]) {
+        let track: KeyframeTrack<Crop> = try parseKeyframes(rows, path: path, fieldNames: ["top", "right", "bottom", "left"]) {
             Crop(left: $0[3], top: $0[0], right: $0[1], bottom: $0[2])
         }
+        for keyframe in track.keyframes where !keyframe.value.isValid {
+            throw ToolError(
+                "\(path) crop at frame \(keyframe.frame) must use 0-1 insets and leave at least "
+                    + "\(Crop.minimumVisibleFraction) of the display-oriented source visible on each axis"
+            )
+        }
+        return track
     }
 
     private static func sortAndDedupe<V>(_ kfs: [Keyframe<V>]) -> [Keyframe<V>] {

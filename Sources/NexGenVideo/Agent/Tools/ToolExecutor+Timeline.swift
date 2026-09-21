@@ -309,12 +309,22 @@ extension ToolExecutor {
 
     private static let inspectMediaAllowedKeys: Set<String> = [
         "mediaRef", "clipId", "maxFrames", "startSeconds", "endSeconds", "wordTimestamps", "overview",
+        "coordinateGrid",
     ]
 
     func inspectMedia(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
         try validateUnknownKeys(args, allowed: Self.inspectMediaAllowedKeys, path: "inspect_media")
         let mediaRef = try args.requireString("mediaRef")
         let asset = try asset(mediaRef, editor: editor)
+        let coordinateGrid = args.bool("coordinateGrid") ?? false
+        if coordinateGrid {
+            guard asset.type == .image || asset.type == .video || asset.type == .lottie else {
+                throw ToolError("coordinateGrid requires image, video, or Lottie frames")
+            }
+            if args.bool("overview") == true {
+                throw ToolError("coordinateGrid is unavailable with overview because each storyboard tile has its own source coordinates")
+            }
+        }
         let url = asset.url
         guard FileManager.default.fileExists(atPath: url.path) else {
             switch asset.generationStatus {
@@ -344,10 +354,10 @@ extension ToolExecutor {
         }
 
         switch asset.type {
-        case .image: return try await readImage(asset: asset, args: args, editor: editor)
-        case .video: return try await readVideo(editor: editor, asset: asset, args: args, mapping: mapping)
+        case .image: return try await readImage(asset: asset, coordinateGrid: coordinateGrid, editor: editor)
+        case .video: return try await readVideo(editor: editor, asset: asset, args: args, mapping: mapping, coordinateGrid: coordinateGrid)
         case .audio: return try await readAudio(editor: editor, asset: asset, args: args, mapping: mapping)
-        case .lottie: return try await readLottie(asset: asset, args: args)
+        case .lottie: return try await readLottie(asset: asset, args: args, coordinateGrid: coordinateGrid)
         case .document: return try readDocument(asset: asset)
         case .text: throw ToolError("Text clips are not stored as media assets.")
         }
@@ -375,12 +385,19 @@ extension ToolExecutor {
         ]
     }
 
-    private func readImage(asset: MediaAsset, args: [String: Any], editor: EditorViewModel) async throws -> ToolResult {
+    private func readImage(asset: MediaAsset, coordinateGrid: Bool, editor: EditorViewModel) async throws -> ToolResult {
         let inspectedProject = editor.workingRoot
         let url = asset.url
         let before = try await Task.detached(priority: .utility) { try FileDigest.sha256(of: url) }.value
         let encoded = await Task.detached(priority: .userInitiated) {
-            ImageEncoder.encode(url: url).map {
+            let output: ImageEncoder.Output?
+            if coordinateGrid,
+               let image = ImageEncoder.thumbnail(url: url, maxPixelSize: ImageEncoder.maxLongestEdge) {
+                output = InspectFrameGrid.encode(image)
+            } else {
+                output = ImageEncoder.encode(url: url)
+            }
+            return output.map {
                 (base64: $0.data.base64EncodedString(), mime: $0.mime, encodedByteSize: $0.data.count)
             }
         }.value
@@ -393,6 +410,7 @@ extension ToolExecutor {
         meta["mimeType"] = encoded.mime
         meta["byteSize"] = fileSize
         meta["encodedByteSize"] = encoded.encodedByteSize
+        if coordinateGrid { meta["coordinateGrid"] = InspectFrameGrid.metadata }
         if let props = Self.imagePropertiesSummary(at: url) {
             meta["imageProperties"] = props
         }
@@ -419,7 +437,13 @@ extension ToolExecutor {
         )
     }
 
-    private func readVideo(editor: EditorViewModel, asset: MediaAsset, args: [String: Any], mapping: (clip: Clip, fps: Int)? = nil) async throws -> ToolResult {
+    private func readVideo(
+        editor: EditorViewModel,
+        asset: MediaAsset,
+        args: [String: Any],
+        mapping: (clip: Clip, fps: Int)? = nil,
+        coordinateGrid: Bool
+    ) async throws -> ToolResult {
         guard asset.duration > 0 else { throw ToolError("Video has zero duration: \(asset.name)") }
 
         let range = try Self.sourceRange(args, duration: asset.duration)
@@ -438,7 +462,8 @@ extension ToolExecutor {
         let frameCount = max(1, min(requested, Self.readVideoMaxFrames))
         async let visualTask = Self.extractVisual(
             url: url, name: asset.name, overview: wantsOverview,
-            frameCount: frameCount, start: windowStart, end: windowEnd
+            frameCount: frameCount, start: windowStart, end: windowEnd,
+            coordinateGrid: coordinateGrid
         )
         async let transcriptTask: Result<TranscriptionResult, Error>? = {
             guard hasAudio else { return nil }
@@ -453,6 +478,7 @@ extension ToolExecutor {
             imageBlocks = [.image(base64: jpeg.base64EncodedString(), mediaType: "image/jpeg")]
         case .frames(let frames):
             meta["frameTimestamps"] = frames.map { $0.timestamp.jsonRounded(toPlaces: 3) }
+            if coordinateGrid { meta["coordinateGrid"] = InspectFrameGrid.metadata }
             imageBlocks = frames.map { .image(base64: $0.jpeg.base64EncodedString(), mediaType: "image/jpeg") }
         }
 
@@ -481,7 +507,8 @@ extension ToolExecutor {
     }
 
     private nonisolated static func extractVisual(
-        url: URL, name: String, overview: Bool, frameCount: Int, start: Double, end: Double
+        url: URL, name: String, overview: Bool, frameCount: Int, start: Double, end: Double,
+        coordinateGrid: Bool
     ) async throws -> Visual {
         if overview {
             do {
@@ -510,7 +537,8 @@ extension ToolExecutor {
             let t = start + (end - start) * (Double(i) + 0.5) / Double(frameCount)
             let cmTime = CMTime(seconds: t, preferredTimescale: 600)
             guard let cgImage = try? await generator.image(at: cmTime).image else { continue }
-            guard let jpeg = ImageEncoder.encodeJPEG(cgImage, quality: readVideoJPEGQuality) else { continue }
+            let inspectedImage = coordinateGrid ? InspectFrameGrid.apply(to: cgImage) : cgImage
+            guard let jpeg = ImageEncoder.encodeJPEG(inspectedImage, quality: readVideoJPEGQuality) else { continue }
             frames.append((timestamp: t, jpeg: jpeg))
         }
         guard !frames.isEmpty else { throw ToolError("Failed to extract frames from \(name)") }
@@ -541,7 +569,7 @@ extension ToolExecutor {
 
     private static let readDocumentMaxCharacters = 20_000
 
-    private func readLottie(asset: MediaAsset, args: [String: Any]) async throws -> ToolResult {
+    private func readLottie(asset: MediaAsset, args: [String: Any], coordinateGrid: Bool) async throws -> ToolResult {
         let count = max(1, min(args.int("maxFrames") ?? Self.defaultReadVideoFrames, Self.readVideoMaxFrames))
         let (lottieMeta, frames) = try await LottieVideoGenerator.sampleFrames(fileAt: asset.url, count: count)
         guard !frames.isEmpty else { throw ToolError("Failed to render Lottie frames from \(asset.name)") }
@@ -551,10 +579,11 @@ extension ToolExecutor {
         meta["frameCount"] = lottieMeta.frameCount
         meta["durationSeconds"] = lottieMeta.duration
         meta["sampledFrameIndices"] = frames.map(\.frameIndex)
+        if coordinateGrid { meta["coordinateGrid"] = InspectFrameGrid.metadata }
         meta["note"] = "Lottie frames sampled evenly across the animation; transparent areas composited over gray."
 
         let imageBlocks: [ToolResult.Block] = frames.compactMap { frame in
-            Self.compositeJPEG(frame.image).map { .image(base64: $0.base64EncodedString(), mediaType: "image/jpeg") }
+            Self.compositeJPEG(frame.image, coordinateGrid: coordinateGrid).map { .image(base64: $0.base64EncodedString(), mediaType: "image/jpeg") }
         }
         guard !imageBlocks.isEmpty else { throw ToolError("Failed to encode Lottie frames") }
         guard let metaJSON = Self.jsonString(roundJSONFloatingPointNumbers(meta, toPlaces: 3)) else {
@@ -564,7 +593,7 @@ extension ToolExecutor {
     }
 
     /// Composites an alpha frame over mid-gray so transparent regions read clearly to the model.
-    private static func compositeJPEG(_ image: CGImage, quality: CGFloat = 0.7) -> Data? {
+    private static func compositeJPEG(_ image: CGImage, coordinateGrid: Bool, quality: CGFloat = 0.7) -> Data? {
         guard let context = CGContext(
             data: nil, width: image.width, height: image.height,
             bitsPerComponent: 8, bytesPerRow: 0,
@@ -575,7 +604,9 @@ extension ToolExecutor {
         context.setFillColor(gray: 0.5, alpha: 1)
         context.fill(rect)
         context.draw(image, in: rect)
-        return context.makeImage().flatMap { ImageEncoder.encodeJPEG($0, quality: quality) }
+        return context.makeImage().flatMap {
+            ImageEncoder.encodeJPEG(coordinateGrid ? InspectFrameGrid.apply(to: $0) : $0, quality: quality)
+        }
     }
 
     private func readAudio(editor: EditorViewModel, asset: MediaAsset, args: [String: Any], mapping: (clip: Clip, fps: Int)? = nil) async throws -> ToolResult {

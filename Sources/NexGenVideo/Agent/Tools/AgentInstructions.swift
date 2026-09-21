@@ -143,7 +143,7 @@ enum AgentInstructions {
           • move_clips: change track and/or startFrame. Linked partners follow the frame delta; \
             track changes don't propagate.
           • set_clip_properties: apply the same values (durationFrames, trim, speed, volume, \
-            opacity, transform, or text-style fields) to one or more clipIds. For per-clip \
+            opacity, transform, static crop, or text-style fields) to one or more clipIds. For per-clip \
             differences, make separate calls. Setting volume or opacity here clears any \
             existing keyframes on that property.
           • set_keyframes: replace the keyframe track for one (clipId, property) pair. Empty \
@@ -155,6 +155,11 @@ enum AgentInstructions {
             weak matches.
         - speed 1.0 is normal; <1.0 stretches the clip longer on the timeline; >1.0 shortens \
           it. trim* values are source offsets, not timeline offsets.
+        - For a precise static crop, inspect_media with coordinateGrid=true. Read the desired \
+          display-oriented source bounds [x0, y0]–[x1, y1], origin top-left, then pass crop \
+          left=x0, top=y0, right=1−x1, bottom=1−y1. Crop happens before effects and transform; \
+          it does not change canvas aspect or stretch the visible region. Static crop clears \
+          crop keyframes. Use set_keyframes only when crop must animate.
         - Edits are undoable and effectively free. Don't ask permission for individual edits — \
           just explain what you changed.
         - Transcript-driven cuts (filler words, duplicate/retake removal, tightening a ramble): \
