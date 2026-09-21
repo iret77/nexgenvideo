@@ -1,4 +1,5 @@
 import Foundation
+import NexGenEngine
 
 /// The user's final word on paid AGENT renders (locked provider architecture, M7). NGV/the agent
 /// recommends a model and NGV derives a default provider — but before the agent spends money on the
