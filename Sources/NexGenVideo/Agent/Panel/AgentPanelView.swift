@@ -81,6 +81,13 @@ struct AgentPanelView: View {
             refreshDiscoveredPlugins()
             service.refreshBackendStatus()
         }
+        .onReceive(NotificationCenter.default.publisher(
+            for: WorkspaceUIAcceptance.agentPinnedAwayNotification
+        )) { notification in
+            guard WorkspaceUIAcceptance.isRequested,
+                  let pinnedAway = notification.object as? Bool else { return }
+            isUserPinnedAway = pinnedAway
+        }
         // A pack activating AFTER the panel appeared (project open, Start production) must swap the
         // generic starters for the pack's own — otherwise the chips stay stale-generic.
         .onChange(of: editor.activePluginName) { _, _ in refreshDiscoveredPlugins() }
@@ -279,14 +286,17 @@ struct AgentPanelView: View {
     }
 
     private func conversationActions(equalWidth: Bool) -> some View {
-        HStack(spacing: AppTheme.Spacing.xs) {
+        let iconOnly = equalWidth && isUserPinnedAway
+        return HStack(spacing: AppTheme.Spacing.xs) {
             if isUserPinnedAway {
-                latestButton
+                latestButton(iconOnly: iconOnly)
                     .frame(maxWidth: equalWidth ? .infinity : nil)
                     .transition(.opacity)
             }
-            newConversationButton.frame(maxWidth: equalWidth ? .infinity : nil)
-            utilityButton.frame(maxWidth: equalWidth ? .infinity : nil)
+            newConversationButton(iconOnly: iconOnly)
+                .frame(maxWidth: equalWidth ? .infinity : nil)
+            utilityButton(iconOnly: iconOnly)
+                .frame(maxWidth: equalWidth ? .infinity : nil)
         }
         .frame(maxWidth: equalWidth ? .infinity : nil)
         .animation(
@@ -295,9 +305,15 @@ struct AgentPanelView: View {
         )
     }
 
-    private var newConversationButton: some View {
+    private func newConversationButton(iconOnly: Bool) -> some View {
         Button { service.startNewConversation() } label: {
-            Label("New", systemImage: "plus")
+            Group {
+                if iconOnly {
+                    Image(systemName: "plus")
+                } else {
+                    Label("New", systemImage: "plus")
+                }
+            }
                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
@@ -306,7 +322,10 @@ struct AgentPanelView: View {
         .controlSize(.small)
         .background {
             if WorkspaceUIAcceptance.isRequested {
-                AppRelaunchClickProbe(identifier: "agent.newConversation")
+                AppRelaunchClickProbe(
+                    identifier: "agent.newConversation",
+                    acceptanceState: iconOnly
+                )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .allowsHitTesting(false)
             }
@@ -317,19 +336,36 @@ struct AgentPanelView: View {
         .accessibilityLabel("New conversation")
     }
 
-    private var latestButton: some View {
+    private func latestButton(iconOnly: Bool) -> some View {
         Button {
             isUserPinnedAway = false
             programmaticScrollPending = true
             scrollToLatestRequest &+= 1
         } label: {
-            Label("Latest", systemImage: "arrow.down")
+            Group {
+                if iconOnly {
+                    Image(systemName: "arrow.down")
+                } else {
+                    Label("Latest", systemImage: "arrow.down")
+                }
+            }
                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
         }
         .buttonStyle(.capsule(.secondary, size: .small))
         .controlSize(.small)
+        .background {
+            if WorkspaceUIAcceptance.isRequested {
+                AppRelaunchClickProbe(
+                    identifier: "agent.latest",
+                    acceptanceState: iconOnly
+                )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
+            }
+        }
+        .accessibilityLabel("Scroll to latest")
     }
 
     @State private var isUserPinnedAway = false
@@ -343,12 +379,18 @@ struct AgentPanelView: View {
         discoveredPlugins.contains { !$0.commands.isEmpty }
     }
 
-    private var utilityButton: some View {
+    private func utilityButton(iconOnly: Bool) -> some View {
         Button {
             refreshDiscoveredPlugins()
             showUtilities.toggle()
         } label: {
-            Label("More", systemImage: "ellipsis")
+            Group {
+                if iconOnly {
+                    Image(systemName: "ellipsis")
+                } else {
+                    Label("More", systemImage: "ellipsis")
+                }
+            }
                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
@@ -357,7 +399,10 @@ struct AgentPanelView: View {
         .controlSize(.small)
         .background {
             if WorkspaceUIAcceptance.isRequested {
-                AppRelaunchClickProbe(identifier: "agent.utilities")
+                AppRelaunchClickProbe(
+                    identifier: "agent.utilities",
+                    acceptanceState: iconOnly
+                )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .allowsHitTesting(false)
             }
@@ -370,6 +415,7 @@ struct AgentPanelView: View {
                 onCloseConversation: closeCurrentConversation
             )
         }
+        .accessibilityLabel("More")
     }
 
     private func runPluginCommand(_ command: PluginCommandCatalog.PluginCommand) {

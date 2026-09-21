@@ -264,6 +264,8 @@ struct AgentTranscriptLayoutPolicyTests {
         #expect(header.contains("if isUserPinnedAway"))
         #expect(header.contains(".transition(.opacity)"))
         #expect(!header.contains(".opacity(isUserPinnedAway"))
+        #expect(header.contains("let iconOnly = equalWidth && isUserPinnedAway"))
+        #expect(header.contains(".accessibilityLabel(\"Scroll to latest\")"))
         #expect(!header.contains("ForEach(service.openSessions)"))
         #expect(!header.contains(".focusable(false)"))
         #expect(!panel.contains("ChatTabView"))

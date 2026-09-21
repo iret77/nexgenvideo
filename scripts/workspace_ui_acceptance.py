@@ -57,8 +57,13 @@ def run_scale(executable, output, scale):
     workspaces = {row.get("workspace") for row in workspace_rows}
     completed = any(row.get("event") == "completed" for row in rows)
     hidden = [row for row in rows if row.get("event") == "panels-hidden"]
+    narrow = [row for row in rows if row.get("event") == "narrow-production"]
+    pinned = [row for row in rows if row.get("event") == "narrow-production-pinned"]
     invariants = [row for row in rows if row.get("event") == "invariants"]
-    screenshots = [row.get("screenshot") for row in workspace_rows + hidden]
+    screenshots = [
+        row.get("screenshot")
+        for row in workspace_rows + hidden + narrow + pinned
+    ]
     valid_images = all(
         isinstance(name, str)
         and (output / name).is_file()
@@ -72,12 +77,14 @@ def run_scale(executable, output, scale):
         and workspaces == EXPECTED_WORKSPACES
         and len(workspace_rows) == len(EXPECTED_WORKSPACES)
         and len(hidden) == 1
+        and len(narrow) == 1
+        and len(pinned) == 1
         and len(invariants) == 1
         and invariants[0].get("liveStateUnchanged") is True
         and invariants[0].get("projectBytesUnchanged") is True
         and invariants[0].get("undoUnchanged") is True
         and invariants[0].get("workingCopyUnchanged") is True
-        and len(screenshots) == 6
+        and len(screenshots) == 8
         and valid_images
     )
     return {
