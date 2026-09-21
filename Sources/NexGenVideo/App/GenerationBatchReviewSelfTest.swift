@@ -444,8 +444,8 @@ enum GenerationBatchReviewSelfTest {
         ) else {
             return "AppKit could not create pointer events for \(identifier)"
         }
-        NSApp.postEvent(down, atStart: false)
-        NSApp.postEvent(up, atStart: false)
+        window.sendEvent(down)
+        window.sendEvent(up)
         return nil
     }
 
@@ -474,8 +474,8 @@ enum GenerationBatchReviewSelfTest {
             isARepeat: false,
             keyCode: 49
         ) {
-            NSApp.postEvent(down, atStart: false)
-            NSApp.postEvent(up, atStart: false)
+            window.sendEvent(down)
+            window.sendEvent(up)
         }
     }
 
