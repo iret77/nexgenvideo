@@ -2,6 +2,20 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.5.10",
+      "date": "2026-09-21",
+      "sections": [
+        {
+          "heading": "Reliability",
+          "items": [
+            "Generation batches show verified Runway Gemini Image costs and distinguish unsupported options, pricing outages and unavailable exchange rates.",
+            "Failed pricing can be retried, or an affected request can be prepared again on an explicitly selected route, without submitting a generation.",
+            "Every pricing or route change creates a new review binding, and the current price and project budget are checked again before dispatch."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.5.8",
       "date": "2026-09-11",
       "sections": [

@@ -314,6 +314,7 @@ enum EditSubmitter {
                 gen: gen,
                 modality: .image,
                 outputCount: count,
+                referenceCount: refCount,
                 editor: editor,
                 quoteLoader: quoteLoader
             )
@@ -440,6 +441,7 @@ enum EditSubmitter {
         durationSeconds: Double? = nil,
         outputCount: Int = 1,
         generateAudio: Bool? = nil,
+        referenceCount: Int = 0,
         editor: EditorViewModel,
         quoteLoader: GenerationBudgetGuard.QuoteLoader,
         target: ResolvedGenerationTarget? = nil
@@ -454,7 +456,8 @@ enum EditSubmitter {
                     resolution: gen.resolution,
                     quality: gen.quality,
                     promptCharacterCount: gen.prompt.count,
-                    generateAudio: generateAudio
+                    generateAudio: generateAudio,
+                    referenceCount: max(0, referenceCount)
                 ),
                 target: target ?? GenerationService.dispatchTarget(modelId: gen.model),
                 editor: editor,

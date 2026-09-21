@@ -1,4 +1,5 @@
 import Foundation
+import NexGenEngine
 
 /// The user's final word on paid AGENT renders (locked provider architecture, M7). NGV/the agent
 /// recommends a model and NGV derives a default provider — but before the agent spends money on the
@@ -122,6 +123,66 @@ struct SpendPipelineScope: Equatable, Sendable {
         self.declaredPack = declaredPack
         self.declaredBinding = declaredBinding
         self.bindingResolution = bindingResolution
+    }
+}
+
+struct SpendPipelineMutationLease {
+    let coordinator: PipelinePhaseRunCoordinator
+    let dataRoot: URL
+    let id: UUID
+}
+
+extension SpendPipelineScope {
+    @MainActor
+    func acquireMutation(editor: EditorViewModel, label: String) throws -> SpendPipelineMutationLease {
+        let expectedRoot = dataRoot.standardizedFileURL.resolvingSymlinksInPath()
+        guard let workingRoot = editor.workingRoot,
+              let currentDataRoot = DataRootResolver.dataRoot(of: workingRoot),
+              currentDataRoot.standardizedFileURL.resolvingSymlinksInPath() == expectedRoot else {
+            throw ToolError("The project changed while approval was open. Review the request and try again.")
+        }
+        guard editor.declaredPluginName == declaredPack,
+              editor.declaredPluginBinding == declaredBinding else {
+            throw ToolError("The project format changed while approval was open. Review the request and try again.")
+        }
+        let projectHome = FrameInventory.projectHome(of: expectedRoot)
+        guard ProjectPluginSettings.bindingResolution(projectURL: projectHome) == bindingResolution else {
+            throw ToolError("The project format binding changed while approval was open. Review the request and try again.")
+        }
+        do {
+            _ = try ProjectPackGate.requireLiveMutation(
+                projectURL: projectHome,
+                declaredPack: declaredPack,
+                declaredBinding: declaredBinding
+            )
+        } catch {
+            throw ToolError(
+                "The project format binding changed while approval was open: "
+                    + error.localizedDescription
+            )
+        }
+        let currentPhase = try editor.pipelineAgentHarness.guardCurrentPhaseWork(
+            tool: tool,
+            dataRoot: expectedRoot,
+            declaredPack: declaredPack,
+            declaredBinding: declaredBinding
+        )
+        guard currentPhase == phase else {
+            throw ToolError("The pipeline phase changed while approval was open. Review the request and try again.")
+        }
+        guard let id = editor.pipelinePhaseRunCoordinator.beginMutation(
+            projectRoot: expectedRoot,
+            label: phase ?? label
+        ) else {
+            let active = editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: expectedRoot)
+                ?? "pipeline work"
+            throw ToolError("Can't start the approved operation while \(active) is running. Wait for it to finish.")
+        }
+        return SpendPipelineMutationLease(
+            coordinator: editor.pipelinePhaseRunCoordinator,
+            dataRoot: expectedRoot,
+            id: id
+        )
     }
 }
 

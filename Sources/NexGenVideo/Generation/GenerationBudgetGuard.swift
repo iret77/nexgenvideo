@@ -31,12 +31,18 @@ enum GenerationBudgetGuard {
         target: ResolvedGenerationTarget,
         editor: EditorViewModel,
         approvedPackage: GenerationPackageV1? = nil,
+        requiresVerifiedCeiling: Bool = false,
         quoteLoader: QuoteLoader = LiveGenerationPricing.quote
     ) async throws -> GenerationAuthorization {
         if let approvedPackage {
             try approvedPackage.validate()
             guard approvedPackage.payload.target == target, approvedPackage.payload.outputCount == input.outputCount else {
                 throw GenerationBudgetError.blocked("The priced request differs from its generation package.")
+            }
+            guard !requiresVerifiedCeiling || approvedPackage.payload.estimate != nil else {
+                throw GenerationBudgetError.blocked(
+                    "This request has no verified monetary ceiling. Retry pricing or choose another route before approval."
+                )
             }
         }
         guard let workingRoot = editor.workingRoot else {
@@ -62,7 +68,7 @@ enum GenerationBudgetGuard {
         )
 
         let estimate: GenerationMoney?
-        let pricingFailure: String?
+        let pricingFailure: GenerationPricingFailure?
         do {
             let quoted = try await quoteLoader(target, input)
             try validate(quoted)
@@ -70,7 +76,7 @@ enum GenerationBudgetGuard {
             pricingFailure = nil
         } catch {
             estimate = nil
-            pricingFailure = error.localizedDescription
+            pricingFailure = .classified(error, provider: target.provider, endpoint: target.endpoint)
         }
 
         if let ceiling = approvedPackage?.payload.estimate {
@@ -98,7 +104,7 @@ enum GenerationBudgetGuard {
                 throw GenerationBudgetError.blocked(
                     "Budget stop: \(target.provider.displayName) did not provide a verified monetary "
                     + "estimate for \(target.endpoint). No provider request was sent. "
-                    + (pricingFailure ?? "Pricing is unavailable.")
+                    + (pricingFailure?.localizedDescription ?? "Pricing is unavailable.")
                 )
             }
             let projected = existingSpend + estimate.eurAmount
@@ -123,7 +129,7 @@ enum GenerationBudgetGuard {
             authorization: authorization,
             kind: .reserved,
             money: estimate,
-            note: pricingFailure
+            note: pricingFailure?.detail
         )
         return authorization
     }
@@ -435,7 +441,12 @@ enum LiveGenerationPricing {
         switch (target.provider, target.transport) {
         case (.fal, .api):
             guard let apiKey = ProviderKeychain.load(.fal) else {
-                throw GenerationBudgetError.blocked("Add a fal.ai API key to retrieve live pricing.")
+                throw GenerationPricingFailure(
+                    reason: .priceQueryUnavailable,
+                    provider: .fal,
+                    endpoint: target.endpoint,
+                    detail: "Add a fal.ai API key to retrieve live pricing."
+                )
             }
             return try await ProviderMoneyClient.shared.falQuote(
                 endpoint: target.endpoint,
@@ -444,8 +455,11 @@ enum LiveGenerationPricing {
             )
         case (.runway, .api):
             guard let credits = runwayCredits(endpoint: target.endpoint, input: input) else {
-                throw GenerationBudgetError.blocked(
-                    "Runway pricing is not verified for this exact model and option set."
+                throw GenerationPricingFailure(
+                    reason: .unsupportedCombination,
+                    provider: .runway,
+                    endpoint: target.endpoint,
+                    detail: "Runway pricing is not verified for this exact model and option set."
                 )
             }
             return try await ProviderMoneyClient.shared.normalize(
@@ -454,20 +468,28 @@ enum LiveGenerationPricing {
                 pricingSource: "https://docs.dev.runwayml.com/guides/pricing/"
             )
         default:
-            throw GenerationBudgetError.blocked(
-                "\(target.provider.displayName) does not expose a verified pre-dispatch monetary estimate."
+            throw GenerationPricingFailure(
+                reason: .unsupportedCombination,
+                provider: target.provider,
+                endpoint: target.endpoint,
+                detail: "\(target.provider.displayName) does not expose a verified pre-dispatch monetary estimate."
             )
         }
     }
 
-    private static func runwayCredits(
+    static func runwayCredits(
         endpoint: String,
         input: GenerationPricingInput
     ) -> Int? {
+        guard (1...4).contains(input.outputCount), input.referenceCount >= 0 else { return nil }
         let duration = input.durationSeconds.flatMap {
             $0 > 0 ? max(1, Int($0.rounded(.up))) : nil
         }
-        let model = RunwayModelRegistry.model(for: endpoint)?.apiModel
+        let registryModel = RunwayModelRegistry.model(for: endpoint)
+        if registryModel?.imageRequest != nil {
+            guard input.modality == .image, input.resolution == nil else { return nil }
+        }
+        let model = registryModel?.apiModel
         switch model {
         case "gen4.5":
             guard let duration else { return nil }
@@ -478,10 +500,68 @@ enum LiveGenerationPricing {
         case "aleph2":
             guard let duration else { return nil }
             return max(56, 28 * duration)
+        case "gen4_image_turbo":
+            return 2 * max(1, input.outputCount)
         case "gen4_image":
+            guard runwayRatios(endpoint: endpoint, satisfy: { dimensions in
+                dimensions.min() ?? 0 >= 1_080
+            }) else { return nil }
             return 8 * max(1, input.outputCount)
+        case "gpt_image_2":
+            guard runwayRatios(endpoint: endpoint, satisfy: { dimensions in
+                dimensions.max() ?? 0 < 3_840
+            }) else { return nil }
+            let perImage: Int
+            switch input.quality ?? "high" {
+            case "low": perImage = 1
+            case "medium": perImage = 5
+            case "high", "auto": perImage = 20
+            default: return nil
+            }
+            return perImage * max(1, input.outputCount)
+        case "seedream5_pro":
+            guard runwayRatios(endpoint: endpoint, satisfy: { dimensions in
+                dimensions.max() ?? 0 < 1_920
+            }) else { return nil }
+            return 5 * max(1, input.outputCount)
+        case "seedream5_lite":
+            return 4 * max(1, input.outputCount)
+        case "grok_imagine_image_2":
+            guard runwayRatios(endpoint: endpoint, satisfy: { dimensions in
+                dimensions.max() ?? 0 < 1_920
+            }) else { return nil }
+            let perImage: Int
+            switch input.quality ?? "medium" {
+            case "low": perImage = 4
+            case "medium": perImage = 6
+            default: return nil
+            }
+            return max(6, perImage * max(1, input.outputCount) + input.referenceCount)
+        case "gemini_image3_pro":
+            guard input.modality == .image,
+                  input.outputCount == 1,
+                  input.resolution == nil,
+                  input.quality == nil,
+                  runwayRatios(endpoint: endpoint, satisfy: { dimensions in
+                      dimensions.max() ?? 0 < 3_840
+                  }) else { return nil }
+            return 20
+        case "gemini_2.5_flash":
+            return 5 * max(1, input.outputCount)
         default:
             return nil
+        }
+    }
+
+    private static func runwayRatios(
+        endpoint: String,
+        satisfy predicate: ([Int]) -> Bool
+    ) -> Bool {
+        guard let ratios = RunwayModelRegistry.model(for: endpoint)?.imageRequest?.ratios.values,
+              !ratios.isEmpty else { return false }
+        return ratios.allSatisfy { ratio in
+            let dimensions = ratio.split(separator: ":").compactMap { Int($0) }
+            return dimensions.count == 2 && predicate(dimensions)
         }
     }
 }
@@ -501,21 +581,40 @@ actor ProviderMoneyClient {
     ) async throws -> GenerationMoney {
         var parts = URLComponents(string: "https://api.fal.ai/v1/models/pricing")!
         parts.queryItems = [URLQueryItem(name: "endpoint_id", value: endpoint)]
-        guard let url = parts.url else {
-            throw GenerationBudgetError.blocked("fal.ai returned an invalid pricing URL.")
-        }
+        guard let url = parts.url else { throw pricingFailure(
+            .priceQueryUnavailable,
+            provider: .fal,
+            endpoint: endpoint,
+            detail: "fal.ai returned an invalid pricing URL."
+        ) }
         var request = URLRequest(url: url)
         request.setValue("Key \(apiKey)", forHTTPHeaderField: "Authorization")
-        let data = try await responseData(for: request, label: "fal.ai pricing")
-        let response = try JSONDecoder().decode(FalPricingResponse.self, from: data)
+        let data = try await responseData(
+            for: request,
+            label: "fal.ai pricing",
+            reason: .priceQueryUnavailable,
+            provider: .fal,
+            endpoint: endpoint
+        )
+        let response: FalPricingResponse
+        do { response = try JSONDecoder().decode(FalPricingResponse.self, from: data) }
+        catch { throw pricingFailure(
+            .priceQueryUnavailable,
+            provider: .fal,
+            endpoint: endpoint,
+            detail: "fal.ai returned unreadable pricing metadata."
+        ) }
         guard let price = response.prices.first(where: { $0.endpointId == endpoint }),
               price.unitPrice.isFinite,
               price.unitPrice >= 0 else {
-            throw GenerationBudgetError.blocked(
-                "fal.ai returned no current price for \(endpoint)."
+            throw pricingFailure(
+                .unsupportedCombination,
+                provider: .fal,
+                endpoint: endpoint,
+                detail: "fal.ai returned no current price for \(endpoint)."
             )
         }
-        let quantity = try falQuantity(unit: price.unit, input: input)
+        let quantity = try falQuantity(unit: price.unit, input: input, endpoint: endpoint)
         return try await normalize(
             nativeAmount: price.unitPrice * quantity,
             currency: price.currency,
@@ -536,7 +635,13 @@ actor ProviderMoneyClient {
         guard let url = parts.url else { return nil }
         var request = URLRequest(url: url)
         request.setValue("Key \(apiKey)", forHTTPHeaderField: "Authorization")
-        let data = try await responseData(for: request, label: "fal.ai billing")
+        let data = try await responseData(
+            for: request,
+            label: "fal.ai billing",
+            reason: .priceQueryUnavailable,
+            provider: .fal,
+            endpoint: endpoint
+        )
         let response = try JSONDecoder().decode(FalBillingResponse.self, from: data)
         guard let event = response.billingEvents.first(where: {
             $0.requestId == requestId && $0.endpointId == endpoint
@@ -554,7 +659,12 @@ actor ProviderMoneyClient {
         pricingSource: String
     ) async throws -> GenerationMoney {
         guard nativeAmount.isFinite, nativeAmount >= 0 else {
-            throw GenerationBudgetError.blocked("Provider pricing returned an invalid amount.")
+            throw pricingFailure(
+                .priceQueryUnavailable,
+                provider: nil,
+                endpoint: pricingSource,
+                detail: "Provider pricing returned an invalid amount."
+            )
         }
         let code = currency.uppercased()
         let rates = try await exchangeRates()
@@ -565,8 +675,11 @@ actor ProviderMoneyClient {
             guard let unitsPerEuro = rates.unitsPerEuro[code],
                   unitsPerEuro.isFinite,
                   unitsPerEuro > 0 else {
-                throw GenerationBudgetError.blocked(
-                    "ECB has no current EUR reference rate for \(code)."
+                throw pricingFailure(
+                    .exchangeRateUnavailable,
+                    provider: nil,
+                    endpoint: pricingSource,
+                    detail: "ECB has no current EUR reference rate for \(code)."
                 )
             }
             eurPerUnit = 1 / unitsPerEuro
@@ -582,7 +695,11 @@ actor ProviderMoneyClient {
         )
     }
 
-    private func falQuantity(unit: String, input: GenerationPricingInput) throws -> Double {
+    private func falQuantity(
+        unit: String,
+        input: GenerationPricingInput,
+        endpoint: String
+    ) throws -> Double {
         let normalized = unit.lowercased()
             .replacingOccurrences(of: "-", with: "_")
             .replacingOccurrences(of: " ", with: "_")
@@ -594,35 +711,40 @@ actor ProviderMoneyClient {
         case "second", "seconds", "video_second", "video_seconds",
              "output_second", "output_seconds", "audio_second", "audio_seconds":
             guard let duration = input.durationSeconds, duration > 0 else {
-                throw GenerationBudgetError.blocked(
-                    "fal.ai prices \(unit), but this request has no verified duration."
+                throw pricingFailure(
+                    .unsupportedCombination, provider: .fal, endpoint: endpoint,
+                    detail: "fal.ai prices \(unit), but this request has no verified duration."
                 )
             }
             return duration * Double(max(1, input.outputCount))
         case "minute", "minutes", "audio_minute", "audio_minutes":
             guard let duration = input.durationSeconds, duration > 0 else {
-                throw GenerationBudgetError.blocked(
-                    "fal.ai prices \(unit), but this request has no verified duration."
+                throw pricingFailure(
+                    .unsupportedCombination, provider: .fal, endpoint: endpoint,
+                    detail: "fal.ai prices \(unit), but this request has no verified duration."
                 )
             }
             return duration / 60 * Double(max(1, input.outputCount))
         case "character", "characters":
             guard input.promptCharacterCount > 0 else {
-                throw GenerationBudgetError.blocked(
-                    "fal.ai prices characters, but this request has no priced text."
+                throw pricingFailure(
+                    .unsupportedCombination, provider: .fal, endpoint: endpoint,
+                    detail: "fal.ai prices characters, but this request has no priced text."
                 )
             }
             return Double(input.promptCharacterCount)
         case "thousand_characters", "1000_characters":
             guard input.promptCharacterCount > 0 else {
-                throw GenerationBudgetError.blocked(
-                    "fal.ai prices characters, but this request has no priced text."
+                throw pricingFailure(
+                    .unsupportedCombination, provider: .fal, endpoint: endpoint,
+                    detail: "fal.ai prices characters, but this request has no priced text."
                 )
             }
             return Double(input.promptCharacterCount) / 1000
         default:
-            throw GenerationBudgetError.blocked(
-                "fal.ai billing unit '\(unit)' cannot be derived exactly from this request."
+            throw pricingFailure(
+                .unsupportedCombination, provider: .fal, endpoint: endpoint,
+                detail: "fal.ai billing unit '\(unit)' cannot be derived exactly from this request."
             )
         }
     }
@@ -631,16 +753,21 @@ actor ProviderMoneyClient {
         if let cachedRates, cachedRates.isFresh { return cachedRates }
         let data = try await responseData(
             for: URLRequest(url: Self.ecbURL),
-            label: "ECB exchange rates"
+            label: "ECB exchange rates",
+            reason: .exchangeRateUnavailable,
+            provider: nil,
+            endpoint: Self.ecbURL.absoluteString
         )
         guard let xml = String(data: data, encoding: .utf8),
               let date = capture(#"time=['"]([^'"]+)['"]"#, in: xml),
               let parsedDate = ISO8601DateFormatter().date(from: date + "T00:00:00Z") else {
-            throw GenerationBudgetError.blocked("ECB exchange-rate data is missing or stale.")
+            throw pricingFailure(.exchangeRateUnavailable, provider: nil,
+                endpoint: Self.ecbURL.absoluteString, detail: "ECB exchange-rate data is missing or stale.")
         }
         let age = Date().timeIntervalSince(parsedDate)
         guard age >= -24 * 60 * 60, age < 8 * 24 * 60 * 60 else {
-            throw GenerationBudgetError.blocked("ECB exchange-rate data is missing or stale.")
+            throw pricingFailure(.exchangeRateUnavailable, provider: nil,
+                endpoint: Self.ecbURL.absoluteString, detail: "ECB exchange-rate data is missing or stale.")
         }
         var unitsPerEuro: [String: Double] = [:]
         let pattern = #"currency=['"]([A-Z]{3})['"]\s+rate=['"]([0-9.]+)['"]"#
@@ -653,20 +780,45 @@ actor ProviderMoneyClient {
             unitsPerEuro[String(xml[currencyRange])] = rate
         }
         guard !unitsPerEuro.isEmpty else {
-            throw GenerationBudgetError.blocked("ECB exchange-rate data contains no rates.")
+            throw pricingFailure(.exchangeRateUnavailable, provider: nil,
+                endpoint: Self.ecbURL.absoluteString, detail: "ECB exchange-rate data contains no rates.")
         }
         let rates = ExchangeRates(date: date, retrievedAt: Date(), unitsPerEuro: unitsPerEuro)
         cachedRates = rates
         return rates
     }
 
-    private func responseData(for request: URLRequest, label: String) async throws -> Data {
-        let (data, response) = try await URLSession.shared.data(for: request)
+    private func responseData(
+        for request: URLRequest,
+        label: String,
+        reason: GenerationPricingFailure.Reason,
+        provider: GenerationProvider?,
+        endpoint: String
+    ) async throws -> Data {
+        let data: Data
+        let response: URLResponse
+        do { (data, response) = try await URLSession.shared.data(for: request) }
+        catch { throw pricingFailure(
+            reason,
+            provider: provider,
+            endpoint: endpoint,
+            detail: "\(label) could not be reached: \(error.localizedDescription)"
+        ) }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
-            throw GenerationBudgetError.blocked("\(label) failed with HTTP \(status).")
+            throw pricingFailure(reason, provider: provider, endpoint: endpoint,
+                detail: "\(label) failed with HTTP \(status).")
         }
         return data
+    }
+
+    private func pricingFailure(
+        _ reason: GenerationPricingFailure.Reason,
+        provider: GenerationProvider?,
+        endpoint: String,
+        detail: String
+    ) -> GenerationPricingFailure {
+        GenerationPricingFailure(reason: reason, provider: provider, endpoint: endpoint, detail: detail)
     }
 
     private func capture(_ pattern: String, in text: String) -> String? {

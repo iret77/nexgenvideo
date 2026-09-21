@@ -247,13 +247,30 @@ enum GenerationController {
 
     static func prepareReviewPackage(_ generation: PreparedGeneration, editor: EditorViewModel,
                                     quoteLoader: GenerationBudgetGuard.QuoteLoader = LiveGenerationPricing.quote) async throws -> GenerationPackageV1 {
-        let estimate = try? await quoteLoader(generation.target,
-            pricingInput(generation.request, prepared: generation.submission, compiledPrompt: generation.compiledPrompt))
+        let estimate: GenerationMoney?
+        let pricingFailure: GenerationPricingFailure?
+        do {
+            estimate = try await quoteLoader(generation.target,
+                pricingInput(generation.request, prepared: generation.submission, compiledPrompt: generation.compiledPrompt))
+            pricingFailure = nil
+        } catch {
+            try Task.checkCancellation()
+            estimate = nil
+            pricingFailure = .classified(
+                error,
+                provider: generation.target.provider,
+                endpoint: generation.target.endpoint
+            )
+        }
         try generation.scope?.requireCurrent(editor: editor)
         try await generation.references?.requireUnchanged()
         guard editor.workingRoot == generation.home else { throw GenerationRequestError.gate("The project changed during request preparation.") }
         try generation.destination.requireCurrent(editor: editor)
-        guard let package = try makePackage(generation, estimate: estimate) else {
+        guard let package = try makePackage(
+            generation,
+            estimate: estimate,
+            pricingFailure: pricingFailure
+        ) else {
             throw GenerationRequestError.optionsInvalid("This operation does not support a visual generation package.")
         }
         try await package.requireCurrentContext(editor: editor)
@@ -261,7 +278,11 @@ enum GenerationController {
         return package
     }
 
-    private static func makePackage(_ generation: PreparedGeneration, estimate: GenerationMoney?) throws -> GenerationPackageV1? {
+    private static func makePackage(
+        _ generation: PreparedGeneration,
+        estimate: GenerationMoney?,
+        pricingFailure: GenerationPricingFailure? = nil
+    ) throws -> GenerationPackageV1? {
         var input: GenerationInput
         let parameters: PreparedProviderParameters
         let modality: String
@@ -286,7 +307,8 @@ enum GenerationController {
             requestParametersJSON: GenerationPackageV1.requestJSON(parameters: parameters, references: references),
             routing: input.productionRouting,
             routeReceipt: .init(target: generation.target, checks: ModelCatalog.shared.routeChecks,
-                capabilitySnapshot: input.productionRouting?.route.capabilitySnapshot), estimate: estimate))
+                capabilitySnapshot: input.productionRouting?.route.capabilitySnapshot), estimate: estimate,
+            pricingFailure: pricingFailure))
     }
 
     @discardableResult
@@ -469,7 +491,8 @@ enum GenerationController {
         do {
             let priced = try await GenerationBudgetGuard.authorize(
                 input: pricingInput(request, prepared: prepared, compiledPrompt: generation.compiledPrompt),
-                target: target, editor: editor, approvedPackage: generation.reviewedPackage, quoteLoader: quoteLoader)
+                target: target, editor: editor, approvedPackage: generation.reviewedPackage,
+                requiresVerifiedCeiling: generation.batchItem != nil, quoteLoader: quoteLoader)
             do {
                 let package = try generation.reviewedPackage ?? makePackage(generation, estimate: priced.estimate)
                 try package?.persist(editor: editor)
@@ -656,9 +679,11 @@ enum GenerationController {
         var resolution: String?
         var quality: String?
         var generateAudio: Bool?
+        var referenceCount = 0
 
         switch prepared {
         case .video(let submission, let parameters):
+            referenceCount = parameters.referenceSlots.count
             duration = submission.placeholderDuration
             if case .video(let params) = parameters.parameters {
                 duration = params.duration.seconds.map(Double.init) ?? duration
@@ -666,6 +691,7 @@ enum GenerationController {
                 generateAudio = params.generateAudio
             }
         case .image(let submission, let parameters):
+            referenceCount = parameters.referenceSlots.count
             outputCount = max(1, submission.numImages)
             if case .image(let params) = parameters.parameters {
                 resolution = params.resolution
@@ -688,7 +714,8 @@ enum GenerationController {
             resolution: resolution,
             quality: quality,
             promptCharacterCount: compiledPrompt.count,
-            generateAudio: generateAudio
+            generateAudio: generateAudio,
+            referenceCount: referenceCount
         )
     }
 

@@ -6,6 +6,25 @@ import Testing
 @Suite("Generation batch single-use execution")
 @MainActor
 struct GenerationBatchTests {
+    private func runwayInput(
+        _ model: String,
+        count: Int = 1,
+        quality: String? = nil,
+        references: Int = 0
+    ) -> GenerationPricingInput {
+        GenerationPricingInput(
+            modelId: "runway/\(model)",
+            modality: .image,
+            durationSeconds: nil,
+            outputCount: count,
+            resolution: nil,
+            quality: quality,
+            promptCharacterCount: 1,
+            generateAudio: nil,
+            referenceCount: references
+        )
+    }
+
     private func fixture() async throws -> (URL, EditorViewModel, GenerationBatch) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("ngv-batch-\(UUID().uuidString).ngv")
         try Fixtures.prepareProjectPackage(at: root)
@@ -86,7 +105,7 @@ struct GenerationBatchTests {
                 })
         }
         #expect(dispatches == 0)
-        #expect(collector.packages == [package])
+        #expect(collector.entries.map { $0.package } == [package])
         #expect(editor.mediaAssets.isEmpty)
         #expect(editor.generationLog.spendEvents.isEmpty)
         #expect(editor.agentService.pendingSpendApproval == nil)
@@ -238,6 +257,273 @@ struct GenerationBatchTests {
             items: [.init(id: UUID().uuidString, purpose: "Unpriced generation", package: unpriced)]))
         #expect(manifest.totalEUR == nil)
         #expect(throws: (any Error).self) { try GenerationBatchJournal(approving: manifest, authorityID: "test-authority") }
+    }
+
+    @Test func thirteenGeminiRequestsHaveOneExactReviewTotalAndApproval() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ngv-gemini-batch-\(UUID().uuidString).ngv")
+        try Fixtures.prepareProjectPackage(at: root)
+        defer { cleanup(root) }
+        let editor = EditorViewModel()
+        editor.projectURL = root
+        let (generation, package) = try await GenerationPackageFixture.prepare(
+            editor: editor,
+            model: "runway/gemini_image3_pro",
+            provider: .runway,
+            endpoint: "runway/gemini_image3_pro"
+        )
+        let input = try package.pricingInput()
+        #expect(LiveGenerationPricing.runwayCredits(endpoint: package.payload.target.endpoint, input: input) == 20)
+        let unsupported4K = GenerationPricingInput(
+            modelId: input.modelId,
+            modality: input.modality,
+            durationSeconds: input.durationSeconds,
+            outputCount: input.outputCount,
+            resolution: "4K",
+            quality: input.quality,
+            promptCharacterCount: input.promptCharacterCount,
+            generateAudio: input.generateAudio,
+            referenceCount: input.referenceCount
+        )
+        #expect(LiveGenerationPricing.runwayCredits(
+            endpoint: package.payload.target.endpoint,
+            input: unsupported4K
+        ) == nil)
+        let verifiedPackage = try package.replacingPricing(
+            estimate: .init(
+                nativeAmount: 0.20,
+                nativeCurrency: "USD",
+                eurAmount: 0.18,
+                eurPerNativeUnit: 0.90,
+                exchangeRateDate: "2026-09-21",
+                pricingSource: "https://docs.dev.runwayml.com/guides/pricing/",
+                exchangeRateSource: "fixture://ecb"
+            ),
+            failure: nil
+        )
+        let references = try #require(generation.references)
+        try await GenerationPackageInputs.persist(package: verifiedPackage, snapshot: references, editor: editor)
+        let items = (0..<13).map {
+            GenerationBatch.Item(id: UUID().uuidString, purpose: "Bible view \($0 + 1)", package: verifiedPackage)
+        }
+        let batch = try GenerationBatch(payload: .init(
+            nonce: UUID(),
+            projectKey: verifiedPackage.payload.binding.projectKey,
+            phase: "bible",
+            items: items
+        ))
+        #expect(batch.payload.items.allSatisfy { $0.package.payload.estimate?.eurAmount == 0.18 })
+        #expect(abs((batch.totalEUR ?? 0) - 2.34) < 0.000_001)
+        let journal = try GenerationBatchJournal(approving: batch, authorityID: "one-user-approval")
+        try journal.validate(batch: batch)
+        #expect(journal.executions.count == 13)
+        #expect(journal.executions.allSatisfy { $0.state == .queued })
+    }
+
+    @Test func officialRunwayImagePricesCoverExactExecutableOptions() {
+        #expect(LiveGenerationPricing.runwayCredits(
+            endpoint: "runway/gen4_image_turbo",
+            input: runwayInput("gen4_image_turbo")
+        ) == 2)
+        #expect(LiveGenerationPricing.runwayCredits(
+            endpoint: "runway/gen4_image",
+            input: runwayInput("gen4_image")
+        ) == 8)
+        #expect(LiveGenerationPricing.runwayCredits(
+            endpoint: "runway/gpt_image_2",
+            input: runwayInput("gpt_image_2", count: 4, quality: "high")
+        ) == 80)
+        #expect(LiveGenerationPricing.runwayCredits(
+            endpoint: "runway/seedream5_pro",
+            input: runwayInput("seedream5_pro", count: 4)
+        ) == 20)
+        #expect(LiveGenerationPricing.runwayCredits(
+            endpoint: "runway/seedream5_lite",
+            input: runwayInput("seedream5_lite", count: 4)
+        ) == 16)
+        #expect(LiveGenerationPricing.runwayCredits(
+            endpoint: "runway/grok_imagine_image_2",
+            input: runwayInput("grok_imagine_image_2", count: 4, quality: "medium", references: 2)
+        ) == 26)
+        #expect(LiveGenerationPricing.runwayCredits(
+            endpoint: "runway/grok_imagine_image_2",
+            input: runwayInput("grok_imagine_image_2", quality: "low")
+        ) == 6)
+        #expect(LiveGenerationPricing.runwayCredits(
+            endpoint: "runway/gemini_image3_pro",
+            input: runwayInput("gemini_image3_pro")
+        ) == 20)
+        #expect(LiveGenerationPricing.runwayCredits(
+            endpoint: "runway/gemini_2.5_flash",
+            input: runwayInput("gemini_2.5_flash")
+        ) == 5)
+        #expect(LiveGenerationPricing.runwayCredits(
+            endpoint: "runway/gemini_image3.1_flash",
+            input: runwayInput("gemini_image3.1_flash")
+        ) == nil)
+    }
+
+    @Test func unpricedItemsCanBeRemovedAndTheBatchCanStillBeDeclined() async throws {
+        let (root, editor, original) = try await fixture()
+        defer { cleanup(root) }
+        let unpriced = try original.payload.items[0].package.replacingPricing(
+            estimate: nil,
+            failure: .init(
+                reason: .unsupportedCombination,
+                provider: original.payload.items[0].package.payload.target.provider,
+                endpoint: original.payload.items[0].package.payload.target.endpoint,
+                detail: "fixture unsupported options"
+            )
+        )
+        let batch = try original.replacingPackage(
+            itemID: original.payload.items[0].id,
+            with: unpriced
+        )
+        let recoveries = Dictionary(uniqueKeysWithValues: batch.payload.items.map { item in
+            (item.id, GenerationBatchRecovery(options: []) { _, _ in item.package })
+        })
+        try editor.generationBatchCoordinator.present(batch, recoveries: recoveries)
+        #expect(editor.generationBatchCoordinator.pending?.totalEUR == nil)
+        editor.generationBatchCoordinator.remove(
+            itemID: batch.payload.items[0].id,
+            editor: editor
+        )
+        let reduced = try #require(editor.generationBatchCoordinator.pending)
+        #expect(reduced.id != batch.id)
+        #expect(reduced.payload.items.count == 2)
+        #expect(reduced.totalEUR == 0.50)
+        editor.generationBatchCoordinator.decline(editor: editor)
+        #expect(editor.generationBatchCoordinator.pending == nil)
+        #expect(!editor.generationBatchCoordinator.isRecovering)
+    }
+
+    @Test func pricingRetryRebindsPackageAndManifestWithoutDispatch() async throws {
+        let (root, editor, pricedBatch) = try await fixture()
+        defer { cleanup(root) }
+        let originalItem = pricedBatch.payload.items[0]
+        let unpricedPackage = try originalItem.package.replacingPricing(
+            estimate: nil,
+            failure: .init(
+                reason: .exchangeRateUnavailable,
+                provider: nil,
+                endpoint: "fixture://ecb",
+                detail: "fixture exchange outage"
+            )
+        )
+        let snapshot = try await GenerationPackageInputs.restore(package: originalItem.package, editor: editor)
+        try await GenerationPackageInputs.persist(package: unpricedPackage, snapshot: snapshot, editor: editor)
+        let item = GenerationBatch.Item(id: originalItem.id, purpose: originalItem.purpose, package: unpricedPackage)
+        let batch = try GenerationBatch(payload: .init(
+            nonce: pricedBatch.payload.nonce,
+            projectKey: pricedBatch.payload.projectKey,
+            phase: pricedBatch.payload.phase,
+            items: [item],
+            requestSHA256: pricedBatch.payload.requestSHA256
+        ))
+        var routePreparations = 0
+        let recovery = GenerationBatchRecovery(options: []) { _, _ in
+            routePreparations += 1
+            return unpricedPackage
+        }
+        try editor.generationBatchCoordinator.present(batch, recoveries: [item.id: recovery])
+        await editor.generationBatchCoordinator.retryPricing(
+            editor: editor,
+            quoteLoader: { _, _ in GenerationPackageFixture.money(0.40) }
+        )
+        let rebound = try #require(editor.generationBatchCoordinator.pending)
+        #expect(rebound.id != batch.id)
+        #expect(rebound.payload.items[0].package.id != unpricedPackage.id)
+        #expect(rebound.payload.items[0].package.payload.estimate?.eurAmount == 0.40)
+        #expect(rebound.payload.items[0].package.payload.pricingFailure == nil)
+        #expect(rebound.payload.items[0].package.payload.requestParametersJSON
+            == unpricedPackage.payload.requestParametersJSON)
+        #expect(rebound.payload.items[0].package.payload.references
+            == unpricedPackage.payload.references)
+        #expect(rebound.payload.requestSHA256 == batch.payload.requestSHA256)
+        #expect(routePreparations == 0)
+        #expect(editor.generationLog.spendEvents.isEmpty)
+        #expect(editor.mediaAssets.isEmpty)
+        let oldApprovedBatch = try batch.replacingPackage(
+            itemID: item.id,
+            with: originalItem.package
+        )
+        let oldJournal = try GenerationBatchJournal(
+            approving: oldApprovedBatch,
+            authorityID: "old-review"
+        )
+        #expect(throws: (any Error).self) { try oldJournal.validate(batch: rebound) }
+    }
+
+    @Test func explicitRouteChangeRepreparesAndRebindsWithoutDispatch() async throws {
+        let (root, editor, pricedBatch) = try await fixture()
+        defer { cleanup(root) }
+        let originalItem = pricedBatch.payload.items[0]
+        let unpricedPackage = try originalItem.package.replacingPricing(
+            estimate: nil,
+            failure: .init(
+                reason: .unsupportedCombination,
+                provider: originalItem.package.payload.target.provider,
+                endpoint: originalItem.package.payload.target.endpoint,
+                detail: "fixture unsupported options"
+            )
+        )
+        let originalSnapshot = try await GenerationPackageInputs.restore(
+            package: originalItem.package,
+            editor: editor
+        )
+        try await GenerationPackageInputs.persist(
+            package: unpricedPackage,
+            snapshot: originalSnapshot,
+            editor: editor
+        )
+        let (replacementGeneration, replacementPackage) = try await GenerationPackageFixture.prepare(
+            editor: editor,
+            model: "alternate-image",
+            provider: .runway,
+            endpoint: "runway/gen4_image"
+        )
+        let option = SpendOption(
+            modelId: replacementPackage.payload.target.modelId,
+            modelName: "Alternate image",
+            target: replacementPackage.payload.target,
+            credits: 8,
+            requiresCatalogAvailability: false
+        )
+        var preparations = 0
+        let recovery = GenerationBatchRecovery(options: [option]) { editor, selected in
+            #expect(selected.id == option.id)
+            preparations += 1
+            try await GenerationPackageInputs.persist(
+                package: replacementPackage,
+                snapshot: #require(replacementGeneration.references),
+                editor: editor
+            )
+            return replacementPackage
+        }
+        let item = GenerationBatch.Item(
+            id: originalItem.id,
+            purpose: originalItem.purpose,
+            package: unpricedPackage
+        )
+        let batch = try GenerationBatch(payload: .init(
+            nonce: pricedBatch.payload.nonce,
+            projectKey: pricedBatch.payload.projectKey,
+            phase: pricedBatch.payload.phase,
+            items: [item],
+            requestSHA256: pricedBatch.payload.requestSHA256
+        ))
+        try editor.generationBatchCoordinator.present(batch, recoveries: [item.id: recovery])
+        await editor.generationBatchCoordinator.changeRoute(itemID: item.id, option: option, editor: editor)
+        let rebound = try #require(editor.generationBatchCoordinator.pending)
+        #expect(preparations == 1)
+        #expect(rebound.id != batch.id)
+        #expect(rebound.payload.items[0].package.id == replacementPackage.id)
+        #expect(rebound.payload.items[0].package.payload.target == option.target)
+        #expect(rebound.payload.items[0].package.payload.requestParametersJSON
+            == replacementPackage.payload.requestParametersJSON)
+        #expect(rebound.payload.requestSHA256 == batch.payload.requestSHA256)
+        #expect(rebound.totalEUR == replacementPackage.payload.estimate?.eurAmount)
+        #expect(editor.generationLog.spendEvents.isEmpty)
+        #expect(editor.mediaAssets.isEmpty)
     }
 
     @Test func changedArchivedInputsCannotResumeUnderTheOriginalPackage() async throws {

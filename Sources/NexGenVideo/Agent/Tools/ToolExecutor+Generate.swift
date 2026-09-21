@@ -861,7 +861,23 @@ extension ToolExecutor {
                 throw ToolError("The batch item has no exact prepared inputs.")
             }
             try await GenerationPackageInputs.persist(package: value.package, snapshot: references, editor: editor)
-            batch.packages.append(value.package)
+            let recovery = GenerationBatchRecovery(
+                options: options,
+                pipelineScope: try spendPipelineScope(tool: pipelineTool, editor: editor)
+            ) { editor, option in
+                let replacement = try await prepare(editor, option)
+                guard replacement.package.payload.target == option.target,
+                      let references = replacement.generation?.references else {
+                    throw ToolError("The changed route has no exact prepared inputs.")
+                }
+                try await GenerationPackageInputs.persist(
+                    package: replacement.package,
+                    snapshot: references,
+                    editor: editor
+                )
+                return replacement.package
+            }
+            batch.entries.append((value.package, recovery))
             return .ok("Prepared generation package: \(value.package.id). No generation was submitted.")
         }
         guard CostGuard.needsApproval(credits: recommended.credits) else {
