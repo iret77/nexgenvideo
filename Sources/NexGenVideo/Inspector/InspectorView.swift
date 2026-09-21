@@ -748,6 +748,13 @@ struct InspectorView: View {
                             case .effects, .ai, .none:
                                 EmptyView()
                             }
+                            if !selectedVisualClips.isEmpty {
+                                InspectorSection("Compositing") {
+                                    InspectorRow(icon: "square.on.square", label: "Blend Mode") {
+                                        ClipBlendModePicker(clips: selectedVisualClips)
+                                    }
+                                }
+                            }
                         }
                         .padding(AppTheme.Spacing.lg)
                     }

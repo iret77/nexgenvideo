@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreImage
 
 /// Immutable per-clip snapshot read on the render queue — never the live timeline.
 struct LayerPlan: Sendable {
@@ -7,12 +8,12 @@ struct LayerPlan: Sendable {
     /// Display size (preferredTransform applied), matching `clipNaturalSizes`.
     let natSize: CGSize
     let preferredTransform: CGAffineTransform
+    var stillImage: CIImage? = nil
 }
 
 /// One timeline segment between clip boundaries. Layers are ordered bottom → top.
 final class CompositorInstruction: NSObject, AVVideoCompositionInstructionProtocol, @unchecked Sendable {
     let timeRange: CMTimeRange
-    // Post-processing must stay on: the export animationTool (text) keys off it.
     let enablePostProcessing = true
     // Values are sampled per frame; never let AVFoundation cache one frame per instruction.
     let containsTweening = true
@@ -29,7 +30,8 @@ final class CompositorInstruction: NSObject, AVVideoCompositionInstructionProtoc
         self.fps = fps
         var seen = Set<CMPersistentTrackID>()
         self.requiredSourceTrackIDs = layers.compactMap {
-            seen.insert($0.trackID).inserted ? NSNumber(value: $0.trackID) : nil
+            $0.stillImage == nil && $0.clip.mediaType != .text && seen.insert($0.trackID).inserted
+                ? NSNumber(value: $0.trackID) : nil
         }
         super.init()
     }

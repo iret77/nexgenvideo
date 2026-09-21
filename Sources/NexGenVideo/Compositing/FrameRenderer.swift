@@ -1,8 +1,7 @@
 import AVFoundation
 import CoreImage
 
-/// Composites a frame from a CompositorInstruction's layers with Core Image:
-/// per-layer crop → effects → transform → opacity, stacked bottom→top.
+// Shared bottom-to-top compositor for preview, capture, final render and export.
 enum FrameRenderer {
 
     static func render(
@@ -17,11 +16,25 @@ enum FrameRenderer {
 
         var accum = CIImage(color: .black).cropped(to: renderRect)
         for layer in instruction.layers {
-            guard let buffer = sourceFrame(layer.trackID) else { continue }
-            if let image = composedLayer(layer, buffer: buffer, frame: frame,
-                                         renderSize: instruction.renderSize) {
-                accum = image.composited(over: accum)
-            }
+            let source: CIImage
+            let sourceHeight: CGFloat
+            if let still = layer.stillImage {
+                source = still
+                sourceHeight = layer.natSize.height
+            } else if layer.clip.mediaType == .text {
+                guard let image = TextRasterizer.layer(for: layer.clip, renderSize: instruction.renderSize)?.stillImage else { continue }
+                source = image
+                sourceHeight = layer.natSize.height
+            } else if let buffer = sourceFrame(layer.trackID) {
+                source = CIImage(cvPixelBuffer: buffer, options: [.colorSpace: NSNull()]).unpremultiplyingAlpha()
+                sourceHeight = CGFloat(CVPixelBufferGetHeight(buffer))
+            } else { continue }
+            let image = composedLayer(layer, source: source, sourceHeight: sourceHeight,
+                                      frame: frame, renderSize: instruction.renderSize)
+            accum = ClipBlendRenderer.composite(
+                image, over: accum, mode: layer.clip.blendMode,
+                opacity: layer.clip.opacityAt(frame: frame), bounds: renderRect
+            )
         }
         context.render(accum, to: output, bounds: renderRect, colorSpace: nil)
         tag709(output)
@@ -39,19 +52,14 @@ enum FrameRenderer {
 
     private static func composedLayer(
         _ layer: LayerPlan,
-        buffer: CVPixelBuffer,
+        source: CIImage,
+        sourceHeight: CGFloat,
         frame: Int,
         renderSize: CGSize
-    ) -> CIImage? {
+    ) -> CIImage {
         let clip = layer.clip
-        let alpha = min(1.0, max(0.0, clip.opacityAt(frame: frame)))
-        guard alpha > 0 else { return nil }
-
-        // CI (color management off) treats pixels as unpremultiplied; sources are
-        // premultiplied, so undo it or the composite double-darkens edges.
-        var image = CIImage(cvPixelBuffer: buffer, options: [.colorSpace: NSNull()])
-            .unpremultiplyingAlpha()
-        let srcHeight = CGFloat(CVPixelBufferGetHeight(buffer))
+        var image = source
+        let srcHeight = sourceHeight
 
         let crop = clip.cropAt(frame: frame)
         if !crop.isIdentity {
@@ -79,8 +87,10 @@ enum FrameRenderer {
             }
         }
 
-        // transformAt drops the flip flags, so use the static transform unless animated.
-        let t = clip.hasTransformAnimation ? clip.transformAt(frame: frame) : clip.transform
+        // Animated geometry retains the clip's static reflection axes.
+        var t = clip.hasTransformAnimation ? clip.transformAt(frame: frame) : clip.transform
+        t.flipHorizontal = clip.transform.flipHorizontal
+        t.flipVertical = clip.transform.flipVertical
         let av = layer.preferredTransform.concatenating(
             CompositionBuilder.affineTransform(for: t, natSize: layer.natSize, renderSize: renderSize)
         )
@@ -88,13 +98,6 @@ enum FrameRenderer {
         let ci = flipY(srcHeight).concatenating(av).concatenating(flipY(renderSize.height))
         image = image.transformed(by: ci)
 
-        if alpha < 1 {
-            // Alpha only — CIColorMatrix re-premultiplies by the result's alpha, so
-            // scaling RGB too would double the fade.
-            image = image.applyingFilter("CIColorMatrix", parameters: [
-                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: alpha),
-            ])
-        }
         return image
     }
 

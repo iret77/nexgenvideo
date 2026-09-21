@@ -60,6 +60,7 @@ extension ToolExecutor {
             dict["tracks"] = tracks
         }
         dict["totalFrames"] = editor.timeline.totalFrames
+        dict["blendModeContract"] = ["version": 1, "modes": ClipBlendMode.allCases.map(\.rawValue)]
         if let window {
             dict["window"] = [window.lowerBound, min(window.upperBound, editor.timeline.totalFrames)]
         }
@@ -131,6 +132,11 @@ extension ToolExecutor {
 
     private static func compactClip(_ clip: [String: Any]) -> [String: Any] {
         var out = compactClipKeyframes(clip)
+        let carrier = clip["compositing"] as? [String: Any]
+        let rawMode = carrier?["blendMode"] as? String ?? "normal"
+        let version = carrier?["version"] as? Int ?? 1
+        out["blendMode"] = clip["mediaType"] as? String != "audio" && version == 1
+            ? (ClipBlendMode(rawValue: rawMode) ?? .normal).rawValue : "normal"
         if let s = out["sourceClipType"] as? String, s == out["mediaType"] as? String {
             out.removeValue(forKey: "sourceClipType")
         }

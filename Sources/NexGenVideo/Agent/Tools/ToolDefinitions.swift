@@ -546,6 +546,7 @@ enum ToolDefinitions {
                     "speed": ["type": "number", "description": "Playback speed multiplier (default 1.0). >1 speeds up, <1 slows down. The clip's timeline length is rescaled to keep the same source content (2x speed → half the frames), unless you also pass durationFrames to set the length explicitly."],
                     "volume": ["type": "number", "description": "Volume 0.0-1.0. Clears any existing volume keyframes."],
                     "opacity": ["type": "number", "description": "Opacity 0.0-1.0. Clears any existing opacity keyframes."],
+                    "blendMode": ["type": "string", "enum": ClipBlendMode.allCases.map(\.rawValue), "description": "Per-clip compositing mode (v1). Applies to video, image, Lottie and text clips; audio is rejected. Opacity and fades control the blend strength. Does not propagate to linked clips."],
                     "transform": [
                         "type": "object",
                         "additionalProperties": false,

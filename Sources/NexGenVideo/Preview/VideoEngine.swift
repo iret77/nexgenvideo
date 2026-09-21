@@ -11,8 +11,6 @@ enum PreviewSeekMode: String {
 final class VideoEngine {
     private(set) var player = AVPlayer()
 
-    let textController = TextLayerController()
-
     weak var previewView: PreviewNSView?
 
     weak var editor: EditorViewModel?
@@ -69,8 +67,6 @@ final class VideoEngine {
 
     func seek(to frame: Int, mode: PreviewSeekMode = .exact) {
         guard let editor else { return }
-        textController.tick(frame)
-
         let time = CMTime(value: CMTimeValue(frame), timescale: CMTimeScale(editor.timeline.fps))
         let tolerance: CMTime = mode == .interactiveScrub
             ? interactiveTolerance(activeLayerCount: activeVideoLayerCount(at: frame, editor: editor))
@@ -113,10 +109,8 @@ final class VideoEngine {
 
         switch tab {
         case .timeline:
-            textController.textRoot.isHidden = false
             rebuild()
         case .mediaAsset(let id, _, let type):
-            textController.textRoot.isHidden = true
             guard let asset = editor.mediaAssets.first(where: { $0.id == id }) else { return }
             if type == .image {
                 replacePlayerItem(nil, reason: "imagePreview")
@@ -178,8 +172,6 @@ final class VideoEngine {
             item.audioMix = result.audioMix
             item.videoComposition = result.videoComposition
             replacePlayerItem(item, reason: "rebuild")
-            syncTextLayers()
-
             seek(to: editor.currentFrame, mode: .exact)
             if editor.isPlaying { player.play() }
         }
@@ -208,17 +200,10 @@ final class VideoEngine {
     // MARK: - Text Layers
 
     func syncTextLayers() {
-        guard let editor, let previewView else { return }
-        guard editor.activePreviewTab == .timeline else {
-            textController.textRoot.isHidden = true
-            return
-        }
-
-        textController.textRoot.isHidden = false
-        let videoRect = previewView.playerLayer.videoRect
-        let resolvedRect = videoRect.isEmpty ? previewView.bounds : videoRect
-        textController.sync(timeline: editor.timeline, videoRect: resolvedRect)
-        textController.tick(editor.currentFrame)
+        guard let editor else { return }
+        let duration = CMTime(value: CMTimeValue(editor.timeline.totalFrames), timescale: CMTimeScale(editor.timeline.fps))
+        if duration != compositionDuration { rebuild(); return }
+        refreshVisuals()
     }
 
     // MARK: - Scopes
@@ -402,7 +387,6 @@ final class VideoEngine {
                 let clamped = duration > 0 ? min(frame, duration) : frame
                 if editor.activePreviewTab == .timeline {
                     editor.currentFrame = clamped
-                    self.textController.tick(clamped)
                 } else {
                     editor.sourcePlayheadFrame = clamped
                 }

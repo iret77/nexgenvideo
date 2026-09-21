@@ -52,6 +52,7 @@ fileprivate struct SetClipPropertiesInput: DecodableToolArgs {
     let speed: Double?
     let volume: Double?
     let opacity: Double?
+    let blendMode: ClipBlendMode?
     let transform: ParsedTransform?
     let content: String?
     let fontName: String?
@@ -62,14 +63,14 @@ fileprivate struct SetClipPropertiesInput: DecodableToolArgs {
     static let allowedKeys: Set<String> = [
         "clipIds",
         "durationFrames", "trimStartFrame", "trimEndFrame", "speed",
-        "volume", "opacity",
+        "volume", "opacity", "blendMode",
         "transform",
         "content", "fontName", "fontSize", "color", "alignment",
     ]
 
     var hasAnyProperty: Bool {
         durationFrames != nil || trimStartFrame != nil || trimEndFrame != nil
-            || speed != nil || volume != nil || opacity != nil
+            || speed != nil || volume != nil || opacity != nil || blendMode != nil
             || transform != nil
             || content != nil || fontName != nil || fontSize != nil
             || color != nil || alignment != nil
@@ -442,6 +443,7 @@ extension ToolExecutor {
         }
         let color = try parseColorHex(input.color, path: "set_clip_properties")
         let alignment = try parseAlignment(input.alignment, path: "set_clip_properties")
+        if input.blendMode != nil { try editor.validateClipBlendModeTargets(input.clipIds) }
 
         // Resolve clipIds + collect types so we can reject text-only fields on non-text clips.
         var clipTypes: [String: ClipType] = [:]
@@ -472,11 +474,14 @@ extension ToolExecutor {
             : []
 
         let setActionName = input.clipIds.count == 1 ? "Set Clip Property (Agent)" : "Set Clip Properties (Agent)"
-        let summaries: [String] = withUndoGroup(editor, actionName: setActionName) {
+        let summaries: [String] = try withUndoGroup(editor, actionName: setActionName) {
+            if let mode = input.blendMode {
+                try editor.setClipBlendMode(mode, clipIds: input.clipIds)
+            }
             var summaries: [String] = []
             for id in input.clipIds {
                 let isText = clipTypes[id] == .text
-                let changed = Self.applyPropertyChanges(
+                var changed = Self.applyPropertyChanges(
                     durationFrames: input.durationFrames,
                     trimStartFrame: input.trimStartFrame,
                     trimEndFrame: input.trimEndFrame,
@@ -492,6 +497,7 @@ extension ToolExecutor {
                     clipId: id,
                     editor: editor
                 )
+                if input.blendMode != nil { changed.append("blendMode") }
                 // Match the inspector: refit bbox after content/font change when caller didn't set a box.
                 if isText && input.transform == nil && (input.content != nil || input.fontName != nil || input.fontSize != nil) {
                     editor.fitTextClipToContent(clipId: id)
@@ -535,6 +541,10 @@ extension ToolExecutor {
         clipId: String,
         editor: EditorViewModel
     ) -> [String] {
+        guard durationFrames != nil || trimStartFrame != nil || trimEndFrame != nil
+                || speed != nil || volume != nil || opacity != nil || transform != nil
+                || content != nil || fontName != nil || fontSize != nil || color != nil || alignment != nil
+        else { return [] }
         var changed: [String] = []
         editor.commitClipProperty(clipId: clipId) { clip in
             if let v = durationFrames {

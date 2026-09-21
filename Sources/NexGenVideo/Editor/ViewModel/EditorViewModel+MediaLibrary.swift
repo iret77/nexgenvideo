@@ -1287,7 +1287,6 @@ extension EditorViewModel {
         }
 
         let asset = currentItem.asset
-        let timelineSnapshot = timeline
         let fps = timeline.fps
         let canvas = CGSize(width: timeline.width, height: timeline.height)
         let time = CMTime(value: CMTimeValue(frame), timescale: CMTimeScale(fps))
@@ -1317,24 +1316,7 @@ extension EditorViewModel {
             }
 
             let data = await MainActor.run { () -> Data? in
-                let finalCG: CGImage
-                if isTimelineTab {
-                    let textRoot = TextLayerController.buildSnapshot(
-                        timeline: timelineSnapshot,
-                        canvasSize: canvas,
-                        atFrame: frame
-                    )
-                    guard let composited = Self.compositeCapture(
-                        video: videoCG, textRoot: textRoot, canvas: canvas
-                    ) else {
-                        Log.project.error("captureCurrentFrameToMedia: composite failed")
-                        return nil
-                    }
-                    finalCG = composited
-                } else {
-                    finalCG = videoCG
-                }
-                let rep = NSBitmapImageRep(cgImage: finalCG)
+                let rep = NSBitmapImageRep(cgImage: videoCG)
                 guard let data = rep.representation(using: .png, properties: [:]) else {
                     Log.project.error("captureCurrentFrameToMedia: png encode failed")
                     return nil

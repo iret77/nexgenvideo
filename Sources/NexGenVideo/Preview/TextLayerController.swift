@@ -133,9 +133,9 @@ final class TextLayerController {
         return result
     }
 
-    private static func makeTextLayer() -> CATextLayer {
+    nonisolated static func makeTextLayer() -> CATextLayer {
         let layer = CATextLayer()
-        layer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
+        layer.contentsScale = 1
         layer.isWrapped = true
         layer.truncationMode = .none
         layer.allowsFontSubpixelQuantization = true
@@ -151,9 +151,9 @@ final class TextLayerController {
         return layer
     }
 
-    private static let referenceCanvasHeight: CGFloat = 1080
+    nonisolated private static let referenceCanvasHeight: CGFloat = 1080
 
-    private static func applyStyle(to layer: CATextLayer, clip: Clip, containerSize: CGSize) {
+    nonisolated static func applyStyle(to layer: CATextLayer, clip: Clip, containerSize: CGSize) {
         let style = clip.textStyle ?? TextStyle()
         let content = clip.textContent ?? ""
         let scale = containerSize.height / referenceCanvasHeight

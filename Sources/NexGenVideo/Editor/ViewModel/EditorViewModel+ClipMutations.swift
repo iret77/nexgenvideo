@@ -340,7 +340,7 @@ extension EditorViewModel {
         }
         modify(&clip)
         timeline.tracks[loc.trackIndex].clips[loc.clipIndex] = clip
-        // Text renders via CATextLayer overlay — skip the composition path.
+        // Text has no AV source track; only its compositor instructions need refreshing.
         if clip.mediaType == .text {
             videoEngine?.syncTextLayers()
             return
