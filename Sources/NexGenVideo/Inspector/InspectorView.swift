@@ -908,7 +908,7 @@ struct InspectorView: View {
         label: String,
         clipId: String?,
         property: AnimatableProperty,
-        @ViewBuilder fields: () -> Fields
+        @ViewBuilder fields: @escaping () -> Fields
     ) -> some View {
         propertyRow(label: label) {
             HStack(spacing: AppTheme.Spacing.sm) {
