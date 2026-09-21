@@ -402,6 +402,7 @@ enum AppTheme {
         static let searchThumbnailWidth: CGFloat = 80
         static let searchThumbnailHeight: CGFloat = 45
         static let previewToolbarHeight: CGFloat = 36
+        static let previewCompactToolbarHeight: CGFloat = 60
         static let previewErrorMaxWidth: CGFloat = 520
         static let previewErrorMaxHeight: CGFloat = 240
         static let previewScrubberHeight: CGFloat = 12

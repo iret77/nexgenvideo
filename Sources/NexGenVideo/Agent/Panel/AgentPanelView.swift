@@ -280,11 +280,19 @@ struct AgentPanelView: View {
 
     private func conversationActions(equalWidth: Bool) -> some View {
         HStack(spacing: AppTheme.Spacing.xs) {
-            latestButton.frame(maxWidth: equalWidth ? .infinity : nil)
+            if isUserPinnedAway {
+                latestButton
+                    .frame(maxWidth: equalWidth ? .infinity : nil)
+                    .transition(.opacity)
+            }
             newConversationButton.frame(maxWidth: equalWidth ? .infinity : nil)
             utilityButton.frame(maxWidth: equalWidth ? .infinity : nil)
         }
         .frame(maxWidth: equalWidth ? .infinity : nil)
+        .animation(
+            reduceMotion ? nil : .easeInOut(duration: AppTheme.Anim.quick),
+            value: isUserPinnedAway
+        )
     }
 
     private var newConversationButton: some View {
@@ -296,6 +304,13 @@ struct AgentPanelView: View {
         }
         .buttonStyle(.capsule(.secondary, size: .small))
         .controlSize(.small)
+        .background {
+            if WorkspaceUIAcceptance.isRequested {
+                AppRelaunchClickProbe(identifier: "agent.newConversation")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
+            }
+        }
         .disabled(!service.canStartNewConversation)
         .help(service.canStartNewConversation
               ? "Start a new conversation" : "This conversation is already empty or has an action in progress")
@@ -315,13 +330,6 @@ struct AgentPanelView: View {
         }
         .buttonStyle(.capsule(.secondary, size: .small))
         .controlSize(.small)
-        .opacity(isUserPinnedAway ? AppTheme.Opacity.opaque : AppTheme.Opacity.transparent)
-        .allowsHitTesting(isUserPinnedAway)
-        .accessibilityHidden(!isUserPinnedAway)
-        .animation(
-            reduceMotion ? nil : .easeInOut(duration: AppTheme.Anim.quick),
-            value: isUserPinnedAway
-        )
     }
 
     @State private var isUserPinnedAway = false
@@ -347,6 +355,13 @@ struct AgentPanelView: View {
         }
         .buttonStyle(.capsule(.secondary, size: .small))
         .controlSize(.small)
+        .background {
+            if WorkspaceUIAcceptance.isRequested {
+                AppRelaunchClickProbe(identifier: "agent.utilities")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
+            }
+        }
         .popover(isPresented: $showUtilities, arrowEdge: .top) {
             PluginLauncherPopover(
                 plugins: pluginLauncherAvailable ? discoveredPlugins : [],

@@ -722,6 +722,7 @@ final class VideoProject: NSDocument {
             window.center()
         }
         window.appearance = NSAppearance(named: .darkAqua)
+        WorkspaceUIAcceptance.configureInitialWindowIfRequested(window)
         // Background-drag fought the timeline: dragging a clip also dragged the whole window (both
         // moved at once). The window still drags by its transparent titlebar row.
         window.isMovableByWindowBackground = false

@@ -36,7 +36,6 @@ enum WorkspaceUIAcceptance {
                 originalProject = try projectSnapshot(at: projectURL)
                 document = try await VideoProject.load(from: projectURL)
                 document.makeWindowControllers()
-                document.showWindows()
                 guard let projectWindow = document.windowControllers
                     .compactMap({ $0 as? EditorWindowController })
                     .first?.window,
@@ -45,26 +44,23 @@ enum WorkspaceUIAcceptance {
                 }
                 window = projectWindow
                 host = contentView
+                document.showWindows()
             } catch {
                 fail("could not open the project fixture: \(error.localizedDescription)", scale: scale)
             }
             let editor = document.editorViewModel
             emit(
-                "window-before-resize",
+                "window-initial",
                 scale: scale,
                 fields: ["window": windowDiagnostics(window, contentView: host)]
             )
-            window.setContentSize(NSSize(width: 1470, height: 950))
-            if scale == 1.5 {
-                window.appearance = NSAppearance(named: .accessibilityHighContrastDarkAqua)
-            }
             window.makeKeyAndOrderFront(nil)
             app.activate(ignoringOtherApps: true)
             editor.setWorkspaceFocus(.production)
             try? await Task.sleep(for: .milliseconds(500))
             host.layoutSubtreeIfNeeded()
             emit(
-                "window-after-resize",
+                "window-ready",
                 scale: scale,
                 fields: [
                     "window": windowDiagnostics(window, contentView: host),
@@ -97,6 +93,7 @@ enum WorkspaceUIAcceptance {
                         && visiblePanelIDs(in: host) == expectedPanels(for: workspace)
                         && defaultPanelWidthsAreValid(workspace: workspace, frames: frames)
                         && previewTimecodeIsSingleLine(in: window, scale: scale)
+                        && (workspace != .production || agentControlsAreContained(in: window))
                 }) else {
                     let diagnosticName = "scale-\(scaleLabel(scale))-\(workspace.rawValue)-failed"
                     _ = snapshot(
@@ -134,7 +131,8 @@ enum WorkspaceUIAcceptance {
                       visiblePanelIDs(in: host) == expectedPanels(for: workspace),
                       visiblePanelFrames(in: host) == renderedFrames,
                       defaultPanelWidthsAreValid(workspace: workspace, frames: renderedFrames),
-                      previewTimecodeIsSingleLine(in: window, scale: scale) else {
+                      previewTimecodeIsSingleLine(in: window, scale: scale),
+                      workspace != .production || agentControlsAreContained(in: window) else {
                     fail("workspace layout did not settle for \(workspace.rawValue)", scale: scale)
                 }
                 let visiblePanels = visiblePanelIDs(in: host)
@@ -242,6 +240,47 @@ enum WorkspaceUIAcceptance {
                   visiblePanelFrames(in: host) == restoredFrames else {
                 fail("restored panel layout did not settle", scale: scale)
             }
+            guard click(identifier: "editor.workspace.production", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      host.layoutSubtreeIfNeeded()
+                      return editor.workspaceFocus == .production
+                          && visiblePanelIDs(in: host) == expectedPanels(for: .production)
+                  }) else {
+                fail("could not prepare narrow production workspace", scale: scale)
+            }
+            window.setContentSize(NSSize(
+                width: AppTheme.Window.projectMin.width,
+                height: window.contentView?.bounds.height ?? AppTheme.Window.projectMin.height
+            ))
+            guard await waitUntil(timeout: .seconds(5), {
+                host.layoutSubtreeIfNeeded()
+                let frames = visiblePanelFrames(in: host)
+                return abs(host.bounds.width - AppTheme.Window.projectMin.width)
+                        <= AppTheme.BorderWidth.thin
+                    && visiblePanelIDs(in: host) == expectedPanels(for: .production)
+                    && narrowProductionWidthsAreValid(frames)
+                    && previewTimecodeIsSingleLine(in: window, scale: scale)
+                    && agentControlsAreContained(in: window)
+            }) else {
+                fail("narrow production controls did not fit", scale: scale)
+            }
+            let narrowFrames = visiblePanelFrames(in: host)
+            try? await Task.sleep(for: .milliseconds(300))
+            host.layoutSubtreeIfNeeded()
+            let narrowName = "scale-\(scaleLabel(scale))-production-narrow"
+            guard visiblePanelFrames(in: host) == narrowFrames,
+                  snapshot(host, at: evidenceURL.appendingPathComponent("\(narrowName).png")) else {
+                fail("narrow production layout did not settle", scale: scale)
+            }
+            emit(
+                "narrow-production",
+                scale: scale,
+                fields: [
+                    "screenshot": "\(narrowName).png",
+                    "frames": narrowFrames.mapValues { frameDescription($0) },
+                    "window": windowDiagnostics(window, contentView: host),
+                ]
+            )
             guard editor.timeline == originalTimeline,
                   editor.mediaManifest == originalManifest,
                   editor.generationLog == originalGenerationLog,
@@ -269,6 +308,17 @@ enum WorkspaceUIAcceptance {
         }
         app.run()
         exit(1)
+    }
+
+    static func configureInitialWindowIfRequested(_ window: NSWindow) {
+        guard isRequested,
+              let requestedScale = ProcessInfo.processInfo.environment["NGV_WORKSPACE_UI_SCALE"],
+              let scale = Double(requestedScale),
+              AppTheme.Typography.validatedScale(scale) == scale else { return }
+        window.setContentSize(NSSize(width: 1470, height: 950))
+        if scale == 1.5 {
+            window.appearance = NSAppearance(named: .accessibilityHighContrastDarkAqua)
+        }
     }
 
     private static func makeProjectFixture(scale: Double) throws -> URL {
@@ -399,19 +449,78 @@ enum WorkspaceUIAcceptance {
         }
     }
 
+    private static func narrowProductionWidthsAreValid(_ frames: [String: NSRect]) -> Bool {
+        let tolerance = AppTheme.Spacing.md
+        guard let agent = frames["agentPanel"],
+              let project = frames["projectPanel"],
+              let preview = frames["previewPanel"],
+              let inspector = frames["inspectorPanel"] else { return false }
+        return agent.width >= AppTheme.Layout.agentPanelMin - tolerance
+            && project.width >= AppTheme.Layout.previewMinWidth - tolerance
+            && preview.width >= AppTheme.Layout.produceRightColumnMinWidth - tolerance
+            && inspector.width >= AppTheme.Layout.produceRightColumnMinWidth - tolerance
+    }
+
     private static func previewTimecodeIsSingleLine(in window: NSWindow, scale: Double) -> Bool {
         guard let root = window.contentView,
               let previewFrame = visiblePanelFrames(in: root)["previewPanel"] else { return false }
         let maximumHeight = AppTheme.Typography.ui * CGFloat(scale) + AppTheme.Spacing.md
-        return probes(in: root, identifier: "preview.timecode").contains { probe in
+        let previewBounds = previewFrame.insetBy(
+            dx: -AppTheme.BorderWidth.thin,
+            dy: -AppTheme.BorderWidth.thin
+        )
+        guard let transportFrame = probes(in: root, identifier: "preview.transportBar")
+            .compactMap({ probe -> NSRect? in
+                let frame = probe.convert(probe.bounds, to: root)
+                guard probe.window === window,
+                      !probe.isHiddenOrHasHiddenAncestor,
+                      frame.width > 0,
+                      frame.height > 0,
+                      previewBounds.contains(frame) else { return nil }
+                return frame
+            })
+            .first else { return false }
+        let transportBounds = transportFrame.insetBy(
+            dx: -AppTheme.BorderWidth.thin,
+            dy: -AppTheme.BorderWidth.thin
+        )
+        let timecodeFits = probes(in: root, identifier: "preview.timecode").contains { probe in
             let frame = probe.convert(probe.bounds, to: root)
             return probe.window === window
                 && !probe.isHiddenOrHasHiddenAncestor
                 && frame.width > 0
                 && frame.height > 0
                 && frame.height <= maximumHeight
-                && previewFrame.insetBy(dx: -AppTheme.BorderWidth.thin, dy: -AppTheme.BorderWidth.thin)
-                    .contains(frame)
+                && transportBounds.contains(frame)
+        }
+        return timecodeFits
+            && visibleProbe(identifier: "preview.zoom", in: window, containedBy: transportBounds)
+    }
+
+    private static func agentControlsAreContained(in window: NSWindow) -> Bool {
+        guard let root = window.contentView,
+              let agentFrame = visiblePanelFrames(in: root)["agentPanel"] else { return false }
+        let bounds = agentFrame.insetBy(
+            dx: -AppTheme.BorderWidth.thin,
+            dy: -AppTheme.BorderWidth.thin
+        )
+        return visibleProbe(identifier: "agent.newConversation", in: window, containedBy: bounds)
+            && visibleProbe(identifier: "agent.utilities", in: window, containedBy: bounds)
+    }
+
+    private static func visibleProbe(
+        identifier: String,
+        in window: NSWindow,
+        containedBy bounds: NSRect
+    ) -> Bool {
+        guard let root = window.contentView else { return false }
+        return probes(in: root, identifier: identifier).contains { probe in
+            let frame = probe.convert(probe.bounds, to: root)
+            return probe.window === window
+                && !probe.isHiddenOrHasHiddenAncestor
+                && frame.width > 0
+                && frame.height > 0
+                && bounds.contains(frame)
         }
     }
 

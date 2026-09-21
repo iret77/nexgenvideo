@@ -85,14 +85,21 @@ struct PreviewContainerView: View {
                 durationTimecode: durationTimecode,
                 compact: false
             )
+            .frame(height: AppTheme.ComponentSize.previewToolbarHeight)
             transportRow(
                 duration: duration,
                 fps: fps,
                 durationTimecode: durationTimecode,
                 compact: true
             )
+            .frame(height: AppTheme.ComponentSize.previewToolbarHeight)
+            narrowTransport(
+                duration: duration,
+                fps: fps,
+                durationTimecode: durationTimecode
+            )
+            .frame(height: AppTheme.ComponentSize.previewCompactToolbarHeight)
         }
-        .frame(height: AppTheme.ComponentSize.previewToolbarHeight)
     }
 
     private func transportRow(
@@ -111,23 +118,7 @@ struct PreviewContainerView: View {
 
             Spacer()
 
-            HStack(spacing: compact ? AppTheme.Spacing.sm : AppTheme.Spacing.md) {
-                transportButton("backward.end.fill") { seekTo(0) }
-                if !compact {
-                    transportButton("backward.frame.fill") { seekTo(playheadFrame - 1) }
-                }
-                transportButton(editor.isPlaying ? "pause.fill" : "play.fill") {
-                    if isTimeline {
-                        editor.togglePlayback()
-                    } else {
-                        editor.toggleSourcePlayback()
-                    }
-                }
-                if !compact {
-                    transportButton("forward.frame.fill") { seekTo(playheadFrame + 1) }
-                }
-                transportButton("forward.end.fill") { seekTo(duration) }
-            }
+            transportControls(duration: duration, compact: compact)
 
             Spacer()
 
@@ -137,6 +128,65 @@ struct PreviewContainerView: View {
             settingsMenuButton(label: zoomBadgeLabel, help: "Canvas Zoom") { zoomMenuItems }
         }
         .padding(.horizontal, compact ? AppTheme.Spacing.sm : AppTheme.Spacing.lg)
+        .background {
+            if WorkspaceUIAcceptance.isRequested {
+                AppRelaunchClickProbe(identifier: "preview.transportBar")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+
+    private func narrowTransport(
+        duration: Int,
+        fps: Int,
+        durationTimecode: String
+    ) -> some View {
+        VStack(spacing: AppTheme.Spacing.xxs) {
+            HStack(spacing: AppTheme.Spacing.xs) {
+                PreviewTimecodeText(
+                    isTimeline: isTimeline,
+                    fps: fps,
+                    durationTimecode: durationTimecode,
+                    showsDuration: false
+                )
+                Spacer(minLength: AppTheme.Spacing.xs)
+                if isTimeline || editor.activePreviewTab.clipType == .video {
+                    captureFrameButton
+                }
+                settingsMenuButton(label: zoomBadgeLabel, help: "Canvas Zoom") { zoomMenuItems }
+            }
+            transportControls(duration: duration, compact: false)
+        }
+        .padding(.horizontal, AppTheme.Spacing.sm)
+        .padding(.vertical, AppTheme.Spacing.xxs)
+        .background {
+            if WorkspaceUIAcceptance.isRequested {
+                AppRelaunchClickProbe(identifier: "preview.transportBar")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+
+    private func transportControls(duration: Int, compact: Bool) -> some View {
+        HStack(spacing: compact ? AppTheme.Spacing.sm : AppTheme.Spacing.md) {
+            transportButton("backward.end.fill") { seekTo(0) }
+            if !compact {
+                transportButton("backward.frame.fill") { seekTo(playheadFrame - 1) }
+            }
+            transportButton(editor.isPlaying ? "pause.fill" : "play.fill") {
+                if isTimeline {
+                    editor.togglePlayback()
+                } else {
+                    editor.toggleSourcePlayback()
+                }
+            }
+            if !compact {
+                transportButton("forward.frame.fill") { seekTo(playheadFrame + 1) }
+            }
+            transportButton("forward.end.fill") { seekTo(duration) }
+        }
     }
 
     // MARK: - Image settings bar
@@ -210,6 +260,13 @@ struct PreviewContainerView: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
+        .background {
+            if WorkspaceUIAcceptance.isRequested {
+                AppRelaunchClickProbe(identifier: "preview.zoom")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
+            }
+        }
         .hoverHighlight()
         .help(help)
     }
