@@ -116,7 +116,10 @@ struct GenerationBatchTests {
                     .init(id: UUID().uuidString, purpose: $0, package: package)
                 }
             ))
-            let projection = GenerationBatchReviewProjection(batch: batch) { _ in "Fixture image" }
+            let projection = GenerationBatchReviewProjection(
+                batch: batch,
+                modelName: { _ in "Fixture image" }
+            )
             #expect(projection.itemCount == count)
             #expect(projection.sections.flatMap(\.items).count == count)
             #expect(projection.sections.flatMap(\.items).map(\.manifestIndex).sorted() == Array(0..<count))
@@ -136,7 +139,10 @@ struct GenerationBatchTests {
                 .init(id: UUID().uuidString, purpose: $0, package: package)
             }
         ))
-        let projection = GenerationBatchReviewProjection(batch: thirteen) { _ in "Fixture image" }
+        let projection = GenerationBatchReviewProjection(
+            batch: thirteen,
+            modelName: { _ in "Fixture image" }
+        )
         #expect(projection.sections.map(\.group) == [.character, .ensemble, .location, .prop, .look, .other])
         #expect(projection.sections.first(where: { $0.group == .character })?.items.map(\.manifestIndex) == [0, 1, 8, 9])
         #expect(try GenerationBatch(payload: thirteen.payload) == thirteen)
