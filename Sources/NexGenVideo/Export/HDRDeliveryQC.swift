@@ -97,7 +97,7 @@ enum HDRDeliveryQC {
         let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
             kCVPixelBufferPixelFormatTypeKey as String:
                 kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,
-            AVVideoAllowWideColorKey: true,
+            AVVideoAllowWideColorKey: NSNumber(value: true),
         ])
         output.alwaysCopiesSampleData = false
         guard reader.canAdd(output) else {

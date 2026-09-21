@@ -109,7 +109,7 @@ enum HDRVideoExporter {
             AVVideoCodecKey: AVVideoCodecType.hevc,
             AVVideoWidthKey: Int(size.width),
             AVVideoHeightKey: Int(size.height),
-            AVVideoAllowWideColorKey: true,
+            AVVideoAllowWideColorKey: NSNumber(value: true),
             AVVideoColorPropertiesKey: colorProperties(),
             AVVideoCompressionPropertiesKey: [
                 kVTCompressionPropertyKey_ProfileLevel as String:
@@ -137,7 +137,7 @@ enum HDRVideoExporter {
             videoTracks: tracks,
             videoSettings: [
                 kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-                AVVideoAllowWideColorKey: false,
+                AVVideoAllowWideColorKey: NSNumber(value: false),
                 AVVideoColorPropertiesKey: [
                     AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
                     AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
