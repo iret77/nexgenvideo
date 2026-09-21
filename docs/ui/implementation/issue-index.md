@@ -11,6 +11,17 @@
 - FilmFlow und Clay bleiben optionale Fähigkeiten. Ihre vollständige Integrationsabnahme setzt tatsächlich gelieferte externe/Engine-Verträge voraus; bestehender generischer Import/Schnitt/Export bleibt unabhängig bedienbar.
 - Einzelne geprüfte PRs, ein abgestimmter Release-Batch; keine automatischen Zwischenreleases.
 
+## Aktueller Koordinationsstand · 21.09.2026
+
+| Auftrag | PR / Basis | Nachgewiesener Stand | Grenze für die Folgearbeit |
+|---|---|---|---|
+| #506 | [PR #576](https://github.com/iret77/nexgenvideo/pull/576), `main` → `codex/ui-506-workspaces` | Fünf native Workspaces, Zustandsmigration und eigener Actions-UI-Harness; verpflichtende Checks am aktuellen Head grün. | Bleibt Draft und ungemergt. #507 basiert technisch auf diesem Head; parallele PRs dürfen seine Dateien nicht duplizieren. |
+| #507 | [PR #578](https://github.com/iret77/nexgenvideo/pull/578), gestapelt auf PR #576 | Gemeinsames Inspector-/Formularraster und native Acceptance-Evidenz; Checks am aktuellen Head grün. | Im PR weiterhin als WIP bezeichnet. Erst nach stabiler #506-Basis gegen `main` retargeten/integrieren; keine unabhängige Mergebehauptung. |
+| #559 | [PR #577](https://github.com/iret77/nexgenvideo/pull/577), unabhängig auf `main` | Versionierter Vertragsentwurf; keine gesperrte Spezifikation und kein Produktcode geändert. | Vier Vertragsentscheidungen sind noch nicht ausdrücklich freigegeben. #560, #561, #563 und #572 bleiben durch #559 gesperrt. Dadurch bleiben #562, #564, #565, #566, #573 und die abschließende #574 mittelbar gesperrt. |
+| Vorlage #550 | [PR #575](https://github.com/iret77/nexgenvideo/pull/575), `main` | Clickdummy, Erhaltungsinventar, Ausführungsplan und Herkunftsinventar. | Dokumentationsvorlage, keine native Implementierung und keine Merge-/Release-Freigabe. |
+
+[PR #548](https://github.com/iret77/nexgenvideo/pull/548) und [PR #549](https://github.com/iret77/nexgenvideo/pull/549) sind weiterhin offene, grüne Drafts auf `main`; #547, #540, #533 und #528 sind offen. UI-Arbeit darf deren noch nicht integrierte Fähigkeiten nicht als Main-Bestand behandeln. Die PR-Reihenfolge für den begonnenen UI-Pfad ist daher: Vorlage #575 erhalten, #576 als #506-Basis, danach den gestapelten #578-Delta; PR #577 bleibt ein unabhängiger Entscheidungszweig und wird nicht in diesen Code-Stack gemischt.
+
 ## Aufgaben und direkte Abhängigkeiten
 
 | Issue | Auftrag | Beginnen nach |

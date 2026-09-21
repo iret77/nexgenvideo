@@ -1,11 +1,12 @@
 # Native Workbench: verbindliche Implementierungsvorlage
 
-Stand 20.09.2026. Auftrag: das freigegebene Desktop-Konzept als begrenztes UI-Refactoring im bestehenden NexGenVideo umsetzen. Diese Lieferung bereitet die Implementierung vor; sie implementiert keine native Oberfläche und erteilt keine Build-/Merge-/Release-Freigabe.
+Stand 20.09.2026, Quellen- und Koordinationsnachtrag 21.09.2026. Auftrag: das freigegebene Desktop-Konzept als begrenztes UI-Refactoring im bestehenden NexGenVideo umsetzen. Diese Lieferung bereitet die Implementierung vor; sie implementiert keine native Oberfläche und erteilt keine Build-/Merge-/Release-Freigabe.
 
 - [Clickdummy herunterladen und lokal im Browser öffnen](workbench.html) — eigenständige, eingefrorene Vorlage, kein WebView-Produkt.
 - [Implementierungs-Issues und Reihenfolge](issue-index.md).
 - [Funktionsinventar](native-function-matrix.md) — 121 historische Gruppen, vor jedem Umbau gegen aktuellen Code prüfen.
 - [Letzter Interaktionsreview: direkte Objektauswahl](selection-review.md).
+- [Herkunftsinventar der lokalen UI-Artefakte](source-artifact-audit.md) — vollständige Erfassung und begründete Übernahme der 811 unversionierten Pfade.
 - [Filmvorschau](film-preview.png) / [Medienvorschau](media-preview.png).
 
 ## Quellenstand und Geltung
@@ -13,6 +14,8 @@ Stand 20.09.2026. Auftrag: das freigegebene Desktop-Konzept als begrenztes UI-Re
 GitHub-main wurde am 20.09.2026 als `8bd8fbde5cdb9a2a46b26c2441aa5035c885d1e0` verifiziert. Die parallele [Higgsfield-PR #549](https://github.com/iret77/nexgenvideo/pull/549) ist offen, Head `9b1e09fc2d9834a611d1cfbcbf6ef7d32bcd755c`. Der lokale Code-Abgleich enthielt diese Änderungen. [Wissens-PR #548](https://github.com/iret77/nexgenvideo/pull/548) ist offen, Head `e59f08d377712b58f3694383b11302fed6f5860a`; die Runtime-Migration bleibt [#547](https://github.com/iret77/nexgenvideo/issues/547). Vor Umsetzung Status und tatsächliche Integration erneut prüfen. Offene PRs sind nicht in main vorhanden.
 
 Der Clickdummy simuliert Daten, KI, Import, Jobs und Exporte. Seine JavaScript-Bedingungen sind keine gültigen nativen Gates, seine Beispielmodelle/-preise keine aktuelle Provider-Spezifikation. Die native App bleibt SwiftUI/AppKit/AVFoundation; bestehende Engine, Writer, Bibliothek, Timeline, VideoEngine, Inspector und Provider werden weiterverwendet.
+
+Die erste native Umsetzung läuft getrennt: [PR #576](https://github.com/iret77/nexgenvideo/pull/576) (Draft, Basis `main`) setzt #506 um, [PR #578](https://github.com/iret77/nexgenvideo/pull/578) stapelt #507 ausdrücklich auf #576. Der Vertragsentwurf aus #559 liegt unabhängig als [PR #577](https://github.com/iret77/nexgenvideo/pull/577) vor und genehmigt bis zu einer ausdrücklichen Entscheidung keine Folgeimplementierung. Der aktuelle Status und die Merge-/Startgrenzen stehen im [Ausführungsindex](issue-index.md).
 
 Bei Widersprüchen gilt: aktuelle ausdrückliche Owner-Vorgaben → gesperrte Verträge bis zu ihrer ausdrücklichen Änderung → diese aktuelle Implementierungsvorlage → ältere Entwürfe. Ein Konflikt mit gesperrten Verträgen wird als konkrete Entscheidung vorgelegt und nicht still gelöst. Die Zielreihenfolge im Dummy ist noch kein genehmigter nativer Phasenvertrag.
 
