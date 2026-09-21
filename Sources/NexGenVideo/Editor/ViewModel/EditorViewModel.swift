@@ -227,6 +227,7 @@ final class EditorViewModel {
     var projectURL: URL? {
         didSet {
             guard projectURL != oldValue else { return }
+            _ = cancelAudioExtractionForProjectChange()
             if !pipelinePhaseRunCoordinator.hasRunningJobs {
                 pipelinePhaseExecution.reset()
             }
@@ -430,6 +431,7 @@ final class EditorViewModel {
         }
         let phaseCoordinator = pipelinePhaseRunCoordinator
         let importTail = mediaImportTail
+        let extractionTask = cancelAudioExtractionForProjectChange()
         if importTail != nil {
             cancelMediaImport()
         }
@@ -439,9 +441,10 @@ final class EditorViewModel {
         workingCopyHome = nil
         activeWorkingCopyKey = nil
         activeWorkingCopyGeneration = nil
-        if importTail != nil || phaseIsRunning {
+        if importTail != nil || extractionTask != nil || phaseIsRunning {
             Task { @MainActor [phaseCoordinator] in
                 _ = await importTail?.value
+                _ = await extractionTask?.value
                 if let dataRoot, phaseIsRunning {
                     await phaseCoordinator.waitUntilIdle(
                         projectRoot: dataRoot
@@ -1327,5 +1330,10 @@ final class EditorViewModel {
     }
 
     var availableCockpitPackSurfaces: [CockpitSurfaceData] = []
+
+    var pendingAudioTrackSelection: AudioTrackSelectionRequest?
+    var audioExtractionProgress: AudioExtractionProgress?
+    @ObservationIgnored var audioExtractionTask: Task<Void, Never>?
+    @ObservationIgnored var audioTrackExtractionClient = AudioTrackExtractionClient.live
 
 }

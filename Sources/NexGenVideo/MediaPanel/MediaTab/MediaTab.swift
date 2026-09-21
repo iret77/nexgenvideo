@@ -152,6 +152,29 @@ struct MediaTab: View {
         .onChange(of: currentFolderId, initial: true) { _, folderId in
             editor.mediaPanelCurrentFolderId = folderId
         }
+        .confirmationDialog(
+            "Choose an Audio Track",
+            isPresented: Binding(
+                get: { editor.pendingAudioTrackSelection != nil },
+                set: { presented in
+                    if !presented, editor.pendingAudioTrackSelection != nil {
+                        editor.cancelAudioTrackSelection()
+                    }
+                }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let request = editor.pendingAudioTrackSelection {
+                ForEach(request.tracks) { track in
+                    Button(track.label) { editor.selectAudioTrack(track) }
+                }
+            }
+            Button("Cancel", role: .cancel) { editor.cancelAudioTrackSelection() }
+        } message: {
+            if let request = editor.pendingAudioTrackSelection {
+                Text("\"\(request.sourceName)\" contains multiple audio tracks.")
+            }
+        }
     }
 
     private var swapBanner: some View {

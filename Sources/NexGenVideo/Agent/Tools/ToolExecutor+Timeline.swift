@@ -821,6 +821,15 @@ extension ToolExecutor {
         if let originalFilename = asset.originalFilename {
             meta["originalFilename"] = originalFilename
         }
+        if let origin = asset.origin {
+            meta["origin"] = [
+                "kind": origin.kind.rawValue,
+                "sourceAssetId": origin.sourceAssetID,
+                "sourceFilename": origin.sourceFilename,
+                "audioTrackNumber": origin.audioTrackNumber,
+                "audioTrackLabel": origin.audioTrackLabel,
+            ]
+        }
         if let w = asset.sourceWidth { meta["sourceWidth"] = w }
         if let h = asset.sourceHeight { meta["sourceHeight"] = h }
         if let fps = asset.sourceFPS { meta["sourceFPS"] = fps }
