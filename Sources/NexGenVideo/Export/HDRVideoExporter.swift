@@ -616,6 +616,11 @@ enum HDRVideoExporter {
                         }
                         image = title.composited(over: image)
                     }
+                    // Prevent SDR titles and effects from creating undeclared HDR highlight energy.
+                    let constrained = image.applyingFilter("CIColorClamp", parameters: [
+                        "inputMinComponents": CIVector(x: 0, y: 0, z: 0, w: 0),
+                        "inputMaxComponents": CIVector(x: 1, y: 1, z: 1, w: 1),
+                    ]).cropped(to: bounds)
                     var destination: CVPixelBuffer?
                     let status = CVPixelBufferPoolCreatePixelBuffer(nil, pool, &destination)
                     guard status == kCVReturnSuccess, let destination else {
@@ -625,7 +630,7 @@ enum HDRVideoExporter {
                         return
                     }
                     tagHLG(destination, colorSpace: outputSpace)
-                    context.render(image, to: destination, bounds: bounds, colorSpace: outputSpace)
+                    context.render(constrained, to: destination, bounds: bounds, colorSpace: outputSpace)
                     guard pump.adaptor.append(destination, withPresentationTime: pts) else {
                         pump.coordinator.fail("a converted HDR frame could not be encoded")
                         return
