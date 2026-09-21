@@ -96,6 +96,11 @@ enum GenerationBatchReviewSelfTest {
         pricedPackage: GenerationPackageV1
     ) async throws {
         let firstID = original.payload.items[0].id
+        try await reveal(
+            identifier: "generation-batch.remove.\(firstID)",
+            in: window,
+            context: "13-item narrow large-text review"
+        )
         try await requireVisible([
             "generation-batch.remove.\(firstID)",
             "generation-batch.details.\(firstID)",
@@ -153,6 +158,11 @@ enum GenerationBatchReviewSelfTest {
             width: AppTheme.Layout.agentPanelMax,
             height: AppTheme.ComponentSize.agentDecisionMaxHeight * AppTheme.Typography.largestScale
         ))
+        try await reveal(
+            identifier: "generation-batch.remove.\(keyboardID)",
+            in: window,
+            context: "13-item wide review"
+        )
         try await requireVisible([
             "generation-batch.remove.\(keyboardID)",
             "generation-batch.decline",
@@ -183,6 +193,11 @@ enum GenerationBatchReviewSelfTest {
             width: AppTheme.Layout.agentPanelMin,
             height: AppTheme.ComponentSize.agentDecisionMaxHeight * AppTheme.Typography.largestScale
         ))
+        try await reveal(
+            identifier: "generation-batch.remove.\(single.payload.items[0].id)",
+            in: window,
+            context: "single-item narrow large-text review"
+        )
         try await requireVisible([
             "generation-batch.remove.\(single.payload.items[0].id)",
             "generation-batch.details.\(single.payload.items[0].id)",
@@ -204,6 +219,11 @@ enum GenerationBatchReviewSelfTest {
                 width: width,
                 height: AppTheme.ComponentSize.agentDecisionMaxHeight * AppTheme.Typography.largestScale
             ))
+            try await reveal(
+                identifier: "generation-batch.remove.\(fifty.payload.items[0].id)",
+                in: window,
+                context: "50-item \(Int(width))-point large-text review"
+            )
             try await requireVisible([
                 "generation-batch.remove.\(fifty.payload.items[0].id)",
                 "generation-batch.decline",
@@ -352,6 +372,24 @@ enum GenerationBatchReviewSelfTest {
             try? await Task.sleep(for: .milliseconds(100))
         }
         return predicate()
+    }
+
+    private static func reveal(
+        identifier: String,
+        in window: NSWindow,
+        context: String
+    ) async throws {
+        guard await waitUntil(timeout: .seconds(10), {
+            guard let root = window.contentView,
+                  let probe = findClickProbes(in: root, identifier: identifier).first else {
+                return false
+            }
+            root.layoutSubtreeIfNeeded()
+            probe.scrollToVisible(probe.bounds)
+            return isClickProbeReady(probe, root: root, window: window)
+        }) else {
+            throw Failure(message: "\(context) could not scroll \(identifier) into the batch body viewport")
+        }
     }
 
     private static func requireVisible(
