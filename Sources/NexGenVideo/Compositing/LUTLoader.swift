@@ -14,6 +14,14 @@ enum LUTStoreError: LocalizedError {
 /// Cached by path + mtime, like AlphaVideoNormalizer's tag scheme.
 enum LUTLoader {
 
+    private static let minimumDimension = 2
+    private static let maximumDimension = 65
+    private static let inputChannels = 3
+    private static let outputChannels = 4
+    private static let maximumEntryCount = maximumDimension * maximumDimension * maximumDimension
+    private static let maximumOutputBytes = maximumEntryCount * outputChannels * MemoryLayout<Float>.size
+    private static let maximumSourceBytes = maximumOutputBytes * 16
+
     struct CubeLUT {
         let dimension: Int
         let data: Data
@@ -50,7 +58,7 @@ enum LUTLoader {
         }
         lock.unlock()
 
-        guard let text = try? String(contentsOfFile: path, encoding: .utf8),
+        guard let text = sourceText(atPath: path),
               let lut = parse(text) else { return nil }
 
         lock.lock()
@@ -60,47 +68,80 @@ enum LUTLoader {
     }
 
     static func parse(_ text: String) -> CubeLUT? {
+        guard text.utf8.count <= maximumSourceBytes else { return nil }
+
         var dimension = 0
         var domainMin: [Float] = [0, 0, 0]
         var domainMax: [Float] = [1, 1, 1]
         var values: [Float] = []
+        var expectedValueCount: Int?
+        var sawDimension = false
+        var sawDomainMin = false
+        var sawDomainMax = false
 
         for rawLine in text.split(whereSeparator: \.isNewline) {
-            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            let line = rawLine.prefix { $0 != "#" }.trimmingCharacters(in: .whitespaces)
             if line.isEmpty || line.hasPrefix("#") { continue }
-            let parts = line.split(separator: " ", omittingEmptySubsequences: true)
+            let parts = line.split(whereSeparator: \.isWhitespace)
             guard let first = parts.first else { continue }
             switch first.uppercased() {
             case "TITLE", "LUT_1D_SIZE":
                 if first.uppercased() == "LUT_1D_SIZE" { return nil }
             case "LUT_3D_SIZE":
-                dimension = Int(parts.last.map(String.init) ?? "") ?? 0
+                guard !sawDimension, parts.count == 2,
+                      let parsedDimension = Int(parts[1]),
+                      (minimumDimension...maximumDimension).contains(parsedDimension) else { return nil }
+                dimension = parsedDimension
+                expectedValueCount = dimension * dimension * dimension * inputChannels
+                sawDimension = true
             case "DOMAIN_MIN":
-                domainMin = parts.dropFirst().compactMap { Float($0) }
+                guard !sawDomainMin, let parsed = finiteTriple(parts.dropFirst()) else { return nil }
+                domainMin = parsed
+                sawDomainMin = true
             case "DOMAIN_MAX":
-                domainMax = parts.dropFirst().compactMap { Float($0) }
+                guard !sawDomainMax, let parsed = finiteTriple(parts.dropFirst()) else { return nil }
+                domainMax = parsed
+                sawDomainMax = true
             default:
-                guard parts.count >= 3 else { continue }
-                let rgb = parts.prefix(3).compactMap { Float($0) }
-                guard rgb.count == 3 else { return nil }
+                guard sawDimension, let expectedValueCount, let rgb = finiteTriple(parts[...]),
+                      values.count <= expectedValueCount - inputChannels else { return nil }
                 values.append(contentsOf: rgb)
             }
         }
 
-        guard dimension > 1, dimension <= 64,
-              values.count == dimension * dimension * dimension * 3,
-              domainMin.count == 3, domainMax.count == 3 else { return nil }
+        guard sawDimension, let expectedValueCount,
+              values.count == expectedValueCount,
+              zip(domainMin, domainMax).allSatisfy({ $0 < $1 }) else { return nil }
 
         // Normalize domain and pack as RGBA float32 (r fastest), as CIColorCube expects.
         var rgba = [Float]()
-        rgba.reserveCapacity(dimension * dimension * dimension * 4)
-        for i in 0..<(values.count / 3) {
-            for c in 0..<3 {
+        rgba.reserveCapacity(dimension * dimension * dimension * outputChannels)
+        for i in 0..<(values.count / inputChannels) {
+            for c in 0..<inputChannels {
                 let span = max(0.0001, domainMax[c] - domainMin[c])
-                rgba.append(min(1, max(0, (values[i * 3 + c] - domainMin[c]) / span)))
+                rgba.append(min(1, max(0, (values[i * inputChannels + c] - domainMin[c]) / span)))
             }
             rgba.append(1)
         }
         return CubeLUT(dimension: dimension, data: rgba.withUnsafeBufferPointer { Data(buffer: $0) })
+    }
+
+    private static func finiteTriple(_ parts: ArraySlice<Substring>) -> [Float]? {
+        guard parts.count == inputChannels else { return nil }
+        let values = parts.compactMap { Float($0) }
+        guard values.count == inputChannels, values.allSatisfy(\.isFinite) else { return nil }
+        return values
+    }
+
+    private static func sourceText(atPath path: String) -> String? {
+        do {
+            let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: path))
+            defer { try? handle.close() }
+            guard let data = try handle.read(upToCount: maximumSourceBytes + 1),
+                  data.count <= maximumSourceBytes else { return nil }
+            return String(data: data, encoding: .utf8)
+        } catch {
+            return nil
+        }
     }
 }
