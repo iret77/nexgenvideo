@@ -73,7 +73,23 @@ enum HDRDeliveryQC {
             referenceFrames: frames,
             passed: true
         )
-        try DeliveryValidatorV1.validate(hdrQC: result, outputSHA256: outputSHA256)
+        do {
+            try DeliveryValidatorV1.validate(hdrQC: result, outputSHA256: outputSHA256)
+        } catch {
+            let frameSummary = frames.map {
+                "\($0.index):y=\($0.lumaMinimumCode)...\($0.lumaMaximumCode),"
+                    + "cb=\(Int($0.chromaCbMeanCode.rounded())),"
+                    + "cr=\(Int($0.chromaCrMeanCode.rounded()))"
+            }.joined(separator: ";")
+            throw ToolError(
+                "HDR QC rejected track=\(track.codec)/\(track.bitsPerComponent)/"
+                    + "\(track.colorPrimaries)/\(track.transferFunction)/\(track.yCbCrMatrix) "
+                    + "container=\(container.fileType)/\(container.sampleEntry)/"
+                    + "\(container.profileIDC)/\(container.colorPrimariesIndex)/"
+                    + "\(container.transferFunctionIndex)/\(container.matrixIndex) "
+                    + "frames=[\(frameSummary)]."
+            )
+        }
         return result
     }
 
