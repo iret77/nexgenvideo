@@ -95,6 +95,11 @@ enum GenerationBatchReviewSelfTest {
         original: GenerationBatch,
         pricedPackage: GenerationPackageV1
     ) async throws {
+        guard await waitUntil(timeout: .seconds(10), {
+            NSApp.isActive && window.isVisible && window.isKeyWindow
+        }) else {
+            throw Failure(message: "the review window never became the active key window")
+        }
         let firstID = original.payload.items[0].id
         try await reveal(
             identifier: "generation-batch.remove.\(firstID)",
@@ -487,7 +492,7 @@ enum GenerationBatchReviewSelfTest {
     }
 
     private static func isClickProbeReady(_ probe: NSView, root: NSView, window: NSWindow) -> Bool {
-        guard window.isVisible, window.isKeyWindow, !window.ignoresMouseEvents,
+        guard NSApp.isActive, window.isVisible, window.isKeyWindow, !window.ignoresMouseEvents,
               probe.window === window,
               !probe.isHiddenOrHasHiddenAncestor else { return false }
         let frame = probe.bounds
