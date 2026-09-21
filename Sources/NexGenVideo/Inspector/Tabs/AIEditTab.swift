@@ -277,11 +277,14 @@ struct AIEditTab: View {
         switch action {
         case .upscale:
             Menu(title) {
-                ForEach(UpscaleModelConfig.models(for: asset.type)) { model in
+                ForEach(UpscaleModelConfig.selections(
+                    for: asset,
+                    effectiveDuration: effectiveDurationForAvailability
+                )) { selection in
                     Button {
-                        runUpscale(model)
+                        runUpscale(selection)
                     } label: {
-                        Text(upscaleLabel(for: model))
+                        Text(upscaleLabel(for: selection))
                     }
                 }
             }
@@ -383,18 +386,21 @@ struct AIEditTab: View {
         )
     }
 
-    private func upscaleLabel(for model: UpscaleModelConfig) -> String {
-        let seconds = Int((effectiveDurationForAvailability ?? asset.duration).rounded())
-        let cost = CostEstimator.upscaleCost(model: model, durationSeconds: max(1, seconds))
-        return "\(model.displayName) · \(model.speed) · \(CostEstimator.format(cost))"
+    private func upscaleLabel(for selection: UpscaleSelection) -> String {
+        selection.label(
+            durationSeconds: effectiveDurationForAvailability ?? asset.duration
+        )
     }
 
-    private func runUpscale(_ model: UpscaleModelConfig) {
+    private func runUpscale(_ selection: UpscaleSelection) {
         markReplacementPendingIfNeeded()
         let trim = trimmedSourceIfEnabled()
         Task { @MainActor in
             _ = await EditSubmitter.submitUpscale(
-                asset: asset, model: model, editor: editor,
+                asset: asset,
+                model: selection.model,
+                targetResolution: selection.targetResolution,
+                editor: editor,
                 trimmedSource: trim,
                 onComplete: replacementCompletion(resetTrim: trim != nil),
                 onFailure: replacementFailure()

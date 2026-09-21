@@ -273,6 +273,21 @@ struct FalAudioUpscaleInputTests {
         #expect(FalInputBuilder.upscaleInput(up, model: clarity)["image_url"] as? String == "https://x/in.media")
         #expect(FalInputBuilder.upscaleInput(up, model: topaz)["video_url"] as? String == "https://x/in.media")
     }
+
+    @Test func briaEightKUsesVerifiedDesiredIncreaseDialect() throws {
+        let bria = try #require(FalModelRegistry.model(for: "bria/video/increase-resolution"))
+        let params = UpscaleGenerationParams(
+            sourceURL: "https://x/source.mp4",
+            durationSeconds: 10,
+            targetResolution: "8K",
+            scaleFactor: 4
+        )
+        let input = FalInputBuilder.upscaleInput(params, model: bria)
+
+        #expect(input["video_url"] as? String == "https://x/source.mp4")
+        #expect(input["desired_increase"] as? String == "4")
+        #expect(input["upscale_factor"] == nil)
+    }
 }
 
 @Suite("FalOutput — result parsing")

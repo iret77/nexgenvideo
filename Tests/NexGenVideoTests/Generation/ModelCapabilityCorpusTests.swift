@@ -10,10 +10,10 @@ struct ModelCapabilityCorpusTests {
         let document = try BundledModelCapabilityCorpus.load()
 
         #expect(document.schema == "model-capability-corpus/v1")
-        #expect(document.observedAt == "2026-08-31")
+        #expect(document.observedAt == "2026-09-21")
         #expect(document.staleAfterDays == 120)
-        #expect(document.inventory.count == 87)
-        #expect(document.inventory.filter { !$0.fixture }.count == 85)
+        #expect(document.inventory.count == 88)
+        #expect(document.inventory.filter { !$0.fixture }.count == 86)
         #expect(document.knowledgeBase.profiles.count == 59)
         #expect(document.knowledgeBase.aliases.count == 191)
         #expect(document.defensiveDefaults.ownerConfirmation == "confirmed")

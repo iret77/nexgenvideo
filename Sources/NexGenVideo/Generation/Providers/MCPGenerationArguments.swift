@@ -417,6 +417,12 @@ enum MCPGenerationArguments {
         case .upscale(let value):
             values["sourceurl"] = .string(value.sourceURL)
             values["durationseconds"] = .int(value.durationSeconds)
+            if let resolution = value.targetResolution {
+                values["resolution"] = .string(resolution)
+            }
+            if let factor = value.scaleFactor {
+                values["scalefactor"] = .int(factor)
+            }
         }
         return (values, media)
     }
@@ -439,6 +445,7 @@ enum MCPGenerationArguments {
             case "instrumental": ["instrumental"]
             case "durationseconds": ["durationseconds", "duration"]
             case "sourceurl": ["sourceurl"]
+            case "scalefactor", "upscalefactor", "desiredincrease": ["scalefactor"]
             case "requestid", "clientrequestid", "idempotencykey": ["requestid"]
             case "block", "blocking", "sync", "syncmode", "synchronous",
                  "wait", "waitforcompletion": ["sync"]

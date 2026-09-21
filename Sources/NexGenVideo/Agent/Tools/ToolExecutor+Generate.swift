@@ -2556,28 +2556,50 @@ extension ToolExecutor {
             throw ToolError("Upscale supports video and image assets only (got \(asset.type.rawValue))")
         }
 
-        let available = UpscaleModelConfig.models(for: asset.type)
-        let model: UpscaleModelConfig
-        if let requested = args.string("model").map({ ModelCatalog.shared.internalId(forLogical: $0) }) {
-            guard let match = available.first(where: { $0.id == requested }) else {
-                let ids = available.map(\.id).joined(separator: ", ")
-                throw ToolError("Model '\(requested)' does not support \(asset.type.rawValue). Available: \(ids)")
-            }
-            model = match
-        } else {
-            guard let first = available.first else {
-                throw ToolError("No upscaler available for \(asset.type.rawValue)")
-            }
-            model = first
-        }
-
         let trimmed = try trimmedSource(args, editor: editor, source: asset)
+        let upDuration = max(
+            1,
+            trimmed?.durationSeconds ?? (asset.duration > 0 ? asset.duration : 1)
+        )
+        let targetResolution = args.string("targetResolution")
+        let available = UpscaleModelConfig.models(for: asset.type)
+        let candidates = available.flatMap {
+            $0.selections(
+                sourceType: asset.type,
+                sourceWidth: asset.sourceWidth,
+                sourceHeight: asset.sourceHeight,
+                durationSeconds: upDuration
+            )
+        }.filter {
+            guard let targetResolution else { return true }
+            return $0.targetResolution?.caseInsensitiveCompare(targetResolution) == .orderedSame
+        }
+        let selection: UpscaleSelection
+        if let requested = args.string("model").map({ ModelCatalog.shared.internalId(forLogical: $0) }) {
+            guard let match = candidates.first(where: { $0.model.id == requested }) else {
+                let options = candidates.map(\.displayName).joined(separator: ", ")
+                throw ToolError(
+                    "Model '\(requested)' does not support this \(asset.type.rawValue) source"
+                        + (targetResolution.map { " at \($0)" } ?? "")
+                        + ". Available: \(options)"
+                )
+            }
+            selection = match
+        } else {
+            guard let first = candidates.first else {
+                throw ToolError(
+                    "No upscaler supports this \(asset.type.rawValue) source"
+                        + (targetResolution.map { " at \($0)" } ?? "")
+                )
+            }
+            selection = first
+        }
+        let model = selection.model
 
         // Cost-Guard (M7): approval before this paid upscale. Upscalers are type-specific, so no swap.
-        let upSeconds = Int((trimmed?.durationSeconds ?? (asset.duration > 0 ? asset.duration : 1)).rounded())
         return try await withSpendApproval(
             editor, currentModelId: model.id, currentModelName: model.displayName,
-            credits: CostEstimator.upscaleCost(model: model, durationSeconds: upSeconds),
+            credits: CostEstimator.upscaleCost(model: model, durationSeconds: upDuration),
             actionLabel: "Upscale",
             selectionScope: .upscale,
             pipelineTool: .upscaleMedia,
@@ -2589,6 +2611,7 @@ extension ToolExecutor {
                         guard let placeholderId = await EditSubmitter.submitUpscale(
                             asset: asset,
                             model: model,
+                            targetResolution: selection.targetResolution,
                             editor: editor,
                             trimmedSource: trimmed,
                             origin: .agentTool,
@@ -2618,7 +2641,7 @@ extension ToolExecutor {
                     throw ToolError(message)
                 case .succeeded(let completed):
                     return try await Self.completedGenerationResult(
-                        text: "Upscale completed. Asset ID: \(result.placeholderId). Model: \(model.displayName), source: \(asset.name)\(trimmed != nil ? " (trimmed range)" : "")",
+                        text: "Upscale completed. Asset ID: \(result.placeholderId). Model: \(model.displayName)\(selection.targetResolution.map { ", target: \($0)" } ?? ""), source: \(asset.name)\(trimmed != nil ? " (trimmed range)" : "")",
                         asset: asset.type == .image ? completed : nil
                     )
                 }
@@ -2857,11 +2880,31 @@ extension ToolExecutor {
     }
 
     nonisolated static func upscaleModelInfo(_ m: UpscaleModelConfig) -> [String: Any] {
-        [
+        var info: [String: Any] = [
             "id": m.id, "displayName": m.displayName,
             "type": "upscale",
             "speed": m.speed,
             "supportedTypes": m.supportedTypes.map(\.rawValue).sorted(),
         ]
+        if !m.caps.targets.isEmpty {
+            info["targets"] = m.caps.targets.map {
+                [
+                    "resolution": $0.resolution,
+                    "longEdge": $0.longEdge,
+                    "shortEdge": $0.shortEdge,
+                    "scaleFactors": $0.scaleFactors,
+                ] as [String: Any]
+            }
+        }
+        if let value = m.caps.maxDurationSecondsExclusive {
+            info["sourceDurationMustBeLessThanSeconds"] = value
+        }
+        if let value = m.caps.maxInputLongEdgeExclusive {
+            info["sourceLongEdgeMustBeLessThan"] = value
+        }
+        if let value = m.caps.maxInputShortEdgeExclusive {
+            info["sourceShortEdgeMustBeLessThan"] = value
+        }
+        return info
     }
 }

@@ -35,9 +35,6 @@ enum EditAction {
                 guard let h = asset.sourceHeight, h > 0 else {
                     return .disabled(reason: "Loading video metadata…")
                 }
-                if h >= 2160 {
-                    return .disabled(reason: "Already 4K or higher")
-                }
             }
             if Self.isUpscaleResult(asset) {
                 return .disabled(reason: "Already upscaled")
@@ -45,8 +42,11 @@ enum EditAction {
             if asset.isGenerating {
                 return .disabled(reason: "Generation in progress")
             }
-            guard !UpscaleModelConfig.models(for: asset.type).isEmpty else {
-                return .disabled(reason: "No enabled upscaler is available")
+            guard !UpscaleModelConfig.selections(
+                for: asset,
+                effectiveDuration: effectiveDurationOverride
+            ).isEmpty else {
+                return .disabled(reason: "No enabled upscaler supports this source")
             }
             return .available
 

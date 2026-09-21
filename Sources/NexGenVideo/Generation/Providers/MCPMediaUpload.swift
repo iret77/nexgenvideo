@@ -250,7 +250,9 @@ enum MCPMediaUpload {
         case .upscale(let value):
             return .upscale(UpscaleGenerationParams(
                 sourceURL: transform(value.sourceURL),
-                durationSeconds: value.durationSeconds
+                durationSeconds: value.durationSeconds,
+                targetResolution: value.targetResolution,
+                scaleFactor: value.scaleFactor
             ))
         }
     }

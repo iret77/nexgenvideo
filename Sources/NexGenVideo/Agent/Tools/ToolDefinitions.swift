@@ -819,7 +819,8 @@ enum ToolDefinitions {
             inputSchema: objectSchema(
                 properties: [
                     "mediaRef": ["type": "string", "description": "ID of the video or image asset to upscale"],
-                    "model": ["type": "string", "description": "Upscaler model ID (e.g. 'bytedance-upscaler', 'seedvr-image-upscaler'). Defaults to the first model that supports the asset's type."],
+                    "model": ["type": "string", "description": "Upscaler model ID from list_models. Defaults to the first model that supports the source and target."],
+                    "targetResolution": ["type": "string", "enum": ["8K"], "description": "Optional output target. Use list_models to confirm the selected model and source dimensions support it."],
                     "sourceClipId": ["type": "string", "description": "Optional. Video clip id (from get_timeline) referencing mediaRef. When set and the clip is trimmed, only the clip's visible range is upscaled, not the full source."],
                 ],
                 required: ["mediaRef"]

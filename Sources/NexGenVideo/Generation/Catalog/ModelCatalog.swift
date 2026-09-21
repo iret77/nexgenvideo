@@ -1671,4 +1671,62 @@ struct UpscaleCaps: Decodable, Sendable {
     let speed: String   // "Fast" | "Medium" | "Slow"
     let p75DurationSeconds: Int
     let supportedTypes: [String]   // "video" | "image"
+    let targets: [UpscaleTargetCaps]
+    let maxDurationSecondsExclusive: Int?
+    let maxInputLongEdgeExclusive: Int?
+    let maxInputShortEdgeExclusive: Int?
+
+    init(
+        speed: String,
+        p75DurationSeconds: Int,
+        supportedTypes: [String],
+        targets: [UpscaleTargetCaps] = [],
+        maxDurationSecondsExclusive: Int? = nil,
+        maxInputLongEdgeExclusive: Int? = nil,
+        maxInputShortEdgeExclusive: Int? = nil
+    ) {
+        self.speed = speed
+        self.p75DurationSeconds = p75DurationSeconds
+        self.supportedTypes = supportedTypes
+        self.targets = targets
+        self.maxDurationSecondsExclusive = maxDurationSecondsExclusive
+        self.maxInputLongEdgeExclusive = maxInputLongEdgeExclusive
+        self.maxInputShortEdgeExclusive = maxInputShortEdgeExclusive
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case speed, p75DurationSeconds, supportedTypes, targets
+        case maxDurationSecondsExclusive, maxInputLongEdgeExclusive
+        case maxInputShortEdgeExclusive
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        speed = try container.decode(String.self, forKey: .speed)
+        p75DurationSeconds = try container.decode(Int.self, forKey: .p75DurationSeconds)
+        supportedTypes = try container.decode([String].self, forKey: .supportedTypes)
+        targets = try container.decodeIfPresent(
+            [UpscaleTargetCaps].self,
+            forKey: .targets
+        ) ?? []
+        maxDurationSecondsExclusive = try container.decodeIfPresent(
+            Int.self,
+            forKey: .maxDurationSecondsExclusive
+        )
+        maxInputLongEdgeExclusive = try container.decodeIfPresent(
+            Int.self,
+            forKey: .maxInputLongEdgeExclusive
+        )
+        maxInputShortEdgeExclusive = try container.decodeIfPresent(
+            Int.self,
+            forKey: .maxInputShortEdgeExclusive
+        )
+    }
+}
+
+struct UpscaleTargetCaps: Decodable, Sendable {
+    let resolution: String
+    let longEdge: Int
+    let shortEdge: Int
+    let scaleFactors: [Int]
 }

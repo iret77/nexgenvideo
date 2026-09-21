@@ -188,6 +188,7 @@ struct FalClientTests {
         "fal-ai/elevenlabs/music": "fal-ai/elevenlabs",
         "fal-ai/clarity-upscaler": "fal-ai/clarity-upscaler",
         "fal-ai/topaz/upscale/video": "fal-ai/topaz",
+        "bria/video/increase-resolution": "bria/video",
     ]
 
     @Test("image catalog pages both active fal.ai image categories with the saved key")

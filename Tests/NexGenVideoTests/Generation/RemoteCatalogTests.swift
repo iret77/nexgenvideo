@@ -70,4 +70,33 @@ struct RemoteCatalogTests {
         #expect(entry.offers == seed.offers)
         #expect(FalModelRegistry.model(for: entry.id)?.videoDuration == .secondsOrAuto)
     }
+
+    @Test func legacyUpscaleCapabilitiesDecodeWithoutTargetConstraints() throws {
+        let json = #"""
+        [{
+          "id":"legacy/upscale",
+          "kind":"upscale",
+          "displayName":"Legacy Upscale",
+          "allowedEndpoints":["legacy/upscale"],
+          "responseShape":"video",
+          "uiCapabilities":{
+            "speed":"Fast",
+            "p75DurationSeconds":30,
+            "supportedTypes":["video"]
+          }
+        }]
+        """#
+
+        let entry = try #require(
+            JSONDecoder().decode([CatalogEntry].self, from: Data(json.utf8)).first
+        )
+        guard case .upscale(let caps) = entry.uiCapabilities else {
+            Issue.record("expected an upscale entry")
+            return
+        }
+        #expect(caps.targets.isEmpty)
+        #expect(caps.maxDurationSecondsExclusive == nil)
+        #expect(caps.maxInputLongEdgeExclusive == nil)
+        #expect(caps.maxInputShortEdgeExclusive == nil)
+    }
 }

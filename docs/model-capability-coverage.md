@@ -1,13 +1,13 @@
 # Model capability coverage
 
-Inventory date: `2026-08-31`. Stale threshold: `120 days`.
+Inventory date: `2026-09-21`. Stale threshold: `120 days`.
 The report is generated offline from the checked-in corpus; web access is not part of CI.
 
 ## Summary
 
 | Offers | Non-fixture | Exact | Inherited | Defensive | Stale | Conflicting | Research-needed | Unclassified |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 87 | 85 | 75 | 1 | 11 | 3 | 4 | 87 | 0 |
+| 88 | 86 | 75 | 1 | 12 | 3 | 4 | 88 | 0 |
 
 `exact` identifies a concrete intrinsic profile. `inherited` is an explicit family/variant lineage miss. `defensive` is used for unknown or deliberately unversioned IDs. Stale and conflicting evidence stays visible and forces research-needed.
 
@@ -80,6 +80,7 @@ These explicit conservative values are the production fallback for unresolved ca
 | image | runway | `seedream5_pro` | `runway/seedream5_pro` | `seedream/pro/5` | exact | research-needed |
 | music | fal | `fal-ai/elevenlabs/music` | `fal-ai/elevenlabs/music` | `—` | defensive | research-needed |
 | music | fal | `fal-ai/stable-audio` | `fal-ai/stable-audio` | `—` | defensive | research-needed |
+| video | fal | `bria/video/increase-resolution` | `bria/video/increase-resolution` | `—` | defensive | research-needed |
 | video | fal | `bytedance/seedance-2.0/image-to-video` | `bytedance/seedance-2.0/image-to-video` | `seedance/image-to-video/2.0` | exact | research-needed |
 | video | fal | `bytedance/seedance-2.0/reference-to-video` | `bytedance/seedance-2.0/reference-to-video` | `seedance/reference-to-video/2.0` | exact | research-needed |
 | video | fal | `bytedance/seedance-2.0/text-to-video` | `bytedance/seedance-2.0/text-to-video` | `seedance/text-to-video/2.0` | exact | research-needed |
@@ -124,6 +125,7 @@ These explicit conservative values are the production fallback for unresolved ca
 - [fal Model Search API and endpoint OpenAPI schemas](https://fal.ai/docs/platform-apis/v1/models) — Free endpoint-id and OpenAPI lookups for the shipped fal registry plus MiniMax H3; no generation calls.
 - [fal Seedance 2.5 endpoint documentation](https://fal.ai/models/bytedance/seedance-2.5/reference-to-video) — Text, image and reference modes; reference counts and duration/resolution contracts.
 - [fal Seedance 2.5 production guidance](https://fal.ai/learn/devs/how-to-use-seedance-2-5) — Provider-published reliable subject/reference guidance, kept separate from hard API limits.
+- [fal Bria video upscale endpoint schema](https://fal.ai/models/bria/video/increase-resolution/api) — Free live catalog, endpoint schema and published pricing lookups; no generation call.
 - [fal endpoint metadata: bytedance/seedance-2.0/image-to-video](https://api.fal.ai/v1/models?endpoint_id=bytedance%2Fseedance-2.0%2Fimage-to-video) — Free endpoint metadata lookup; no generation call.
 - [fal endpoint metadata: bytedance/seedance-2.0/reference-to-video](https://api.fal.ai/v1/models?endpoint_id=bytedance%2Fseedance-2.0%2Freference-to-video) — Free endpoint metadata lookup; no generation call.
 - [fal endpoint metadata: bytedance/seedance-2.0/text-to-video](https://api.fal.ai/v1/models?endpoint_id=bytedance%2Fseedance-2.0%2Ftext-to-video) — Free endpoint metadata lookup; no generation call.
