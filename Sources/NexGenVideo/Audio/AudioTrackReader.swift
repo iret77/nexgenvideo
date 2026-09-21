@@ -36,20 +36,24 @@ enum AudioTrackReader {
         }
 
         let asset = AVURLAsset(url: url)
+        trace("asset-created")
         guard let track = try await asset.loadTracks(withMediaType: .audio).first else {
             throw ReadError.noAudioTrack(url.lastPathComponent)
         }
+        trace("track-loaded")
 
         let reader: AVAssetReader
         do { reader = try AVAssetReader(asset: asset) } catch {
             throw ReadError.readFailed(error.localizedDescription)
         }
+        trace("reader-created")
 
         let output = AVAssetReaderTrackOutput(track: track, outputSettings: outputSettings)
         guard reader.canAdd(output) else {
             throw ReadError.readFailed("Cannot read audio from \(url.lastPathComponent)")
         }
         reader.add(output)
+        trace("output-added")
         if let range {
             let start = CMTime(seconds: range.lowerBound, preferredTimescale: 1_000_000_000)
             let end = CMTime(seconds: range.upperBound, preferredTimescale: 1_000_000_000)
@@ -57,13 +61,22 @@ enum AudioTrackReader {
                 throw ReadError.invalidRange
             }
             reader.timeRange = CMTimeRange(start: start, end: end)
+            trace("range-set")
         }
 
         guard reader.startReading() else {
             throw ReadError.readFailed(reader.error?.localizedDescription ?? "Reader could not start")
         }
+        trace("reading-started")
 
-        while let sample = output.copyNextSampleBuffer() {
+        var bufferIndex = 0
+        while true {
+            trace("copy-next-start-\(bufferIndex)")
+            guard let sample = output.copyNextSampleBuffer() else {
+                trace("copy-next-finished-\(reader.status.rawValue)")
+                break
+            }
+            trace("copy-next-buffer-\(bufferIndex)")
             guard let desc = CMSampleBufferGetFormatDescription(sample),
                   let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(desc),
                   let format = AVAudioFormat(streamDescription: asbd) else {
@@ -95,6 +108,7 @@ enum AudioTrackReader {
                 throw ReadError.readFailed("PCM copy failed (OSStatus \(status))")
             }
             try onBuffer(pcm)
+            bufferIndex += 1
             if let remaining = remainingRangeSeconds {
                 let nextRemaining = max(0, remaining - Double(frames) / format.sampleRate)
                 remainingRangeSeconds = nextRemaining
@@ -108,5 +122,10 @@ enum AudioTrackReader {
         if reader.status == .failed {
             throw ReadError.readFailed(reader.error?.localizedDescription ?? "Read failed")
         }
+    }
+
+    private static func trace(_ message: String) {
+        guard ProcessInfo.processInfo.environment["NGV_WAVEFORM_DIAGNOSTIC"] == "1" else { return }
+        FileHandle.standardError.write(Data("waveform-reader: \(message)\n".utf8))
     }
 }
