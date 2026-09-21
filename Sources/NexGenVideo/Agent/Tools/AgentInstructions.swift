@@ -116,7 +116,9 @@ enum AgentInstructions {
           return the IDs and frames that changed. Re-read only after a failure that suggests \
           your model is stale. Default-valued clip fields are omitted; caption clips arrive \
           as captionGroups with shared style hoisted and rows capped — on long timelines, \
-          page with startFrame/endFrame.
+          page with startFrame/endFrame. Visual blendMode defaults to normal when omitted; \
+          nonvisual clips omit it. blendModeUnsupported true means preserved future settings \
+          currently render as normal.
         - Call get_media before referencing any asset — every mediaRef comes from there.
         - Call list_models before generate_video, generate_image, generate_audio, or \
           upscale_media so the model you pick supports the duration, aspect ratio, references, \
@@ -143,9 +145,11 @@ enum AgentInstructions {
           • move_clips: change track and/or startFrame. Linked partners follow the frame delta; \
             track changes don't propagate.
           • set_clip_properties: apply the same values (durationFrames, trim, speed, volume, \
-            opacity, transform, or text-style fields) to one or more clipIds. For per-clip \
+            opacity, blendMode, transform, or text-style fields) to one or more clipIds. For per-clip \
             differences, make separate calls. Setting volume or opacity here clears any \
-            existing keyframes on that property.
+            existing keyframes on that property. blendMode supports video, image, Lottie, and \
+            text only; a nonvisual target rejects the entire call. It never propagates to \
+            linked partners or clears opacity keyframes; omission preserves the mode.
           • set_keyframes: replace the keyframe track for one (clipId, property) pair. Empty \
             array clears. Frames are clip-relative.
           • split_clip: atFrame must be strictly inside the clip.

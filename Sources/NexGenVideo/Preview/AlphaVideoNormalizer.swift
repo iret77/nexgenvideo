@@ -5,11 +5,19 @@ import CoreVideo
 // Converts straight-alpha video to premultiplied alpha for correct compositing.
 enum AlphaVideoNormalizer {
 
+    private enum AlphaMode: Equatable {
+        case none
+        case straight
+        case premultiplied
+        case unspecified
+    }
+
     /// Returns cached premultiplied-alpha video if source has straight alpha; else nil.
     static func premultipliedVideo(for sourceURL: URL, mediaRef: String) async throws -> URL? {
         let asset = AVURLAsset(url: sourceURL)
-        guard let track = try await asset.loadTracks(withMediaType: .video).first,
-              try await trackContainsAlpha(track) else { return nil }
+        guard let track = try await asset.loadTracks(withMediaType: .video).first else { return nil }
+        let alphaMode = try await trackAlphaMode(track)
+        guard alphaMode == .straight || alphaMode == .unspecified else { return nil }
 
         // Skip rotated/flipped sources since baking orientation would lose the original transform.
         let preferredTransform = (try? await track.load(.preferredTransform)) ?? .identity
@@ -19,7 +27,7 @@ enum AlphaVideoNormalizer {
         let size = CGSize(width: abs(natSize.width), height: abs(natSize.height))
         guard size.width >= 2, size.height >= 2 else { return nil }
 
-        let filename = "\(mediaRef)_\(cacheTag(for: sourceURL))_premul.mov"
+        let filename = "\(mediaRef)_\(cacheTag(for: sourceURL))_premul-v2.mov"
         let outputURL = ImageVideoGenerator.cacheDirectory.appendingPathComponent(filename)
         if FileManager.default.fileExists(atPath: outputURL.path) { return outputURL }
 
@@ -31,12 +39,21 @@ enum AlphaVideoNormalizer {
         }
     }
 
-    private static func trackContainsAlpha(_ track: AVAssetTrack) async throws -> Bool {
-        guard let format = try await track.load(.formatDescriptions).first else { return false }
-        // Only trust the codec's alpha flag, not just format/container capability.
-        return CMFormatDescriptionGetExtension(
-            format, extensionKey: kCMFormatDescriptionExtension_ContainsAlphaChannel
-        ) as? Bool ?? false
+    private static func trackAlphaMode(_ track: AVAssetTrack) async throws -> AlphaMode {
+        guard let format = try await track.load(.formatDescriptions).first,
+              CMFormatDescriptionGetExtension(
+                format, extensionKey: kCMFormatDescriptionExtension_ContainsAlphaChannel
+              ) as? Bool == true else { return .none }
+        let value = CMFormatDescriptionGetExtension(
+            format, extensionKey: kCMFormatDescriptionExtension_AlphaChannelMode
+        ) as? String
+        if value == kCMFormatDescriptionAlphaChannelMode_PremultipliedAlpha as String {
+            return .premultiplied
+        }
+        if value == kCMFormatDescriptionAlphaChannelMode_StraightAlpha as String {
+            return .straight
+        }
+        return .unspecified
     }
 
     /// Cache key fragment that busts when the underlying file is replaced.
@@ -146,6 +163,12 @@ enum AlphaVideoNormalizer {
             rowBytes: CVPixelBufferGetBytesPerRow(buffer)
         )
         vImagePremultiplyData_RGBA8888(&image, &image, vImage_Flags(kvImageNoFlags))
+        CVBufferSetAttachment(
+            buffer,
+            kCVImageBufferAlphaChannelModeKey,
+            kCVImageBufferAlphaChannelMode_PremultipliedAlpha,
+            .shouldPropagate
+        )
     }
 
     enum NormalizeError: LocalizedError {

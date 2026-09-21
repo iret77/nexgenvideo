@@ -233,7 +233,7 @@ extension EditorViewModel {
         undoManager?.enableUndoRegistration()
         guard !ids.isEmpty else {
             timeline = before
-            videoEngine?.syncTextLayers()
+            videoEngine?.refreshTextCompositing()
             return []
         }
         registerTimelineSwap(undoState: before, redoState: timeline, actionName: "Generate Captions")

@@ -53,6 +53,18 @@ extension ToolExecutor {
         ) as? [String: Any] else { throw ToolError("Failed to encode timeline") }
         if var tracks = dict["tracks"] as? [[String: Any]] {
             for i in tracks.indices {
+                if let clips = tracks[i]["clips"] as? [[String: Any]] {
+                    tracks[i]["clips"] = zip(clips, editor.timeline.tracks[i].clips).map { encoded, clip in
+                        var encoded = encoded
+                        encoded.removeValue(forKey: "compositing")
+                        if clip.mediaType.isVisual {
+                            let unsupported = clip.compositing != nil && clip.compositing?.supportedMode == nil
+                            if clip.blendMode != .normal || unsupported { encoded["blendMode"] = clip.blendMode.rawValue }
+                            if unsupported { encoded["blendModeUnsupported"] = true }
+                        }
+                        return encoded
+                    }
+                }
                 tracks[i] = Self.compactTrack(tracks[i], window: window)
                 // Report the displayed label (mirrored video numbering), not the stored seed.
                 tracks[i]["label"] = editor.timelineTrackDisplayLabel(at: i)
@@ -60,6 +72,7 @@ extension ToolExecutor {
             dict["tracks"] = tracks
         }
         dict["totalFrames"] = editor.timeline.totalFrames
+        dict["blendModeContract"] = ["version": 1, "modes": ClipBlendMode.allCases.map(\.rawValue)]
         if let window {
             dict["window"] = [window.lowerBound, min(window.upperBound, editor.timeline.totalFrames)]
         }

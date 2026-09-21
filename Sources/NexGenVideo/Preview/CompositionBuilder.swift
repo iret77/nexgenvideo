@@ -51,7 +51,7 @@ enum CompositionBuilder {
         var unprocessableMediaRefs: Set<String> = []
 
         for (trackIdx, track) in timeline.tracks.enumerated() {
-            // Text renders via CATextLayer overlay (preview) + animation tool (export) — never as composition tracks.
+            // Text has immutable raster sources in compositor instructions, not AV tracks.
             let sortedClips = track.clips
                 .sorted { $0.startFrame < $1.startFrame }
                 .filter { $0.mediaType != .text }
@@ -433,6 +433,7 @@ enum CompositionBuilder {
     ) -> [CompositorInstruction] {
         let timescale = CMTimeScale(timeline.fps)
         struct Entry {
+            let trackIndex: Int
             let start: CMTime
             let end: CMTime
             let plan: LayerPlan
@@ -451,6 +452,7 @@ enum CompositionBuilder {
                 if let clipIds, !clipIds.contains(clip.id) { continue }
                 guard clip.durationFrames > 0, clip.startFrame >= prevEndFrame else { continue }
                 entries.append(Entry(
+                    trackIndex: trackIndex,
                     start: CMTime(value: CMTimeValue(clip.startFrame), timescale: timescale),
                     end: CMTime(value: CMTimeValue(clip.endFrame), timescale: timescale),
                     plan: LayerPlan(
@@ -462,6 +464,25 @@ enum CompositionBuilder {
                 ))
                 prevEndFrame = clip.endFrame
             }
+        }
+
+        var textBudget = TextRasterizer.preparationBudget
+        for (index, track) in timeline.tracks.enumerated() where !track.hidden && track.type.isVisual {
+            for clip in track.clips where clip.mediaType == .text && clip.durationFrames > 0 {
+                guard let plan = TextRasterizer.prepare(for: clip, renderSize: renderSize, budget: &textBudget) else { continue }
+                entries.append(Entry(
+                    trackIndex: index,
+                    start: CMTime(value: CMTimeValue(clip.startFrame), timescale: timescale),
+                    end: CMTime(value: CMTimeValue(clip.endFrame), timescale: timescale),
+                    plan: plan
+                ))
+            }
+        }
+        entries.sort {
+            if $0.trackIndex != $1.trackIndex { return $0.trackIndex > $1.trackIndex }
+            if $0.plan.clip.mediaType != $1.plan.clip.mediaType { return $1.plan.clip.mediaType == .text }
+            if $0.start != $1.start { return $0.start < $1.start }
+            return $0.plan.clip.id < $1.plan.clip.id
         }
 
         var cutSet = Set<CMTime>()
