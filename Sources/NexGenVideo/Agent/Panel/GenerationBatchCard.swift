@@ -493,7 +493,11 @@ private struct GenerationBatchRuntimeProbe: ViewModifier {
     @ViewBuilder
     func body(content: Content) -> some View {
         content.background {
-            if enabled { AppRelaunchClickProbe(identifier: identifier) }
+            if enabled {
+                AppRelaunchClickProbe(identifier: identifier)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
+            }
         }
     }
 }
