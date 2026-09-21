@@ -34,7 +34,11 @@ jobs:
             local expected="$3"
             local log="$RUNNER_TEMP/$label.log"
 
-            swift test --cache-path "$NGV_SWIFTPM_CACHE_PATH" --skip-build --filter "$filter" >"$log" 2>&1 &
+            local args=(swift test --cache-path "$NGV_SWIFTPM_CACHE_PATH" --skip-build)
+            if [[ -n "$filter" ]]; then
+              args+=(--filter "$filter")
+            fi
+            "${args[@]}" >"$log" 2>&1 &
             local driver=$!
             for _ in {1..45}; do
               if ! kill -0 "$driver" 2>/dev/null; then
@@ -69,6 +73,7 @@ jobs:
           run_filter 'monoFastPath' decoder 'already mono at 22050 Hz decodes through the fast path'
           run_filter 'trimmedExtractionFollowsTrackTimebase' trimmed 'trimmed extraction follows the audio track timebase'
           run_filter 'trimmedExtractionFollowsTrackTimebase|monoFastPath' concurrent 'trimmed extraction follows the audio track timebase'
+          run_filter '' full 'Test run'
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -78,5 +83,6 @@ jobs:
             ${{ runner.temp }}/decoder.*
             ${{ runner.temp }}/trimmed.*
             ${{ runner.temp }}/concurrent.*
+            ${{ runner.temp }}/full.*
           if-no-files-found: ignore
           retention-days: 3
