@@ -79,7 +79,8 @@ enum HDRDeliveryQC {
             let frameSummary = frames.map {
                 "\($0.index):y=\($0.lumaMinimumCode)...\($0.lumaMaximumCode),"
                     + "cb=\(Int($0.chromaCbMeanCode.rounded())),"
-                    + "cr=\(Int($0.chromaCrMeanCode.rounded()))"
+                    + "cr=\(Int($0.chromaCrMeanCode.rounded())),"
+                    + "oor=\($0.outOfRangePixelCount)/\($0.pixelCount)"
             }.joined(separator: ";")
             throw ToolError(
                 "HDR QC rejected track=\(track.codec)/\(track.bitsPerComponent)/"
