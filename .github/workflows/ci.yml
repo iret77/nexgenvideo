@@ -83,7 +83,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Render Agent UI specification
-        run: python3 scripts/render_agent_chat_spec.py --output "$RUNNER_TEMP/agent-chat-spec"
+        run: |
+          python3 scripts/render_agent_chat_spec.py --output "$RUNNER_TEMP/agent-chat-spec"
+          python3 scripts/render_generation_batch_review_spec.py --output "$RUNNER_TEMP/agent-chat-spec"
       - name: Upload Agent UI render evidence
         uses: actions/upload-artifact@v4
         with:
@@ -331,6 +333,11 @@ jobs:
           NGV_SELFTEST_GENERATION_BATCH_RECOVERY=1 \
             candidate/NexGenVideo.app/Contents/MacOS/NexGenVideo \
             | grep -qx 'SELFTEST_GENERATION_BATCH_RECOVERY_OK'
+      - name: Verify generation batch pointer and keyboard review on macOS 26
+        run: |
+          NGV_SELFTEST_GENERATION_BATCH_REVIEW=1 \
+            candidate/NexGenVideo.app/Contents/MacOS/NexGenVideo \
+            | grep -qx 'SELFTEST_GENERATION_BATCH_REVIEW_OK'
       - uses: actions/upload-artifact@v4
         if: always()
         with:

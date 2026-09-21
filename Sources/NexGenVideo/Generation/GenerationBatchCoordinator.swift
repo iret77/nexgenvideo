@@ -81,20 +81,27 @@ final class GenerationBatchCoordinator {
     }
 
     func remove(itemID: String, editor: EditorViewModel) {
-        guard let pending, !approving, !isRecovering else { return }
+        guard let pending, !approving else { return }
         if pending.payload.items.count == 1 { decline(editor: editor); return }
         do {
             let updated = try pending.removing(itemIDs: [itemID])
+            var updatedRecoveries = recoveries
+            updatedRecoveries.removeValue(forKey: itemID)
             editor.agentService.replaceGenerationBatchPresentation(oldID: pending.id, newID: updated.id)
+            recoveries = updatedRecoveries
+            recoveringItemIDs.remove(itemID)
             self.pending = updated
-            recoveries.removeValue(forKey: itemID)
+            error = nil
         }
         catch { self.error = error.localizedDescription }
     }
 
     func decline(editor: EditorViewModel) {
-        guard !approving, !isRecovering, let pending else { return }
-        self.pending = nil; error = nil; recoveries = [:]
+        guard !approving, let pending else { return }
+        self.pending = nil
+        error = nil
+        recoveries = [:]
+        recoveringItemIDs = []
         editor.agentService.completeGenerationBatch(pending.id, message: "The user declined the generation batch. No batch item was submitted.")
     }
 
@@ -128,62 +135,99 @@ final class GenerationBatchCoordinator {
                 && ($0.package.payload.pricingFailure?.isRetryable ?? true)
         }
         guard !items.isEmpty else { return }
-        recoveringItemIDs = Set(items.map(\.id))
+        let itemIDs = Set(items.map(\.id))
+        recoveringItemIDs.formUnion(itemIDs)
         error = nil
-        defer { recoveringItemIDs = [] }
+        defer {
+            if pending == nil || pending?.payload.nonce == original.payload.nonce {
+                recoveringItemIDs.subtract(itemIDs)
+            }
+        }
         do {
-            var updated = original
             for item in items {
-                try await item.package.requireCurrentContext(editor: editor)
-                let snapshot = try await GenerationPackageInputs.restore(package: item.package, editor: editor)
-                let pricingInput = try item.package.pricingInput()
-                let estimate: GenerationMoney?
-                let failure: GenerationPricingFailure?
-                do {
-                    estimate = try await quoteLoader(item.package.payload.target, pricingInput)
-                    failure = nil
-                } catch {
-                    try Task.checkCancellation()
-                    estimate = nil
-                    failure = .classified(
-                        error,
-                        provider: item.package.payload.target.provider,
-                        endpoint: item.package.payload.target.endpoint
-                    )
+                guard pending?.payload.nonce == original.payload.nonce,
+                      pending?.payload.items.contains(where: { $0.id == item.id }) == true else {
+                    continue
                 }
-                let package = try item.package.replacingPricing(estimate: estimate, failure: failure)
-                try await GenerationPackageInputs.persist(package: package, snapshot: snapshot, editor: editor)
-                updated = try updated.replacingPackage(itemID: item.id, with: package)
+                do {
+                    try await item.package.requireCurrentContext(editor: editor)
+                    let snapshot = try await GenerationPackageInputs.restore(package: item.package, editor: editor)
+                    let pricingInput = try item.package.pricingInput()
+                    let estimate: GenerationMoney?
+                    let failure: GenerationPricingFailure?
+                    do {
+                        estimate = try await quoteLoader(item.package.payload.target, pricingInput)
+                        failure = nil
+                    } catch {
+                        try Task.checkCancellation()
+                        estimate = nil
+                        failure = .classified(
+                            error,
+                            provider: item.package.payload.target.provider,
+                            endpoint: item.package.payload.target.endpoint
+                        )
+                    }
+                    guard pending?.payload.nonce == original.payload.nonce,
+                          pending?.payload.items.contains(where: { $0.id == item.id }) == true else {
+                        continue
+                    }
+                    let package = try item.package.replacingPricing(estimate: estimate, failure: failure)
+                    try await GenerationPackageInputs.persist(package: package, snapshot: snapshot, editor: editor)
+                    guard let current = pending,
+                          current.payload.nonce == original.payload.nonce,
+                          current.payload.items.contains(where: { $0.id == item.id }) else {
+                        continue
+                    }
+                    let updated = try current.replacingPackage(itemID: item.id, with: package)
+                    editor.agentService.replaceGenerationBatchPresentation(oldID: current.id, newID: updated.id)
+                    pending = updated
+                } catch {
+                    guard pending?.payload.nonce == original.payload.nonce,
+                          pending?.payload.items.contains(where: { $0.id == item.id }) == true else {
+                        continue
+                    }
+                    throw error
+                }
             }
-            guard pending?.id == original.id else {
-                throw GenerationRequestError.gate("The batch changed while pricing was refreshed.")
+        } catch {
+            if pending?.payload.nonce == original.payload.nonce {
+                self.error = error.localizedDescription
             }
-            editor.agentService.replaceGenerationBatchPresentation(oldID: original.id, newID: updated.id)
-            pending = updated
-        } catch { self.error = error.localizedDescription }
+        }
     }
 
     func changeRoute(itemID: String, option: SpendOption, editor: EditorViewModel) async {
-        guard let original = pending, !approving, !isRecovering,
+        guard let original = pending, !approving, !recoveringItemIDs.contains(itemID),
               let recovery = recoveries[itemID],
               let item = original.payload.items.first(where: { $0.id == itemID }),
               option.target != item.package.payload.target else { return }
-        recoveringItemIDs = [itemID]
+        recoveringItemIDs.insert(itemID)
         error = nil
-        defer { recoveringItemIDs = [] }
+        defer {
+            if pending == nil || pending?.payload.nonce == original.payload.nonce {
+                recoveringItemIDs.remove(itemID)
+            }
+        }
         do {
             let package = try await recovery.prepare(editor: editor, option: option)
             guard package.payload.target == option.target else {
                 throw GenerationRequestError.gate("The prepared request did not use the selected route.")
             }
             try await package.requireCurrentContext(editor: editor)
-            guard pending?.id == original.id else {
-                throw GenerationRequestError.gate("The batch changed while its route was prepared.")
+            guard let current = pending,
+                  current.payload.nonce == original.payload.nonce,
+                  current.payload.items.contains(where: { $0.id == itemID }) else {
+                return
             }
-            let updated = try original.replacingPackage(itemID: itemID, with: package)
-            editor.agentService.replaceGenerationBatchPresentation(oldID: original.id, newID: updated.id)
+            let updated = try current.replacingPackage(itemID: itemID, with: package)
+            editor.agentService.replaceGenerationBatchPresentation(oldID: current.id, newID: updated.id)
             pending = updated
-        } catch { self.error = error.localizedDescription }
+        } catch {
+            if pending?.payload.nonce == original.payload.nonce,
+               pending?.payload.items.contains(where: { $0.id == itemID }) == true {
+                self.error = error.localizedDescription
+            }
+        }
     }
 
     func cancelRemaining(batchID: String, editor: EditorViewModel) {

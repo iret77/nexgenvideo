@@ -30,14 +30,16 @@ enum GenerationBatchRecoverySelfTest {
             let recoverable = GenerationBatchReviewControls(
                 hasVerifiedTotal: false,
                 hasRetryablePricingFailure: true,
-                isBusy: false
+                isCommitting: false,
+                isRecovering: false
             )
             try check(recoverable.canEdit && recoverable.canRetryPricing && !recoverable.canApprove,
                       "An unpriced batch must remain editable and retryable but not approvable")
             let verified = GenerationBatchReviewControls(
                 hasVerifiedTotal: true,
                 hasRetryablePricingFailure: false,
-                isBusy: false
+                isCommitting: false,
+                isRecovering: false
             )
             try check(verified.canEdit && !verified.canRetryPricing && verified.canApprove,
                       "A fully priced batch must expose one approval")

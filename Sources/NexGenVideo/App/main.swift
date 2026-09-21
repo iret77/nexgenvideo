@@ -3,6 +3,7 @@ import AppKit
 Log.bootstrap()
 ChatHangReplay.runIfRequested()
 HangDiagnosticReplay.runIfRequested()
+GenerationBatchReviewSelfTest.runIfRequested()
 AppRelaunchSelfTest.recordBootIfRequested()
 
 // CI-only exact-file analysis through the real app and private digest-pinned fixture.
