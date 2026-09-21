@@ -117,19 +117,34 @@ struct HDRExportTests {
             outputURL: output
         )
         try #require(service.error == nil, "\(service.error ?? "HDR export failed")")
+        try publishMovieEvidence(output)
 
         let spec = hdrSpec(width: 320, height: 320, fps: 30)
-        let baseQC = try await PipelineDeliveryStore.probeOutput(
-            outputURL: output,
-            spec: spec,
-            expectedDurationFrames: 120
-        )
+        let baseQC: DeliveryProbeQCV1
+        do {
+            baseQC = try await PipelineDeliveryStore.probeOutput(
+                outputURL: output,
+                spec: spec,
+                expectedDurationFrames: 120
+            )
+        } catch {
+            throw stageError("Delivery probe", error: error)
+        }
         #expect(baseQC.passed)
-        let hdrQC = try await HDRDeliveryQC.probe(outputURL: output, spec: spec)
-        try DeliveryValidatorV1.validate(
-            hdrQC: hdrQC,
-            outputSHA256: try FileDigest.sha256(of: output)
-        )
+        let hdrQC: DeliveryHDRQCV1
+        do {
+            hdrQC = try await HDRDeliveryQC.probe(outputURL: output, spec: spec)
+        } catch {
+            throw stageError("HDR probe", error: error)
+        }
+        do {
+            try DeliveryValidatorV1.validate(
+                hdrQC: hdrQC,
+                outputSHA256: try FileDigest.sha256(of: output)
+            )
+        } catch {
+            throw stageError("HDR validator", error: error)
+        }
         #expect(hdrQC.referenceFrames[0].lumaMinimumCode <= 70)
         #expect(hdrQC.referenceFrames[0].lumaMaximumCode > 100)
         #expect((350...450).contains(hdrQC.referenceFrames[1].lumaMaximumCode))
@@ -210,10 +225,24 @@ struct HDRExportTests {
             to: directory.appendingPathComponent("hdr-qc.v1.json"),
             options: .atomic
         )
+        try publishMovieEvidence(movie)
+    }
+
+    private func publishMovieEvidence(_ movie: URL) throws {
+        guard let path = ProcessInfo.processInfo.environment["NGV_HDR_QC_OUTPUT_DIR"] else { return }
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let destination = directory.appendingPathComponent("hdr-reference.mov")
         if FileManager.default.fileExists(atPath: destination.path) {
             try FileManager.default.removeItem(at: destination)
         }
         try FileManager.default.copyItem(at: movie, to: destination)
+    }
+
+    private func stageError(_ stage: String, error: Error) -> ToolError {
+        let value = error as NSError
+        return ToolError(
+            "\(stage) failed: \(value.domain) \(value.code) \(value.localizedDescription)"
+        )
     }
 }
