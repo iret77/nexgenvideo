@@ -1316,7 +1316,9 @@ extension EditorViewModel {
             }
 
             let data = await MainActor.run { () -> Data? in
-                let rep = NSBitmapImageRep(cgImage: videoCG)
+                // Captured timeline PNGs must re-import through the opaque, color-tagged video path.
+                guard let image = isTimelineTab ? OpaqueImage.flatten(videoCG) : videoCG else { return nil }
+                let rep = NSBitmapImageRep(cgImage: image)
                 guard let data = rep.representation(using: .png, properties: [:]) else {
                     Log.project.error("captureCurrentFrameToMedia: png encode failed")
                     return nil
@@ -1336,33 +1338,6 @@ extension EditorViewModel {
                 self.moveAssetsToFolder(assetIds: [mediaAsset.id], folderId: self.mediaPanelCurrentFolderId)
             }
         }
-    }
-
-    static func compositeCapture(video: CGImage, textRoot: CALayer, canvas: CGSize) -> CGImage? {
-        let width = Int(canvas.width)
-        let height = Int(canvas.height)
-        let colorSpace = video.colorSpace?.model == .rgb
-            ? video.colorSpace!
-            : (CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB())
-        guard let context = CGContext(
-            data: nil,
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bytesPerRow: 0,
-            space: colorSpace,
-            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
-        ) else {
-            return nil
-        }
-        context.draw(video, in: CGRect(origin: .zero, size: canvas))
-        // CALayer.render ignores isGeometryFlipped; flip the context to land glyphs upright.
-        context.saveGState()
-        context.translateBy(x: 0, y: canvas.height)
-        context.scaleBy(x: 1, y: -1)
-        textRoot.render(in: context)
-        context.restoreGState()
-        return context.makeImage()
     }
 
     func finalizeImportedAsset(_ asset: MediaAsset) async {
@@ -1461,7 +1436,7 @@ extension EditorViewModel {
         for i in Set(specs.map(\.trackIndex)) where timeline.tracks.indices.contains(i) {
             sortClips(trackIndex: i)
         }
-        videoEngine?.syncTextLayers()
+        videoEngine?.refreshTextCompositing()
         return createdIds.compactMap { $0 }
     }
 
@@ -1497,13 +1472,13 @@ extension EditorViewModel {
         undoManager?.registerUndo(withTarget: self) { vm in
             if let loc = vm.findClip(id: clipId) {
                 vm.timeline.tracks[loc.trackIndex].clips.remove(at: loc.clipIndex)
-                vm.videoEngine?.syncTextLayers()
+                vm.videoEngine?.refreshTextCompositing()
             }
         }
         undoManager?.setActionName("Add Text")
 
         selectedClipIds = [clipId]
-        videoEngine?.syncTextLayers()
+        videoEngine?.refreshTextCompositing()
         return clipId
     }
 }

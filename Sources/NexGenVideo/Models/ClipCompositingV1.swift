@@ -39,17 +39,56 @@ enum ClipBlendMode: String, CaseIterable, Codable, Sendable {
 
 // Host-only carrier; no NexGenEngine or pack value layout changes.
 struct ClipCompositingV1: Codable, Sendable, Equatable {
-    var version: Int = 1
-    var blendMode: String
+    private var raw: JSONValue
+
+    init(version: Int = 1, blendMode: String) {
+        raw = .object(["version": .number(Decimal(version)), "blendMode": .string(blendMode)])
+    }
+
+    init(from decoder: Decoder) throws { raw = try JSONValue(from: decoder) }
+
+    func encode(to encoder: Encoder) throws { try raw.encode(to: encoder) }
 
     var supportedMode: ClipBlendMode? {
-        version == 1 ? ClipBlendMode(rawValue: blendMode) : nil
+        guard case .object(let fields) = raw,
+              fields["version"] == .number(1),
+              let rawMode = fields["blendMode"],
+              case .string(let mode) = rawMode else { return nil }
+        return ClipBlendMode(rawValue: mode)
+    }
+
+    private indirect enum JSONValue: Codable, Sendable, Equatable {
+        case object([String: JSONValue]), array([JSONValue]), string(String), number(Decimal), floating(Double), bool(Bool), null
+
+        init(from decoder: Decoder) throws {
+            let value = try decoder.singleValueContainer()
+            if value.decodeNil() { self = .null }
+            else if let bool = try? value.decode(Bool.self) { self = .bool(bool) }
+            else if let string = try? value.decode(String.self) { self = .string(string) }
+            else if let object = try? value.decode([String: JSONValue].self) { self = .object(object) }
+            else if let array = try? value.decode([JSONValue].self) { self = .array(array) }
+            else if let number = try? value.decode(Decimal.self) { self = .number(number) }
+            else { self = .floating(try value.decode(Double.self)) }
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var value = encoder.singleValueContainer()
+            switch self {
+            case .object(let object): try value.encode(object)
+            case .array(let array): try value.encode(array)
+            case .string(let string): try value.encode(string)
+            case .number(let number): try value.encode(number)
+            case .floating(let number): try value.encode(number)
+            case .bool(let bool): try value.encode(bool)
+            case .null: try value.encodeNil()
+            }
+        }
     }
 }
 
 extension Clip {
     var blendMode: ClipBlendMode {
-        get { mediaType == .audio ? .normal : compositing?.supportedMode ?? .normal }
+        get { mediaType.isVisual ? compositing?.supportedMode ?? .normal : .normal }
         set { compositing = newValue == .normal ? nil : ClipCompositingV1(blendMode: newValue.rawValue) }
     }
 

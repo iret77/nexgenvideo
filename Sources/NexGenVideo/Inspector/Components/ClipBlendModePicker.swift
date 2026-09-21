@@ -17,14 +17,14 @@ struct ClipBlendModePicker: View {
         let modes = ClipBlendMode.allCases.map { NativeChoicePicker.Option(id: $0.rawValue, title: $0.title) }
         NativeChoicePicker(
             label: "Blend Mode",
-            options: selection.isEmpty ? [.init(id: "", title: placeholder)] + modes : modes,
+            options: selection.isEmpty ? [.init(id: "", title: placeholder, isEnabled: false)] + modes : modes,
             selection: Binding(get: { selection }, set: { raw in
                 guard let mode = ClipBlendMode(rawValue: raw) else { return }
                 do { try editor.setClipBlendMode(mode, clipIds: clips.map(\.id)) }
                 catch { Log.preview.error("Blend mode change failed: \(error.localizedDescription)") }
             })
         )
-        .disabled(clips.isEmpty || clips.contains { $0.mediaType == .audio })
+        .disabled(clips.isEmpty || clips.contains { !$0.mediaType.isVisual })
         .help("Blend selected visual clips with the layers below them")
     }
 }

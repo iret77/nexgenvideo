@@ -50,15 +50,27 @@ struct ImageVideoGeneratorTests {
         #expect(abs(Int(b) - Int(src.2)) <= 6)
     }
 
-    /// The captured frame must be opaque — an alpha channel routes re-import to the untagged
-    /// ProRes 4444 path and shifts the colors.
-    @MainActor
-    @Test func compositeCaptureProducesOpaqueImage() throws {
+    @Test func capturedImageFlatteningRemovesAlphaAndPreservesColor() throws {
         let canvas = CGSize(width: 64, height: 64)
         let video = try Self.solidCGImage(rgb: (30, 92, 158), size: canvas)
-        let result = try #require(EditorViewModel.compositeCapture(video: video, textRoot: CALayer(), canvas: canvas))
+        let result = try #require(OpaqueImage.flatten(video))
         let alpha = result.alphaInfo
         #expect(alpha == .none || alpha == .noneSkipLast || alpha == .noneSkipFirst)
+        let (r, g, b) = Self.centerPixel(of: result)
+        #expect(abs(Int(r) - 30) <= 1 && abs(Int(g) - 92) <= 1 && abs(Int(b) - 158) <= 1)
+    }
+
+    @Test func capturedTransparentImageFlattensAgainstBlack() throws {
+        let context = try #require(CGContext(data: nil, width: 16, height: 16, bitsPerComponent: 8,
+            bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(red: 1, green: 0, blue: 0, alpha: 0.5)
+        context.fill(CGRect(x: 0, y: 0, width: 16, height: 16))
+        let source = try #require(context.makeImage())
+        let flattened = try #require(OpaqueImage.flatten(source))
+        #expect(flattened.alphaInfo == .noneSkipLast)
+        let (r, g, b) = Self.centerPixel(of: flattened)
+        #expect(abs(Int(r) - 128) <= 1 && g == 0 && b == 0)
     }
 
     private static func centerPixel(of cg: CGImage) -> (UInt8, UInt8, UInt8) {

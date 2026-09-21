@@ -57,18 +57,11 @@ struct PreviewView: NSViewRepresentable {
     }
 }
 
-/// Hosts AVPlayerLayer + a direct CALayer tree for text overlays.
 final class PreviewNSView: NSView {
     let playerLayer = AVPlayerLayer()
-    private(set) var textRoot: CALayer?
-
-    /// Fires when `playerLayer.videoRect` changes so text layers can re-scale.
-    var onVideoRectChange: ((CGRect) -> Void)?
 
     /// Fires on cmd+scroll. (deltaY, pointInTopDownViewCoords, viewSize)
     var onCmdScroll: ((CGFloat, CGPoint, CGSize) -> Void)?
-
-    private var lastVideoRect: CGRect = .zero
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -81,33 +74,12 @@ final class PreviewNSView: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    /// Attach the text layer tree above `playerLayer` — persists across item swaps.
-    func setTextRoot(_ new: CALayer?) {
-        textRoot?.removeFromSuperlayer()
-        textRoot = new
-        if let new, let host = layer {
-            host.addSublayer(new)
-            new.frame = resolvedVideoRect
-        }
-    }
-
     override func layout() {
         super.layout()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         playerLayer.frame = bounds
-        let videoRect = resolvedVideoRect
-        textRoot?.frame = videoRect
         CATransaction.commit()
-        if videoRect != lastVideoRect {
-            lastVideoRect = videoRect
-            onVideoRectChange?(videoRect)
-        }
-    }
-
-    private var resolvedVideoRect: CGRect {
-        let rect = playerLayer.videoRect
-        return rect.isEmpty ? bounds : rect
     }
 
     override func scrollWheel(with event: NSEvent) {

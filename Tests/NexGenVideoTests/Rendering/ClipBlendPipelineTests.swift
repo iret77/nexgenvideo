@@ -124,6 +124,80 @@ struct ClipBlendPipelineTests {
         #expect(frame.br.g > 220)
     }
 
+    @Test func preparedTextBudgetAndLazyFallbackProduceIdenticalPixels() throws {
+        let text = textClip()
+        var budget = TextRasterizer.preparationBudget
+        let eager = try #require(TextRasterizer.prepare(for: text, renderSize: size, budget: &budget))
+        let eagerImage = try #require(eager.stillImage)
+        #expect(budget >= 0 && budget < TextRasterizer.preparationBudget)
+        var exhausted = 0
+        let lazy = try #require(TextRasterizer.prepare(for: text, renderSize: size, budget: &exhausted))
+        #expect(lazy.stillImage == nil)
+        #expect(exhausted == 0)
+        let lazyImage = try #require(lazy.textSource?.image())
+        let context = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
+        var eagerPixel = [Float](repeating: 0, count: 4)
+        var lazyPixel = eagerPixel
+        let bounds = CGRect(x: 40, y: 45, width: 1, height: 1)
+        context.render(eagerImage, toBitmap: &eagerPixel, rowBytes: 16, bounds: bounds, format: .RGBAf, colorSpace: nil)
+        context.render(lazyImage, toBitmap: &lazyPixel, rowBytes: 16, bounds: bounds, format: .RGBAf, colorSpace: nil)
+        #expect(eagerPixel == lazyPixel)
+        #expect(lazyPixel[1] > 0.95 && lazyPixel[3] > 0.95)
+    }
+
+    @Test func textBorderAndPositiveYShadowKeepTopLeftOrientation() throws {
+        var text = textClip()
+        text.transform = Transform(topLeft: (0, 0), width: 1.0 / 6, height: 1.0 / 6)
+        text.textStyle?.border = TextStyle.Fill(enabled: true, color: TextStyle.RGBA(r: 0, g: 0, b: 1, a: 1))
+        text.textStyle?.shadow = TextStyle.Shadow(enabled: true,
+            color: TextStyle.RGBA(r: 1, g: 0, b: 0, a: 1), offsetX: 0, offsetY: 20, blur: 0)
+        var budget = TextRasterizer.preparationBudget
+        let plan = try #require(TextRasterizer.prepare(for: text, renderSize: CGSize(width: 1920, height: 1080), budget: &budget))
+        let image = try #require(plan.stillImage)
+        let context = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
+        func pixel(_ x: Int, _ y: Int) -> [Float] {
+            var result = [Float](repeating: 0, count: 4)
+            context.render(image, toBitmap: &result, rowBytes: 16,
+                bounds: CGRect(x: x, y: y, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
+            return result
+        }
+        #expect(pixel(160, 90)[1] > 0.95)
+        #expect(pixel(0, 90)[2] > 0.8)
+        #expect(pixel(160, -10)[0] > 0.95)
+        #expect(pixel(160, -10)[3] > 0.95)
+        #expect(pixel(160, 190)[3] < 0.01)
+    }
+
+    @Test func textTimingAndFadesUseSharedCompositorAtBoundaries() async throws {
+        var text = textClip()
+        text.startFrame = 10
+        text.durationFrames = 40
+        text.fadeInFrames = 10
+        text.fadeOutFrames = 10
+        let timeline = CompositorFixtures.timeline([Fixtures.videoTrack(clips: [text]),
+            Fixtures.videoTrack(clips: [CompositorFixtures.patternClip(duration: 60)])])
+        for (frame, green) in [(9, 0), (10, 0), (15, 128), (20, 255), (45, 128), (50, 0)] {
+            let rendered = try await CompositorRenderTests.render(timeline, frame: frame)
+            #expect(abs(rendered.tl.g - green) < 35, "frame \(frame)")
+            #expect(rendered.tl.r > 220)
+        }
+    }
+
+    @Test func textVisibilityDetectionMatchesHiddenAndNonvisualTracks() {
+        let text = textClip()
+        let visible = CompositorFixtures.timeline([Fixtures.videoTrack(clips: [text])])
+        #expect(TextLayerStyle.hasVisibleText(in: visible))
+        var hidden = visible
+        hidden.tracks[0].hidden = true
+        #expect(!TextLayerStyle.hasVisibleText(in: hidden))
+        var empty = visible
+        empty.tracks[0].clips[0].durationFrames = 0
+        #expect(!TextLayerStyle.hasVisibleText(in: empty))
+        var audio = visible
+        audio.tracks[0].type = .audio
+        #expect(!TextLayerStyle.hasVisibleText(in: audio))
+    }
+
     @Test func previewFinalAndExportHaveMatchingTextBlendPixels() async throws {
         let source = try await CompositorFixtures.patternVideoURL()
         let lower = CompositorFixtures.patternClip(duration: 30)

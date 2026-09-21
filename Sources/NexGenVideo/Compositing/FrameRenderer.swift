@@ -21,8 +21,8 @@ enum FrameRenderer {
             if let still = layer.stillImage {
                 source = still
                 sourceHeight = layer.natSize.height
-            } else if layer.clip.mediaType == .text {
-                guard let image = TextRasterizer.layer(for: layer.clip, renderSize: instruction.renderSize)?.stillImage else { continue }
+            } else if let text = layer.textSource {
+                guard let image = text.image() else { continue }
                 source = image
                 sourceHeight = layer.natSize.height
             } else if let buffer = sourceFrame(layer.trackID) {

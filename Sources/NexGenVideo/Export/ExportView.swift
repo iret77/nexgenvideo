@@ -148,7 +148,7 @@ struct ExportView: View {
                             .interfaceFont(size: AppTheme.Typography.ui)
                             .foregroundStyle(AppTheme.Text.tertiaryColor)
 
-                        Text("Text overlays, flips, adjustments, effects, and keyframe easing aren't included.")
+                        Text("Text, blend modes, flips, adjustments, effects, and keyframe easing aren't included.")
                             .interfaceFont(size: AppTheme.Typography.ui)
                             .foregroundStyle(AppTheme.Text.tertiaryColor)
                     }

@@ -197,9 +197,9 @@ final class VideoEngine {
         currentItem.videoComposition = videoComposition
     }
 
-    // MARK: - Text Layers
+    // MARK: - Text Compositing
 
-    func syncTextLayers() {
+    func refreshTextCompositing() {
         guard let editor else { return }
         let duration = CMTime(value: CMTimeValue(editor.timeline.totalFrames), timescale: CMTimeScale(editor.timeline.fps))
         if duration != compositionDuration { rebuild(); return }

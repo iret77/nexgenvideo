@@ -466,11 +466,10 @@ enum CompositionBuilder {
             }
         }
 
-        for (index, track) in timeline.tracks.enumerated() where !track.hidden && track.type != .audio {
+        var textBudget = TextRasterizer.preparationBudget
+        for (index, track) in timeline.tracks.enumerated() where !track.hidden && track.type.isVisual {
             for clip in track.clips where clip.mediaType == .text && clip.durationFrames > 0 {
-                let plan = LayerPlan(trackID: kCMPersistentTrackID_Invalid, clip: clip,
-                                     natSize: TextRasterizer.naturalSize(for: clip, renderSize: renderSize),
-                                     preferredTransform: .identity)
+                guard let plan = TextRasterizer.prepare(for: clip, renderSize: renderSize, budget: &textBudget) else { continue }
                 entries.append(Entry(
                     trackIndex: index,
                     start: CMTime(value: CMTimeValue(clip.startFrame), timescale: timescale),

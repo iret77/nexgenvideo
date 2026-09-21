@@ -342,7 +342,7 @@ extension EditorViewModel {
         timeline.tracks[loc.trackIndex].clips[loc.clipIndex] = clip
         // Text has no AV source track; only its compositor instructions need refreshing.
         if clip.mediaType == .text {
-            videoEngine?.syncTextLayers()
+            videoEngine?.refreshTextCompositing()
             return
         }
         if rebuild {
@@ -369,7 +369,7 @@ extension EditorViewModel {
                 touchedVisual = true
             }
         }
-        if touchedText { videoEngine?.syncTextLayers() }
+        if touchedText { videoEngine?.refreshTextCompositing() }
         if touchedVisual {
             if rebuild {
                 notifyTimelineChangedDebounced()
@@ -384,7 +384,7 @@ extension EditorViewModel {
               let loc = findClip(id: clipId) else { return }
         timeline.tracks[loc.trackIndex].clips[loc.clipIndex] = original
         if original.mediaType == .text {
-            videoEngine?.syncTextLayers()
+            videoEngine?.refreshTextCompositing()
         } else {
             notifyTimelineChanged()
         }
@@ -447,7 +447,7 @@ extension EditorViewModel {
         timeline.tracks[loc.trackIndex].clips[loc.clipIndex] = clip
         registerClipPropertySwap(clipId: clipId, undoTarget: before, redoTarget: clip)
         if clip.mediaType == .text {
-            videoEngine?.syncTextLayers()
+            videoEngine?.refreshTextCompositing()
         } else {
             notifyTimelineChanged()
         }
@@ -469,7 +469,7 @@ extension EditorViewModel {
                 touchedVisual = true
             }
         }
-        if touchedText { videoEngine?.syncTextLayers() }
+        if touchedText { videoEngine?.refreshTextCompositing() }
         if touchedVisual { notifyTimelineChanged() }
     }
 
@@ -481,7 +481,7 @@ extension EditorViewModel {
             }
             vm.registerClipPropertySwap(clipId: clipId, undoTarget: redoTarget, redoTarget: undoTarget)
             if undoTarget.mediaType == .text {
-                vm.videoEngine?.syncTextLayers()
+                vm.videoEngine?.refreshTextCompositing()
             } else {
                 vm.notifyTimelineChanged()
             }

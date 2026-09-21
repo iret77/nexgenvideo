@@ -362,7 +362,7 @@ extension Clip {
             cropTrack: try? c.decode(KeyframeTrack<Crop>.self, forKey: .cropTrack),
             volumeTrack: try? c.decode(KeyframeTrack<Double>.self, forKey: .volumeTrack),
             effects: try? c.decode([Effect].self, forKey: .effects),
-            compositing: try? c.decode(ClipCompositingV1.self, forKey: .compositing)
+            compositing: try c.decodeIfPresent(ClipCompositingV1.self, forKey: .compositing)
         )
     }
 }

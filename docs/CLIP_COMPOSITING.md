@@ -2,15 +2,19 @@
 
 The host owns the version-one set of 16 blend modes in `ClipBlendMode`. Both inspector
 selections and `set_clip_properties` use `EditorViewModel.setClipBlendMode`. The command
-validates every target before mutation, rejects audio, does not expand linked partners,
-and records one undo group. Existing opacity animation is preserved.
+validates every target before mutation, rejects every nonvisual target, does not expand
+linked partners, and joins the caller's undo group or records its own. Existing opacity
+animation is preserved.
 
 `Clip.compositing` is an optional host-only `ClipCompositingV1` carrier containing
-`version` and the raw `blendMode` string. Missing settings mean Normal. Unknown strings
-or versions render as Normal and retain their carrier when saved or undone. The inspector
+an opaque JSON value. Version one recognizes `version` and `blendMode`; all fields and
+nested values survive save and undo until explicit editing. Missing settings mean Normal.
+Unknown modes or versions render as Normal. The inspector
 labels this fallback explicitly; selecting a supported mode replaces it. Normal needs no
 carrier. Agent input is stricter than project decoding: its schema and decoder accept only
-the supported enum, and `get_timeline` reports both the effective mode and stored carrier.
+the supported enum. `get_timeline` omits default Normal and nonvisual blend settings;
+unsupported visual settings report `blendMode: normal` and `blendModeUnsupported: true`
+without duplicating the opaque carrier. `blendModeContract` lists supported modes.
 
 ## Pack ABI
 
@@ -28,8 +32,11 @@ that track's media. Core Image works in the existing unmanaged compositor color 
 The blend result is faded toward the existing backdrop; clip opacity never changes the
 input color of a nonlinear blend. Pixels outside a placed/cropped layer preserve the backdrop.
 
-Text rasterizes lazily into a bounded cache of immutable images, retaining typography,
-fill, border, and shadow. Text then receives the same transform, crop, effects, blend,
+Text prepares immutable raster sources once per composition, retaining typography,
+fill, border, and shadow. Instructions eagerly retain at most 64 MB of rasters per build;
+remaining sources use a shared 64 MB cache without per-frame JSON encoding. Rasterization
+disables Core Animation actions and explicitly preserves top-left glyph/shadow coordinates.
+Text then receives the same transform, crop, effects, blend,
 opacity keyframes and fades as other visual clips. Text is not added as a second display
 overlay or export animation tool. Preview, frame capture, agent inspection, final renders,
 and encoded exports all consume the shared `CompositionBuilder`/`FrameRenderer` path.

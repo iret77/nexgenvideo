@@ -475,8 +475,9 @@ extension ToolExecutor {
 
         let setActionName = input.clipIds.count == 1 ? "Set Clip Property (Agent)" : "Set Clip Properties (Agent)"
         let summaries: [String] = try withUndoGroup(editor, actionName: setActionName) {
+            var blendChanged: Set<String> = []
             if let mode = input.blendMode {
-                try editor.setClipBlendMode(mode, clipIds: input.clipIds)
+                blendChanged = try editor.setClipBlendMode(mode, clipIds: input.clipIds, grouped: false)
             }
             var summaries: [String] = []
             for id in input.clipIds {
@@ -497,7 +498,7 @@ extension ToolExecutor {
                     clipId: id,
                     editor: editor
                 )
-                if input.blendMode != nil { changed.append("blendMode") }
+                if blendChanged.contains(id) { changed.append("blendMode") }
                 // Match the inspector: refit bbox after content/font change when caller didn't set a box.
                 if isText && input.transform == nil && (input.content != nil || input.fontName != nil || input.fontSize != nil) {
                     editor.fitTextClipToContent(clipId: id)

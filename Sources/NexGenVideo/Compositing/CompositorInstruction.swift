@@ -9,6 +9,7 @@ struct LayerPlan: Sendable {
     let natSize: CGSize
     let preferredTransform: CGAffineTransform
     var stillImage: CIImage? = nil
+    var textSource: TextRasterizer.Source? = nil
 }
 
 /// One timeline segment between clip boundaries. Layers are ordered bottom → top.

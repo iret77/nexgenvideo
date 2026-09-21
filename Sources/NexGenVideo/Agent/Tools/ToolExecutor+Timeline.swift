@@ -53,6 +53,18 @@ extension ToolExecutor {
         ) as? [String: Any] else { throw ToolError("Failed to encode timeline") }
         if var tracks = dict["tracks"] as? [[String: Any]] {
             for i in tracks.indices {
+                if let clips = tracks[i]["clips"] as? [[String: Any]] {
+                    tracks[i]["clips"] = zip(clips, editor.timeline.tracks[i].clips).map { encoded, clip in
+                        var encoded = encoded
+                        encoded.removeValue(forKey: "compositing")
+                        if clip.mediaType.isVisual {
+                            let unsupported = clip.compositing != nil && clip.compositing?.supportedMode == nil
+                            if clip.blendMode != .normal || unsupported { encoded["blendMode"] = clip.blendMode.rawValue }
+                            if unsupported { encoded["blendModeUnsupported"] = true }
+                        }
+                        return encoded
+                    }
+                }
                 tracks[i] = Self.compactTrack(tracks[i], window: window)
                 // Report the displayed label (mirrored video numbering), not the stored seed.
                 tracks[i]["label"] = editor.timelineTrackDisplayLabel(at: i)
@@ -132,11 +144,6 @@ extension ToolExecutor {
 
     private static func compactClip(_ clip: [String: Any]) -> [String: Any] {
         var out = compactClipKeyframes(clip)
-        let carrier = clip["compositing"] as? [String: Any]
-        let rawMode = carrier?["blendMode"] as? String ?? "normal"
-        let version = carrier?["version"] as? Int ?? 1
-        out["blendMode"] = clip["mediaType"] as? String != "audio" && version == 1
-            ? (ClipBlendMode(rawValue: rawMode) ?? .normal).rawValue : "normal"
         if let s = out["sourceClipType"] as? String, s == out["mediaType"] as? String {
             out.removeValue(forKey: "sourceClipType")
         }

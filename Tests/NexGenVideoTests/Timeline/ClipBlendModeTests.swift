@@ -67,6 +67,53 @@ struct ClipBlendModeTests {
         #expect(editor.timeline == after)
     }
 
+    @Test(arguments: [
+        #"{"version":2,"blendMode":"multiply","future":{"enabled":true,"values":[null,3.25,"value"]}}"#,
+        #"{"version":2,"future":{"enabled":false}}"#,
+        #"{"version":1,"blendMode":"future","extra":[1,2,3]}"#,
+        #"{"version":2,"blendMode":{"kind":"future"}}"#,
+        #"{"version":2,"blendMode":"future","large":1e200}"#,
+        #"{"version":1,"blendMode":"screen","extra":{"preserve":true}}"#,
+    ])
+    func opaqueCarrierPreservesEveryJSONField(json: String) throws {
+        let original = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? NSDictionary
+        let data = Data("{\"id\":\"clip\",\"mediaRef\":\"source\",\"startFrame\":0,\"durationFrames\":30,\"compositing\":\(json)}".utf8)
+        let clip = try JSONDecoder().decode(Clip.self, from: data)
+        let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(clip)) as? [String: Any]
+        #expect((encoded?["compositing"] as? NSDictionary) == original)
+        #expect(clip.blendMode == (json.contains("screen") ? .screen : .normal))
+        let editor = EditorViewModel()
+        editor.timeline = Fixtures.timeline(tracks: [Fixtures.videoTrack(clips: [clip])])
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        editor.undoManager = undo
+        try editor.setClipBlendMode(.multiply, clipIds: [clip.id])
+        #expect(editor.clipFor(id: clip.id)?.compositing == ClipCompositingV1(blendMode: "multiply"))
+        undo.undo()
+        #expect(editor.clipFor(id: clip.id)?.compositing == clip.compositing)
+    }
+
+    @Test func canonicalMutationReportsActualChangesAndJoinsExistingGroup() throws {
+        var unchanged = Fixtures.clip(id: "unchanged", start: 0, duration: 30)
+        unchanged.blendMode = .screen
+        let changed = Fixtures.clip(id: "changed", start: 30, duration: 30)
+        let editor = EditorViewModel()
+        editor.timeline = Fixtures.timeline(tracks: [Fixtures.videoTrack(clips: [unchanged, changed])])
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        editor.undoManager = undo
+        #expect(try editor.setClipBlendMode(.screen, clipIds: [unchanged.id]).isEmpty)
+        #expect(!undo.canUndo)
+        undo.beginUndoGrouping()
+        let ids = try editor.setClipBlendMode(.screen, clipIds: [unchanged.id, changed.id], grouped: false)
+        #expect(ids == [changed.id])
+        #expect(undo.groupingLevel == 1)
+        undo.endUndoGrouping()
+        undo.undo()
+        #expect(editor.clipFor(id: changed.id)?.blendMode == .normal)
+        #expect(editor.clipFor(id: unchanged.id)?.blendMode == .screen)
+    }
+
     @Test func splitDuplicateAndClipboardRetainBlendMode() throws {
         var clip = Fixtures.clip(id: "clip", start: 0, duration: 60)
         clip.blendMode = .overlay
