@@ -36,6 +36,7 @@ enum HDRVideoExporter {
     static let hlgReferenceWhiteSignal = 0.75
     static let minimumVideoBitRate = 5_000_000
     private static let targetBitsPerPixel = 0.35
+    private static let compressionQuality = 1.0
 
     struct TextOverlay: @unchecked Sendable {
         let image: CGImage
@@ -120,6 +121,8 @@ enum HDRVideoExporter {
             AVVideoCompressionPropertiesKey: [
                 kVTCompressionPropertyKey_ProfileLevel as String:
                     kVTProfileLevel_HEVC_Main10_AutoLevel,
+                kVTCompressionPropertyKey_Quality as String:
+                    NSNumber(value: compressionQuality),
                 AVVideoAverageBitRateKey: NSNumber(value: bitRate),
                 AVVideoExpectedSourceFrameRateKey: NSNumber(value: frameRate),
             ],
