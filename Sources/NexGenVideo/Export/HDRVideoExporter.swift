@@ -639,6 +639,16 @@ enum HDRVideoExporter {
                     }
                     tagHLG(destination, colorSpace: outputSpace)
                     context.render(constrained, to: destination, bounds: bounds, colorSpace: outputSpace)
+                    if frame == 0,
+                       !pump.overlays.isEmpty,
+                       ProcessInfo.processInfo.environment["NGV_HDR_RUNTIME_QC"] == "1",
+                       let summary = pixelSummary(destination) {
+                        let overlays = pump.overlays.map {
+                            "\($0.image.width)x\($0.image.height)@"
+                                + "\(Int($0.placement.x)),\(Int($0.placement.y))"
+                        }.joined(separator: ",")
+                        print("[hdr-qc] encoder-input frame=0 \(summary) overlays=[\(overlays)]")
+                    }
                     guard pump.adaptor.append(destination, withPresentationTime: pts) else {
                         pump.coordinator.fail("a converted HDR frame could not be encoded")
                         return
@@ -688,5 +698,32 @@ enum HDRVideoExporter {
             .shouldPropagate
         )
         CVBufferSetAttachment(buffer, kCVImageBufferCGColorSpaceKey, colorSpace, .shouldPropagate)
+    }
+
+    private static func pixelSummary(_ buffer: CVPixelBuffer) -> String? {
+        guard CVPixelBufferGetPixelFormatType(buffer) == pixelFormat,
+              CVPixelBufferIsPlanar(buffer),
+              CVPixelBufferGetPlaneCount(buffer) == 2 else { return nil }
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+
+        let width = CVPixelBufferGetWidthOfPlane(buffer, 0)
+        let height = CVPixelBufferGetHeightOfPlane(buffer, 0)
+        let bytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(buffer, 0)
+        guard let base = CVPixelBufferGetBaseAddressOfPlane(buffer, 0),
+              width > 0, height > 0 else { return nil }
+        var minimum = Int.max
+        var maximum = Int.min
+        var outside = 0
+        for y in 0..<height {
+            let values = base.advanced(by: y * bytesPerRow).assumingMemoryBound(to: UInt16.self)
+            for x in 0..<width {
+                let code = Int(values[x] >> 6)
+                minimum = min(minimum, code)
+                maximum = max(maximum, code)
+                if !(64...940).contains(code) { outside += 1 }
+            }
+        }
+        return "y=\(minimum)...\(maximum),oor=\(outside)/\(width * height)"
     }
 }

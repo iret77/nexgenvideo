@@ -685,46 +685,92 @@ public extension DeliveryValidatorV1 {
         hdrQC: DeliveryHDRQCV1,
         outputSHA256: String
     ) throws {
-        guard hdrQC.schema == DeliveryHDRQCV1.schemaVersion,
-              hdrQC.outputSHA256 == outputSHA256,
-              digest(outputSHA256),
-              hdrQC.conversion == "rec709-sdr-reference-white-75-to-bt2020-hlg",
-              hdrQC.track.codec == "hvc1",
-              hdrQC.track.bitsPerComponent == 10,
-              hdrQC.track.colorPrimaries == "bt2020",
-              hdrQC.track.transferFunction == "hlg",
-              hdrQC.track.yCbCrMatrix == "bt2020-ncl",
-              !hdrQC.track.fullRange,
-              hdrQC.container.fileType == "mov",
-              hdrQC.container.sampleEntry == "hvc1",
-              hdrQC.container.hasHEVCConfiguration,
-              hdrQC.container.profileIDC == 2,
-              hdrQC.container.lumaBitDepth == 10,
-              hdrQC.container.chromaBitDepth == 10,
-              hdrQC.container.colorPrimariesIndex == 9,
-              hdrQC.container.transferFunctionIndex == 18,
-              hdrQC.container.matrixIndex == 9,
-              hdrQC.container.fullRangeFlag != true,
-              hdrQC.referenceFrames.count == 4,
-              hdrQC.referenceFrames.map(\.index) == [0, 1, 2, 3],
-              hdrQC.referenceFrames.allSatisfy({
-                  $0.presentationTimeTimescale > 0
-                    && $0.pixelFormat == "x420"
-                    && $0.lumaMinimumCode >= DeliveryHDRQCV1.decodedLumaMinimumCode
-                    && $0.lumaMaximumCode <= DeliveryHDRQCV1.decodedLumaMaximumCode
-                    && $0.lumaMaximumCode <= DeliveryHDRQCV1.sdrReferenceWhiteMaximumCode
-                    && $0.lumaMinimumCode <= $0.lumaMaximumCode
-                    && $0.outOfRangePixelCount >= 0
-                    && $0.outOfRangePixelCount <= $0.pixelCount
-                    && $0.pixelCount > 0
-                    && $0.chromaCbMeanCode.isFinite
-                    && (60.0...964.0).contains($0.chromaCbMeanCode)
-                    && $0.chromaCrMeanCode.isFinite
-                    && (60.0...964.0).contains($0.chromaCrMeanCode)
-                    && digest($0.pixelSHA256)
-              }),
-              hdrQC.passed else {
+        guard hdrValidationFailures(hdrQC: hdrQC, outputSHA256: outputSHA256).isEmpty else {
             throw DeliveryValidationErrorV1.unsuccessfulOutput
         }
+    }
+
+    static func hdrValidationFailures(
+        hdrQC: DeliveryHDRQCV1,
+        outputSHA256: String
+    ) -> [String] {
+        var failures: [String] = []
+        check(
+            hdrQC.schema == DeliveryHDRQCV1.schemaVersion,
+            "schema",
+            DeliveryHDRQCV1.schemaVersion,
+            hdrQC.schema,
+            into: &failures
+        )
+        check(
+            hdrQC.outputSHA256 == outputSHA256,
+            "output_sha256",
+            outputSHA256,
+            hdrQC.outputSHA256,
+            into: &failures
+        )
+        check(
+            digest(outputSHA256),
+            "output_sha256_format",
+            "64 lowercase hexadecimal characters",
+            outputSHA256,
+            into: &failures
+        )
+        check(
+            hdrQC.conversion == "rec709-sdr-reference-white-75-to-bt2020-hlg",
+            "conversion",
+            "rec709-sdr-reference-white-75-to-bt2020-hlg",
+            hdrQC.conversion,
+            into: &failures
+        )
+        check(hdrQC.track.codec == "hvc1", "track.codec", "hvc1", hdrQC.track.codec, into: &failures)
+        check(hdrQC.track.bitsPerComponent == 10, "track.bits_per_component", 10, hdrQC.track.bitsPerComponent, into: &failures)
+        check(hdrQC.track.colorPrimaries == "bt2020", "track.color_primaries", "bt2020", hdrQC.track.colorPrimaries, into: &failures)
+        check(hdrQC.track.transferFunction == "hlg", "track.transfer_function", "hlg", hdrQC.track.transferFunction, into: &failures)
+        check(hdrQC.track.yCbCrMatrix == "bt2020-ncl", "track.ycbcr_matrix", "bt2020-ncl", hdrQC.track.yCbCrMatrix, into: &failures)
+        check(!hdrQC.track.fullRange, "track.full_range", false, hdrQC.track.fullRange, into: &failures)
+        check(hdrQC.container.fileType == "mov", "container.file_type", "mov", hdrQC.container.fileType, into: &failures)
+        check(hdrQC.container.sampleEntry == "hvc1", "container.sample_entry", "hvc1", hdrQC.container.sampleEntry, into: &failures)
+        check(hdrQC.container.hasHEVCConfiguration, "container.has_hevc_configuration", true, hdrQC.container.hasHEVCConfiguration, into: &failures)
+        check(hdrQC.container.profileIDC == 2, "container.profile_idc", 2, hdrQC.container.profileIDC, into: &failures)
+        check(hdrQC.container.lumaBitDepth == 10, "container.luma_bit_depth", 10, hdrQC.container.lumaBitDepth, into: &failures)
+        check(hdrQC.container.chromaBitDepth == 10, "container.chroma_bit_depth", 10, hdrQC.container.chromaBitDepth, into: &failures)
+        check(hdrQC.container.colorPrimariesIndex == 9, "container.color_primaries_index", 9, hdrQC.container.colorPrimariesIndex, into: &failures)
+        check(hdrQC.container.transferFunctionIndex == 18, "container.transfer_function_index", 18, hdrQC.container.transferFunctionIndex, into: &failures)
+        check(hdrQC.container.matrixIndex == 9, "container.matrix_index", 9, hdrQC.container.matrixIndex, into: &failures)
+        check(hdrQC.container.fullRangeFlag != true, "container.full_range_flag", "false or absent", String(describing: hdrQC.container.fullRangeFlag), into: &failures)
+        check(hdrQC.referenceFrames.count == 4, "reference_frames.count", 4, hdrQC.referenceFrames.count, into: &failures)
+        check(hdrQC.referenceFrames.map(\.index) == [0, 1, 2, 3], "reference_frames.indices", [0, 1, 2, 3], hdrQC.referenceFrames.map(\.index), into: &failures)
+
+        for frame in hdrQC.referenceFrames {
+            let prefix = "reference_frames[\(frame.index)]"
+            check(frame.presentationTimeTimescale > 0, "\(prefix).presentation_time_timescale", "> 0", frame.presentationTimeTimescale, into: &failures)
+            check(frame.pixelFormat == "x420", "\(prefix).pixel_format", "x420", frame.pixelFormat, into: &failures)
+            check(frame.lumaMinimumCode >= DeliveryHDRQCV1.decodedLumaMinimumCode, "\(prefix).luma_minimum_code", ">= \(DeliveryHDRQCV1.decodedLumaMinimumCode)", frame.lumaMinimumCode, into: &failures)
+            check(frame.lumaMaximumCode <= DeliveryHDRQCV1.decodedLumaMaximumCode, "\(prefix).luma_maximum_code", "<= \(DeliveryHDRQCV1.decodedLumaMaximumCode)", frame.lumaMaximumCode, into: &failures)
+            check(frame.lumaMaximumCode <= DeliveryHDRQCV1.sdrReferenceWhiteMaximumCode, "\(prefix).sdr_reference_white_maximum_code", "<= \(DeliveryHDRQCV1.sdrReferenceWhiteMaximumCode)", frame.lumaMaximumCode, into: &failures)
+            check(frame.lumaMinimumCode <= frame.lumaMaximumCode, "\(prefix).luma_code_order", "minimum <= maximum", "\(frame.lumaMinimumCode)...\(frame.lumaMaximumCode)", into: &failures)
+            check(frame.outOfRangePixelCount >= 0, "\(prefix).out_of_range_pixel_count", ">= 0", frame.outOfRangePixelCount, into: &failures)
+            check(frame.outOfRangePixelCount <= frame.pixelCount, "\(prefix).out_of_range_pixel_count", "<= pixel_count (\(frame.pixelCount))", frame.outOfRangePixelCount, into: &failures)
+            check(frame.pixelCount > 0, "\(prefix).pixel_count", "> 0", frame.pixelCount, into: &failures)
+            check(frame.chromaCbMeanCode.isFinite, "\(prefix).chroma_cb_mean_code", "finite", frame.chromaCbMeanCode, into: &failures)
+            check((60.0...964.0).contains(frame.chromaCbMeanCode), "\(prefix).chroma_cb_mean_code", "60...964", frame.chromaCbMeanCode, into: &failures)
+            check(frame.chromaCrMeanCode.isFinite, "\(prefix).chroma_cr_mean_code", "finite", frame.chromaCrMeanCode, into: &failures)
+            check((60.0...964.0).contains(frame.chromaCrMeanCode), "\(prefix).chroma_cr_mean_code", "60...964", frame.chromaCrMeanCode, into: &failures)
+            check(digest(frame.pixelSHA256), "\(prefix).pixel_sha256", "64 lowercase hexadecimal characters", frame.pixelSHA256, into: &failures)
+        }
+        check(hdrQC.passed, "passed", true, hdrQC.passed, into: &failures)
+        return failures
+    }
+
+    private static func check<Expected, Measured>(
+        _ condition: Bool,
+        _ predicate: String,
+        _ expected: Expected,
+        _ measured: Measured,
+        into failures: inout [String]
+    ) {
+        guard !condition else { return }
+        failures.append("\(predicate) expected \(expected) measured \(measured)")
     }
 }

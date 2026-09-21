@@ -139,6 +139,16 @@ struct DeliveryV1Tests {
         #expect(throws: DeliveryValidationErrorV1.self) {
             try DeliveryValidatorV1.validate(hdrQC: illegalRange, outputSHA256: output)
         }
+        let failures = DeliveryValidatorV1.hdrValidationFailures(
+            hdrQC: illegalRange,
+            outputSHA256: output
+        )
+        #expect(failures.contains(
+            "reference_frames[0].luma_minimum_code expected >= 60 measured 0"
+        ))
+        #expect(failures.contains(
+            "reference_frames[0].luma_maximum_code expected <= 944 measured 1023"
+        ))
 
         var peakFrames = frames
         peakFrames[2] = .init(

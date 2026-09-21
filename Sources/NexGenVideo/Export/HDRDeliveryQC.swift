@@ -73,9 +73,11 @@ enum HDRDeliveryQC {
             referenceFrames: frames,
             passed: true
         )
-        do {
-            try DeliveryValidatorV1.validate(hdrQC: result, outputSHA256: outputSHA256)
-        } catch {
+        let failures = DeliveryValidatorV1.hdrValidationFailures(
+            hdrQC: result,
+            outputSHA256: outputSHA256
+        )
+        if !failures.isEmpty {
             let frameSummary = frames.map {
                 "\($0.index):y=\($0.lumaMinimumCode)...\($0.lumaMaximumCode),"
                     + "cb=\(Int($0.chromaCbMeanCode.rounded())),"
@@ -88,7 +90,7 @@ enum HDRDeliveryQC {
                     + "container=\(container.fileType)/\(container.sampleEntry)/"
                     + "\(container.profileIDC)/\(container.colorPrimariesIndex)/"
                     + "\(container.transferFunctionIndex)/\(container.matrixIndex) "
-                    + "frames=[\(frameSummary)]."
+                    + "frames=[\(frameSummary)] failures=[\(failures.joined(separator: "; "))]."
             )
         }
         return result
