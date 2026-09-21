@@ -71,7 +71,7 @@ struct HDRExportTests {
     }
 
     @Test(
-        "round trip proves metadata, legal range, reference frames, and SDR white mapping",
+        "round trip proves metadata, title burn-in, reference frames, and SDR white mapping",
         .enabled(if: hdrRuntimeQCEnabled)
     )
     func roundTripQC() async throws {
@@ -86,7 +86,20 @@ struct HDRExportTests {
             size: 320
         )
         defer { try? FileManager.default.removeItem(at: source) }
-        let timeline = fixtureTimeline(source: source, durationFrames: 120)
+        var timeline = fixtureTimeline(source: source, durationFrames: 120)
+        var title = Fixtures.clip(
+            id: "title",
+            mediaRef: "",
+            mediaType: .text,
+            start: 0,
+            duration: 30
+        )
+        title.textContent = "HDR"
+        var style = TextStyle()
+        style.fontSize = 120
+        style.color = .init(r: 1, g: 1, b: 1, a: 1)
+        title.textStyle = style
+        timeline.timeline.tracks.insert(Fixtures.videoTrack(clips: [title]), at: 0)
         let output = FileManager.default.temporaryDirectory
             .appendingPathComponent("hdr-round-trip-\(UUID().uuidString).mov")
         defer { try? FileManager.default.removeItem(at: output) }
@@ -117,57 +130,13 @@ struct HDRExportTests {
             hdrQC: hdrQC,
             outputSHA256: try FileDigest.sha256(of: output)
         )
-        #expect(hdrQC.referenceFrames[0].lumaMaximumCode <= 70)
+        #expect(hdrQC.referenceFrames[0].lumaMinimumCode <= 70)
+        #expect(hdrQC.referenceFrames[0].lumaMaximumCode > 100)
         #expect((350...450).contains(hdrQC.referenceFrames[1].lumaMaximumCode))
         #expect((380...420).contains(Int(hdrQC.referenceFrames[2].chromaCbMeanCode.rounded())))
         #expect((710...750).contains(Int(hdrQC.referenceFrames[2].chromaCrMeanCode.rounded())))
         #expect((700...740).contains(hdrQC.referenceFrames[3].lumaMaximumCode))
         try publishEvidence(hdrQC, movie: output)
-    }
-
-    @Test(
-        "HDR path burns timeline titles before the color conversion",
-        .enabled(if: hdrRuntimeQCEnabled)
-    )
-    func titleOverlay() async throws {
-        let source = try await FixtureVideo.write(
-            scenes: [.init(rgb: (0, 0, 0), seconds: 1)],
-            fps: 10,
-            size: 320
-        )
-        defer { try? FileManager.default.removeItem(at: source) }
-        var fixture = fixtureTimeline(source: source, durationFrames: 30)
-        var title = Fixtures.clip(
-            id: "title",
-            mediaRef: "",
-            mediaType: .text,
-            start: 0,
-            duration: 30
-        )
-        title.textContent = "HDR"
-        var style = TextStyle()
-        style.fontSize = 120
-        style.color = .init(r: 1, g: 1, b: 1, a: 1)
-        title.textStyle = style
-        fixture.timeline.tracks.insert(Fixtures.videoTrack(clips: [title]), at: 0)
-
-        let output = FileManager.default.temporaryDirectory
-            .appendingPathComponent("hdr-title-\(UUID().uuidString).mov")
-        defer { try? FileManager.default.removeItem(at: output) }
-        let service = ExportService()
-        await service.export(
-            timeline: fixture.timeline,
-            resolver: fixture.resolver,
-            format: .hevcMain10HLG,
-            resolution: .matchTimeline,
-            outputURL: output
-        )
-        try #require(service.error == nil, "\(service.error ?? "HDR title export failed")")
-        let qc = try await HDRDeliveryQC.probe(
-            outputURL: output,
-            spec: hdrSpec(width: 320, height: 320, fps: 30)
-        )
-        #expect(qc.referenceFrames.allSatisfy { $0.lumaMaximumCode > 100 })
     }
 
     private func fixtureTimeline(
