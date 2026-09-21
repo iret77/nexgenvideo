@@ -73,6 +73,37 @@ struct ImageVideoGeneratorTests {
         #expect(abs(Int(r) - 128) <= 1 && g == 0 && b == 0)
     }
 
+    @Test func alphaStillVideoDeclaresPremultipliedPixels() async throws {
+        let imageURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("alpha-mode-\(UUID().uuidString).png")
+        defer { try? FileManager.default.removeItem(at: imageURL) }
+        let context = try #require(CGContext(data: nil, width: 16, height: 16, bitsPerComponent: 8,
+            bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(red: 0, green: 1, blue: 0, alpha: 0.5)
+        context.fill(CGRect(x: 0, y: 0, width: 16, height: 16))
+        let destination = try #require(CGImageDestinationCreateWithURL(
+            imageURL as CFURL, UTType.png.identifier as CFString, 1, nil
+        ))
+        CGImageDestinationAddImage(destination, try #require(context.makeImage()), nil)
+        try #require(CGImageDestinationFinalize(destination))
+
+        let videoURL = try await ImageVideoGenerator.stillVideo(
+            for: imageURL, mediaRef: "alpha-mode-\(UUID().uuidString)", size: CGSize(width: 16, height: 16)
+        )
+        defer { try? FileManager.default.removeItem(at: videoURL) }
+        let asset = AVURLAsset(url: videoURL)
+        let track = try #require(try await asset.loadTracks(withMediaType: .video).first)
+        let format = try #require(try await track.load(.formatDescriptions).first)
+        let mode = CMFormatDescriptionGetExtension(
+            format, extensionKey: kCMFormatDescriptionExtension_AlphaChannelMode
+        ) as? String
+        #expect(mode == kCMFormatDescriptionAlphaChannelMode_PremultipliedAlpha as String)
+        #expect(try await AlphaVideoNormalizer.premultipliedVideo(
+            for: videoURL, mediaRef: "already-premultiplied"
+        ) == nil)
+    }
+
     private static func centerPixel(of cg: CGImage) -> (UInt8, UInt8, UInt8) {
         var px = [UInt8](repeating: 0, count: 4)
         let ctx = CGContext(

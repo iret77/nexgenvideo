@@ -53,8 +53,8 @@ struct ChromaKeyKernelTests {
 
     @Test func spillDesaturatesEdges() {
         // A green-tinted edge pixel (partial key) loses its green cast with spill on.
-        let off = ChromaKeyKernel.apply(solid(0.4, 0.6, 0.42), keyHue: 0.333, tolerance: 0.3, softness: 0.5, spill: 0)
-        let on = ChromaKeyKernel.apply(solid(0.4, 0.6, 0.42), keyHue: 0.333, tolerance: 0.3, softness: 0.5, spill: 1)
+        let off = ChromaKeyKernel.apply(solid(0.45, 0.6, 0.45), keyHue: 0.333, tolerance: 0.3, softness: 0.5, spill: 0)
+        let on = ChromaKeyKernel.apply(solid(0.45, 0.6, 0.45), keyHue: 0.333, tolerance: 0.3, softness: 0.5, spill: 1)
         func g(_ i: CIImage) -> Double {
             var px = [Float](repeating: 0, count: 4)
             ctx.render(i, toBitmap: &px, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1),

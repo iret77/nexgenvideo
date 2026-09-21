@@ -33,7 +33,7 @@ enum TextLayerStyle {
         if style.shadow.enabled {
             layer.shadowColor = style.shadow.color.nsColor.cgColor
             layer.shadowOpacity = Float(AppTheme.Opacity.opaque)
-            layer.shadowOffset = CGSize(width: style.shadow.offsetX * scale, height: style.shadow.offsetY * scale)
+            layer.shadowOffset = CGSize(width: style.shadow.offsetX * scale, height: -style.shadow.offsetY * scale)
             layer.shadowRadius = max(0, CGFloat(style.shadow.blur) * scale)
         }
         return layer

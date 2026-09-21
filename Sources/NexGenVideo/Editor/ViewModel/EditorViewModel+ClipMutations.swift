@@ -233,12 +233,15 @@ extension EditorViewModel {
     }
 
     func registerTimelineSwap(undoState: Timeline, redoState: Timeline, actionName: String) {
+        let opensGroup = undoManager?.groupingLevel == 0
+        if opensGroup { undoManager?.beginUndoGrouping() }
         undoManager?.registerUndo(withTarget: self) { vm in
             vm.timeline = undoState
             vm.notifyTimelineChanged()
             vm.registerTimelineSwap(undoState: redoState, redoState: undoState, actionName: actionName)
         }
         undoManager?.setActionName(actionName)
+        if opensGroup { undoManager?.endUndoGrouping() }
     }
 
     /// Run `work` as a single atomic mutation, registering one timeline-swap undo

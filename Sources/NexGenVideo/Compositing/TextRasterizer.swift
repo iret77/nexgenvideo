@@ -62,6 +62,8 @@ enum TextRasterizer {
         let keyData: Data
         let styleHash: Int
         let renderSize: CGSize
+        let padding: CGFloat
+        let providerSize: CGSize
         private let lock = NSLock()
         private var count = 0
         private var bytes = 0
@@ -79,11 +81,13 @@ enum TextRasterizer {
             return work()
         }
 
-        init(key: CacheKey, keyData: Data, renderSize: CGSize) {
+        init(key: CacheKey, keyData: Data, renderSize: CGSize, padding: CGFloat) {
             self.key = key
             self.keyData = keyData
             self.styleHash = keyData.hashValue
             self.renderSize = renderSize
+            self.padding = padding
+            self.providerSize = CGSize(width: key.width + padding * 2, height: key.height + padding * 2)
             super.init()
         }
 
@@ -110,23 +114,15 @@ enum TextRasterizer {
             clip.transform = Transform(topLeft: (0, 0), width: key.width / renderSize.width,
                                        height: key.height / renderSize.height)
             let layer = TextLayerStyle.makeLayer(clip: clip, containerSize: renderSize)
-            // Provider origins and bitmap rows are top-left; CATextLayer draws in layer coordinates.
+            layer.frame.origin = CGPoint(x: padding, y: padding)
+            let root = CALayer()
+            root.frame = CGRect(origin: .zero, size: providerSize)
+            root.isGeometryFlipped = true
+            root.addSublayer(layer)
+            // Provider origins and bitmap rows are top-left; mirror the host layer tree.
             bitmap.translateBy(x: -CGFloat(originx), y: CGFloat(height + originy))
             bitmap.scaleBy(x: 1, y: -1)
-            let bounds = CGRect(x: 0, y: 0, width: key.width, height: key.height)
-            if let fill = layer.backgroundColor {
-                bitmap.setFillColor(fill)
-                bitmap.fill(bounds)
-            }
-            bitmap.saveGState()
-            bitmap.clip(to: bounds)
-            layer.draw(in: bitmap)
-            bitmap.restoreGState()
-            if layer.borderWidth > 0, let border = layer.borderColor {
-                bitmap.setStrokeColor(border)
-                bitmap.setLineWidth(layer.borderWidth)
-                bitmap.stroke(bounds.insetBy(dx: layer.borderWidth / 2, dy: layer.borderWidth / 2))
-            }
+            root.render(in: bitmap)
             lock.withLock {
                 count += 1
                 bytes = max(bytes, byteCount)
@@ -155,27 +151,19 @@ enum TextRasterizer {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
         guard let keyData = try? encoder.encode(key) else { return nil }
-        let provider = TileProvider(key: key, keyData: keyData, renderSize: renderSize)
-        let pixels = CIImage(imageProvider: provider, size: Int(width), Int(height), format: .RGBA8,
-            colorSpace: nil, options: [.providerTileSize: [tileSide, tileSide]])
-        var recipe = pixels
         let shadow = key.style.shadow
-        if shadow.enabled {
-            let scale = renderSize.height / 1080
-            let radius = max(0, shadow.blur) * scale
-            let padding = ceil((max(abs(shadow.offsetX), abs(shadow.offsetY)) + max(0, shadow.blur) * 3) * scale)
-            guard padding.isFinite else { return nil }
-            var shade = pixels.applyingFilter("CIColorMatrix", parameters: [
-                "inputRVector": CIVector(x: 0, y: 0, z: 0, w: 0),
-                "inputGVector": CIVector(x: 0, y: 0, z: 0, w: 0),
-                "inputBVector": CIVector(x: 0, y: 0, z: 0, w: 0),
-                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: shadow.color.a),
-                "inputBiasVector": CIVector(x: shadow.color.r, y: shadow.color.g, z: shadow.color.b, w: 0),
-            ])
-            if radius > 0 { shade = shade.applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: radius]) }
-            shade = shade.transformed(by: CGAffineTransform(translationX: shadow.offsetX * scale, y: -shadow.offsetY * scale))
-            recipe = pixels.composited(over: shade).cropped(to: pixels.extent.insetBy(dx: -padding, dy: -padding))
-        }
+        let scale = renderSize.height / 1080
+        let padding = shadow.enabled
+            ? ceil((max(abs(shadow.offsetX), abs(shadow.offsetY)) + max(0, shadow.blur) * 3) * scale)
+            : 0
+        guard padding.isFinite,
+              width + padding * 2 < CGFloat(Int.max),
+              height + padding * 2 < CGFloat(Int.max) else { return nil }
+        let provider = TileProvider(key: key, keyData: keyData, renderSize: renderSize, padding: padding)
+        let pixels = CIImage(imageProvider: provider,
+            size: Int(provider.providerSize.width), Int(provider.providerSize.height), format: .RGBA8,
+            colorSpace: nil, options: [.providerTileSize: [tileSide, tileSide]])
+        let recipe = pixels.transformed(by: CGAffineTransform(translationX: -padding, y: -padding))
         let source = Source(provider: provider, recipe: recipe)
         var plan = LayerPlan(trackID: kCMPersistentTrackID_Invalid, clip: clip, natSize: size,
                              preferredTransform: .identity, textSource: source)

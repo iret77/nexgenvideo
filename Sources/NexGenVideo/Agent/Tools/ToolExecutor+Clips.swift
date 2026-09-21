@@ -474,12 +474,12 @@ extension ToolExecutor {
             : []
 
         let setActionName = input.clipIds.count == 1 ? "Set Clip Property (Agent)" : "Set Clip Properties (Agent)"
-        let summaries: [String] = try withUndoGroup(editor, actionName: setActionName) {
+        var summaries: [String] = []
+        try editor.withTimelineSwap(actionName: setActionName) {
             var blendChanged: Set<String> = []
             if let mode = input.blendMode {
                 blendChanged = try editor.setClipBlendMode(mode, clipIds: input.clipIds, grouped: false)
             }
-            var summaries: [String] = []
             for id in input.clipIds {
                 let isText = clipTypes[id] == .text
                 var changed = Self.applyPropertyChanges(
@@ -519,7 +519,6 @@ extension ToolExecutor {
                     editor: editor
                 )
             }
-            return summaries
         }
 
         let linkedNote = partners.isEmpty ? "" : " (+\(partners.count) linked)"

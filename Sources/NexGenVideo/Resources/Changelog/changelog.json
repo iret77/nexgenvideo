@@ -2,20 +2,6 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
-      "version": "1.6.0",
-      "date": "2026-09-21",
-      "sections": [
-        {
-          "heading": "Compositing",
-          "items": [
-            "Choose from 16 per-clip blend modes in the inspector or through the agent, with undo and saved project settings.",
-            "Video, images, animation and text use the same compositing stack in preview, captured frames and rendered exports, including opacity, fades and keyed mattes.",
-            "Keyed mattes preserve transparent edges in normal compositing, and inspector and agent blend edits remain a single named undo step."
-          ]
-        }
-      ]
-    },
-    {
       "version": "1.5.8",
       "date": "2026-09-11",
       "sections": [
