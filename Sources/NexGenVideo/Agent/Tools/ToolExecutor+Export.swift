@@ -95,16 +95,13 @@ extension ToolExecutor {
     }
 
     private func exportXML(_ editor: EditorViewModel, outputURL: URL) throws -> ToolResult {
-        if FileManager.default.fileExists(atPath: outputURL.path) {
-            do {
-                try FileManager.default.removeItem(at: outputURL)
-            } catch {
-                throw ToolError("export_project: \(error.localizedDescription)")
-            }
+        do {
+            try XMLExporter.export(timeline: editor.timeline, resolver: editor.mediaResolver, outputURL: outputURL)
+        } catch {
+            throw ToolError("export_project: \(error.localizedDescription)")
         }
-        XMLExporter.export(timeline: editor.timeline, resolver: editor.mediaResolver, outputURL: outputURL)
         guard FileManager.default.fileExists(atPath: outputURL.path) else {
-            throw ToolError("export_project: XML export failed")
+            throw ToolError("export_project: XML export did not create “\(outputURL.lastPathComponent)”. Choose another writable location and try again.")
         }
         return try jsonResult([
             "status": "exported",

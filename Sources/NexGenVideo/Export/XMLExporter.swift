@@ -38,9 +38,40 @@ import Foundation
 
 enum XMLExporter {
 
-    static func export(timeline: Timeline, resolver: MediaResolver, outputURL: URL) {
+    enum ExportError: LocalizedError {
+        case serializationFailed(target: URL)
+        case writeFailed(target: URL)
+
+        var errorDescription: String? {
+            let target: URL
+            let recovery: String
+            switch self {
+            case let .serializationFailed(url):
+                target = url
+                recovery = "Try exporting again."
+            case let .writeFailed(url):
+                target = url
+                recovery = "Choose another writable location and try again."
+            }
+            return "Couldn’t export XML to “\(target.lastPathComponent)”. \(recovery)"
+        }
+    }
+
+    static func export(timeline: Timeline, resolver: MediaResolver, outputURL: URL) throws {
         let xml = Builder(timeline: timeline, resolver: resolver).build()
-        try? xml.data(using: .utf8)?.write(to: outputURL)
+        let data = try serializedData(xml, target: outputURL)
+        do {
+            try data.write(to: outputURL, options: .atomic)
+        } catch {
+            throw ExportError.writeFailed(target: outputURL)
+        }
+    }
+
+    static func serializedData(_ xml: String, target: URL, encoding: String.Encoding = .utf8) throws -> Data {
+        guard let data = xml.data(using: encoding) else {
+            throw ExportError.serializationFailed(target: target)
+        }
+        return data
     }
 
     // MARK: - Source timecode
