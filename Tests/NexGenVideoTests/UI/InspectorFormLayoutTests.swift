@@ -8,7 +8,7 @@ import Testing
 struct InspectorFormLayoutTests {
     @Test func valuesKeepOneTrailingAxisAcrossWidthsAndTextScales() throws {
         for width: CGFloat in [184, 260, 360] {
-            for scale in [1.0, 1.3] {
+            for scale in [1.0, 1.3, 1.5] {
                 let host = NSHostingView(rootView: VStack(spacing: AppTheme.Spacing.md) {
                     InspectorFormRow(label: "White Balance Temperature") {
                         Text("5600 K")
