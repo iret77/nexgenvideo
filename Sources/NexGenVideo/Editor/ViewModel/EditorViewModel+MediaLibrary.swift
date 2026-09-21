@@ -1262,8 +1262,6 @@ extension EditorViewModel {
         }
     }
 
-    /// Text is composited via `CALayer.render` — `AVAssetImageGenerator`
-    /// doesn't evaluate `animationTool` on single-frame extraction.
     func captureCurrentFrameToMedia() {
         guard let currentItem = videoEngine?.player.currentItem else {
             Log.project.error("captureCurrentFrameToMedia: no preview item")

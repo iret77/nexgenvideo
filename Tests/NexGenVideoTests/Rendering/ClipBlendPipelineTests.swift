@@ -125,15 +125,19 @@ struct ClipBlendPipelineTests {
     }
 
     @Test func preparedTextBudgetAndLazyFallbackProduceIdenticalPixels() throws {
-        let text = textClip()
+        var text = textClip()
+        text.textStyle?.fontName = "eager-\(UUID().uuidString)"
         var budget = TextRasterizer.preparationBudget
         let eager = try #require(TextRasterizer.prepare(for: text, renderSize: size, budget: &budget))
         let eagerImage = try #require(eager.stillImage)
         #expect(budget >= 0 && budget < TextRasterizer.preparationBudget)
         var exhausted = 0
+        text.textStyle?.fontName = "lazy-\(UUID().uuidString)"
         let lazy = try #require(TextRasterizer.prepare(for: text, renderSize: size, budget: &exhausted))
         #expect(lazy.stillImage == nil)
         #expect(exhausted == 0)
+        let lazySource = try #require(lazy.textSource)
+        #expect(lazySource.rasterizedTileCount == 0)
         let lazyImage = try #require(lazy.textSource?.image())
         let context = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
         var eagerPixel = [Float](repeating: 0, count: 4)
@@ -143,6 +147,8 @@ struct ClipBlendPipelineTests {
         context.render(lazyImage, toBitmap: &lazyPixel, rowBytes: 16, bounds: bounds, format: .RGBAf, colorSpace: nil)
         #expect(eagerPixel == lazyPixel)
         #expect(lazyPixel[1] > 0.95 && lazyPixel[3] > 0.95)
+        #expect(lazySource.rasterizedTileCount > 0)
+        #expect(lazySource.maximumRasterizedTileBytes <= TextRasterizer.maximumRasterBytes)
     }
 
     @Test func textBorderAndPositiveYShadowKeepTopLeftOrientation() throws {

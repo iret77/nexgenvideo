@@ -33,9 +33,15 @@ The blend result is faded toward the existing backdrop; clip opacity never chang
 input color of a nonlinear blend. Pixels outside a placed/cropped layer preserve the backdrop.
 
 Text prepares immutable raster sources once per composition, retaining typography,
-fill, border, and shadow. Instructions eagerly retain at most 64 MB of rasters per build;
-remaining sources use a shared 64 MB cache without per-frame JSON encoding. Rasterization
-disables Core Animation actions and explicitly preserves top-left glyph/shadow coordinates.
+fill, border, and shadow. Instructions eagerly retain at most 64 MB of small rasters per
+build, with a 4 MB per-image cap. Larger text boxes and canvases remain demand-tiled:
+Core Image requests only source regions needed by the visible canvas, including animated
+transforms and effect margins. Provider bitmaps are at most 1024 × 1024 RGBA pixels and
+use a shared 64 MB tile cache without per-frame JSON encoding. Their virtual extent is
+not a bitmap allocation and is never clipped to the clip's initial placement.
+CATextLayer draws glyphs directly into clipped contexts without allocating a full-size
+backing store. Source alpha supplies the shadow before the shared compositing stages.
+Rasterization disables Core Animation actions and preserves top-left glyph/shadow coordinates.
 Text then receives the same transform, crop, effects, blend,
 opacity keyframes and fades as other visual clips. Text is not added as a second display
 overlay or export animation tool. Preview, frame capture, agent inspection, final renders,
@@ -48,6 +54,8 @@ Interchange XML remains the existing source-edit interchange format, not a rende
 mode, fractional alpha/opacity, preserved backdrop extents, and chroma-key mattes.
 `ClipBlendPipelineTests` exercises actual image/video sources, alpha media, text glyphs,
 text crop/keyframes/fades/order, normal fallback, and preview/final/encoded-export pixels.
+`TextRasterizerTests` compares styled glyphs against small Core Animation reference
+images and verifies oversized/animated sources and large canvases stay demand-tiled.
 Model and agent suites cover old-project defaults, unknown-value round trips, undo/redo,
 split/duplicate/copy, atomic validation, linked audio, and the closed tool schema.
 Builds and tests run only in GitHub Actions.
