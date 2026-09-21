@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import re
 import subprocess
 from pathlib import Path
 
@@ -36,8 +37,12 @@ def render(source: Path, output: Path) -> None:
         'aria-label="640 point Agent panel with 50 batch items"',
     ]
     missing = [marker for marker in required if marker not in result.stdout]
-    if missing or result.stdout.count('class="panel-shell') != 9:
-        raise RuntimeError(f"Generation batch UI specification is incomplete: {missing}")
+    panel_count = len(re.findall(r'<div class="panel-shell w(?:240|400|640)">', result.stdout))
+    if missing or panel_count != 9:
+        raise RuntimeError(
+            f"Generation batch UI specification is incomplete: {missing}; "
+            f"rendered {panel_count} of 9 panels"
+        )
 
     width, height = CAPTURE_SIZE
     destination = output / "generation-batch-review-1-13-50-240-400-640.png"
