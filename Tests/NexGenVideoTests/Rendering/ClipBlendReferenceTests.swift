@@ -62,6 +62,7 @@ struct ClipBlendReferenceTests {
         let keyed = ChromaKeyKernel.apply(solid([0.1, 0.8, 0.15]), keyHue: 0.333,
                                          tolerance: 0.5, softness: 0.3, spill: 0)
         #expect(pixel(keyed)[3] < 0.05)
+        for channel in 0..<3 { #expect(abs(pixel(keyed)[channel]) < 0.001) }
         let image = ClipBlendRenderer.composite(keyed, over: solid(backdrop), mode: mode, opacity: 0.6, bounds: bounds)
         for channel in 0..<3 { #expect(abs(pixel(image)[channel] - backdrop[channel]) < 0.025) }
     }

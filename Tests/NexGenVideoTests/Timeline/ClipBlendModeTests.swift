@@ -58,8 +58,11 @@ struct ClipBlendModeTests {
         editor.undoManager = undo
         try editor.setClipBlendMode(.screen, clipIds: clips.map(\.id) + ["c0"])
         #expect(editor.timeline.tracks[0].clips.allSatisfy { $0.blendMode == .screen })
+        #expect(undo.groupingLevel == 0)
+        #expect(undo.undoActionName == "Change Blend Mode")
         undo.undo()
         #expect(editor.timeline == before)
+        #expect(!undo.canUndo)
         undo.redo()
         #expect(editor.timeline.tracks[0].clips.allSatisfy { $0.blendMode == .screen })
         let after = editor.timeline

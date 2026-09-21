@@ -19,8 +19,11 @@ struct ClipBlendToolTests {
         let result = await agent.runRaw("set_clip_properties", args: ["clipIds": clips.map(\.id), "blendMode": "multiply"])
         #expect(!result.isError)
         #expect(native.editor.timeline == agent.editor.timeline)
+        #expect(undo.groupingLevel == 0)
+        #expect(!undo.undoActionName.isEmpty)
         undo.undo()
         #expect(agent.editor.timeline == timeline)
+        #expect(!undo.canUndo)
         undo.redo()
         #expect(native.editor.timeline == agent.editor.timeline)
         let read = try await agent.runOK("get_timeline") as? [String: Any]

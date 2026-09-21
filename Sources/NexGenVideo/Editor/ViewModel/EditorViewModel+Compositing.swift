@@ -20,8 +20,8 @@ extension EditorViewModel {
         if grouped { undoManager?.beginUndoGrouping() }
         commitClipProperties(clipIds: changed) { $0.blendMode = mode }
         if grouped {
-            undoManager?.endUndoGrouping()
             undoManager?.setActionName("Change Blend Mode")
+            undoManager?.endUndoGrouping()
         }
         return Set(changed)
     }
