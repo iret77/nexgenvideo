@@ -17,6 +17,16 @@ final class AppState {
 
     private(set) var mcpService: MCPService?
 
+    var hasVisibleKeyProjectWindow: Bool {
+        NSDocumentController.shared.documents
+            .compactMap { $0 as? VideoProject }
+            .contains { project in
+                project.windowControllers.contains {
+                    $0.window?.isVisible == true && $0.window?.isKeyWindow == true
+                }
+            }
+    }
+
     private init() {
         backendObserver = NotificationCenter.default.addObserver(
             forName: .agentBackendChanged,
@@ -137,8 +147,42 @@ final class AppState {
 
     func showEditor(for project: VideoProject) {
         activeProject = project
-        HomeWindowController.shared.window?.orderOut(nil)
         project.showWindows()
+        hideHomeIfProjectWindowIsKey(for: project)
+    }
+
+    func projectWindowDidBecomeKey(_ project: VideoProject, window: NSWindow) {
+        guard window.isVisible,
+              project.windowControllers.contains(where: { $0.window === window }) else {
+            return
+        }
+        activeProject = project
+        HomeWindowController.shared.window?.orderOut(nil)
+    }
+
+    private func hideHomeIfProjectWindowIsKey(for project: VideoProject) {
+        guard project.windowControllers.contains(where: {
+            $0.window?.isVisible == true && $0.window?.isKeyWindow == true
+        }) else { return }
+        HomeWindowController.shared.window?.orderOut(nil)
+    }
+
+    func projectDidClose(_ project: VideoProject) {
+        guard activeProject === project else { return }
+        activeProject = nil
+
+        let remaining = NSDocumentController.shared.documents
+            .compactMap { $0 as? VideoProject }
+            .filter { $0 !== project && !$0.windowControllers.isEmpty }
+        guard let next = remaining.first(where: {
+            $0.windowControllers.contains { $0.window?.isVisible == true }
+        }) ?? remaining.first else {
+            HomeWindowController.shared.showWindow(nil)
+            return
+        }
+
+        showEditor(for: next)
+        next.windowControllers.first?.window?.makeKeyAndOrderFront(nil)
     }
 
     func upgradeActiveProjectPack() {
@@ -236,9 +280,7 @@ final class AppState {
             return
         }
 
-        activeProject = project
-        HomeWindowController.shared.window?.orderOut(nil)
-        project.showWindows()
+        showEditor(for: project)
         project.windowControllers.first?.window?.makeKeyAndOrderFront(nil)
 
         guard let assetId,
@@ -352,7 +394,7 @@ final class AppState {
                 }
                 ProjectRegistry.shared.register(url)
                 doc.makeWindowControllers()
-                doc.showWindows()
+                self.showEditor(for: doc)
             }
         }
     }
@@ -424,8 +466,8 @@ final class AppState {
         }
 
         doc.makeWindowControllers()
-        doc.showWindows()
         NSDocumentController.shared.addDocument(doc)
+        showEditor(for: doc)
         if register { ProjectRegistry.shared.register(resolved) }
         apply(options, to: doc.editorViewModel)
         return doc
