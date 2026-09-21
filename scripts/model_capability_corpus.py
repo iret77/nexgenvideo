@@ -17,6 +17,7 @@ RESOURCE_DIR = ROOT / "Sources/NexGenVideo/Resources/ModelCapabilities"
 CORPUS_PATH = RESOURCE_DIR / "model-capability-corpus-v1.json"
 REPORT_PATH = ROOT / "docs/model-capability-coverage.md"
 OBSERVED_AT = "2026-08-31"
+INVENTORY_OBSERVED_AT = "2026-09-21"
 CORPUS_SCHEMA = "model-capability-corpus/v1"
 KB_SCHEMA = "model-capability-kb/v1"
 STALE_AFTER_DAYS = 120
@@ -467,6 +468,20 @@ fal_offer(
     "video",
     None,
     notes="An unversioned video transformation endpoint; represented defensively until the capability schema has an upscale field.",
+)
+fal_offer(
+    "bria/video/increase-resolution",
+    "video",
+    None,
+    origins=["offline_registry", "free_provider_schema"],
+    notes="The active endpoint exposes 2x and 4x video upscaling up to 8K; represented defensively until the capability schema has an upscale field.",
+)
+SOURCES[fal_source("bria/video/increase-resolution")].update(
+    title="fal Bria video upscale endpoint schema",
+    url="https://fal.ai/models/bria/video/increase-resolution/api",
+    observed_at=INVENTORY_OBSERVED_AT,
+    confidence=0.99,
+    scope="Free live catalog, endpoint schema and published pricing lookups; no generation call.",
 )
 
 
@@ -1001,7 +1016,7 @@ def profile_gaps() -> list[dict[str, Any]]:
 def build_corpus() -> dict[str, Any]:
     return {
         "schema": CORPUS_SCHEMA,
-        "observed_at": OBSERVED_AT,
+        "observed_at": INVENTORY_OBSERVED_AT,
         "stale_after_days": STALE_AFTER_DAYS,
         "defensive_defaults": {
             "owner_confirmation": "confirmed",

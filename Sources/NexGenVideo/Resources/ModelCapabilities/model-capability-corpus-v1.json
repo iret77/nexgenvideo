@@ -991,6 +991,24 @@
     },
     {
       "availability": "active",
+      "catalog_model_id": "bria/video/increase-resolution",
+      "expected_resolution": "defensive",
+      "fixture": false,
+      "modality": "video",
+      "notes": "The active endpoint exposes 2x and 4x video upscaling up to 8K; represented defensively until the capability schema has an upscale field.",
+      "origins": [
+        "offline_registry",
+        "free_provider_schema"
+      ],
+      "provider": "fal",
+      "provider_model_id": "bria/video/increase-resolution",
+      "provider_qualified_alias": "fal::bria/video/increase-resolution",
+      "source_ids": [
+        "fal:bria/video/increase-resolution"
+      ]
+    },
+    {
+      "availability": "active",
       "catalog_model_id": "bytedance/seedance-2.0/image-to-video",
       "expected_resolution": "exact",
       "family_id": "seedance",
@@ -8961,7 +8979,7 @@
     ],
     "schema": "model-capability-kb/v1"
   },
-  "observed_at": "2026-08-31",
+  "observed_at": "2026-09-21",
   "profile_gaps": [
     {
       "fields": {
@@ -10634,6 +10652,16 @@
       "scope": "Provider-published reliable subject/reference guidance, kept separate from hard API limits.",
       "title": "fal Seedance 2.5 production guidance",
       "url": "https://fal.ai/learn/devs/how-to-use-seedance-2-5"
+    },
+    {
+      "confidence": 0.99,
+      "id": "fal:bria/video/increase-resolution",
+      "kind": "provider_schema",
+      "observed_at": "2026-09-21",
+      "primary": true,
+      "scope": "Free live catalog, endpoint schema and published pricing lookups; no generation call.",
+      "title": "fal Bria video upscale endpoint schema",
+      "url": "https://fal.ai/models/bria/video/increase-resolution/api"
     },
     {
       "confidence": 0.92,
