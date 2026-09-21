@@ -8,7 +8,9 @@ import time
 
 
 EXPECTED_WORKSPACES = {"media", "production", "edit", "postproduction", "export"}
-EXPECTED_INSPECTORS = {"text", "video", "effects", "ai", "audio", "mixed", "asset"}
+EXPECTED_INSPECTORS = {
+    "text", "video", "effects", "ai", "audio", "mixed", "asset", "caption"
+}
 SCALES = (1.0, 1.25, 1.5)
 
 

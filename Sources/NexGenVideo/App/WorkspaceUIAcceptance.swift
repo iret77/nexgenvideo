@@ -396,6 +396,7 @@ enum WorkspaceUIAcceptance {
         let originalAssets = editor.mediaAssets
         let originalClipIDs = editor.selectedClipIds
         let originalObject = editor.inspectedObject
+        let originalMediaTab = editor.mediaPanelTab(for: .edit)
         let image = MediaAsset(
             id: "inspector-image",
             url: FileManager.default.temporaryDirectory.appendingPathComponent("ngv-inspector-fixture.png"),
@@ -462,6 +463,25 @@ enum WorkspaceUIAcceptance {
             }
             emit("inspector", scale: scale, fields: ["family": item.family, "screenshot": name])
         }
+        let captionIdentifier = "media.tab.Captions"
+        if probeState(identifier: captionIdentifier, in: window) != true {
+            guard click(identifier: captionIdentifier, in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      host.layoutSubtreeIfNeeded()
+                      return editor.mediaPanelTab(for: .edit) == .captions
+                          && probeState(identifier: captionIdentifier, in: window) == true
+                  }) else {
+                fail("caption form did not activate", scale: scale)
+            }
+        }
+        try? await Task.sleep(for: .milliseconds(300))
+        host.layoutSubtreeIfNeeded()
+        let captionName = "scale-\(scaleLabel(scale))-inspector-caption.png"
+        guard snapshot(host, at: evidenceURL.appendingPathComponent(captionName)) else {
+            fail("could not capture caption form", scale: scale)
+        }
+        emit("inspector", scale: scale, fields: ["family": "caption", "screenshot": captionName])
+        editor.setMediaPanelTab(originalMediaTab, for: .edit)
         editor.selectedClipIds = originalClipIDs
         editor.inspectedObject = originalObject
         editor.mediaAssets = originalAssets

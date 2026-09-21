@@ -13,7 +13,8 @@ struct MediaPanelView: View {
         VStack(spacing: AppTheme.Spacing.none) {
             SegmentedTabBar(
                 titles: EditorViewModel.MediaPanelTab.allCases.map(\.rawValue),
-                selected: editor.mediaPanelTab(for: workspace).rawValue
+                selected: editor.mediaPanelTab(for: workspace).rawValue,
+                acceptanceProbePrefix: "media.tab"
             ) { title in
                 if let tab = EditorViewModel.MediaPanelTab(rawValue: title) {
                     withAnimation(.easeInOut(duration: AppTheme.Anim.transition)) {

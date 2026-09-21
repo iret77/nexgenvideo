@@ -11,6 +11,7 @@ on:
       - 'Sources/NexGenVideo/Editor/TitleBarView.swift'
       - 'Sources/NexGenVideo/Inspector/**'
       - 'Sources/NexGenVideo/MediaPanel/CaptionsTab/CaptionTab.swift'
+      - 'Sources/NexGenVideo/MediaPanel/MediaPanelView.swift'
       - 'Sources/NexGenVideo/UI/AppTheme.swift'
       - 'Sources/NexGenVideo/UI/SegmentedTabBar.swift'
 
