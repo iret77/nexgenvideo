@@ -129,7 +129,8 @@ struct PromptGoldenTests {
             modelID: "fal-ai/gpt-image-2.5/flare/text-to-image",
             payload: payload
         )
-        #expect(compiled == ImageBuilders.gptImage25(payload))
+        let expected = try ImageBuilders.gptImage25(payload)
+        #expect(compiled == expected)
         #expect(compiled.contains("Subject:"))
         #expect(compiled.contains("Use case:"))
     }
