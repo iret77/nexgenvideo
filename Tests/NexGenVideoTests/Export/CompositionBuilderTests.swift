@@ -192,6 +192,60 @@ struct CompositionBuildAudioTrackTests {
         #expect(audioMappings.first.flatMap(clipIds) == ["a1", "a2"])
     }
 
+    @Test func fullyMutedAudioTimelineCreatesNoAudioTrackOrMixerInput() async throws {
+        let clip = Fixtures.clip(
+            id: "muted", mediaRef: "unavailable-audio", mediaType: .audio,
+            start: 0, duration: 24
+        )
+        var track = Fixtures.audioTrack(clips: [clip])
+        track.muted = true
+        let timeline = Fixtures.timeline(fps: 24, tracks: [track])
+
+        let result = try await CompositionBuilder.build(
+            timeline: timeline,
+            resolveURL: { _ in nil },
+            renderSize: CGSize(width: 320, height: 180)
+        )
+
+        #expect(result.trackMappings.allSatisfy(\.isVideo))
+        #expect(result.audioMix.inputParameters.isEmpty)
+        #expect(try await result.composition.loadTracks(withMediaType: .audio).isEmpty)
+        #expect(result.offlineMediaRefs.isEmpty)
+    }
+
+    @Test func mutedAudioTrackDoesNotAffectActiveAudioTrack() async throws {
+        let audioURL = try makeSilentWav(durationSeconds: 1)
+        defer { try? FileManager.default.removeItem(at: audioURL) }
+
+        let mutedClip = Fixtures.clip(
+            id: "muted", mediaRef: "unavailable-audio", mediaType: .audio,
+            start: 0, duration: 24
+        )
+        var mutedTrack = Fixtures.audioTrack(clips: [mutedClip])
+        mutedTrack.muted = true
+        let activeClip = Fixtures.clip(
+            id: "active", mediaRef: "active-audio", mediaType: .audio,
+            start: 0, duration: 24
+        )
+        let timeline = Fixtures.timeline(fps: 24, tracks: [
+            mutedTrack,
+            Fixtures.audioTrack(clips: [activeClip]),
+        ])
+
+        let result = try await CompositionBuilder.build(
+            timeline: timeline,
+            resolveURL: { $0 == "active-audio" ? audioURL : nil },
+            renderSize: CGSize(width: 320, height: 180)
+        )
+
+        let audioMappings = result.trackMappings.filter { !$0.isVideo }
+        #expect(audioMappings.count == 1)
+        #expect(audioMappings.first.flatMap(clipIds) == ["active"])
+        #expect(result.audioMix.inputParameters.count == 1)
+        #expect(try await result.composition.loadTracks(withMediaType: .audio).count == 1)
+        #expect(result.offlineMediaRefs.isEmpty)
+    }
+
     @Test func unityAudioClipResetsVolumeAfterMutedClipOnSharedCompositionTrack() async throws {
         let audioURL = try makeSilentWav(durationSeconds: 3)
         defer { try? FileManager.default.removeItem(at: audioURL) }
