@@ -58,8 +58,7 @@ enum LUTLoader {
         }
         lock.unlock()
 
-        guard sourceSize(atPath: path) <= maximumSourceBytes,
-              let text = try? String(contentsOfFile: path, encoding: .utf8),
+        guard let text = sourceText(atPath: path),
               let lut = parse(text) else { return nil }
 
         lock.lock()
@@ -96,15 +95,15 @@ enum LUTLoader {
                 expectedValueCount = dimension * dimension * dimension * inputChannels
                 sawDimension = true
             case "DOMAIN_MIN":
-                guard !sawDomainMin, let parsed = finiteTriple(parts) else { return nil }
+                guard !sawDomainMin, let parsed = finiteTriple(parts.dropFirst()) else { return nil }
                 domainMin = parsed
                 sawDomainMin = true
             case "DOMAIN_MAX":
-                guard !sawDomainMax, let parsed = finiteTriple(parts) else { return nil }
+                guard !sawDomainMax, let parsed = finiteTriple(parts.dropFirst()) else { return nil }
                 domainMax = parsed
                 sawDomainMax = true
             default:
-                guard sawDimension, let expectedValueCount, let rgb = finiteTriple(parts),
+                guard sawDimension, let expectedValueCount, let rgb = finiteTriple(parts[...]),
                       values.count <= expectedValueCount - inputChannels else { return nil }
                 values.append(contentsOf: rgb)
             }
@@ -127,15 +126,22 @@ enum LUTLoader {
         return CubeLUT(dimension: dimension, data: rgba.withUnsafeBufferPointer { Data(buffer: $0) })
     }
 
-    private static func finiteTriple(_ parts: [Substring]) -> [Float]? {
-        guard parts.count == inputChannels + 1 else { return nil }
-        let values = parts.dropFirst().compactMap { Float($0) }
+    private static func finiteTriple(_ parts: ArraySlice<Substring>) -> [Float]? {
+        guard parts.count == inputChannels else { return nil }
+        let values = parts.compactMap { Float($0) }
         guard values.count == inputChannels, values.allSatisfy(\.isFinite) else { return nil }
         return values
     }
 
-    private static func sourceSize(atPath path: String) -> Int {
-        (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? NSNumber)
-            .flatMap { $0 }?.intValue ?? .max
+    private static func sourceText(atPath path: String) -> String? {
+        do {
+            let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: path))
+            defer { try? handle.close() }
+            guard let data = try handle.read(upToCount: maximumSourceBytes + 1),
+                  data.count <= maximumSourceBytes else { return nil }
+            return String(data: data, encoding: .utf8)
+        } catch {
+            return nil
+        }
     }
 }
