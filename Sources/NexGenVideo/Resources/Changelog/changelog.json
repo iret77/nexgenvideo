@@ -2,6 +2,18 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.6.0",
+      "date": "2026-09-21",
+      "sections": [
+        {
+          "heading": "Models",
+          "items": [
+            "AI Upscale offers 8K output for compatible video sources, shows the current cost before submission and preserves the project source and target for reruns."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.5.8",
       "date": "2026-09-11",
       "sections": [

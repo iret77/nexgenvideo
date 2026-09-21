@@ -41,6 +41,11 @@ enum FalUpscaleKind: Sendable {
     case video           // `video_url` in → `video.url` out
 }
 
+enum FalUpscaleScaleField: Sendable {
+    case upscaleFactor
+    case desiredIncrease
+}
+
 struct FalModel: Sendable {
     var entry: CatalogEntry
     var imageSize: FalImageSizeMode = .imageSizeEnum
@@ -57,6 +62,7 @@ struct FalModel: Sendable {
     var upscaleKind: FalUpscaleKind? = nil
     var videoFirstLastFrames: Bool = false
     var productionQualityTargetIDs: [String] = []
+    var upscaleScaleField: FalUpscaleScaleField = .upscaleFactor
 }
 
 enum FalModelRegistry {
@@ -475,19 +481,68 @@ enum FalModelRegistry {
 
     private static let upscaleModels: [FalModel] = [
         upscale("fal-ai/clarity-upscaler", "Clarity Upscaler", kind: .image, speed: "Medium", p75: 30),
-        upscale("fal-ai/topaz/upscale/video", "Topaz Video Upscale", kind: .video, speed: "Slow", p75: 120),
+        upscale(
+            "fal-ai/topaz/upscale/video",
+            "Topaz Video Upscale",
+            kind: .video,
+            speed: "Slow",
+            p75: 120,
+            maxInputShortEdgeExclusive: 2_160
+        ),
+        upscale(
+            "bria/video/increase-resolution",
+            "Bria Video Upscale",
+            kind: .video,
+            speed: "Medium",
+            p75: 120,
+            creditsPerSecond: 14,
+            targets: [
+                UpscaleTargetCaps(
+                    resolution: "8K",
+                    longEdge: 7_680,
+                    shortEdge: 4_320,
+                    scaleFactors: [2, 4]
+                )
+            ],
+            maxDurationSecondsExclusive: 30,
+            maxInputLongEdgeExclusive: 7_680,
+            maxInputShortEdgeExclusive: 4_320,
+            scaleField: .desiredIncrease
+        ),
     ]
 
-    private static func upscale(_ id: String, _ name: String, kind: FalUpscaleKind, speed: String, p75: Int) -> FalModel {
+    private static func upscale(
+        _ id: String,
+        _ name: String,
+        kind: FalUpscaleKind,
+        speed: String,
+        p75: Int,
+        creditsPerSecond: Double? = nil,
+        targets: [UpscaleTargetCaps] = [],
+        maxDurationSecondsExclusive: Int? = nil,
+        maxInputLongEdgeExclusive: Int? = nil,
+        maxInputShortEdgeExclusive: Int? = nil,
+        scaleField: FalUpscaleScaleField = .upscaleFactor
+    ) -> FalModel {
         let shape: CatalogEntry.ResponseShape = (kind == .video) ? .video : .upscaledImage
         let types = (kind == .video) ? ["video"] : ["image"]
         return FalModel(
             entry: CatalogEntry(
                 id: id, kind: .upscale, displayName: name,
                 allowedEndpoints: [id], responseShape: shape,
-                uiCapabilities: .upscale(UpscaleCaps(speed: speed, p75DurationSeconds: p75, supportedTypes: types))
+                uiCapabilities: .upscale(UpscaleCaps(
+                    speed: speed,
+                    p75DurationSeconds: p75,
+                    supportedTypes: types,
+                    targets: targets,
+                    maxDurationSecondsExclusive: maxDurationSecondsExclusive,
+                    maxInputLongEdgeExclusive: maxInputLongEdgeExclusive,
+                    maxInputShortEdgeExclusive: maxInputShortEdgeExclusive
+                )),
+                creditsPerSecondUpscale: creditsPerSecond
             ),
-            upscaleKind: kind
+            upscaleKind: kind,
+            upscaleScaleField: scaleField
         )
     }
 }

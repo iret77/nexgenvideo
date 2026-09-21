@@ -48,6 +48,7 @@ struct GenerationRequest {
     let intent: String
     let aspectRatio: String
     let durationSeconds: Double?
+    let outputResolution: String?
     let placement: Placement
     let origin: Origin
     /// Exact user-approved provider target. Nil lets NGV resolve its normal default.
@@ -73,6 +74,7 @@ struct GenerationRequest {
         intent: String,
         aspectRatio: String = "",
         durationSeconds: Double? = nil,
+        outputResolution: String? = nil,
         placement: Placement,
         origin: Origin,
         target: ResolvedGenerationTarget? = nil,
@@ -89,6 +91,7 @@ struct GenerationRequest {
         self.intent = intent
         self.aspectRatio = aspectRatio
         self.durationSeconds = durationSeconds
+        self.outputResolution = outputResolution
         self.placement = placement
         self.origin = origin
         self.target = target
@@ -653,7 +656,7 @@ enum GenerationController {
     ) -> GenerationPricingInput {
         var duration = request.durationSeconds
         var outputCount = 1
-        var resolution: String?
+        var resolution: String? = request.outputResolution
         var quality: String?
         var generateAudio: Bool?
 

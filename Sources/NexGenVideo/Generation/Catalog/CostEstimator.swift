@@ -56,9 +56,9 @@ enum CostEstimator {
         }
     }
 
-    static func upscaleCost(model: UpscaleModelConfig, durationSeconds: Int) -> Int? {
-        let d = max(1, durationSeconds)
-        return ceilCredits(model.creditsPerSecond * Double(d))
+    static func upscaleCost(model: UpscaleModelConfig, durationSeconds: Double) -> Int? {
+        guard let rate = model.creditsPerSecond else { return nil }
+        return ceilCredits(rate * max(1, durationSeconds))
     }
 
     /// Recompute cost from a stored `GenerationInput`. Used on rerun.
@@ -83,7 +83,7 @@ enum CostEstimator {
             let duration = (m.durations != nil || m.inputs.contains(.video)) ? genInput.duration : nil
             return audioCost(model: m, prompt: genInput.prompt, durationSeconds: duration)
         case .upscale(let m):
-            return upscaleCost(model: m, durationSeconds: genInput.duration)
+            return upscaleCost(model: m, durationSeconds: Double(genInput.duration))
         case .none:
             return nil
         }

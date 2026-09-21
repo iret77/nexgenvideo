@@ -85,7 +85,16 @@ enum FalInputBuilder {
 
     static func upscaleInput(_ p: UpscaleGenerationParams, model: FalModel) -> [String: Any] {
         let urlField = (model.upscaleKind == .video) ? "video_url" : "image_url"
-        return [urlField: p.sourceURL]   // upscale_factor defaults to 2x on fal
+        var input: [String: Any] = [urlField: p.sourceURL]
+        if let scaleFactor = p.scaleFactor {
+            switch model.upscaleScaleField {
+            case .upscaleFactor:
+                input["upscale_factor"] = scaleFactor
+            case .desiredIncrease:
+                input["desired_increase"] = String(scaleFactor)
+            }
+        }
+        return input
     }
 
     /// Map our aspect-ratio label to fal's `image_size` enum.
