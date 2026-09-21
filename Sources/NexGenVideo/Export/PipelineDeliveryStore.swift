@@ -340,7 +340,7 @@ enum PipelineDeliveryStore {
             try await HDRVideoExporter.requireCapability(renderSize: CGSize(
                 width: spec.width,
                 height: spec.height
-            ))
+            ), fps: spec.fpsNumerator / spec.fpsDenominator)
         }
         let id = UUID().uuidString.lowercased()
         let createdAt = currentTimestamp()

@@ -58,7 +58,7 @@ extension ToolExecutor {
             try await HDRVideoExporter.requireCapability(renderSize: resolution.renderSize(for: CGSize(
                 width: editor.timeline.width,
                 height: editor.timeline.height
-            )))
+            )), fps: editor.timeline.fps)
         }
         guard ExportCoordinator.beginExportIfIdle() else {
             throw ToolError("export_project: Another export is already in progress.")

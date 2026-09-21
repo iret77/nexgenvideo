@@ -34,6 +34,8 @@ enum HDRVideoExporter {
     static let pixelFormat = kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
     static let conversionID = "rec709-sdr-reference-white-75-to-bt2020-hlg"
     static let hlgReferenceWhiteSignal = 0.75
+    static let minimumVideoBitRate = 5_000_000
+    private static let targetBitsPerPixel = 0.35
 
     struct TextOverlay: @unchecked Sendable {
         let image: CGImage
@@ -82,15 +84,15 @@ enum HDRVideoExporter {
         var errorDescription: String? { "HDR export failed: \(reason)" }
     }
 
-    static func capability(renderSize: CGSize) async -> HDRExportCapability {
+    static func capability(renderSize: CGSize, fps: Int = 30) async -> HDRExportCapability {
         let snapshot = await Task.detached(priority: .userInitiated) {
-            capabilitySnapshot(renderSize: renderSize)
+            capabilitySnapshot(renderSize: renderSize, fps: fps)
         }.value
         return HDRExportCapability.evaluate(snapshot)
     }
 
-    static func requireCapability(renderSize: CGSize) async throws {
-        let result = await capability(renderSize: renderSize)
+    static func requireCapability(renderSize: CGSize, fps: Int = 30) async throws {
+        let result = await capability(renderSize: renderSize, fps: fps)
         guard result.isSupported else {
             throw HDRExportError(reason: result.reason ?? "the selected HDR settings are unavailable")
         }
@@ -104,8 +106,13 @@ enum HDRVideoExporter {
         ]
     }
 
-    static func videoWriterSettings(size: CGSize) -> [String: Any] {
-        [
+    static func videoWriterSettings(size: CGSize, fps: Int = 30) -> [String: Any] {
+        let frameRate = max(1, fps)
+        let bitRate = max(
+            minimumVideoBitRate,
+            Int(Double(size.width) * Double(size.height) * Double(frameRate) * targetBitsPerPixel)
+        )
+        return [
             AVVideoCodecKey: AVVideoCodecType.hevc,
             AVVideoWidthKey: Int(size.width),
             AVVideoHeightKey: Int(size.height),
@@ -113,6 +120,8 @@ enum HDRVideoExporter {
             AVVideoCompressionPropertiesKey: [
                 kVTCompressionPropertyKey_ProfileLevel as String:
                     kVTProfileLevel_HEVC_Main10_AutoLevel,
+                AVVideoAverageBitRateKey: NSNumber(value: bitRate),
+                AVVideoExpectedSourceFrameRateKey: NSNumber(value: frameRate),
             ],
         ]
     }
@@ -124,7 +133,7 @@ enum HDRVideoExporter {
         cancellation: Cancellation,
         onProgress: (@Sendable (Double) -> Void)? = nil
     ) async throws {
-        try await requireCapability(renderSize: renderSize)
+        try await requireCapability(renderSize: renderSize, fps: inputs.fps)
         if cancellation.isCancelled { throw CancellationError() }
 
         let tracks = try await inputs.composition.loadTracks(withMediaType: .video)
@@ -155,7 +164,7 @@ enum HDRVideoExporter {
             try FileManager.default.removeItem(at: outputURL)
         }
         let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
-        let settings = videoWriterSettings(size: renderSize)
+        let settings = videoWriterSettings(size: renderSize, fps: inputs.fps)
         guard writer.canApply(outputSettings: settings, forMediaType: .video) else {
             throw HDRExportError(reason: "the movie writer rejected the Main10 HLG settings")
         }
@@ -255,7 +264,10 @@ enum HDRVideoExporter {
         }
     }
 
-    private static func capabilitySnapshot(renderSize: CGSize) -> HDRExportCapabilitySnapshot {
+    private static func capabilitySnapshot(
+        renderSize: CGSize,
+        fps: Int
+    ) -> HDRExportCapabilitySnapshot {
         let inputSpace = CGColorSpace(name: CGColorSpace.itur_709)
         let workingSpace = CGColorSpace(name: CGColorSpace.extendedLinearITUR_2020)
         let outputSpace = CGColorSpace(name: CGColorSpace.itur_2100_HLG)
@@ -305,7 +317,7 @@ enum HDRVideoExporter {
             .appendingPathComponent("ngv-hdr-capability-\(UUID().uuidString).mov")
         defer { try? FileManager.default.removeItem(at: probeURL) }
         if let writer = try? AVAssetWriter(outputURL: probeURL, fileType: .mov) {
-            let settings = videoWriterSettings(size: renderSize)
+            let settings = videoWriterSettings(size: renderSize, fps: fps)
             let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
             writerAcceptsSettings = writer.canApply(outputSettings: settings, forMediaType: .video)
                 && writer.canAdd(input)

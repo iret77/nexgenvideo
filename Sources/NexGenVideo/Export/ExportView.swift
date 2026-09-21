@@ -43,7 +43,10 @@ struct ExportView: View {
                 hdrCapability = nil
                 return
             }
-            let capability = await HDRVideoExporter.capability(renderSize: selectedRenderSize)
+            let capability = await HDRVideoExporter.capability(
+                renderSize: selectedRenderSize,
+                fps: editor.timeline.fps
+            )
             guard !Task.isCancelled else { return }
             hdrCapability = capability
         }
@@ -344,7 +347,7 @@ struct ExportView: View {
     }
 
     private var hdrCapabilityKey: String {
-        "\(codec.id)-\(resolution.id)-\(Int(selectedRenderSize.width))x\(Int(selectedRenderSize.height))"
+        "\(codec.id)-\(resolution.id)-\(Int(selectedRenderSize.width))x\(Int(selectedRenderSize.height))-\(editor.timeline.fps)"
     }
 
     /// Quick estimate for exporting a NexGenVideo Project

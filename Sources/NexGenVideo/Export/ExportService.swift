@@ -196,7 +196,10 @@ final class ExportService {
                 width: timeline.width,
                 height: timeline.height
             ))
-            try await HDRVideoExporter.requireCapability(renderSize: renderSize)
+            try await HDRVideoExporter.requireCapability(
+                renderSize: renderSize,
+                fps: timeline.fps
+            )
             try await TimelineStyleReview.revalidate(
                 styleReview,
                 timeline: timeline,
