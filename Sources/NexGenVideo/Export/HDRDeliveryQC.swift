@@ -28,7 +28,10 @@ enum HDRDeliveryQC {
               let description = try await videoTrack.load(.formatDescriptions).first else {
             throw ToolError("HDR QC could not read the exported video track.")
         }
-        let extensions = CMFormatDescriptionGetExtensions(description) as NSDictionary
+        guard let rawExtensions = CMFormatDescriptionGetExtensions(description) else {
+            throw ToolError("HDR QC could not read the exported video track metadata.")
+        }
+        let extensions = rawExtensions as NSDictionary
         let track = DeliveryHDRTrackQCV1(
             codec: fourCC(CMFormatDescriptionGetMediaSubType(description)),
             bitsPerComponent: number(
