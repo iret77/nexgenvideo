@@ -260,10 +260,10 @@ extension ToolExecutor {
         let brief = try? YAMLArtifactStore(dataRoot: root).load(Brief.self, at: PipelineLayout.briefFile)
         let briefJSON = (try? JSONEncoder().encode(brief)) ?? Data()
         var options: [String: Any] = [:]
-        if let bpm = args["perceived_bpm"] as? Double { options["perceived_bpm"] = bpm }
+        if let bpm = args.double("perceived_bpm") { options["perceived_bpm"] = bpm }
         if let mode = args["match_mode"] as? String { options["match_mode"] = mode }
         if let excluded = args["excluded_pattern_ids"] as? [String] { options["excluded_pattern_ids"] = excluded }
-        if let top = args["top"] as? Int { options["max_results"] = top }
+        if let top = args.int("top") { options["max_results"] = top }
         // #214: forward the recorded affect detection/override so the affect axis comes from audio +
         // lyrics, not the brief tone-tag map. Pure passthrough — the host never interprets the affect
         // vocabulary (a pack concern); it hands the pack the bytes it wrote. Absent → assembler falls back.
@@ -4747,7 +4747,10 @@ extension ToolExecutor {
         summary["downbeats"] = downbeats.map(ms)
         summary["sections"] = (obj["sections"] as? [[String: Any]] ?? []).map { s -> [String: Any] in
             var out: [String: Any] = [:]
-            if let i = (s["index"] as? NSNumber)?.intValue { out["index"] = i }
+            if let value = s["index"],
+               let index = ToolIntegerArgument.exact(value) {
+                out["index"] = index
+            }
             if let start = number(s["start"]) { out["start"] = ms(start) }
             if let end = number(s["end"]) { out["end"] = ms(end) }
             out["label"] = (s["label"] as? String).map { $0 as Any } ?? NSNull()

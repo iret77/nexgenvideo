@@ -229,7 +229,10 @@ extension ToolExecutor {
         return start < window.upperBound && start + intValue(clip["durationFrames"]) > window.lowerBound
     }
 
-    private static func intValue(_ v: Any?) -> Int { (v as? NSNumber)?.intValue ?? 0 }
+    private static func intValue(_ value: Any?) -> Int {
+        guard let value else { return 0 }
+        return ToolIntegerArgument.exact(value) ?? 0
+    }
 
     private static func compactClipKeyframes(_ clip: [String: Any]) -> [String: Any] {
         var out = clip

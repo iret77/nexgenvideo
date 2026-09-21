@@ -82,11 +82,10 @@ enum MCP20260728 {
             case let value as Int: return .int(value)
             case let value as NSNumber:
                 let number = value.doubleValue
-                return number.rounded(.towardZero) == number
-                    && number >= Double(Int.min)
-                    && number <= Double(Int.max)
-                    ? .int(value.intValue)
-                    : .double(number)
+                if let integer = ToolIntegerArgument.exact(value) {
+                    return .int(integer)
+                }
+                return .double(number)
             case let value as Double: return .double(value)
             case let value as String: return .string(value)
             case let value as [Any]: return .array(value.map(fromAny))

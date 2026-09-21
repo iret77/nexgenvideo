@@ -81,7 +81,11 @@ extension ToolExecutor {
         }
         var measuredByIndex: [Int: Int] = [:]
         for position in sections.indices {
-            guard let index = (sections[position]["index"] as? NSNumber)?.intValue else {
+            guard let rawIndex = sections[position]["index"],
+                  let index = ToolIntegerArgument.exact(
+                    rawIndex,
+                    in: ToolIntegerArgument.frameBounds
+                  ) else {
                 throw ToolError(
                     "Measured section \(position) has no integer index; re-run analysis."
                 )
@@ -97,7 +101,11 @@ extension ToolExecutor {
         var labels: [[String: String]] = []
         var seen: Set<Int> = []
         for (position, raw) in rawLabels.enumerated() {
-            guard let index = (raw["index"] as? NSNumber)?.intValue,
+            guard let rawIndex = raw["index"],
+                  let index = ToolIntegerArgument.exact(
+                    rawIndex,
+                    in: ToolIntegerArgument.frameBounds
+                  ),
                   let sectionPosition = measuredByIndex[index] else {
                 throw ToolError(
                     "section_labels[\(position)].index does not name a measured section."

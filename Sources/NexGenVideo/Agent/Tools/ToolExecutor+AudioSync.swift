@@ -15,6 +15,12 @@ extension ToolExecutor {
 
         let searchWindow = args.double("searchWindowSeconds") ?? EditorViewModel.AudioSyncDefaults.searchWindowSeconds
         guard searchWindow > 0 else { throw ToolError("sync_audio: searchWindowSeconds must be > 0.") }
+        guard ToolIntegerArgument.rounded(
+            searchWindow / AudioEnvelopeExtractor.hopSeconds,
+            in: 0...Int.max
+        ) != nil else {
+            throw ToolError("sync_audio.searchWindowSeconds: outside the supported range")
+        }
 
         let report = await editor.syncAudio(
             referenceClipId: referenceClipId,

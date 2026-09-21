@@ -17,16 +17,15 @@ extension ToolExecutor {
             aggressiveness = a
         } else { aggressiveness = .balanced }
 
+        let spans = try Self.parseWordSpans(rawWords)
+
         let (allWords, _) = try await timelineWords(editor)
         guard !allWords.isEmpty else { throw ToolError("No transcribable speech on the timeline.") }
 
-        var selected = Set<Int>(), ignored: [Int] = []
         let maxIndex = allWords.count - 1
-        for (a, b) in try Self.parseWordSpans(rawWords) {
-            for idx in min(a, b)...max(a, b) {
-                if (0...maxIndex).contains(idx) { selected.insert(idx) } else { ignored.append(idx) }
-            }
-        }
+        let selection = Self.boundedWordSelection(spans, maxIndex: maxIndex)
+        let selected = selection.selected
+        let ignored = selection.ignored
         guard !selected.isEmpty else {
             throw ToolError("None of the requested word indices are in range 0...\(maxIndex). Re-read get_transcript.")
         }
@@ -97,16 +96,35 @@ extension ToolExecutor {
             if let n = intFromAny(element) { return (n, n) }
             guard let pair = element as? [Any], pair.count == 2,
                   let a = intFromAny(pair[0]), let b = intFromAny(pair[1]) else {
-                throw ToolError("words[\(i)]: expected an integer index or an [start, end] pair.")
+                throw ToolError(
+                    "remove_words.words[\(i)]: expected a nonnegative integer index or an [start, end] pair."
+                )
             }
             return (a, b)
         }
     }
 
+    static func boundedWordSelection(
+        _ spans: [(Int, Int)],
+        maxIndex: Int
+    ) -> (selected: Set<Int>, ignored: [Int]) {
+        var selected = Set<Int>()
+        var ignored: [Int] = []
+        guard maxIndex >= 0 else { return (selected, ignored) }
+        for (a, b) in spans {
+            let lower = min(a, b)
+            let upper = max(a, b)
+            if lower > maxIndex {
+                ignored.append(lower)
+                continue
+            }
+            if upper > maxIndex { ignored.append(upper) }
+            for index in lower...min(maxIndex, upper) { selected.insert(index) }
+        }
+        return (selected, ignored)
+    }
+
     private static func intFromAny(_ v: Any) -> Int? {
-        if let i = v as? Int { return i }
-        if let n = v as? NSNumber { return n.intValue }
-        if let d = v as? Double, d.rounded() == d { return Int(d) }
-        return nil
+        ToolIntegerArgument.exact(v, in: ToolIntegerArgument.frameBounds)
     }
 }
