@@ -33,9 +33,13 @@ enum CompositionBuilder {
 
     static func build(
         timeline: Timeline,
-        resolveURL: @Sendable (String) -> URL?,
-        resolveSourceSize: @Sendable (String) -> CGSize? = { _ in nil },
-        renderSize: CGSize
+        resolveURL: @escaping @Sendable (String) -> URL?,
+        resolveSourceSize: @escaping @Sendable (String) -> CGSize? = { _ in nil },
+        renderSize: CGSize,
+        makeAsset: @escaping @Sendable (URL) -> AVURLAsset = { AVURLAsset(url: $0) },
+        loadTracks: @escaping @Sendable (AVURLAsset, AVMediaType) async throws -> [AVAssetTrack] = {
+            try await $0.loadTracks(withMediaType: $1)
+        }
     ) async throws -> CompositionResult {
         Log.preview.info("build fps=\(timeline.fps) size=\(timeline.width)x\(timeline.height) tracks=\(timeline.tracks.count)")
         guard timeline.fps > 0, timeline.width > 0, timeline.height > 0 else {
@@ -49,6 +53,13 @@ enum CompositionBuilder {
         var clipTransforms: [String: CGAffineTransform] = [:]
         var offlineMediaRefs: Set<String> = []
         var unprocessableMediaRefs: Set<String> = []
+        let sourcePool = SourcePool(
+            resolveURL: resolveURL,
+            resolveSourceSize: resolveSourceSize,
+            renderSize: renderSize,
+            makeAsset: makeAsset,
+            loadTracks: loadTracks
+        )
 
         for (trackIdx, track) in timeline.tracks.enumerated() {
             // Text has immutable raster sources in compositor instructions, not AV tracks.
@@ -66,13 +77,7 @@ enum CompositionBuilder {
 
                 for clip in sortedClips {
                     let source: (asset: AVURLAsset, track: AVAssetTrack)
-                    switch try await loadSource(
-                        clip: clip,
-                        mediaType: mediaType,
-                        resolveURL: resolveURL,
-                        resolveSourceSize: resolveSourceSize,
-                        renderSize: renderSize
-                    ) {
+                    switch try await sourcePool.loadSource(for: clip, mediaType: mediaType) {
                     case .loaded(let asset, let track): source = (asset, track)
                     case .offline: offlineMediaRefs.insert(clip.mediaRef); continue
                     case .unprocessable: unprocessableMediaRefs.insert(clip.mediaRef); continue
@@ -151,13 +156,7 @@ enum CompositionBuilder {
             for clip in sortedClips {
                 guard clip.durationFrames > 0, clip.startFrame >= previousEndFrame else { continue }
                 let source: (asset: AVURLAsset, track: AVAssetTrack)
-                switch try await loadSource(
-                    clip: clip,
-                    mediaType: mediaType,
-                    resolveURL: resolveURL,
-                    resolveSourceSize: resolveSourceSize,
-                    renderSize: renderSize
-                ) {
+                switch try await sourcePool.loadSource(for: clip, mediaType: mediaType) {
                 case .loaded(let asset, let track): source = (asset, track)
                 case .offline: offlineMediaRefs.insert(clip.mediaRef); continue
                 case .unprocessable: unprocessableMediaRefs.insert(clip.mediaRef); continue
@@ -242,59 +241,194 @@ enum CompositionBuilder {
         case unprocessable
     }
 
-    private static func loadSource(
-        clip: Clip,
-        mediaType: AVMediaType,
-        resolveURL: @Sendable (String) -> URL?,
-        resolveSourceSize: @Sendable (String) -> CGSize?,
-        renderSize: CGSize
-    ) async throws -> LoadOutcome {
-        let mediaURL: URL
-        guard let resolved = resolveURL(clip.mediaRef) else { return .offline }
-        // A failed generation on a present file is unprocessable; on a missing file it's offline.
-        let sourceExists = FileManager.default.fileExists(atPath: resolved.path)
-        if clip.mediaType == .image {
-            let imageSize = resolveSourceSize(clip.mediaRef)
-                ?? ImageVideoGenerator.imageNativeSize(url: resolved)
-                ?? renderSize
-            do {
-                mediaURL = try await ImageVideoGenerator.stillVideo(
-                    for: resolved,
-                    mediaRef: clip.mediaRef,
-                    size: imageSize
-                )
-            } catch {
-                Log.preview.error("stillVideo failed mediaRef=\(clip.mediaRef) size=\(Int(imageSize.width))x\(Int(imageSize.height)): \(Log.detail(error))")
-                return sourceExists ? .unprocessable : .offline
-            }
-        } else if clip.mediaType == .lottie {
-            let lottieSize = resolveSourceSize(clip.mediaRef) ?? renderSize
-            do {
-                mediaURL = try await LottieVideoGenerator.lottieVideo(
-                    for: resolved,
-                    mediaRef: clip.mediaRef,
-                    size: lottieSize
-                )
-            } catch {
-                Log.preview.error("lottieVideo failed mediaRef=\(clip.mediaRef) size=\(Int(lottieSize.width))x\(Int(lottieSize.height)): \(Log.detail(error))")
-                return sourceExists ? .unprocessable : .offline
-            }
-        } else if mediaType == .video {
-            mediaURL = (try? await AlphaVideoNormalizer.premultipliedVideo(for: resolved, mediaRef: clip.mediaRef)) ?? resolved
-        } else {
-            mediaURL = resolved
+    private struct TrackLoadKey: Hashable {
+        let url: URL
+        let mediaType: String
+
+        init(url: URL, mediaType: AVMediaType) {
+            self.url = url
+            self.mediaType = mediaType.rawValue
+        }
+    }
+
+    private struct SourceLoadKey: Hashable {
+        let url: URL
+        let clipType: String
+        let mediaType: String
+        let width: Double?
+        let height: Double?
+
+        init(url: URL, clipType: ClipType, mediaType: AVMediaType, size: CGSize?) {
+            self.url = url
+            self.clipType = clipType.rawValue
+            self.mediaType = mediaType.rawValue
+            self.width = size.map { Double($0.width) }
+            self.height = size.map { Double($0.height) }
+        }
+    }
+
+    private final class SourcePool {
+        let resolveURL: @Sendable (String) -> URL?
+        let resolveSourceSize: @Sendable (String) -> CGSize?
+        let renderSize: CGSize
+        let makeAsset: @Sendable (URL) -> AVURLAsset
+        let loadTracks: @Sendable (AVURLAsset, AVMediaType) async throws -> [AVAssetTrack]
+        var assetsByURL: [URL: AVURLAsset] = [:]
+        var trackLoadOutcomes: [TrackLoadKey: LoadOutcome] = [:]
+        var sourceLoadOutcomes: [SourceLoadKey: LoadOutcome] = [:]
+        var normalizedVideoURLs: [URL: URL] = [:]
+
+        init(
+            resolveURL: @escaping @Sendable (String) -> URL?,
+            resolveSourceSize: @escaping @Sendable (String) -> CGSize?,
+            renderSize: CGSize,
+            makeAsset: @escaping @Sendable (URL) -> AVURLAsset,
+            loadTracks: @escaping @Sendable (AVURLAsset, AVMediaType) async throws -> [AVAssetTrack]
+        ) {
+            self.resolveURL = resolveURL
+            self.resolveSourceSize = resolveSourceSize
+            self.renderSize = renderSize
+            self.makeAsset = makeAsset
+            self.loadTracks = loadTracks
         }
 
-        guard !Task.isCancelled else { throw CancellationError() }
-        let sourceAsset = AVURLAsset(url: mediaURL)
-        do {
-            guard let sourceTrack = try await sourceAsset.loadTracks(withMediaType: mediaType).first else {
-                return .offline
+        func loadSource(for clip: Clip, mediaType: AVMediaType) async throws -> LoadOutcome {
+            try Task.checkCancellation()
+            guard let resolvedURL = resolveURL(clip.mediaRef) else { return .offline }
+            let sourceURL = Self.canonicalURL(resolvedURL)
+            let generatedSize: CGSize?
+            if clip.mediaType == .image {
+                generatedSize = resolveSourceSize(clip.mediaRef)
+                    ?? ImageVideoGenerator.imageNativeSize(url: sourceURL)
+                    ?? renderSize
+            } else if clip.mediaType == .lottie {
+                generatedSize = resolveSourceSize(clip.mediaRef) ?? renderSize
+            } else {
+                generatedSize = nil
             }
-            return .loaded(asset: sourceAsset, track: sourceTrack)
-        } catch {
-            Log.preview.error("loadTracks failed — skipping clip. clipId=\(clip.id) mediaRef=\(clip.mediaRef): \(error.localizedDescription)")
-            return .offline
+            let key = SourceLoadKey(
+                url: sourceURL,
+                clipType: clip.mediaType,
+                mediaType: mediaType,
+                size: generatedSize
+            )
+            if let outcome = sourceLoadOutcomes[key] { return outcome }
+            let outcome = try await prepareSource(
+                for: clip,
+                sourceURL: sourceURL,
+                generatedSize: generatedSize,
+                mediaType: mediaType
+            )
+            sourceLoadOutcomes[key] = outcome
+            return outcome
+        }
+
+        private func prepareSource(
+            for clip: Clip,
+            sourceURL: URL,
+            generatedSize: CGSize?,
+            mediaType: AVMediaType
+        ) async throws -> LoadOutcome {
+            let sourceExists = FileManager.default.fileExists(atPath: sourceURL.path)
+            let mediaURL: URL
+            if clip.mediaType == .image {
+                let imageSize = generatedSize ?? renderSize
+                do {
+                    mediaURL = try await ImageVideoGenerator.stillVideo(
+                        for: sourceURL,
+                        mediaRef: clip.mediaRef,
+                        size: imageSize
+                    )
+                } catch {
+                    Log.preview.error("stillVideo failed mediaRef=\(clip.mediaRef) size=\(Int(imageSize.width))x\(Int(imageSize.height)): \(Log.detail(error))")
+                    return sourceExists ? .unprocessable : .offline
+                }
+            } else if clip.mediaType == .lottie {
+                let lottieSize = generatedSize ?? renderSize
+                do {
+                    mediaURL = try await LottieVideoGenerator.lottieVideo(
+                        for: sourceURL,
+                        mediaRef: clip.mediaRef,
+                        size: lottieSize
+                    )
+                } catch {
+                    Log.preview.error("lottieVideo failed mediaRef=\(clip.mediaRef) size=\(Int(lottieSize.width))x\(Int(lottieSize.height)): \(Log.detail(error))")
+                    return sourceExists ? .unprocessable : .offline
+                }
+            } else if mediaType == .video {
+                return try await loadVideo(at: sourceURL, clip: clip)
+            } else {
+                mediaURL = sourceURL
+            }
+            return try await loadTrack(at: mediaURL, mediaType: mediaType, clip: clip)
+        }
+
+        private func loadVideo(at url: URL, clip: Clip) async throws -> LoadOutcome {
+            let sourceURL = Self.canonicalURL(url)
+            let source = try await loadTrack(at: sourceURL, mediaType: .video, clip: clip)
+            guard case .loaded(let asset, let track) = source else { return source }
+            if let normalizedURL = normalizedVideoURLs[sourceURL] {
+                guard normalizedURL != sourceURL else { return source }
+                return try await loadTrack(at: normalizedURL, mediaType: .video, clip: clip)
+            }
+
+            let normalizedURL: URL
+            do {
+                normalizedURL = Self.canonicalURL(
+                    try await AlphaVideoNormalizer.premultipliedVideo(
+                        for: sourceURL,
+                        mediaRef: clip.mediaRef,
+                        asset: asset,
+                        track: track
+                    ) ?? sourceURL
+                )
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                normalizedURL = sourceURL
+            }
+            try Task.checkCancellation()
+            normalizedVideoURLs[sourceURL] = normalizedURL
+            guard normalizedURL != sourceURL else { return source }
+            return try await loadTrack(at: normalizedURL, mediaType: .video, clip: clip)
+        }
+
+        private func loadTrack(
+            at url: URL,
+            mediaType: AVMediaType,
+            clip: Clip
+        ) async throws -> LoadOutcome {
+            try Task.checkCancellation()
+            let key = TrackLoadKey(url: Self.canonicalURL(url), mediaType: mediaType)
+            if let outcome = trackLoadOutcomes[key] { return outcome }
+            let asset = sourceAsset(for: key.url)
+            let outcome: LoadOutcome
+            do {
+                if let track = try await loadTracks(asset, mediaType).first {
+                    outcome = .loaded(asset: asset, track: track)
+                } else {
+                    outcome = .offline
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                Log.preview.error("loadTracks failed — skipping source. clipId=\(clip.id) mediaRef=\(clip.mediaRef): \(error.localizedDescription)")
+                outcome = .offline
+            }
+            trackLoadOutcomes[key] = outcome
+            return outcome
+        }
+
+        private func sourceAsset(for url: URL) -> AVURLAsset {
+            if let asset = assetsByURL[url] { return asset }
+            let asset = makeAsset(url)
+            assetsByURL[url] = asset
+            return asset
+        }
+
+        private static func canonicalURL(_ url: URL) -> URL {
+            guard url.isFileURL else { return url.absoluteURL }
+            return url.standardizedFileURL.resolvingSymlinksInPath()
         }
     }
 
