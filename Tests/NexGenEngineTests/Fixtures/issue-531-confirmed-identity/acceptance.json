@@ -1,0 +1,15 @@
+{
+  "schema": "issue-531-confirmed-identity/v1",
+  "project": "demo",
+  "role": "character",
+  "identity_name": "Mouse",
+  "identity_slug": "mouse",
+  "source_path": "import/characters/mouse/face.png",
+  "target_paths": [
+    "bible/refs/mouse/face.png",
+    "bible/refs/mouse/profile.png"
+  ],
+  "production_design_target": "production_design/refs/mouse/face.png",
+  "source_bytes": "confirmed-face-v1",
+  "replacement_bytes": "changed-after-confirmation"
+}

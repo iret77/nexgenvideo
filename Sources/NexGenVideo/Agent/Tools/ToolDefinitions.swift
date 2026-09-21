@@ -81,6 +81,8 @@ enum ToolName: String, CaseIterable, Sendable {
     case runProviderTool = "run_provider_tool"
     case listProjectFiles = "list_project_files"
     case copyProjectFile = "copy_project_file"
+    case recoverConfirmedIdentityProvenance =
+        "recover_confirmed_identity_provenance"
     case writeAnalysisInterpretation = "write_analysis_interpretation"
     case writeBrief = "write_brief"
     case writeProductionDesign = "write_production_design"
@@ -98,6 +100,7 @@ enum ToolName: String, CaseIterable, Sendable {
              .initProject, .rewind, .runPhase, .recordRender, .recordAffect, .saveFrameAudit,
              .setLedgerAttribute, .lockLedgerAttribute, .removeLedgerAttribute,
              .attachSong, .copyProjectFile, .extractScene3dPovs, .writeBrief,
+             .recoverConfirmedIdentityProvenance,
              .writeAnalysisInterpretation,
              .writeProductionDesign, .writeTreatment, .writeStoryboard, .writeBible,
              .writeShotlist, .writePhaseExtension, .cropToAspect, .assembleTimeline, .runSanity:
@@ -1323,7 +1326,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .copyProjectFile,
-            description: "Stage one image asset for Production Design or Bible use (copy, never move). WRITES. Pass exactly one source: `from` for an uploaded image under `import/`, or `media` for a ready image asset returned by get_media/generate_image. Destinations are limited to `production_design/refs/`, `production_design/lighting_anchor.png`, or image paths under `bible/`; canonical YAML/JSON artifacts are refused. Generated media receives an exact hash, compiled prompt, and model in the scope's provenance sidecar. Returns `{from, media, to, generated_provenance}`.",
+            description: "Stage one image asset for Production Design or Bible use (copy, never move). WRITES. Pass exactly one source: `from` for an uploaded image under `import/`, or `media` for a ready image asset returned by get_media/generate_image. Destinations are limited to `production_design/refs/`, `production_design/lighting_anchor.png`, or image paths under `bible/`; canonical YAML/JSON artifacts are refused. Generated media receives an exact hash, compiled prompt, and model in the scope's provenance sidecar. A current confirmed identity copied into Bible retains its original confirmation and records a separate exact source/target hash proof. Returns `{from, media, to, generated_provenance, confirmed_identity_provenance}`.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,
@@ -1332,6 +1335,13 @@ enum ToolDefinitions {
                     "to": ["type": "string", "description": "Destination path, data-root-relative (e.g. 'bible/refs/mouse/face.png')."],
                 ],
                 required: ["to"]
+            )
+        ),
+        AgentTool(
+            name: .recoverConfirmedIdentityProvenance,
+            description: "Explicitly recover the legacy mixed confirmed-identity provenance reported by get_project_state.confirmed_identity_recovery. WRITES. Call only when that object reports `eligible: true` and `action: recover_confirmed_identity_provenance`. The transaction separates creative intake from Bible staging proofs, preserves valid exact source/target hashes, audits and discards altered or symlinked proof claims, and never changes gates or lineage approvals.",
+            inputSchema: objectSchema(
+                properties: ["project_dir": projectDirProperty]
             )
         ),
         AgentTool(

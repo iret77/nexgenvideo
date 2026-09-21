@@ -694,27 +694,8 @@ extension ToolExecutor {
                 throw ToolError("Source not found or not a regular file: '\(fromRel!)'.")
             }
         }
-        do {
-            try FileManager.default.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
-            if from.standardizedFileURL != to.standardizedFileURL {
-                if FileManager.default.fileExists(atPath: to.path) { try FileManager.default.removeItem(at: to) }
-                try FileManager.default.copyItem(at: from, to: to)
-            }
-        } catch {
-            throw ToolError(
-                "Couldn't copy '\(fromRel ?? mediaID ?? "?")' → '\(toRel)': "
-                    + error.localizedDescription
-            )
-        }
-        let proofRecorded = try updatePipelineAssetProof(
-            sourceAsset: sourceAsset,
-            sourceRelativePath: fromRel,
-            destinationRelativePath: toRel,
-            destinationURL: to,
-            dataRoot: root
-        )
-        let confirmedIdentityProvenance = if let fromRel {
-            try ConfirmedIdentityAssetStoreV1.adopt(
+        let carriesConfirmedIdentity = if let fromRel {
+            try ConfirmedIdentityAssetStoreV1.prepareAdoption(
                 from: fromRel,
                 to: toRel,
                 dataRoot: root
@@ -722,12 +703,138 @@ extension ToolExecutor {
         } else {
             false
         }
+        if carriesConfirmedIdentity {
+            let declaration = try mutationPackDeclaration(editor, dataRoot: root)
+            try ConfirmedIdentityProvenanceRecovery.requireCompatibleBinding(
+                declaration.binding
+            )
+        }
+        let scope = toRel.hasPrefix("production_design/")
+            ? "production_design"
+            : "bible"
+        var transactionPaths = [
+            to,
+            PipelineLayout.url(
+                PipelineLayout.assetProofFile(scope: scope),
+                in: root
+            ),
+        ]
+        if scope == "bible" {
+            transactionPaths.append(PipelineLayout.url(
+                PipelineLayout.confirmedIdentityAdoptionsFile,
+                in: root
+            ))
+        }
+        var proofRecorded = false
+        var confirmedIdentityProvenance = false
+        do {
+            try ArtifactTransaction.perform(
+                paths: transactionPaths,
+                dataRoot: root
+            ) {
+                try FileManager.default.createDirectory(
+                    at: to.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                if from.standardizedFileURL != to.standardizedFileURL {
+                    if FileManager.default.fileExists(atPath: to.path) {
+                        try FileManager.default.removeItem(at: to)
+                    }
+                    try FileManager.default.copyItem(at: from, to: to)
+                }
+                proofRecorded = try updatePipelineAssetProof(
+                    sourceAsset: sourceAsset,
+                    sourceRelativePath: fromRel,
+                    destinationRelativePath: toRel,
+                    destinationURL: to,
+                    dataRoot: root
+                )
+                if carriesConfirmedIdentity, let fromRel {
+                    confirmedIdentityProvenance = try ConfirmedIdentityAssetStoreV1
+                        .adopt(
+                            from: fromRel,
+                            to: toRel,
+                            dataRoot: root
+                        )
+                    guard confirmedIdentityProvenance else {
+                        throw ToolError(
+                            "The staged Bible reference no longer matches its confirmed source."
+                        )
+                    }
+                } else if scope == "bible" {
+                    _ = try ConfirmedIdentityAssetStoreV1.removeAdoption(
+                        at: toRel,
+                        dataRoot: root
+                    )
+                }
+            }
+        } catch {
+            throw ToolError(
+                "Couldn't copy '\(fromRel ?? mediaID ?? "?")' → '\(toRel)': "
+                    + error.localizedDescription
+            )
+        }
         return try jsonResult([
             "from": fromRel.map { $0 as Any } ?? NSNull(),
             "media": mediaID.map { $0 as Any } ?? NSNull(),
             "to": toRel,
             "generated_provenance": proofRecorded,
             "confirmed_identity_provenance": confirmedIdentityProvenance,
+        ])
+    }
+
+    func recoverConfirmedIdentityProvenanceTool(
+        _ editor: EditorViewModel,
+        _ args: [String: Any]
+    ) throws -> ToolResult {
+        let root = try resolveDataRoot(args, editor: editor)
+        let declaration = try mutationPackDeclaration(editor, dataRoot: root)
+        try ConfirmedIdentityProvenanceRecovery.requireCompatibleBinding(
+            declaration.binding
+        )
+        guard let status = ConfirmedIdentityProvenanceRecovery.status(
+            dataRoot: root
+        ) else {
+            throw ToolError(
+                "No legacy confirmed-identity provenance needs recovery."
+            )
+        }
+        guard status.eligible else {
+            throw ToolError(
+                status.blocker
+                    ?? "Confirmed-identity provenance is not recoverable."
+            )
+        }
+        let mutationID = try reservePipelineMutation(
+            label: "Recover identity-reference provenance",
+            dataRoot: root,
+            editor: editor
+        )
+        defer {
+            editor.pipelinePhaseRunCoordinator.endMutation(
+                projectRoot: root,
+                id: mutationID
+            )
+        }
+        _ = try ProjectPackGate.requireLiveMutation(
+            projectURL: FrameInventory.projectHome(of: root),
+            declaredPack: declaration.packName,
+            declaredBinding: declaration.binding
+        )
+        guard let result = try ConfirmedIdentityAssetStoreV1
+            .recoverLegacyAdoptions(dataRoot: root) else {
+            throw ToolError(
+                "No legacy confirmed-identity provenance needs recovery."
+            )
+        }
+        return try jsonResult([
+            "recovered_targets": result.recoveredTargets,
+            "discarded_non_bible_targets": result.discardedNonBibleTargets,
+            "discarded_stale_targets": result.discardedStaleTargets,
+            "legacy_manifest_sha256": result.legacyManifestSHA256,
+            "recovered_manifest_sha256": result.recoveredManifestSHA256,
+            "receipt_id": result.receiptID,
+            "gates_changed": false,
         ])
     }
 

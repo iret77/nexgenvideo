@@ -168,6 +168,9 @@ struct PipelinePanelView: View {
                     if let gateError {
                         gateErrorBanner(gateError)
                     }
+                    if let recovery = data.confirmedIdentityRecovery {
+                        confirmedIdentityRecoveryCard(recovery)
+                    }
                     if data.phases.isEmpty {
                         CockpitStateView.empty(icon: "list.bullet.rectangle", title: "No phases",
                                                message: "This project has no defined phases.")
@@ -327,15 +330,109 @@ struct PipelinePanelView: View {
 
     private func summaryHeader(_ data: ProjectStateData) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-            Text(data.isComplete ? "All phases complete" : "\(data.phases.filter(\.approved).count) of \(data.phases.count) phases approved")
+            Text(data.isComplete ? "All phases complete" : "\(data.currentApprovalCount) of \(data.phases.count) approvals current")
                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(AppTheme.Text.primaryColor)
             ProgressView(value: data.progress)
                 .tint(AppTheme.Status.successColor)
-                .accessibilityLabel("Approved phases")
-                .accessibilityValue("\(data.phases.filter(\.approved).count) of \(data.phases.count)")
+                .accessibilityLabel("Current phase approvals")
+                .accessibilityValue("\(data.currentApprovalCount) of \(data.phases.count)")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func confirmedIdentityRecoveryCard(
+        _ recovery: ConfirmedIdentityRecoveryData
+    ) -> some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+            Label(
+                "Recover identity references",
+                systemImage: "exclamationmark.triangle.fill"
+            )
+            .interfaceFont(
+                size: AppTheme.Typography.ui,
+                weight: AppTheme.FontWeight.semibold
+            )
+            .foregroundStyle(AppTheme.Status.warningColor)
+            Text(
+                "Legacy staging records changed upstream lineage. Recovery separates valid exact-hash proofs from confirmed intake and audits rejected references."
+            )
+            .interfaceFont(size: AppTheme.Typography.ui)
+            .foregroundStyle(AppTheme.Text.secondaryColor)
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                ForEach(recovery.affectedTargets, id: \.self) { path in
+                    Text(path)
+                        .interfaceFont(size: AppTheme.Typography.metadata)
+                        .monospaced()
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                        .textSelection(.enabled)
+                }
+            }
+            if !recovery.discardedTargets.isEmpty {
+                Text("Altered or unsupported proofs to discard")
+                    .interfaceFont(
+                        size: AppTheme.Typography.metadata,
+                        weight: AppTheme.FontWeight.semibold
+                    )
+                    .foregroundStyle(AppTheme.Status.warningColor)
+                ForEach(recovery.discardedTargets, id: \.self) { path in
+                    Text(path)
+                        .interfaceFont(size: AppTheme.Typography.metadata)
+                        .monospaced()
+                        .foregroundStyle(AppTheme.Status.warningColor)
+                        .textSelection(.enabled)
+                }
+            }
+            if let blocker = recovery.blocker {
+                Text(blocker)
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .foregroundStyle(AppTheme.Status.errorColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Button("Recover provenance") {
+                apply(
+                    failureMessage: "Couldn't recover identity-reference provenance."
+                ) { project in
+                    _ = try await ConfirmedIdentityProvenanceRecovery.recover(
+                        editor: editor,
+                        projectDir: project
+                    )
+                }
+            }
+            .buttonStyle(.inlineAction(.approval))
+            .disabled(
+                !recovery.eligible || gateWriting || runningPhase != nil
+            )
+            .help(
+                recovery.eligible
+                    ? "Separate legacy staging proofs without changing gate states"
+                    : "Resolve the reported blocker before recovery"
+            )
+            Text(
+                "Recovery does not reapprove phases. Real upstream edits still require Rewind."
+            )
+            .interfaceFont(size: AppTheme.Typography.metadata)
+            .foregroundStyle(AppTheme.Text.mutedColor)
+        }
+        .padding(AppTheme.Spacing.mdLg)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.md)
+                .fill(
+                    AppTheme.Status.warningColor.opacity(
+                        AppTheme.Opacity.faint
+                    )
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.md)
+                .strokeBorder(
+                    AppTheme.Status.warningColor.opacity(
+                        AppTheme.Opacity.muted
+                    ),
+                    lineWidth: AppTheme.BorderWidth.hairline
+                )
+        )
     }
 
     @ViewBuilder
@@ -675,21 +772,27 @@ struct PipelinePanelView: View {
 
     private func phaseStatus(_ phase: ProjectPhase, isRunning: Bool, awaitingApproval: Bool) -> some View {
         let label = isRunning ? "In progress"
-            : phase.approved ? "Approved"
+            : phase.approvalCurrent ? "Approved"
+            : phase.approved ? "Approval outdated"
             : phase.state == "needs_revision" ? "Needs revision"
             : awaitingApproval ? "In progress" : "Not started"
         let symbol = isRunning ? "circle.dotted.circle"
-            : phase.approved ? "checkmark.circle.fill"
+            : phase.approvalCurrent ? "checkmark.circle.fill"
+            : phase.approved ? "exclamationmark.triangle.fill"
             : phase.state == "needs_revision" ? "exclamationmark.triangle.fill"
             : awaitingApproval ? "circle.dotted.circle" : "circle"
         let color = isRunning ? editor.projectPalette.accent
-            : phase.approved ? AppTheme.Status.successColor
+            : phase.approvalCurrent ? AppTheme.Status.successColor
+            : phase.approved ? AppTheme.Status.warningColor
             : phase.state == "needs_revision" ? AppTheme.Status.errorColor : AppTheme.Text.mutedColor
+        let help = phase.approved && !phase.approvalCurrent
+            ? "Approval outdated. Recover reported identity provenance or rewind to this phase."
+            : phase.notes.map { "\(label): \($0)" } ?? label
         return Image(systemName: symbol)
             .interfaceFont(size: AppTheme.Typography.ui)
             .foregroundStyle(color)
             .accessibilityLabel(label)
-            .help(phase.notes.map { "\(label): \($0)" } ?? label)
+            .help(help)
     }
 
     private func centeredProgress() -> some View {

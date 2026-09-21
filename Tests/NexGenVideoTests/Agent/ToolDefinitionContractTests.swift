@@ -464,6 +464,7 @@ struct ToolDefinitionContractTests {
             .initProject, .rewind, .runPhase, .recordRender, .recordAffect, .saveFrameAudit,
             .setLedgerAttribute, .lockLedgerAttribute, .removeLedgerAttribute,
             .attachSong, .copyProjectFile, .extractScene3dPovs,
+            .recoverConfirmedIdentityProvenance,
             .writeAnalysisInterpretation, .writeBrief, .writeProductionDesign,
             .writeTreatment, .writeStoryboard, .writeBible, .writeShotlist,
             .writePhaseExtension, .nextRenderShot,

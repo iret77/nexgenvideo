@@ -189,7 +189,8 @@ reference on every sheet generation.
   demanded canonical view, copy it with
   `copy_project_file(from: "import/characters/<id>/<name>",
   to: "bible/<id>/<view>.png")` and put it in `sheets`; the copy preserves the
-  confirmation receipt. Other selected images remain supporting
+  original confirmation unchanged and records a separate exact source/target
+  adoption proof. Other selected images remain supporting
   `reference_images` under `bible/refs/`.
 - If there are no user refs: skip — the `sheets` must provide the
   anchor.

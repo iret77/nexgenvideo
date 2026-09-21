@@ -5,6 +5,13 @@ import NexGenEngine
 // function returns raw JSON bytes in the former Python read CLI shape, extended where the native host
 // owns authoritative state such as the generation money journal.
 enum NativeCockpitReader {
+    private static let approvalEvidenceDigests =
+        FileDigestReadinessCache()
+
+    struct PhaseApprovalEvidence: Sendable, Equatable {
+        let current: Bool
+        let blocker: String?
+    }
 
     /// True for the kinds served natively — which, after M7, is every cockpit read kind. Retained as
     /// the CockpitDataService entry gate; there is no non-native path.
@@ -214,10 +221,24 @@ enum NativeCockpitReader {
             Brief.self,
             at: PipelineLayout.briefFile
         )
+        let approvalEvidence = FileDigest.$readinessCache.withValue(
+            approvalEvidenceDigests
+        ) {
+            phaseApprovalEvidence(
+                snapshot,
+                dataRoot: dataRoot,
+                activePack: activePack
+            )
+        }
+        let recovery = ConfirmedIdentityProvenanceRecovery.status(
+            dataRoot: dataRoot
+        )
         return try serialize(stateDictionary(
             snapshot,
             spend: spend,
-            budgetStopEur: brief?.budgetStopEur
+            budgetStopEur: brief?.budgetStopEur,
+            approvalEvidence: approvalEvidence,
+            confirmedIdentityRecovery: recovery
         ))
     }
 
@@ -225,12 +246,19 @@ enum NativeCockpitReader {
     static func stateDictionary(
         _ s: ProjectStateBuilder.ProjectState,
         spend: ProjectSpendSnapshot,
-        budgetStopEur: Double?
+        budgetStopEur: Double?,
+        approvalEvidence: [String: PhaseApprovalEvidence] = [:],
+        confirmedIdentityRecovery:
+            ConfirmedIdentityProvenanceRecoveryStatus? = nil
     ) -> [String: Any] {
         let phases: [[String: Any]] = s.phases.map { p in
-            [
+            let evidence = approvalEvidence[p.phase]
+            return [
                 "phase": p.phase,
                 "approved": p.approved,
+                "approval_current": evidence?.current ?? p.approved,
+                "approval_blocker": evidence?.blocker.map { $0 as Any }
+                    ?? NSNull(),
                 "state": p.state.rawValue,
                 "notes": p.notes.map { $0 as Any } ?? NSNull(),
             ]
@@ -244,7 +272,7 @@ enum NativeCockpitReader {
         } else {
             stopRemaining = NSNull()
         }
-        return [
+        var state: [String: Any] = [
             "project": s.project,
             "mode": s.mode,
             "budget_eur": s.budgetEur,
@@ -260,6 +288,87 @@ enum NativeCockpitReader {
             "phases": phases,
             "next_phase": s.nextPhase.map { $0 as Any } ?? NSNull(),
         ]
+        if let confirmedIdentityRecovery {
+            state["confirmed_identity_recovery"] = [
+                "affected_targets": confirmedIdentityRecovery.affectedTargets,
+                "discarded_targets": confirmedIdentityRecovery.discardedTargets,
+                "eligible": confirmedIdentityRecovery.eligible,
+                "blocker": confirmedIdentityRecovery.blocker.map {
+                    $0 as Any
+                } ?? NSNull(),
+                "action": ConfirmedIdentityProvenanceRecoveryStatus.action,
+            ]
+        }
+        return state
+    }
+
+    static func phaseApprovalEvidence(
+        _ snapshot: ProjectStateBuilder.ProjectState,
+        dataRoot: URL,
+        activePack: String?
+    ) -> [String: PhaseApprovalEvidence] {
+        let registry = PackCatalog.registry(activePack: activePack)
+        let wiringBlocker: String? = {
+            do {
+                try GateGuard.requireWiredPack(
+                    declared: activePack,
+                    resolved: activePack,
+                    registry: registry
+                )
+                return nil
+            } catch {
+                return error.localizedDescription
+            }
+        }()
+        var priorEvidenceIsCurrent = true
+        var result: [String: PhaseApprovalEvidence] = [:]
+        for phase in snapshot.phases {
+            guard phase.approved else {
+                result[phase.phase] = PhaseApprovalEvidence(
+                    current: false,
+                    blocker: nil
+                )
+                priorEvidenceIsCurrent = false
+                continue
+            }
+            if let wiringBlocker {
+                result[phase.phase] = PhaseApprovalEvidence(
+                    current: false,
+                    blocker: wiringBlocker
+                )
+                priorEvidenceIsCurrent = false
+                continue
+            }
+            guard priorEvidenceIsCurrent else {
+                result[phase.phase] = PhaseApprovalEvidence(
+                    current: false,
+                    blocker: "An earlier phase approval is no longer current."
+                )
+                continue
+            }
+            do {
+                try PipelineGateEvidenceValidator.requireCurrent(
+                    phase: phase.phase,
+                    dataRoot: dataRoot,
+                    requirement: try PhaseContractRuntime.gateRequirement(
+                        activePack: activePack,
+                        phase: phase.phase,
+                        registry: registry
+                    )
+                )
+                result[phase.phase] = PhaseApprovalEvidence(
+                    current: true,
+                    blocker: nil
+                )
+            } catch {
+                result[phase.phase] = PhaseApprovalEvidence(
+                    current: false,
+                    blocker: error.localizedDescription
+                )
+                priorEvidenceIsCurrent = false
+            }
+        }
+        return result
     }
 
     /// `read.py` "brief": the Brief loaded via the engine, re-encoded to the CLI's

@@ -465,6 +465,8 @@ final class ToolExecutor {
         case .showArtifact:         return try showArtifactTool(editor, args)
         case .listProjectFiles:     return try listProjectFilesTool(editor, args)
         case .copyProjectFile:      return try copyProjectFileTool(editor, args)
+        case .recoverConfirmedIdentityProvenance:
+            return try recoverConfirmedIdentityProvenanceTool(editor, args)
         case .runPhase:             return try await runPhaseTool(editor, args)
         case .attachSong:           return try await attachSongTool(editor, args)
         case .nextRenderShot:       return try await nextRenderShotTool(editor, args)
