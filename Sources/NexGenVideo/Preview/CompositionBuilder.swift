@@ -51,6 +51,7 @@ enum CompositionBuilder {
         var unprocessableMediaRefs: Set<String> = []
 
         for (trackIdx, track) in timeline.tracks.enumerated() {
+            if track.type == .audio, track.muted { continue }
             // Text renders via CATextLayer overlay (preview) + animation tool (export) — never as composition tracks.
             let sortedClips = track.clips
                 .sorted { $0.startFrame < $1.startFrame }
