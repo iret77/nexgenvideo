@@ -292,7 +292,7 @@ private struct GenerationReferenceThumbnail: View {
         let bytes = await Task.detached(priority: .utility) { () -> Data? in
             try? Data(contentsOf: url, options: .mappedIfSafe)
         }.value
-        guard !Task.isCancelled, asset?.url == url else { return }
+        guard !Task.isCancelled, self.asset?.url == url else { return }
         loadedImage = bytes.flatMap { NSImage(data: $0) }
     }
 }
