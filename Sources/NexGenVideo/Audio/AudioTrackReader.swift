@@ -25,12 +25,14 @@ enum AudioTrackReader {
         range: ClosedRange<Double>? = nil,
         onBuffer: (AVAudioPCMBuffer) throws -> Void
     ) async throws {
+        var remainingRangeSeconds: Double?
         if let range {
             guard range.lowerBound.isFinite, range.upperBound.isFinite,
                   range.lowerBound >= 0, range.upperBound >= range.lowerBound else {
                 throw ReadError.invalidRange
             }
             if range.lowerBound == range.upperBound { return }
+            remainingRangeSeconds = range.upperBound - range.lowerBound
         }
 
         let asset = AVURLAsset(url: url)
@@ -71,9 +73,27 @@ enum AudioTrackReader {
         while let sample = output.copyNextSampleBuffer() {
             guard let desc = CMSampleBufferGetFormatDescription(sample),
                   let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(desc),
-                  let format = AVAudioFormat(streamDescription: asbd) else { continue }
-            let frames = AVAudioFrameCount(CMSampleBufferGetNumSamples(sample))
-            guard frames > 0, let pcm = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames) else { continue }
+                  let format = AVAudioFormat(streamDescription: asbd) else {
+                throw ReadError.readFailed("Decoded audio has no valid format")
+            }
+            var frames = AVAudioFrameCount(CMSampleBufferGetNumSamples(sample))
+            guard frames > 0 else {
+                throw ReadError.readFailed("Audio reader returned an empty sample buffer")
+            }
+            if let remaining = remainingRangeSeconds {
+                let sampleRate = format.sampleRate
+                guard sampleRate.isFinite, sampleRate > 0 else {
+                    throw ReadError.readFailed("Decoded audio has no valid sample rate")
+                }
+                let requestedFrames = remaining * sampleRate
+                guard requestedFrames.isFinite else { throw ReadError.invalidRange }
+                if requestedFrames < Double(frames) {
+                    frames = AVAudioFrameCount(max(1, Int(requestedFrames.rounded(.up))))
+                }
+            }
+            guard let pcm = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames) else {
+                throw ReadError.readFailed("Could not allocate a decoded audio buffer")
+            }
             pcm.frameLength = frames
             let status = CMSampleBufferCopyPCMDataIntoAudioBufferList(
                 sample, at: 0, frameCount: Int32(frames), into: pcm.mutableAudioBufferList
@@ -82,6 +102,14 @@ enum AudioTrackReader {
                 throw ReadError.readFailed("PCM copy failed (OSStatus \(status))")
             }
             try onBuffer(pcm)
+            if let remaining = remainingRangeSeconds {
+                let nextRemaining = max(0, remaining - Double(frames) / format.sampleRate)
+                remainingRangeSeconds = nextRemaining
+                if nextRemaining == 0 {
+                    reader.cancelReading()
+                    break
+                }
+            }
         }
 
         if reader.status == .failed {
