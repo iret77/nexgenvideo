@@ -156,6 +156,22 @@ struct ToolDefinitionContractTests {
         )
     }
 
+    @Test("every integer argument declares semantic bounds")
+    func integerSchemasAreBounded() {
+        var failures: [String] = []
+        for tool in ToolDefinitions.all {
+            auditIntegerBounds(
+                tool.inputSchema,
+                path: tool.name.rawValue,
+                failures: &failures
+            )
+        }
+        if !failures.isEmpty {
+            Issue.record("Unbounded integer arguments: \(failures.joined(separator: "; "))")
+        }
+        #expect(failures.isEmpty)
+    }
+
     @Test("every generation tool requires the compile-time shot binding")
     func generationSchemasRequireShotBinding() throws {
         for name in [
@@ -600,6 +616,47 @@ struct ToolDefinitionContractTests {
                         path: "\(path).\(keyword).\(key)",
                         dynamicMaps: dynamicMaps,
                         seenDynamicMaps: &seenDynamicMaps,
+                        failures: &failures
+                    )
+                }
+            }
+        }
+    }
+
+    private func auditIntegerBounds(
+        _ schema: [String: Any],
+        path: String,
+        failures: inout [String]
+    ) {
+        if schema["type"] as? String == "integer",
+           schema["const"] == nil,
+           (schema["minimum"] == nil || schema["maximum"] == nil) {
+            failures.append(path)
+        }
+
+        if let properties = schemaProperties(schema["properties"]) {
+            for key in properties.keys.sorted() {
+                guard let child = properties[key] else { continue }
+                auditIntegerBounds(
+                    child,
+                    path: "\(path).\(key)",
+                    failures: &failures
+                )
+            }
+        }
+        if let items = schema["items"] as? [String: Any] {
+            auditIntegerBounds(
+                items,
+                path: "\(path)[]",
+                failures: &failures
+            )
+        }
+        for keyword in ["anyOf", "oneOf", "allOf"] {
+            if let alternatives = schema[keyword] as? [[String: Any]] {
+                for (index, alternative) in alternatives.enumerated() {
+                    auditIntegerBounds(
+                        alternative,
+                        path: "\(path).\(keyword)[\(index)]",
                         failures: &failures
                     )
                 }

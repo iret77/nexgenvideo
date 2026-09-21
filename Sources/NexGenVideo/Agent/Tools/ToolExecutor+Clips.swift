@@ -471,12 +471,32 @@ extension ToolExecutor {
             ? editor.timingPropagationPartners(of: Set(input.clipIds))
             : []
 
+        if let speed = input.speed, input.durationFrames == nil {
+            for id in Set(input.clipIds).union(partners) {
+                guard let location = editor.findClip(id: id) else { continue }
+                let clip = editor.timeline.tracks[location.trackIndex].clips[location.clipIndex]
+                if clip.mediaType == .text && partners.contains(id) { continue }
+                let sourceConsumed = Double(clip.durationFrames) * clip.speed
+                guard let rescaledDuration = ToolIntegerArgument.rounded(
+                    sourceConsumed / speed,
+                    in: 1...ToolIntegerArgument.maximumFrame
+                ), ToolIntegerArgument.rounded(
+                    Double(rescaledDuration) * speed,
+                    in: ToolIntegerArgument.frameBounds
+                ) != nil else {
+                    throw ToolError(
+                        "set_clip_properties.speed: resulting duration is outside the supported frame range"
+                    )
+                }
+            }
+        }
+
         let setActionName = input.clipIds.count == 1 ? "Set Clip Property (Agent)" : "Set Clip Properties (Agent)"
-        let summaries: [String] = withUndoGroup(editor, actionName: setActionName) {
+        let summaries: [String] = try withUndoGroup(editor, actionName: setActionName) {
             var summaries: [String] = []
             for id in input.clipIds {
                 let isText = clipTypes[id] == .text
-                let changed = Self.applyPropertyChanges(
+                let changed = try Self.applyPropertyChanges(
                     durationFrames: input.durationFrames,
                     trimStartFrame: input.trimStartFrame,
                     trimEndFrame: input.trimEndFrame,
@@ -501,7 +521,7 @@ extension ToolExecutor {
             for partnerId in partners {
                 guard let pLoc = editor.findClip(id: partnerId) else { continue }
                 let partnerIsText = editor.timeline.tracks[pLoc.trackIndex].clips[pLoc.clipIndex].mediaType == .text
-                _ = Self.applyPropertyChanges(
+                _ = try Self.applyPropertyChanges(
                     durationFrames: input.durationFrames,
                     trimStartFrame: partnerIsText ? nil : input.trimStartFrame,
                     trimEndFrame:   partnerIsText ? nil : input.trimEndFrame,
@@ -534,7 +554,24 @@ extension ToolExecutor {
         alignment: TextStyle.Alignment?,
         clipId: String,
         editor: EditorViewModel
-    ) -> [String] {
+    ) throws -> [String] {
+        let rescaledDuration: Int?
+        if let speed, durationFrames == nil, speed > 0,
+           let location = editor.findClip(id: clipId) {
+            let clip = editor.timeline.tracks[location.trackIndex].clips[location.clipIndex]
+            let sourceConsumed = Double(clip.durationFrames) * clip.speed
+            guard let value = ToolIntegerArgument.rounded(
+                sourceConsumed / speed,
+                in: 1...ToolIntegerArgument.maximumFrame
+            ) else {
+                throw ToolError(
+                    "set_clip_properties.speed: resulting duration is outside the supported frame range"
+                )
+            }
+            rescaledDuration = value
+        } else {
+            rescaledDuration = nil
+        }
         var changed: [String] = []
         editor.commitClipProperty(clipId: clipId) { clip in
             if let v = durationFrames {
@@ -546,9 +583,8 @@ extension ToolExecutor {
             if let v = trimStartFrame { clip.trimStartFrame = v; changed.append("trimStartFrame") }
             if let v = trimEndFrame   { clip.trimEndFrame   = v; changed.append("trimEndFrame") }
             if let v = speed {
-                if durationFrames == nil, v > 0 {
-                    let sourceConsumed = Double(clip.durationFrames) * clip.speed
-                    clip.durationFrames = max(1, Int((sourceConsumed / v).rounded()))
+                if let rescaledDuration {
+                    clip.durationFrames = rescaledDuration
                     clip.clampKeyframesToDuration()
                     clip.clampFadesToDuration()
                     changed.append("durationFrames")
@@ -601,29 +637,39 @@ extension ToolExecutor {
             throw ToolError("Clip not found: \(input.clipId)")
         }
 
-        try withUndoGroup(editor, actionName: "Set Keyframes (Agent)") {
-            switch input.property {
-            case "volume":
-                let kfs = try Self.parseScalarKeyframes(rows, path: "keyframes")
+        switch input.property {
+        case "volume":
+            let kfs = try Self.parseScalarKeyframes(rows, path: "set_keyframes.keyframes")
+            withUndoGroup(editor, actionName: "Set Keyframes (Agent)") {
                 editor.commitClipProperty(clipId: input.clipId) { $0.volumeTrack = kfs.keyframes.isEmpty ? nil : kfs }
-            case "opacity":
-                let kfs = try Self.parseScalarKeyframes(rows, path: "keyframes")
-                editor.commitClipProperty(clipId: input.clipId) { $0.opacityTrack = kfs.keyframes.isEmpty ? nil : kfs }
-            case "rotation":
-                let kfs = try Self.parseScalarKeyframes(rows, path: "keyframes")
-                editor.commitClipProperty(clipId: input.clipId) { $0.rotationTrack = kfs.keyframes.isEmpty ? nil : kfs }
-            case "position":
-                let kfs = try Self.parsePairKeyframes(rows, path: "keyframes")
-                editor.commitClipProperty(clipId: input.clipId) { $0.positionTrack = kfs.keyframes.isEmpty ? nil : kfs }
-            case "scale":
-                let kfs = try Self.parsePairKeyframes(rows, path: "keyframes")
-                editor.commitClipProperty(clipId: input.clipId) { $0.scaleTrack = kfs.keyframes.isEmpty ? nil : kfs }
-            case "crop":
-                let kfs = try Self.parseCropKeyframes(rows, path: "keyframes")
-                editor.commitClipProperty(clipId: input.clipId) { $0.cropTrack = kfs.keyframes.isEmpty ? nil : kfs }
-            default:
-                break  // unreachable: validated above
             }
+        case "opacity":
+            let kfs = try Self.parseScalarKeyframes(rows, path: "set_keyframes.keyframes")
+            withUndoGroup(editor, actionName: "Set Keyframes (Agent)") {
+                editor.commitClipProperty(clipId: input.clipId) { $0.opacityTrack = kfs.keyframes.isEmpty ? nil : kfs }
+            }
+        case "rotation":
+            let kfs = try Self.parseScalarKeyframes(rows, path: "set_keyframes.keyframes")
+            withUndoGroup(editor, actionName: "Set Keyframes (Agent)") {
+                editor.commitClipProperty(clipId: input.clipId) { $0.rotationTrack = kfs.keyframes.isEmpty ? nil : kfs }
+            }
+        case "position":
+            let kfs = try Self.parsePairKeyframes(rows, path: "set_keyframes.keyframes")
+            withUndoGroup(editor, actionName: "Set Keyframes (Agent)") {
+                editor.commitClipProperty(clipId: input.clipId) { $0.positionTrack = kfs.keyframes.isEmpty ? nil : kfs }
+            }
+        case "scale":
+            let kfs = try Self.parsePairKeyframes(rows, path: "set_keyframes.keyframes")
+            withUndoGroup(editor, actionName: "Set Keyframes (Agent)") {
+                editor.commitClipProperty(clipId: input.clipId) { $0.scaleTrack = kfs.keyframes.isEmpty ? nil : kfs }
+            }
+        case "crop":
+            let kfs = try Self.parseCropKeyframes(rows, path: "set_keyframes.keyframes")
+            withUndoGroup(editor, actionName: "Set Keyframes (Agent)") {
+                editor.commitClipProperty(clipId: input.clipId) { $0.cropTrack = kfs.keyframes.isEmpty ? nil : kfs }
+            }
+        default:
+            break
         }
 
         let action = rows.isEmpty ? "cleared" : "set \(rows.count)"
@@ -687,8 +733,20 @@ extension ToolExecutor {
                     : Double(clip.startFrame) + (v * Double(fps) - Double(clip.trimStartFrame)) / max(clip.speed, 0.0001)
             }
             for r in input.ranges {
-                let s = max(clip.startFrame, min(clip.endFrame, Int(toFrame(r[0]).rounded())))
-                let e = max(clip.startFrame, min(clip.endFrame, Int(toFrame(r[1]).rounded())))
+                guard let rawStart = ToolIntegerArgument.rounded(
+                    toFrame(r[0]),
+                    in: -ToolIntegerArgument.maximumFrame...ToolIntegerArgument.maximumFrame
+                ) else {
+                    throw ToolError("ripple_delete_ranges.ranges: start is outside the supported frame range")
+                }
+                guard let rawEnd = ToolIntegerArgument.rounded(
+                    toFrame(r[1]),
+                    in: -ToolIntegerArgument.maximumFrame...ToolIntegerArgument.maximumFrame
+                ) else {
+                    throw ToolError("ripple_delete_ranges.ranges: end is outside the supported frame range")
+                }
+                let s = max(clip.startFrame, min(clip.endFrame, rawStart))
+                let e = max(clip.startFrame, min(clip.endFrame, rawEnd))
                 if e > s { frameRanges.append(FrameRange(start: s, end: e)) } else { dropped += 1 }
             }
             guard !frameRanges.isEmpty else {
@@ -704,8 +762,18 @@ extension ToolExecutor {
                 throw ToolError("Track index out of range: \(trackIndex)")
             }
             for r in input.ranges {
-                let s = max(0, Int(r[0].rounded()))
-                let e = Int(r[1].rounded())
+                guard let s = ToolIntegerArgument.rounded(
+                    r[0],
+                    in: ToolIntegerArgument.frameBounds
+                ) else {
+                    throw ToolError("ripple_delete_ranges.ranges: start is outside the supported frame range")
+                }
+                guard let e = ToolIntegerArgument.rounded(
+                    r[1],
+                    in: ToolIntegerArgument.frameBounds
+                ) else {
+                    throw ToolError("ripple_delete_ranges.ranges: end is outside the supported frame range")
+                }
                 if e > s { frameRanges.append(FrameRange(start: s, end: e)) } else { dropped += 1 }
             }
             guard !frameRanges.isEmpty else {
@@ -788,10 +856,13 @@ extension ToolExecutor {
     }
 
     private static func kfInt(_ raw: Any, at path: String) throws -> Int {
-        if let v = raw as? Int { return v }
-        if let v = raw as? Double { return Int(v) }
-        if let v = raw as? NSNumber { return v.intValue }
-        throw ToolError("\(path): expected integer")
+        guard let value = ToolIntegerArgument.exact(
+            raw,
+            in: ToolIntegerArgument.frameBounds
+        ) else {
+            throw ToolError("\(path): expected a nonnegative integer in the supported frame range")
+        }
+        return value
     }
 
     private static func kfDouble(_ raw: Any, at path: String) throws -> Double {
@@ -824,9 +895,11 @@ extension ToolExecutor {
         var removed: [[String: Any]] = []
         var ids: [String] = []
         var seen = Set<Int>()
-        for entry in raw {
-            guard let i = (entry as? Int) ?? (entry as? NSNumber)?.intValue else {
-                throw ToolError("remove_tracks: trackIndexes must be integers (got \(entry))")
+        for (position, entry) in raw.enumerated() {
+            guard let i = ToolIntegerArgument.exact(entry, in: 0...Int.max) else {
+                throw ToolError(
+                    "remove_tracks.trackIndexes[\(position)]: expected a nonnegative integer"
+                )
             }
             guard seen.insert(i).inserted else { continue }
             guard editor.timeline.tracks.indices.contains(i) else {

@@ -1,3 +1,4 @@
+import CoreFoundation
 import Foundation
 import NexGenEngine
 
@@ -5,6 +6,58 @@ struct ToolError: LocalizedError, Sendable {
     let message: String
     init(_ message: String) { self.message = message }
     var errorDescription: String? { message }
+}
+
+enum ToolIntegerArgument {
+    static let maximumFrame = Int(Int32.max)
+    static let frameBounds = 0...maximumFrame
+
+    static func exact(
+        _ value: Any,
+        in bounds: ClosedRange<Int> = Int.min...Int.max
+    ) -> Int? {
+        guard type(of: value) != Bool.self else { return nil }
+        if type(of: value) == Int.self, let integer = value as? Int {
+            return bounds.contains(integer) ? integer : nil
+        }
+        if type(of: value) == Double.self, let double = value as? Double {
+            return exact(double, in: bounds)
+        }
+        if let number = value as? NSNumber {
+            guard CFGetTypeID(number as CFTypeRef) != CFBooleanGetTypeID() else {
+                return nil
+            }
+            let numberType = String(cString: number.objCType)
+            if numberType != "f", numberType != "d",
+               let integer = Int(number.stringValue) {
+                return bounds.contains(integer) ? integer : nil
+            }
+            return exact(number.doubleValue, in: bounds)
+        }
+        return nil
+    }
+
+    static func exact(
+        _ value: Double,
+        in bounds: ClosedRange<Int> = Int.min...Int.max
+    ) -> Int? {
+        guard value.isFinite,
+              value.rounded(.towardZero) == value,
+              let integer = Int(exactly: value),
+              bounds.contains(integer) else { return nil }
+        return integer
+    }
+
+    static func rounded(
+        _ value: Double,
+        rule: FloatingPointRoundingRule = .toNearestOrAwayFromZero,
+        in bounds: ClosedRange<Int> = Int.min...Int.max
+    ) -> Int? {
+        guard value.isFinite,
+              let integer = Int(exactly: value.rounded(rule)),
+              bounds.contains(integer) else { return nil }
+        return integer
+    }
 }
 
 /// Shared by the MCP server and the in-app agent.
@@ -648,10 +701,13 @@ private func validateToolInput(
         guard isJSONNumber(value, integerOnly: true) else {
             throw ToolError("\(path): expected integer")
         }
+        guard ToolIntegerArgument.exact(value) != nil else {
+            throw ToolError("\(path): integer is outside the supported range")
+        }
         try validateNumericBounds(value, schema: schema, path: path)
     case "number":
         guard isJSONNumber(value, integerOnly: false) else {
-            if !(value is Bool), let number = value as? NSNumber,
+            if !isJSONBoolean(value), let number = value as? NSNumber,
                !number.doubleValue.isFinite {
                 throw ToolError("\(path): expected finite number")
             }
@@ -659,7 +715,7 @@ private func validateToolInput(
         }
         try validateNumericBounds(value, schema: schema, path: path)
     case "boolean":
-        guard value is Bool else { throw ToolError("\(path): expected boolean") }
+        guard isJSONBoolean(value) else { throw ToolError("\(path): expected boolean") }
     case nil:
         break
     default:
@@ -698,19 +754,25 @@ private func schemaTypeMatches(_ value: Any, type: String?) -> Bool {
     case "object": return value is [String: Any]
     case "array": return value is [Any]
     case "string": return value is String
-    case "integer", "number": return !(value is Bool) && value is NSNumber
-    case "boolean": return value is Bool
+    case "integer", "number": return !isJSONBoolean(value) && value is NSNumber
+    case "boolean": return isJSONBoolean(value)
     case nil: return true
     default: return false
     }
 }
 
 private func isJSONNumber(_ value: Any, integerOnly: Bool) -> Bool {
-    guard !(value is Bool), let number = value as? NSNumber else { return false }
+    guard !isJSONBoolean(value), let number = value as? NSNumber else { return false }
     let double = number.doubleValue
     guard double.isFinite else { return false }
     if !integerOnly { return true }
     return double.isFinite && double.rounded(.towardZero) == double
+}
+
+private func isJSONBoolean(_ value: Any) -> Bool {
+    if type(of: value) == Bool.self { return true }
+    guard let number = value as? NSNumber else { return false }
+    return CFGetTypeID(number as CFTypeRef) == CFBooleanGetTypeID()
 }
 
 private func validateNumericBounds(
@@ -727,6 +789,14 @@ private func validateNumericBounds(
     if let maximum = schema["maximum"] as? NSNumber,
        double > maximum.doubleValue {
         throw ToolError("\(path): expected at most \(maximum)")
+    }
+    if let minimum = schema["exclusiveMinimum"] as? NSNumber,
+       double <= minimum.doubleValue {
+        throw ToolError("\(path): expected more than \(minimum)")
+    }
+    if let maximum = schema["exclusiveMaximum"] as? NSNumber,
+       double >= maximum.doubleValue {
+        throw ToolError("\(path): expected less than \(maximum)")
     }
 }
 
@@ -830,22 +900,26 @@ extension Dictionary where Key == String, Value == Any {
         return nil
     }
     func int(_ key: String) -> Int? {
-        if let v = self[key] as? Int { return v }
-        if let v = self[key] as? Double { return Int(v) }
-        if let v = self[key] as? NSNumber { return v.intValue }
+        if let v = self[key], let integer = ToolIntegerArgument.exact(v) {
+            return integer
+        }
         if let v = self[key] as? String { return Int(v) }
         return nil
     }
     func double(_ key: String) -> Double? {
-        if let v = self[key] as? Double { return v }
-        if let v = self[key] as? Int { return Double(v) }
-        if let v = self[key] as? NSNumber { return v.doubleValue }
-        if let v = self[key] as? String { return Double(v) }
+        let value: Double?
+        if let v = self[key] as? Double { value = v }
+        else if let v = self[key] as? Int { value = Double(v) }
+        else if let v = self[key] as? NSNumber { value = v.doubleValue }
+        else if let v = self[key] as? String { value = Double(v) }
+        else { value = nil }
+        if let value, value.isFinite { return value }
         return nil
     }
     func bool(_ key: String) -> Bool? {
-        if let v = self[key] as? Bool { return v }
-        if let v = self[key] as? NSNumber { return v.boolValue }
+        if let v = self[key], isJSONBoolean(v), let boolean = v as? Bool {
+            return boolean
+        }
         if let v = self[key] as? String { return Bool(v) }
         return nil
     }

@@ -511,9 +511,8 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
     }
 
     private static func intValue(_ any: Any?) -> Int? {
-        if let i = any as? Int { return i }
-        if let d = any as? Double { return Int(d) }
-        return nil
+        guard let any else { return nil }
+        return ToolIntegerArgument.exact(any, in: ToolIntegerArgument.frameBounds)
     }
 }
 

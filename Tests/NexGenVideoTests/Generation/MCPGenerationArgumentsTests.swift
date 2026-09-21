@@ -621,4 +621,37 @@ struct MCPGenerationArgumentsTests {
         let error = MCPProviderClient.ClientError.toolFailed("Invalid params: prompt is required")
         #expect(error.localizedDescription == "Invalid params: prompt is required")
     }
+
+    @Test func malformedProviderArrayBoundsAreRejectedWithoutConversion() {
+        let schema: Value = .object([
+            "properties": .object([
+                "model": .object(["type": .string("string")]),
+                "prompt": .object(["type": .string("string")]),
+                "image_urls": .object([
+                    "type": .string("array"),
+                    "maxItems": .double(.infinity),
+                    "items": .object(["type": .string("string")]),
+                ]),
+            ]),
+            "required": .array([
+                .string("model"), .string("prompt"), .string("image_urls"),
+            ]),
+        ])
+        let params = BackendGenerationParams.image(ImageGenerationParams(
+            prompt: "compiled prompt",
+            aspectRatio: "1:1",
+            resolution: nil,
+            quality: nil,
+            imageURLs: ["media-1"],
+            numImages: 1
+        ))
+
+        #expect(throws: MCPGenerationArguments.MappingError.self) {
+            try MCPGenerationArguments.make(
+                for: params,
+                model: "image-model",
+                schema: schema
+            )
+        }
+    }
 }

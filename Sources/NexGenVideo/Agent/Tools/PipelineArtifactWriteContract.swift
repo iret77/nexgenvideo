@@ -207,7 +207,13 @@ enum PipelineArtifactWriteContract {
         ]
     }
     private static var number: [String: Any] { ["type": "number"] }
-    private static var integer: [String: Any] { ["type": "integer"] }
+    private static var integer: [String: Any] {
+        [
+            "type": "integer",
+            "minimum": 0,
+            "maximum": ToolIntegerArgument.maximumFrame,
+        ]
+    }
     private static var boolean: [String: Any] { ["type": "boolean"] }
     private static var confidence: [String: Any] {
         [
@@ -536,7 +542,7 @@ enum PipelineArtifactWriteContract {
             "entity_state_ids": stringArray,
             "spatial_state": nonEmptyString,
             "frame_boundary": object([
-                "characterCount": ["type": "integer", "minimum": 0],
+                "characterCount": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame],
                 "characterPositions": ["type": "string"],
                 "gaze": ["type": "string"],
                 "visibleZones": stringArray,
@@ -637,7 +643,7 @@ enum PipelineArtifactWriteContract {
             "modality": enumeration(AssetPhysicalModalityV1.allCases.map(\.rawValue)),
             "semantic_job_id": nonEmptyString,
             "is_required": boolean,
-            "priority": ["type": "integer", "minimum": 0],
+            "priority": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame],
             "preservation_scope_ids": stringArray,
             "exclusion_demand_ids": stringArray,
             "input_slot_id": nonEmptyString,
@@ -719,8 +725,8 @@ enum PipelineArtifactWriteContract {
         [
             "id": nonEmptyString,
             "shot_ids": array(nonEmptyString, minimum: 1),
-            "source_start_sample": ["type": "integer", "minimum": 0],
-            "source_end_sample": ["type": "integer", "minimum": 1],
+            "source_start_sample": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame],
+            "source_end_sample": ["type": "integer", "minimum": 1, "maximum": ToolIntegerArgument.maximumFrame],
             "sample_rate": ["type": "integer", "minimum": 8000, "maximum": 192000],
             "timeline_start_seconds": ["type": "number", "minimum": 0],
             "purpose": enumeration(MusicPerformancePurposeV1.allCases.map(\.rawValue)),
@@ -872,7 +878,7 @@ enum PipelineArtifactWriteContract {
         [
             "id": nonEmptyString,
             "entity_id": nonEmptyString,
-            "version": ["type": "integer", "minimum": 1],
+            "version": ["type": "integer", "minimum": 1, "maximum": ToolIntegerArgument.maximumFrame],
             "description": nonEmptyString,
             "cause_beat_id": nonEmptyString,
             "state_sheet_path": nonEmptyString,
@@ -941,10 +947,10 @@ enum PipelineArtifactWriteContract {
     ) -> [String: Any] {
         object([
             "mode": enumeration([mode.rawValue]),
-            "width": ["type": "integer", "minimum": 64],
-            "height": ["type": "integer", "minimum": 64],
-            "fps": ["type": "integer", "minimum": 1],
-            "duration_seconds": ["type": "number", "exclusiveMinimum": 0],
+            "width": ["type": "integer", "minimum": 64, "maximum": 16_384],
+            "height": ["type": "integer", "minimum": 64, "maximum": 16_384],
+            "fps": ["type": "integer", "minimum": 1, "maximum": 960],
+            "duration_seconds": ["type": "number", "exclusiveMinimum": 0, "maximum": 86_400],
         ].merging(extra) { _, new in new }, required: [
             "mode", "width", "height", "fps", "duration_seconds",
         ] + extraRequired)

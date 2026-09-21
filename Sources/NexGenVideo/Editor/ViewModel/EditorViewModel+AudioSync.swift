@@ -29,7 +29,13 @@ extension EditorViewModel {
         guard let refEnv = await envelope(of: refClip, fps: fps), !refEnv.samples.isEmpty else {
             return AudioSyncBatchReport(failures: targets.map { ($0, "Reference clip has no audio.") })
         }
-        let maxLag = max(1, Int((searchWindowSeconds / AudioEnvelopeExtractor.hopSeconds).rounded()))
+        guard let convertedMaxLag = ToolIntegerArgument.rounded(
+            searchWindowSeconds / AudioEnvelopeExtractor.hopSeconds,
+            in: 0...Int.max
+        ) else {
+            return AudioSyncBatchReport(failures: targets.map { ($0, "Search window is outside the supported range.") })
+        }
+        let requestedMaxLag = max(1, convertedMaxLag)
         let refSamples = refEnv.samples
         var report = AudioSyncBatchReport()
         let refGroup = refClip.linkGroupId
@@ -63,6 +69,7 @@ extension EditorViewModel {
             guard let env = await envelope(of: clip, fps: fps), !env.samples.isEmpty else {
                 report.failures.append((id, "Clip has no audio.")); continue
             }
+            let maxLag = min(requestedMaxLag, max(refSamples.count, env.samples.count))
             let match = await Task.detached(priority: .userInitiated) {
                 AudioSyncCorrelator.correlate(reference: refSamples, target: env.samples, maxLagHops: maxLag)
             }.value
