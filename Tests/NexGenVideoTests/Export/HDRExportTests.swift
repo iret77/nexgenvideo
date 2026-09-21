@@ -5,6 +5,9 @@ import Testing
 import VideoToolbox
 @testable import NexGenVideo
 
+private let hdrRuntimeQCEnabled =
+    ProcessInfo.processInfo.environment["NGV_HDR_RUNTIME_QC"] == "1"
+
 @Suite("HEVC Main10 HDR export", .serialized)
 @MainActor
 struct HDRExportTests {
@@ -67,7 +70,10 @@ struct HDRExportTests {
         #expect(HDRVideoExporter.hlgReferenceWhiteSignal == 0.75)
     }
 
-    @Test("round trip proves metadata, legal range, reference frames, and SDR white mapping")
+    @Test(
+        "round trip proves metadata, legal range, reference frames, and SDR white mapping",
+        .enabled(if: hdrRuntimeQCEnabled)
+    )
     func roundTripQC() async throws {
         let source = try await FixtureVideo.write(
             scenes: [
@@ -119,7 +125,10 @@ struct HDRExportTests {
         try publishEvidence(hdrQC, movie: output)
     }
 
-    @Test("HDR path burns timeline titles before the color conversion")
+    @Test(
+        "HDR path burns timeline titles before the color conversion",
+        .enabled(if: hdrRuntimeQCEnabled)
+    )
     func titleOverlay() async throws {
         let source = try await FixtureVideo.write(
             scenes: [.init(rgb: (0, 0, 0), seconds: 1)],
