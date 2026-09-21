@@ -9,9 +9,19 @@ enum GenerationPackageFixture {
             exchangeRateDate: "2026-09-09", pricingSource: "fixture://pricing", exchangeRateSource: "fixture://exchange")
     }
 
-    static func prepare(editor: EditorViewModel, model: String = "fixture-image") async throws
+    static func prepare(
+        editor: EditorViewModel,
+        model: String = "fixture-image",
+        provider: GenerationProvider = .fal,
+        endpoint: String? = nil
+    ) async throws
         -> (GenerationController.PreparedGeneration, GenerationPackageV1) {
-        let target = ResolvedGenerationTarget(modelId: model, provider: .fal, endpoint: model, binding: nil)
+        let target = ResolvedGenerationTarget(
+            modelId: model,
+            provider: provider,
+            endpoint: endpoint ?? model,
+            binding: nil
+        )
         let request = GenerationRequest(modality: .image, modelId: model, intent: "", aspectRatio: "1:1",
             placement: .mediaLibrary(folderId: nil), origin: .panel, target: target, submission: .image { prompt in
                 ImageGenerationSubmission(genInput: .init(prompt: prompt, model: model, duration: 0, aspectRatio: "1:1"),
@@ -78,13 +88,147 @@ struct GenerationPackageTests {
         let editor = EditorViewModel()
         let (generation, package) = try await GenerationPackageFixture.prepare(editor: editor)
         let pricing = GenerationPricingInput(modelId: generation.target.modelId, modality: .image,
-            durationSeconds: nil, outputCount: 1, resolution: nil, quality: nil, promptCharacterCount: 0, generateAudio: nil)
+            durationSeconds: nil, outputCount: 1, resolution: nil, quality: nil, promptCharacterCount: 0,
+            generateAudio: nil, referenceCount: 0)
         await #expect(throws: (any Error).self) {
             try await GenerationBudgetGuard.authorize(input: pricing, target: generation.target, editor: editor,
                 approvedPackage: package, quoteLoader: { _, _ in GenerationPackageFixture.money(1) })
         }
         #expect(editor.generationLog.spendEvents.isEmpty)
         #expect(editor.mediaAssets.isEmpty)
+    }
+
+    @Test func anUnpricedReviewedPackageCannotReachDispatch() async throws {
+        let editor = EditorViewModel()
+        let (generation, package) = try await GenerationPackageFixture.prepare(editor: editor)
+        let unpriced = try package.replacingPricing(
+            estimate: nil,
+            failure: .init(
+                reason: .priceQueryUnavailable,
+                provider: .fal,
+                endpoint: generation.target.endpoint,
+                detail: "fixture outage"
+            )
+        )
+        let pricing = try unpriced.pricingInput()
+        var quoteCount = 0
+        await #expect(throws: (any Error).self) {
+            try await GenerationBudgetGuard.authorize(
+                input: pricing,
+                target: generation.target,
+                editor: editor,
+                approvedPackage: unpriced,
+                requiresVerifiedCeiling: true,
+                quoteLoader: { _, _ in
+                    quoteCount += 1
+                    return GenerationPackageFixture.money()
+                }
+            )
+        }
+        #expect(quoteCount == 0)
+        #expect(editor.generationLog.spendEvents.isEmpty)
+        #expect(editor.mediaAssets.isEmpty)
+    }
+
+    @Test func individualNoStopApprovalKeepsProviderAgnosticUnpricedPolicy() async throws {
+        let editor = EditorViewModel()
+        let (generation, package) = try await GenerationPackageFixture.prepare(editor: editor)
+        let unpriced = try package.replacingPricing(
+            estimate: nil,
+            failure: .init(
+                reason: .unsupportedCombination,
+                provider: generation.target.provider,
+                endpoint: generation.target.endpoint,
+                detail: "fixture provider has no pre-dispatch quote"
+            )
+        )
+        let authorization = try await GenerationBudgetGuard.authorize(
+            input: unpriced.pricingInput(),
+            target: generation.target,
+            editor: editor,
+            approvedPackage: unpriced,
+            quoteLoader: { _, _ in throw GenerationPricingFailure(
+                reason: .unsupportedCombination,
+                provider: generation.target.provider,
+                endpoint: generation.target.endpoint,
+                detail: "fixture provider has no pre-dispatch quote"
+            ) }
+        )
+        #expect(authorization.estimate == nil)
+        #expect(editor.generationLog.spendEvents.isEmpty)
+    }
+
+    @Test func pricingFailuresRemainTypedInTheReviewBinding() async throws {
+        for reason in [GenerationPricingFailure.Reason.unsupportedCombination,
+                       .priceQueryUnavailable, .exchangeRateUnavailable] {
+            let editor = EditorViewModel()
+            let (generation, _) = try await GenerationPackageFixture.prepare(editor: editor)
+            let package = try await GenerationController.prepareReviewPackage(
+                try await GenerationController.prepare(generation.request, editor: editor).get(),
+                editor: editor,
+                quoteLoader: { target, _ in
+                    throw GenerationPricingFailure(
+                        reason: reason,
+                        provider: target.provider,
+                        endpoint: target.endpoint,
+                        detail: "fixture \(reason.rawValue)"
+                    )
+                }
+            )
+            #expect(package.payload.estimate == nil)
+            #expect(package.payload.pricingFailure?.reason == reason)
+            #expect(package.payload.pricingFailure?.isRetryable == (reason != .unsupportedCombination))
+        }
+    }
+
+    @Test func restoredAutomaticVideoUsesItsBoundBilledDurationForPricing() async throws {
+        let editor = EditorViewModel()
+        let (_, imagePackage) = try await GenerationPackageFixture.prepare(editor: editor)
+        var input = imagePackage.payload.generationInput
+        input.duration = 10
+        input.videoDuration = .automatic
+        let parameters = try PreparedProviderParameters(
+            parameters: .video(.init(
+                prompt: imagePackage.payload.prompt,
+                duration: .automatic,
+                aspectRatio: input.aspectRatio,
+                resolution: nil,
+                sourceVideoURL: nil,
+                startFrameURL: nil,
+                endFrameURL: nil,
+                referenceImageURLs: [],
+                referenceVideoURLs: [],
+                referenceAudioURLs: [],
+                generateAudio: false
+            )),
+            referenceSlots: []
+        )
+        let package = try GenerationPackageV1(payload: .init(
+            target: imagePackage.payload.target,
+            modality: "video",
+            operation: "generate_video",
+            intent: imagePackage.payload.intent,
+            prompt: imagePackage.payload.prompt,
+            promptRevisionID: imagePackage.payload.promptRevisionID,
+            generationInput: input,
+            binding: imagePackage.payload.binding,
+            compilerInputsSHA256: imagePackage.payload.compilerInputsSHA256,
+            recipe: imagePackage.payload.recipe,
+            repairPlanID: imagePackage.payload.repairPlanID,
+            destination: imagePackage.payload.destination,
+            outputCount: 1,
+            references: [],
+            referenceRoles: [],
+            requestParametersJSON: GenerationPackageV1.requestJSON(
+                parameters: parameters,
+                references: []
+            ),
+            routing: imagePackage.payload.routing,
+            routeReceipt: imagePackage.payload.routeReceipt,
+            estimate: imagePackage.payload.estimate,
+            pricingFailure: nil
+        ))
+        #expect(try package.pricingInput().durationSeconds == 10)
     }
 
     @Test func concurrentRetriesJoinTheSamePreparedExecution() async throws {

@@ -224,7 +224,8 @@ struct BudgetStopTests {
             resolution: nil,
             quality: nil,
             promptCharacterCount: 5,
-            generateAudio: true
+            generateAudio: true,
+            referenceCount: 0
         )
 
         _ = try await GenerationBudgetGuard.authorize(
@@ -259,7 +260,8 @@ struct BudgetStopTests {
             resolution: nil,
             quality: nil,
             promptCharacterCount: 5,
-            generateAudio: true
+            generateAudio: true,
+            referenceCount: 0
         )
         let (quoteStarted, startedContinuation) = AsyncStream<Void>.makeStream()
         var resumeQuote: CheckedContinuation<Void, Never>?

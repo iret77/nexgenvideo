@@ -40,6 +40,62 @@ struct GenerationPricingInput: Sendable, Equatable {
     let quality: String?
     let promptCharacterCount: Int
     let generateAudio: Bool?
+    let referenceCount: Int
+}
+
+struct GenerationPricingFailure: Error, Codable, Sendable, Equatable, LocalizedError {
+    enum Reason: String, Codable, Sendable, Hashable {
+        case unsupportedCombination
+        case priceQueryUnavailable
+        case exchangeRateUnavailable
+    }
+
+    let reason: Reason
+    let provider: GenerationProvider?
+    let endpoint: String
+    let detail: String
+
+    var isRetryable: Bool { reason != .unsupportedCombination }
+
+    var errorDescription: String? {
+        switch reason {
+        case .unsupportedCombination:
+            return "No verified price covers this provider, model, and option combination."
+        case .priceQueryUnavailable:
+            return "Provider pricing is temporarily unavailable. Retry pricing."
+        case .exchangeRateUnavailable:
+            return "EUR conversion is temporarily unavailable. Retry pricing."
+        }
+    }
+
+    static func classified(
+        _ error: Error,
+        provider: GenerationProvider,
+        endpoint: String
+    ) -> Self {
+        if let failure = error as? Self {
+            if failure.reason == .exchangeRateUnavailable {
+                return Self(
+                    reason: failure.reason,
+                    provider: nil,
+                    endpoint: failure.endpoint,
+                    detail: failure.detail
+                )
+            }
+            return Self(
+                reason: failure.reason,
+                provider: provider,
+                endpoint: endpoint,
+                detail: failure.detail
+            )
+        }
+        return Self(
+            reason: .priceQueryUnavailable,
+            provider: provider,
+            endpoint: endpoint,
+            detail: error.localizedDescription
+        )
+    }
 }
 
 struct GenerationMoney: Codable, Sendable, Equatable {

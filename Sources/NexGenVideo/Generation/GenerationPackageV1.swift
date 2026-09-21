@@ -61,6 +61,7 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
         let routing: ProductionGenerationRoutingProofV1?
         let routeReceipt: GenerationRouteReceipt
         let estimate: GenerationMoney?
+        let pricingFailure: GenerationPricingFailure?
     }
     let schema: String
     let id: String
@@ -92,6 +93,26 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
               JSONSerialization.isValidJSONObject(try JSONSerialization.jsonObject(with: Data(payload.requestParametersJSON.utf8))) else {
             throw GenerationRequestError.optionsInvalid("The generation package has no executable request.")
         }
+        guard payload.estimate == nil || payload.pricingFailure == nil else {
+            throw GenerationRequestError.optionsInvalid("The package has conflicting pricing results.")
+        }
+        if let failure = payload.pricingFailure {
+            guard !failure.endpoint.isEmpty,
+                  !failure.detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw GenerationRequestError.optionsInvalid("The package has no valid pricing failure.")
+            }
+            switch failure.reason {
+            case .exchangeRateUnavailable:
+                guard failure.provider == nil else {
+                    throw GenerationRequestError.optionsInvalid("The package has an invalid exchange-rate failure.")
+                }
+            case .unsupportedCombination, .priceQueryUnavailable:
+                guard failure.provider == payload.target.provider,
+                      failure.endpoint == payload.target.endpoint else {
+                    throw GenerationRequestError.optionsInvalid("The pricing failure does not match the package route.")
+                }
+            }
+        }
         if let estimate = payload.estimate {
             guard estimate.eurAmount.isFinite, estimate.eurAmount >= 0, estimate.nativeAmount.isFinite,
                   estimate.nativeAmount >= 0, estimate.eurPerNativeUnit.isFinite, estimate.eurPerNativeUnit > 0,
@@ -110,6 +131,35 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
     func validate() throws {
         let rebuilt = try Self(payload: payload)
         guard self == rebuilt else { throw GenerationRequestError.gate("The generation package changed after review.") }
+    }
+
+    func replacingPricing(
+        estimate: GenerationMoney?,
+        failure: GenerationPricingFailure?
+    ) throws -> Self {
+        try validate()
+        return try Self(payload: .init(
+            target: payload.target,
+            modality: payload.modality,
+            operation: payload.operation,
+            intent: payload.intent,
+            prompt: payload.prompt,
+            promptRevisionID: payload.promptRevisionID,
+            generationInput: payload.generationInput,
+            binding: payload.binding,
+            compilerInputsSHA256: payload.compilerInputsSHA256,
+            recipe: payload.recipe,
+            repairPlanID: payload.repairPlanID,
+            destination: payload.destination,
+            outputCount: payload.outputCount,
+            references: payload.references,
+            referenceRoles: payload.referenceRoles,
+            requestParametersJSON: payload.requestParametersJSON,
+            routing: payload.routing,
+            routeReceipt: payload.routeReceipt,
+            estimate: estimate,
+            pricingFailure: failure
+        ))
     }
 
     static func canonicalData<T: Encodable>(_ value: T) throws -> Data {
