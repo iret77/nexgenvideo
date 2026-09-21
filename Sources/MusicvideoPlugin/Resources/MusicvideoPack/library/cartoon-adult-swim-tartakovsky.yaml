@@ -58,28 +58,49 @@ framing_mix:
   pov_pct: 0
   insert_pct: 5
   aerial_pct: 0
+  basis: inferred
+  sources:
+    - "https://variety.com/2024/film/global/genndy-tartakovsky-musical-series-1236036232/"
 
 asl_range:
   min_s: 1.0
   max_s: 5.0
   typical_s: 2.5
+  basis: inferred
+  sources:
+    - "https://variety.com/2024/film/global/genndy-tartakovsky-musical-series-1236036232/"
 
-camera_vocabulary:
-  - "static hold with theatrical staging"
-  - "snap zoom on reaction"
-  - "lateral pan revealing gag"
-  - "match-cut on action"
-  - "freeze-frame punctuation"
+camera:
+  vocabulary:
+    - "static hold with theatrical staging"
+    - "snap zoom on reaction"
+    - "lateral pan revealing gag"
+    - "match-cut on action"
+    - "freeze-frame punctuation"
+  basis: inferred
+  sources:
+    - "https://variety.com/2024/film/global/genndy-tartakovsky-musical-series-1236036232/"
 
-lighting_signature: |
-  flat cel-lit with bold outlines and limited colour palette, single
-  colour-keyed background per scene, hard cast shadows for dramatic
-  beats, deliberate use of black silhouette against bright colour
-  fields (Tartakovsky signature).
+lighting:
+  description: |
+    flat cel-lit with bold outlines and limited colour palette, single
+    colour-keyed background per scene, hard cast shadows for dramatic
+    beats, deliberate use of black silhouette against bright colour
+    fields (Tartakovsky signature).
+  basis: inferred
+  sources:
+    - "https://variety.com/2024/film/global/genndy-tartakovsky-musical-series-1236036232/"
 
-approximation_basis: |
-  Aggregation of the cited Variety, Warner Bros Discovery press
-  releases and the Adult Swim Annecy presentation. Tartakovsky's
-  Samurai Jack and Primal serve as the framing-mix and pacing
-  reference. Values are qualitative, derived from the cited sources
-  describing his theatrical and minimalist visual approach.
+color:
+  description: "A limited palette, one colour-keyed background, and black silhouettes against bright fields."
+  basis: inferred
+  sources:
+    - "https://variety.com/2024/film/global/genndy-tartakovsky-musical-series-1236036232/"
+
+craft_signature:
+  - technique: "Graphic silhouette staging"
+    directive: "Stage black silhouettes against bright colour fields with hard cast shadows and a limited palette."
+    pipeline_levers: [visual_prompt, bible_look, bible_lighting]
+    basis: inferred
+    sources:
+    - "https://variety.com/2024/film/global/genndy-tartakovsky-musical-series-1236036232/"

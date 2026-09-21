@@ -63,29 +63,49 @@ framing_mix:
   pov_pct: 5
   insert_pct: 0
   aerial_pct: 0
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Hardcore_punk"
 
 asl_range:
   min_s: 0.3
   max_s: 3.0
   typical_s: 1.0
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Hardcore_punk"
 
-camera_vocabulary:
-  - "handheld punk shake"
-  - "rapid pan into pit"
-  - "snap zoom on scream"
-  - "crash zoom on impact"
-  - "deliberate blur and grain"
+camera:
+  vocabulary:
+    - "handheld punk shake"
+    - "rapid pan into pit"
+    - "snap zoom on scream"
+    - "crash zoom on impact"
+    - "deliberate blur and grain"
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Hardcore_punk"
 
-lighting_signature: |
-  available stage / venue lighting, single hard key, deep shadow
-  blackout, occasional strobe / red wash, deliberately low-budget
-  exposure (sometimes blown highlights, sometimes underexposed),
-  for atmospheric-metal: cold desaturated daylight or ritual practical.
+lighting:
+  description: |
+    available stage / venue lighting, single hard key, deep shadow
+    blackout, occasional strobe / red wash, deliberately low-budget
+    exposure (sometimes blown highlights, sometimes underexposed),
+    for atmospheric-metal: cold desaturated daylight or ritual practical.
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Hardcore_punk"
 
-approximation_basis: |
-  Aggregation of the cited Wikipedia Hardcore Punk + Grindcore
-  pages, MasterClass, DIY Conspiracy, IDIOTEQ, Everything Is Noise
-  and Rate Your Music sources describing the DIY ethic and
-  hardcore/grindcore visual tradition. Pattern represents the
-  genre-wide visual approach rather than a single auteur — values
-  are qualitative and reflect the tradition's intentional rawness.
+color:
+  description: "A red stage wash or cold desaturated daylight, with deliberate exposure irregularity."
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Hardcore_punk"
+
+craft_signature:
+  - technique: "Available venue light"
+    directive: "Use available stage light, one hard key, deep blackout shadows, and occasional strobe or red wash."
+    pipeline_levers: [visual_prompt, bible_look, bible_lighting]
+    basis: inferred
+    sources:
+    - "https://en.wikipedia.org/wiki/Hardcore_punk"

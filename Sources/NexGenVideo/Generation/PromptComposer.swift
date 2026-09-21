@@ -394,19 +394,32 @@ enum PromptComposer {
                 add(directive, locked: lockedSet.contains(directive.lowercased()))
             }
         }
-        for token in patternLightingTokens(dataRoot: root, store: store) { add(token, locked: false) }
+        for token in patternStyleTokens(dataRoot: root, store: store) { add(token, locked: false) }
         return ProjectDirectives(all: all, locked: locked)
     }
 
-    private static func patternLightingTokens(dataRoot root: URL, store: YAMLArtifactStore) -> [String] {
+    private static func patternStyleTokens(dataRoot root: URL, store: YAMLArtifactStore) -> [String] {
         guard let brief = try? store.load(Brief.self, at: PipelineLayout.briefFile),
             let id = brief.directorPattern?.trimmingCharacters(in: .whitespaces), !id.isEmpty else { return [] }
         let activePack = ProjectPluginSettings.activePlugin(projectURL: FrameInventory.projectHome(of: root))
         guard let provider = PackCatalog.registry(activePack: activePack).patternProvider,
             let data = try? provider.get(id: id),
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
-        guard let lighting = object["lighting_signature"] as? String else { return [] }
-        return [lighting]
+        var directives: [String] = []
+        for key in ["lighting", "color"] {
+            if let block = object[key] as? [String: Any], let value = block["description"] as? String {
+                directives.append(value)
+            }
+        }
+        if let craft = object["craft_signature"] as? [[String: Any]] {
+            for entry in craft {
+                guard let levers = entry["pipeline_levers"] as? [String],
+                      levers.contains("visual_prompt"),
+                      let directive = entry["directive"] as? String else { continue }
+                directives.append(directive)
+            }
+        }
+        return directives
     }
 
     // MARK: - Audio composition (no engine builder)

@@ -29,6 +29,7 @@ yours; the host records the source class and exact bytes.
 - Read (paths relative to the project data root):
   `treatment/current.md`, `brief.yaml`,
   `production_design/production_design.yaml`, `storyboard/current.yaml`.
+- If `brief.director_pattern` is set, load it with `get_pattern`.
 - Optionally user reference uploads under `import/characters/<id>/` and
   `import/locations/<id>/`.
 
@@ -174,6 +175,13 @@ look:
   lighting: ""
   ...
 ```
+
+For a selected director pattern, merge `lighting.description` into
+`look.lighting`, `color.description` into `look.palette`, and each
+`craft_signature` directive bound to `bible_look` or `bible_lighting` into
+the matching field. Preserve its `basis` and source in your review summary;
+never present an inferred directive as documented or measured. These are
+positive directives, not image anchors.
 
 Refs from `production_design/refs/` are NOT carried over as
 `Location.sheets` or `Character.sheets` — they are inspiration, not a

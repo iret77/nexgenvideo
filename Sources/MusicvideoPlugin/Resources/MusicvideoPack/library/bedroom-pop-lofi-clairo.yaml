@@ -60,27 +60,48 @@ framing_mix:
   pov_pct: 0
   insert_pct: 10
   aerial_pct: 0
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Pretty_Girl_(Clairo_song)"
 
 asl_range:
   min_s: 4.0
   max_s: 15.0
   typical_s: 7.0
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Pretty_Girl_(Clairo_song)"
 
-camera_vocabulary:
-  - "static handheld laptop cam"
-  - "self-shot iPhone hold"
-  - "gentle natural-light push"
-  - "deliberate camera shake (authenticity marker)"
+camera:
+  vocabulary:
+    - "static handheld laptop cam"
+    - "self-shot iPhone hold"
+    - "gentle natural-light push"
+    - "deliberate camera shake (authenticity marker)"
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Pretty_Girl_(Clairo_song)"
 
-lighting_signature: |
-  available room light (window, bedside lamp, fairy lights),
-  unmotivated colour bias (often warm yellow tungsten or cool
-  daylight), low-contrast, deliberate over- or under-exposure as
-  authenticity marker, no rim or fill.
+lighting:
+  description: |
+    available room light (window, bedside lamp, fairy lights),
+    unmotivated colour bias (often warm yellow tungsten or cool
+    daylight), low-contrast, deliberate over- or under-exposure as
+    authenticity marker, no rim or fill.
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Pretty_Girl_(Clairo_song)"
 
-approximation_basis: |
-  Aggregation of the cited Wikipedia, FADER interview, Hypebeast,
-  Cherwell, Medium, Kore Studios and Hotel Ugly articles describing
-  Clairo's self-recorded Pretty Girl approach and the broader
-  bedroom-pop "DIY authenticity" aesthetic. Specific framing_mix
-  derived qualitatively, not Cinemetrics-grade.
+color:
+  description: "Warm tungsten yellow or cool daylight with deliberately low contrast."
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Pretty_Girl_(Clairo_song)"
+
+craft_signature:
+  - technique: "Available-light imperfection"
+    directive: "Use window, bedside, or fairy-light illumination with deliberate over- or under-exposure and no polished rim light."
+    pipeline_levers: [visual_prompt, bible_look, bible_lighting]
+    basis: inferred
+    sources:
+    - "https://en.wikipedia.org/wiki/Pretty_Girl_(Clairo_song)"
