@@ -567,7 +567,6 @@ enum HDRVideoExporter {
             .outputColorSpace: outputSpace,
         ])
         let bounds = CGRect(origin: .zero, size: pump.renderSize)
-        let linearScale = hlgReferenceWhiteLinear
 
         await withCheckedContinuation { continuation in
             guard pump.state.install(continuation) else {
@@ -617,12 +616,6 @@ enum HDRVideoExporter {
                         }
                         image = title.composited(over: image)
                     }
-                    let mapped = image.applyingFilter("CIColorMatrix", parameters: [
-                        "inputRVector": CIVector(x: linearScale, y: 0, z: 0, w: 0),
-                        "inputGVector": CIVector(x: 0, y: linearScale, z: 0, w: 0),
-                        "inputBVector": CIVector(x: 0, y: 0, z: linearScale, w: 0),
-                    ])
-
                     var destination: CVPixelBuffer?
                     let status = CVPixelBufferPoolCreatePixelBuffer(nil, pool, &destination)
                     guard status == kCVReturnSuccess, let destination else {
@@ -632,7 +625,7 @@ enum HDRVideoExporter {
                         return
                     }
                     tagHLG(destination, colorSpace: outputSpace)
-                    context.render(mapped, to: destination, bounds: bounds, colorSpace: outputSpace)
+                    context.render(image, to: destination, bounds: bounds, colorSpace: outputSpace)
                     guard pump.adaptor.append(destination, withPresentationTime: pts) else {
                         pump.coordinator.fail("a converted HDR frame could not be encoded")
                         return
@@ -660,13 +653,6 @@ enum HDRVideoExporter {
             }
             try? await Task.sleep(for: .milliseconds(250))
         }
-    }
-
-    private static var hlgReferenceWhiteLinear: CGFloat {
-        let a = 0.178_832_77
-        let b = 0.284_668_92
-        let c = 0.559_910_73
-        return CGFloat((exp((hlgReferenceWhiteSignal - c) / a) + b) / 12)
     }
 
     private static func tagHLG(_ buffer: CVPixelBuffer, colorSpace: CGColorSpace) {

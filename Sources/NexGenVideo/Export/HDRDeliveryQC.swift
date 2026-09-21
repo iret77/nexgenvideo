@@ -63,16 +63,7 @@ enum HDRDeliveryQC {
             CMTimeMultiplyByRatio(duration, multiplier: 5, divisor: 8),
             lastTime,
         ]
-        var frames: [DeliveryHDRReferenceFrameQCV1] = []
-        for (index, time) in times.enumerated() {
-            frames.append(try await referenceFrame(
-                asset: asset,
-                track: videoTrack,
-                time: time,
-                frameDuration: frameDuration,
-                index: index
-            ))
-        }
+        let frames = try referenceFrames(asset: asset, track: videoTrack, times: times)
 
         let result = DeliveryHDRQCV1(
             outputSHA256: outputSHA256,
@@ -86,13 +77,11 @@ enum HDRDeliveryQC {
         return result
     }
 
-    private static func referenceFrame(
+    private static func referenceFrames(
         asset: AVAsset,
         track: AVAssetTrack,
-        time: CMTime,
-        frameDuration: CMTime,
-        index: Int
-    ) async throws -> DeliveryHDRReferenceFrameQCV1 {
+        times: [CMTime]
+    ) throws -> [DeliveryHDRReferenceFrameQCV1] {
         let reader = try AVAssetReader(asset: asset)
         let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
             kCVPixelBufferPixelFormatTypeKey as String:
@@ -104,31 +93,45 @@ enum HDRDeliveryQC {
             throw ToolError("HDR QC cannot decode a 10-bit reference frame.")
         }
         reader.add(output)
-        reader.timeRange = CMTimeRange(
-            start: time,
-            duration: CMTimeMultiply(frameDuration, multiplier: 2)
-        )
-        guard reader.startReading(),
-              let sample = output.copyNextSampleBuffer(),
-              let buffer = CMSampleBufferGetImageBuffer(sample) else {
-            throw ToolError("HDR QC could not read reference frame \(index + 1).")
+        guard reader.startReading() else {
+            throw ToolError(
+                "HDR QC could not start the reference-frame decoder: "
+                    + (reader.error?.localizedDescription ?? "unknown error")
+            )
         }
         defer { reader.cancelReading() }
-        let measurement = try measure(buffer)
-        let pts = CMSampleBufferGetPresentationTimeStamp(sample)
-        return .init(
-            index: index,
-            presentationTimeValue: pts.value,
-            presentationTimeTimescale: pts.timescale,
-            pixelFormat: fourCC(CVPixelBufferGetPixelFormatType(buffer)),
-            lumaMinimumCode: measurement.minimum,
-            lumaMaximumCode: measurement.maximum,
-            outOfRangePixelCount: measurement.outOfRange,
-            pixelCount: measurement.pixelCount,
-            chromaCbMeanCode: measurement.chromaCbMean,
-            chromaCrMeanCode: measurement.chromaCrMean,
-            pixelSHA256: measurement.sha256
-        )
+        var frames: [DeliveryHDRReferenceFrameQCV1] = []
+        var targetIndex = 0
+        while targetIndex < times.count, let sample = output.copyNextSampleBuffer() {
+            let pts = CMSampleBufferGetPresentationTimeStamp(sample)
+            guard CMTimeCompare(pts, times[targetIndex]) >= 0,
+                  let buffer = CMSampleBufferGetImageBuffer(sample) else { continue }
+            let measurement = try measure(buffer)
+            frames.append(.init(
+                index: targetIndex,
+                presentationTimeValue: pts.value,
+                presentationTimeTimescale: pts.timescale,
+                pixelFormat: fourCC(CVPixelBufferGetPixelFormatType(buffer)),
+                lumaMinimumCode: measurement.minimum,
+                lumaMaximumCode: measurement.maximum,
+                outOfRangePixelCount: measurement.outOfRange,
+                pixelCount: measurement.pixelCount,
+                chromaCbMeanCode: measurement.chromaCbMean,
+                chromaCrMeanCode: measurement.chromaCrMean,
+                pixelSHA256: measurement.sha256
+            ))
+            targetIndex += 1
+        }
+        if reader.status == .failed {
+            throw ToolError(
+                "HDR QC reference-frame decoding failed: "
+                    + (reader.error?.localizedDescription ?? "unknown error")
+            )
+        }
+        guard frames.count == times.count else {
+            throw ToolError("HDR QC could not read all four reference frames.")
+        }
+        return frames
     }
 
     private static func measure(
