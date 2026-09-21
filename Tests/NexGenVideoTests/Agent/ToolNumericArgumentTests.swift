@@ -128,6 +128,7 @@ struct ToolNumericArgumentTests {
     }
 
     @Test("word spans reject invalid indices and bound valid extreme spans")
+    @MainActor
     func wordSpanBoundsPreventExtremeLoops() throws {
         let invalidValues: [Any] = [-1, 1.5, 1e300, Double.nan, Double.infinity]
         for value in invalidValues {
