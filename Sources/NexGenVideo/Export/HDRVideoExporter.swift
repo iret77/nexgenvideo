@@ -109,7 +109,6 @@ enum HDRVideoExporter {
             AVVideoCodecKey: AVVideoCodecType.hevc,
             AVVideoWidthKey: Int(size.width),
             AVVideoHeightKey: Int(size.height),
-            AVVideoAllowWideColorKey: NSNumber(value: true),
             AVVideoColorPropertiesKey: colorProperties(),
             AVVideoCompressionPropertiesKey: [
                 kVTCompressionPropertyKey_ProfileLevel as String:

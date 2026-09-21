@@ -58,7 +58,6 @@ struct HDRExportTests {
     func writerSettings() throws {
         let settings = HDRVideoExporter.videoWriterSettings(size: CGSize(width: 1920, height: 1080))
         #expect(settings[AVVideoCodecKey] as? AVVideoCodecType == .hevc)
-        #expect((settings[AVVideoAllowWideColorKey] as? NSNumber)?.boolValue == true)
         let color = try #require(settings[AVVideoColorPropertiesKey] as? [String: Any])
         #expect(color[AVVideoColorPrimariesKey] as? String == AVVideoColorPrimaries_ITU_R_2020)
         #expect(color[AVVideoTransferFunctionKey] as? String == AVVideoTransferFunction_ITU_R_2100_HLG)
