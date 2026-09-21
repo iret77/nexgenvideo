@@ -37,7 +37,7 @@ struct AddCaptionsSubtitleTests {
             contents: "1\n00:00:01,000 --> 00:00:02,000\nHello.\n\n2\n00:00:03,000 --> 00:00:04,000\nWorld.\n"
         )
         defer { try? FileManager.default.removeItem(at: source.directory) }
-        h.editor.mediaAssets.append(source.asset)
+        h.editor.importMediaAsset(source.asset)
 
         _ = try await h.runOK(
             "add_captions",
@@ -58,7 +58,7 @@ struct AddCaptionsSubtitleTests {
         h.addAsset(id: "video", type: .video)
         let malformed = try fixture(id: "broken", contents: "not a cue\n")
         defer { try? FileManager.default.removeItem(at: malformed.directory) }
-        h.editor.mediaAssets.append(malformed.asset)
+        h.editor.importMediaAsset(malformed.asset)
         let before = h.editor.timeline
 
         let mixed = await h.runRaw(
