@@ -56,6 +56,27 @@ struct ToolDefinitionContractTests {
         }
     }
 
+    @Test("crop and inspect grid publish one closed normalized source-space contract")
+    func cropAndGridSchemaContract() throws {
+        let setTool = try #require(ToolDefinitions.all.first { $0.name == .setClipProperties })
+        let setProperties = try #require(schemaProperties(setTool.inputSchema["properties"]))
+        let crop = try #require(setProperties["crop"])
+        #expect(crop["additionalProperties"] as? Bool == false)
+        #expect(crop["minProperties"] as? Int == 1)
+        let cropProperties = try #require(schemaProperties(crop["properties"]))
+        #expect(Set(cropProperties.keys) == ["left", "top", "right", "bottom"])
+        for edge in cropProperties.values {
+            #expect((edge["minimum"] as? NSNumber)?.doubleValue == 0)
+            #expect((edge["maximum"] as? NSNumber)?.doubleValue == 1)
+        }
+
+        let inspectTool = try #require(ToolDefinitions.all.first { $0.name == .inspectMedia })
+        let inspectProperties = try #require(schemaProperties(inspectTool.inputSchema["properties"]))
+        #expect(inspectProperties["coordinateGrid"]?["type"] as? String == "boolean")
+        #expect(inspectTool.description.contains("display-oriented source"))
+        #expect(setTool.description.contains("display-oriented source"))
+    }
+
     @Test("unknown keys are rejected at the tool boundary")
     @MainActor
     func unknownKeysAreRejectedAtBoundary() async {
