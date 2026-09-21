@@ -68,7 +68,7 @@ struct HDRExportTests {
                 == (kVTProfileLevel_HEVC_Main10_AutoLevel as String)
         )
         #expect(
-            (compression[AVVideoAverageBitRateKey] as? NSNumber)?.intValue
+            ((compression[AVVideoAverageBitRateKey] as? NSNumber)?.intValue ?? 0)
                 >= HDRVideoExporter.minimumVideoBitRate
         )
         #expect(
