@@ -30,6 +30,7 @@ final class ExportService {
     func cancel() {
         cancelRequested = true
         activeExportSession?.cancelExport()
+        activeHDRCancellation?.cancel()
     }
 
     func export(
@@ -86,6 +87,17 @@ final class ExportService {
                 "fps": timeline.fps
             ]
         )
+
+        if format.isHDR {
+            await exportHDR(
+                timeline: timeline,
+                resolver: resolver,
+                resolution: resolution,
+                outputURL: outputURL,
+                styleReview: styleReview
+            )
+            return
+        }
 
         do {
             try await TimelineStyleReview.revalidate(styleReview, timeline: timeline, resolver: resolver)
@@ -170,6 +182,100 @@ final class ExportService {
             }
         }
 
+    }
+
+    private func exportHDR(
+        timeline: Timeline,
+        resolver: MediaResolver,
+        resolution: ExportResolution,
+        outputURL: URL,
+        styleReview: TimelineStyleReview.Snapshot?
+    ) async {
+        do {
+            let renderSize = resolution.renderSize(for: CGSize(
+                width: timeline.width,
+                height: timeline.height
+            ))
+            try await HDRVideoExporter.requireCapability(
+                renderSize: renderSize,
+                fps: timeline.fps
+            )
+            try await TimelineStyleReview.revalidate(
+                styleReview,
+                timeline: timeline,
+                resolver: resolver
+            )
+            let result = try await CompositionBuilder.build(
+                timeline: timeline,
+                resolveURL: { resolver.resolveURL(for: $0) },
+                renderSize: renderSize
+            )
+            if styleReview != nil {
+                guard result.offlineMediaRefs.isEmpty,
+                      result.unprocessableMediaRefs.isEmpty else {
+                    throw ToolError("The export cannot reproduce the reviewed cut because media is offline or unprocessable. Repair the media and review the resulting cut again.")
+                }
+            }
+            let overlays = try TextLayerController.buildHDRExportOverlays(
+                timeline: timeline,
+                renderSize: renderSize
+            )
+            let cancellation = HDRVideoExporter.Cancellation()
+            activeHDRCancellation = cancellation
+            defer { activeHDRCancellation = nil }
+            if cancelRequested { cancellation.cancel() }
+            try await HDRVideoExporter.export(
+                .init(
+                    composition: result.composition,
+                    videoComposition: result.videoComposition,
+                    audioMix: result.audioMix,
+                    textOverlays: overlays,
+                    fps: timeline.fps
+                ),
+                renderSize: renderSize,
+                to: outputURL,
+                cancellation: cancellation,
+                onProgress: { [weak self] value in
+                    Task { @MainActor in self?.progress = value }
+                }
+            )
+            try await TimelineStyleReview.revalidate(
+                styleReview,
+                timeline: timeline,
+                resolver: resolver
+            )
+            lastReport = .init(
+                outputSize: await Self.encodedVideoSize(of: outputURL) ?? renderSize,
+                offlineMediaRefs: result.offlineMediaRefs,
+                unprocessableMediaRefs: result.unprocessableMediaRefs
+            )
+            progress = 1
+            Log.export.notice(
+                "hdr export ok",
+                telemetry: "Export finished",
+                data: ["format": "hevc-main10-hlg", "resolution": resolution.rawValue]
+            )
+        } catch {
+            if cancelRequested || error is CancellationError {
+                self.error = "Export was cancelled"
+                Log.export.notice(
+                    "hdr export cancelled",
+                    telemetry: "Export cancelled",
+                    data: ["format": "hevc-main10-hlg", "resolution": resolution.rawValue]
+                )
+            } else {
+                self.error = Log.detail(error)
+                Log.export.error(
+                    "hdr export failed: \(Log.detail(error))",
+                    telemetry: "Export failed",
+                    data: [
+                        "format": "hevc-main10-hlg",
+                        "resolution": resolution.rawValue,
+                        "error": Log.detail(error),
+                    ]
+                )
+            }
+        }
     }
 
     /// Writes a self-contained `.ngv` bundle (all media collected internally).
@@ -299,11 +405,12 @@ final class ExportService {
             }
         case .prores:
             AVAssetExportPresetAppleProRes422LPCM
-        case .xml:
+        case .xml, .hevcMain10HLG:
             AVAssetExportPresetPassthrough // unreachable — XML returns early
         }
     }
 
     private var activeExportSession: AVAssetExportSession?
     private var cancelRequested = false
+    private var activeHDRCancellation: HDRVideoExporter.Cancellation?
 }

@@ -1,4 +1,5 @@
 import Foundation
+import NexGenEngine
 
 extension ToolExecutor {
     func exportProject(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
@@ -34,7 +35,12 @@ extension ToolExecutor {
             guard editor.timeline.totalFrames > 0 else {
                 throw ToolError("export_project: timeline is empty")
             }
-            return try exportVideo(editor, format: format, resolution: resolution, outputURL: outputURL)
+            return try await exportVideo(
+                editor,
+                format: format,
+                resolution: resolution,
+                outputURL: outputURL
+            )
         case .xml:
             return try exportXML(editor, outputURL: outputURL)
         case .nexgen:
@@ -47,7 +53,13 @@ extension ToolExecutor {
         format: ExportFormat,
         resolution: ExportResolution,
         outputURL: URL
-    ) throws -> ToolResult {
+    ) async throws -> ToolResult {
+        if format.isHDR {
+            try await HDRVideoExporter.requireCapability(renderSize: resolution.renderSize(for: CGSize(
+                width: editor.timeline.width,
+                height: editor.timeline.height
+            )), fps: editor.timeline.fps)
+        }
         guard ExportCoordinator.beginExportIfIdle() else {
             throw ToolError("export_project: Another export is already in progress.")
         }
@@ -55,18 +67,56 @@ extension ToolExecutor {
         let timeline = editor.timeline
         let resolver = editor.mediaResolver
         let name = outputURL.lastPathComponent
+        let hdrSpec: DeliverySpecV1?
+        do {
+            if format.isHDR {
+                _ = try PipelineDeliveryStore.adoptCurrentTimeline(
+                    editor: editor,
+                    requireSequenceReview: false
+                )
+                hdrSpec = try PipelineDeliveryStore.defaultSpec(
+                    id: "master.hevc-main10-hlg.\(resolution.id)",
+                    targetKind: .master,
+                    timeline: timeline,
+                    format: format,
+                    resolution: resolution,
+                    requireSequenceReview: false
+                )
+            } else {
+                hdrSpec = nil
+            }
+        } catch {
+            ExportCoordinator.endExport()
+            throw error
+        }
 
         Task { @MainActor in
             defer { ExportCoordinator.endExport() }
             let service = ExportService()
-            await service.export(
-                timeline: timeline,
-                resolver: resolver,
-                format: format,
-                resolution: resolution,
-                outputURL: outputURL,
-                acquireSlot: false
-            )
+            if let hdrSpec {
+                do {
+                    _ = try await PipelineDeliveryStore.export(
+                        editor: editor,
+                        spec: hdrSpec,
+                        format: format,
+                        resolution: resolution,
+                        outputURL: outputURL,
+                        service: service,
+                        acquireSlot: false
+                    )
+                } catch {
+                    service.error = error.localizedDescription
+                }
+            } else {
+                await service.export(
+                    timeline: timeline,
+                    resolver: resolver,
+                    format: format,
+                    resolution: resolution,
+                    outputURL: outputURL,
+                    acquireSlot: false
+                )
+            }
             if let error = service.error {
                 AppNotifications.exportFailed(name: name, reason: error)
             } else {
@@ -297,8 +347,10 @@ private extension ExportFormat {
         case "h.264", "h264": return VideoCodec.h264.exportFormat
         case "h.265", "h265", "hevc": return VideoCodec.h265.exportFormat
         case "prores": return VideoCodec.prores.exportFormat
+        case "hevcmain10hdr(hlg)", "hevcmain10hdr", "hdr", "hlg":
+            return VideoCodec.hdr.exportFormat
         default:
-            throw ToolError("export_project: codec must be H.264, H.265, or ProRes")
+            throw ToolError("export_project: codec must be H.264, H.265, ProRes, or HEVC Main10 HDR (HLG)")
         }
     }
 }

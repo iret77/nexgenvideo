@@ -5,6 +5,54 @@ import Testing
 
 @Suite("Pipeline delivery store")
 struct PipelineDeliveryStoreTests {
+    @Test("HDR delivery is explicit while SDR specifications stay unchanged")
+    @MainActor
+    func hdrAndSDRSpecifications() throws {
+        var timeline = Timeline()
+        timeline.width = 1920
+        timeline.height = 1080
+        timeline.fps = 30
+
+        let sdr = try PipelineDeliveryStore.defaultSpec(
+            id: "sdr",
+            targetKind: .master,
+            timeline: timeline,
+            format: .h265,
+            resolution: .matchTimeline,
+            requireSequenceReview: false
+        )
+        #expect(sdr.container == "mp4")
+        #expect(sdr.videoCodec == "hvc1")
+        #expect(sdr.colorSpace == "rec709-sdr")
+        #expect(!sdr.hdr)
+        #expect(!sdr.requirements.contains { $0.id.hasPrefix("core.hdr-") })
+
+        let hdr = try PipelineDeliveryStore.defaultSpec(
+            id: "hdr",
+            targetKind: .master,
+            timeline: timeline,
+            format: .hevcMain10HLG,
+            resolution: .matchTimeline,
+            requireSequenceReview: false
+        )
+        #expect(hdr.container == "mov")
+        #expect(hdr.videoCodec == "hvc1")
+        #expect(hdr.colorSpace == "bt2020-hlg")
+        #expect(hdr.hdr)
+        #expect(hdr.requirements.contains {
+            $0.id == "core.hdr-conversion"
+                && $0.value == HDRVideoExporter.conversionID
+                && $0.required
+                && $0.state == .enforced
+        })
+        #expect(hdr.requirements.contains {
+            $0.id == "core.hdr-qc"
+                && $0.value == DeliveryHDRQCV1.schemaVersion
+                && $0.required
+                && $0.state == .enforced
+        })
+    }
+
     @Test("finished source rejects timeline and media drift")
     func finishedSourceDrift() throws {
         let home = FileManager.default.temporaryDirectory

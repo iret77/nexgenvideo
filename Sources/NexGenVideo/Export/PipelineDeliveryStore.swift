@@ -16,6 +16,10 @@ enum PipelineDeliveryStore {
     private static let jobsDirectory = "delivery/jobs"
     private static let timelinesDirectory = "delivery/timelines"
 
+    static func hdrQCPath(attemptID: String) -> String {
+        "\(attemptsDirectory)/\(attemptID).hdr-qc.v1.json"
+    }
+
     @MainActor
     static func adoptCurrentTimeline(
         editor: EditorViewModel,
@@ -230,34 +234,51 @@ enum PipelineDeliveryStore {
         let hasAudio = timeline.tracks.contains {
             $0.type == .audio && !$0.muted && !$0.clips.isEmpty
         }
+        var requirements = [
+            DeliveryRequirementV1(
+                id: "core.sequence-review",
+                state: .enforced,
+                required: requireSequenceReview,
+                value: requireSequenceReview ? "current" : "optional"
+            ),
+            DeliveryRequirementV1(
+                id: "core.offline-media",
+                state: .enforced,
+                required: true,
+                value: "reject"
+            ),
+        ]
+        if format.isHDR {
+            requirements.append(contentsOf: [
+                .init(
+                    id: "core.hdr-conversion",
+                    state: .enforced,
+                    required: true,
+                    value: HDRVideoExporter.conversionID
+                ),
+                .init(
+                    id: "core.hdr-qc",
+                    state: .enforced,
+                    required: true,
+                    value: DeliveryHDRQCV1.schemaVersion
+                ),
+            ])
+        }
         let spec = DeliverySpecV1(
             id: id,
             targetKind: targetKind,
-            container: format == .prores ? "mov" : "mp4",
+            container: containerID(format),
             videoCodec: codecID(format),
             width: Int(outputSize.width),
             height: Int(outputSize.height),
             fpsNumerator: timeline.fps,
-            colorSpace: "rec709-sdr",
-            hdr: false,
+            colorSpace: format.isHDR ? "bt2020-hlg" : "rec709-sdr",
+            hdr: format.isHDR,
             audioLayout: hasAudio ? "present" : "none",
             captionMode: TextLayerController.hasVisibleText(in: timeline)
                 ? "burned-in" : "none",
             disclosureMode: "project-record",
-            requirements: [
-                .init(
-                    id: "core.sequence-review",
-                    state: .enforced,
-                    required: requireSequenceReview,
-                    value: requireSequenceReview ? "current" : "optional"
-                ),
-                .init(
-                    id: "core.offline-media",
-                    state: .enforced,
-                    required: true,
-                    value: "reject"
-                ),
-            ],
+            requirements: requirements,
             extensionRefs: extensionRefs
         )
         try validateSupportedSpec(spec)
@@ -271,7 +292,8 @@ enum PipelineDeliveryStore {
         format: ExportFormat,
         resolution: ExportResolution,
         outputURL: URL,
-        service: ExportService
+        service: ExportService,
+        acquireSlot: Bool = true
     ) async throws -> DeliveryAttemptV1 {
         guard let home = editor.workingRoot,
               let dataRoot = DataRootResolver.dataRoot(of: home) else {
@@ -300,7 +322,8 @@ enum PipelineDeliveryStore {
             throw ToolError("This delivery spec requires a current sequence review.")
         }
         guard spec.videoCodec == codecID(format),
-              spec.container == (format == .prores ? "mov" : "mp4"),
+              spec.container == containerID(format),
+              spec.hdr == format.isHDR,
               spec.width == Int(resolution.renderSize(for: CGSize(
                   width: editor.timeline.width,
                   height: editor.timeline.height
@@ -312,6 +335,12 @@ enum PipelineDeliveryStore {
               spec.fpsNumerator == editor.timeline.fps,
               spec.fpsDenominator == 1 else {
             throw ToolError("The delivery spec does not match the selected export settings.")
+        }
+        if format.isHDR {
+            try await HDRVideoExporter.requireCapability(renderSize: CGSize(
+                width: spec.width,
+                height: spec.height
+            ), fps: spec.fpsNumerator / spec.fpsDenominator)
         }
         let id = UUID().uuidString.lowercased()
         let createdAt = currentTimestamp()
@@ -333,7 +362,8 @@ enum PipelineDeliveryStore {
                 resolver: editor.mediaResolver,
                 format: format,
                 resolution: resolution,
-                outputURL: outputURL
+                outputURL: outputURL,
+                acquireSlot: acquireSlot
             )
         } onCancel: {
             Task { @MainActor in service.cancel() }
@@ -382,11 +412,15 @@ enum PipelineDeliveryStore {
                   size > 0 else {
                 throw ToolError("The exported delivery is missing or empty.")
             }
+            let outputSHA256 = try FileDigest.sha256(of: outputURL)
+            let hdrQC = spec.hdr
+                ? try await HDRDeliveryQC.probe(outputURL: outputURL, spec: spec)
+                : nil
             succeeded = copy(
                 base,
                 status: .succeeded,
                 outputPath: outputURL.path,
-                outputSHA256: try FileDigest.sha256(of: outputURL),
+                outputSHA256: outputSHA256,
                 outputByteCount: Int64(size),
                 probeQC: qc,
                 completedAt: currentTimestamp()
@@ -396,6 +430,7 @@ enum PipelineDeliveryStore {
                 finishedTimelineSHA256: finished.manifest.timelineSHA256,
                 requiredSequenceReviewSHA256: finished.plan.sequenceReviewSHA256
             )
+            try record(succeeded, dataRoot: dataRoot, terminal: true, hdrQC: hdrQC)
         } catch {
             let reason = error.localizedDescription
             let failed = copy(
@@ -409,7 +444,6 @@ enum PipelineDeliveryStore {
             editor.onPipelineChanged?()
             throw error
         }
-        try record(succeeded, dataRoot: dataRoot, terminal: true)
         try select(succeeded, dataRoot: dataRoot)
         editor.onPipelineChanged?()
         return succeeded
@@ -462,6 +496,19 @@ enum PipelineDeliveryStore {
             guard try FileDigest.sha256(of: output) == value.outputSHA256 else {
                 throw ToolError("The selected delivery output bytes changed.")
             }
+            if value.spec.hdr {
+                let hdrQC = try JSONDecoder().decode(
+                    DeliveryHDRQCV1.self,
+                    from: Data(contentsOf: ProjectLocalFile.resolve(
+                        hdrQCPath(attemptID: id),
+                        dataRoot: dataRoot
+                    ))
+                )
+                try DeliveryValidatorV1.validate(
+                    hdrQC: hdrQC,
+                    outputSHA256: value.outputSHA256 ?? ""
+                )
+            }
         }
         return value
     }
@@ -495,15 +542,32 @@ enum PipelineDeliveryStore {
 
     private static func validateSupportedSpec(_ spec: DeliverySpecV1) throws {
         try DeliveryValidatorV1.validate(spec: spec)
-        guard ["mp4", "mov"].contains(spec.container),
-              ["avc1", "hvc1", "apcn"].contains(spec.videoCodec),
-              spec.colorSpace == "rec709-sdr",
-              !spec.hdr,
-              ["present", "none"].contains(spec.audioLayout),
+        guard ["present", "none"].contains(spec.audioLayout),
               ["burned-in", "none"].contains(spec.captionMode),
               spec.disclosureMode == "project-record",
               spec.loudnessTarget == nil else {
             throw ToolError("The requested delivery setting is not implemented by the current exporter.")
+        }
+        if spec.hdr {
+            let conversion = spec.requirements.first { $0.id == "core.hdr-conversion" }
+            let qc = spec.requirements.first { $0.id == "core.hdr-qc" }
+            guard spec.container == "mov",
+                  spec.videoCodec == "hvc1",
+                  spec.colorSpace == "bt2020-hlg",
+                  conversion?.state == .enforced,
+                  conversion?.required == true,
+                  conversion?.value == HDRVideoExporter.conversionID,
+                  qc?.state == .enforced,
+                  qc?.required == true,
+                  qc?.value == DeliveryHDRQCV1.schemaVersion else {
+                throw ToolError("HDR delivery requires Main10 BT.2020 HLG conversion and QC evidence.")
+            }
+        } else {
+            guard ["mp4", "mov"].contains(spec.container),
+                  ["avc1", "hvc1", "apcn"].contains(spec.videoCodec),
+                  spec.colorSpace == "rec709-sdr" else {
+                throw ToolError("The requested SDR delivery setting is not implemented by the current exporter.")
+            }
         }
         for path in spec.extensionRefs {
             guard !path.isEmpty, !path.hasPrefix("/"), !path.contains("..") else {
@@ -568,7 +632,8 @@ enum PipelineDeliveryStore {
     private static func record(
         _ attempt: DeliveryAttemptV1,
         dataRoot: URL,
-        terminal: Bool
+        terminal: Bool,
+        hdrQC: DeliveryHDRQCV1? = nil
     ) throws {
         try DeliveryValidatorV1.validate(attempt: attempt)
         guard terminal == ![.queued, .running].contains(attempt.status) else {
@@ -585,8 +650,28 @@ enum PipelineDeliveryStore {
         let attemptURL = dataRoot.appendingPathComponent(
             "\(attemptsDirectory)/\(attempt.id).v1.json"
         )
+        let hdrURL: URL?
+        let hdrData: Data?
+        if attempt.status == .succeeded, attempt.spec.hdr {
+            guard terminal, let hdrQC, let outputSHA256 = attempt.outputSHA256 else {
+                throw ToolError("A successful HDR delivery requires QC evidence.")
+            }
+            try DeliveryValidatorV1.validate(
+                hdrQC: hdrQC,
+                outputSHA256: outputSHA256
+            )
+            hdrURL = dataRoot.appendingPathComponent(hdrQCPath(attemptID: attempt.id))
+            hdrData = try PipelineAssemblyStore.canonical(hdrQC)
+        } else {
+            guard hdrQC == nil else {
+                throw ToolError("HDR QC evidence does not match the delivery attempt.")
+            }
+            hdrURL = nil
+            hdrData = nil
+        }
         var paths = [currentURL, eventURL]
         if terminal { paths.append(attemptURL) }
+        if let hdrURL { paths.append(hdrURL) }
         try ArtifactTransaction.perform(paths: paths, dataRoot: dataRoot) {
             try FileManager.default.createDirectory(
                 at: eventDirectory,
@@ -611,6 +696,19 @@ enum PipelineDeliveryStore {
                     }
                 } else {
                     try bytes.write(to: attemptURL, options: .atomic)
+                }
+            }
+            if let hdrURL, let hdrData {
+                try FileManager.default.createDirectory(
+                    at: hdrURL.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                if FileManager.default.fileExists(atPath: hdrURL.path) {
+                    guard try Data(contentsOf: hdrURL) == hdrData else {
+                        throw ToolError("Immutable HDR QC evidence has different bytes.")
+                    }
+                } else {
+                    try hdrData.write(to: hdrURL, options: .atomic)
                 }
             }
         }
@@ -677,8 +775,16 @@ enum PipelineDeliveryStore {
     private static func codecID(_ format: ExportFormat) -> String {
         switch format {
         case .h264: "avc1"
-        case .h265: "hvc1"
+        case .h265, .hevcMain10HLG: "hvc1"
         case .prores: "apcn"
+        case .xml: ""
+        }
+    }
+
+    private static func containerID(_ format: ExportFormat) -> String {
+        switch format {
+        case .h264, .h265: "mp4"
+        case .prores, .hevcMain10HLG: "mov"
         case .xml: ""
         }
     }

@@ -121,6 +121,72 @@ final class TextLayerController {
         !visibleTextClips(in: timeline).isEmpty
     }
 
+    static func buildHDRExportOverlays(
+        timeline: Timeline,
+        renderSize: CGSize
+    ) throws -> [HDRVideoExporter.TextOverlay] {
+        let canvas = CGRect(origin: .zero, size: renderSize)
+        let colorSpace = CGColorSpace(name: CGColorSpace.itur_709)
+            ?? CGColorSpaceCreateDeviceRGB()
+        return try visibleTextClips(in: timeline).compactMap { clip in
+            let textLayer = makeTextLayer()
+            applyStyle(to: textLayer, clip: clip, containerSize: renderSize)
+            textLayer.opacity = 1
+            textLayer.displayIfNeeded()
+
+            let overflow = ceil(
+                textLayer.shadowRadius * 2
+                    + max(abs(textLayer.shadowOffset.width), abs(textLayer.shadowOffset.height))
+                    + textLayer.borderWidth
+            )
+            let drawingRect = textLayer.frame
+                .insetBy(dx: -overflow, dy: -overflow)
+                .integral
+                .intersection(canvas)
+            guard !drawingRect.isEmpty else { return nil }
+
+            let width = Int(drawingRect.width)
+            let height = Int(drawingRect.height)
+            guard let context = CGContext(
+                data: nil,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: width * 4,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                    | CGBitmapInfo.byteOrder32Big.rawValue
+            ) else {
+                throw HDRVideoExporter.HDRExportError(reason: "a title overlay could not be rasterized")
+            }
+            context.clear(CGRect(x: 0, y: 0, width: width, height: height))
+
+            let root = CALayer()
+            root.frame = CGRect(x: 0, y: 0, width: width, height: height)
+            root.isGeometryFlipped = true
+            textLayer.frame = CGRect(
+                origin: CGPoint(
+                    x: textLayer.frame.minX - drawingRect.minX,
+                    y: textLayer.frame.minY - drawingRect.minY
+                ),
+                size: textLayer.frame.size
+            )
+            root.addSublayer(textLayer)
+            root.render(in: context)
+            guard let image = context.makeImage() else {
+                throw HDRVideoExporter.HDRExportError(reason: "a title overlay produced no pixels")
+            }
+            return HDRVideoExporter.TextOverlay(
+                image: image,
+                placement: CGPoint(
+                    x: drawingRect.minX,
+                    y: renderSize.height - drawingRect.maxY
+                ),
+                clip: clip
+            )
+        }
+    }
+
     // MARK: - Private
 
     private static func visibleTextClips(in timeline: Timeline) -> [Clip] {

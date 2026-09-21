@@ -502,3 +502,275 @@ public enum DeliveryValidatorV1 {
         }
     }
 }
+
+public struct DeliveryHDRTrackQCV1: Codable, Sendable, Equatable {
+    public let codec: String
+    public let bitsPerComponent: Int
+    public let colorPrimaries: String
+    public let transferFunction: String
+    public let yCbCrMatrix: String
+    public let fullRange: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case codec
+        case bitsPerComponent = "bits_per_component"
+        case colorPrimaries = "color_primaries"
+        case transferFunction = "transfer_function"
+        case yCbCrMatrix = "ycbcr_matrix"
+        case fullRange = "full_range"
+    }
+
+    public init(
+        codec: String,
+        bitsPerComponent: Int,
+        colorPrimaries: String,
+        transferFunction: String,
+        yCbCrMatrix: String,
+        fullRange: Bool
+    ) {
+        self.codec = codec
+        self.bitsPerComponent = bitsPerComponent
+        self.colorPrimaries = colorPrimaries
+        self.transferFunction = transferFunction
+        self.yCbCrMatrix = yCbCrMatrix
+        self.fullRange = fullRange
+    }
+}
+
+public struct DeliveryHDRContainerQCV1: Codable, Sendable, Equatable {
+    public let fileType: String
+    public let sampleEntry: String
+    public let hasHEVCConfiguration: Bool
+    public let profileIDC: Int
+    public let lumaBitDepth: Int
+    public let chromaBitDepth: Int
+    public let colorPrimariesIndex: Int
+    public let transferFunctionIndex: Int
+    public let matrixIndex: Int
+    public let fullRangeFlag: Bool?
+
+    private enum CodingKeys: String, CodingKey {
+        case fileType = "file_type"
+        case sampleEntry = "sample_entry"
+        case hasHEVCConfiguration = "has_hevc_configuration"
+        case profileIDC = "profile_idc"
+        case lumaBitDepth = "luma_bit_depth"
+        case chromaBitDepth = "chroma_bit_depth"
+        case colorPrimariesIndex = "color_primaries_index"
+        case transferFunctionIndex = "transfer_function_index"
+        case matrixIndex = "matrix_index"
+        case fullRangeFlag = "full_range_flag"
+    }
+
+    public init(
+        fileType: String,
+        sampleEntry: String,
+        hasHEVCConfiguration: Bool,
+        profileIDC: Int,
+        lumaBitDepth: Int,
+        chromaBitDepth: Int,
+        colorPrimariesIndex: Int,
+        transferFunctionIndex: Int,
+        matrixIndex: Int,
+        fullRangeFlag: Bool?
+    ) {
+        self.fileType = fileType
+        self.sampleEntry = sampleEntry
+        self.hasHEVCConfiguration = hasHEVCConfiguration
+        self.profileIDC = profileIDC
+        self.lumaBitDepth = lumaBitDepth
+        self.chromaBitDepth = chromaBitDepth
+        self.colorPrimariesIndex = colorPrimariesIndex
+        self.transferFunctionIndex = transferFunctionIndex
+        self.matrixIndex = matrixIndex
+        self.fullRangeFlag = fullRangeFlag
+    }
+}
+
+public struct DeliveryHDRReferenceFrameQCV1: Codable, Sendable, Equatable {
+    public let index: Int
+    public let presentationTimeValue: Int64
+    public let presentationTimeTimescale: Int32
+    public let pixelFormat: String
+    public let lumaMinimumCode: Int
+    public let lumaMaximumCode: Int
+    public let outOfRangePixelCount: Int
+    public let pixelCount: Int
+    public let chromaCbMeanCode: Double
+    public let chromaCrMeanCode: Double
+    public let pixelSHA256: String
+
+    private enum CodingKeys: String, CodingKey {
+        case index
+        case presentationTimeValue = "presentation_time_value"
+        case presentationTimeTimescale = "presentation_time_timescale"
+        case pixelFormat = "pixel_format"
+        case lumaMinimumCode = "luma_minimum_code"
+        case lumaMaximumCode = "luma_maximum_code"
+        case outOfRangePixelCount = "out_of_range_pixel_count"
+        case pixelCount = "pixel_count"
+        case chromaCbMeanCode = "chroma_cb_mean_code"
+        case chromaCrMeanCode = "chroma_cr_mean_code"
+        case pixelSHA256 = "pixel_sha256"
+    }
+
+    public init(
+        index: Int,
+        presentationTimeValue: Int64,
+        presentationTimeTimescale: Int32,
+        pixelFormat: String,
+        lumaMinimumCode: Int,
+        lumaMaximumCode: Int,
+        outOfRangePixelCount: Int,
+        pixelCount: Int,
+        chromaCbMeanCode: Double,
+        chromaCrMeanCode: Double,
+        pixelSHA256: String
+    ) {
+        self.index = index
+        self.presentationTimeValue = presentationTimeValue
+        self.presentationTimeTimescale = presentationTimeTimescale
+        self.pixelFormat = pixelFormat
+        self.lumaMinimumCode = lumaMinimumCode
+        self.lumaMaximumCode = lumaMaximumCode
+        self.outOfRangePixelCount = outOfRangePixelCount
+        self.pixelCount = pixelCount
+        self.chromaCbMeanCode = chromaCbMeanCode
+        self.chromaCrMeanCode = chromaCrMeanCode
+        self.pixelSHA256 = pixelSHA256
+    }
+}
+
+public struct DeliveryHDRQCV1: Codable, Sendable, Equatable {
+    public static let schemaVersion = "delivery-hdr-qc/v1"
+    public static let sdrReferenceWhiteMaximumCode = 768
+    public static let decodedLumaMinimumCode = 60
+    public static let decodedLumaMaximumCode = 944
+    public let schema: String
+    public let outputSHA256: String
+    public let conversion: String
+    public let track: DeliveryHDRTrackQCV1
+    public let container: DeliveryHDRContainerQCV1
+    public let referenceFrames: [DeliveryHDRReferenceFrameQCV1]
+    public let passed: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case schema
+        case outputSHA256 = "output_sha256"
+        case conversion, track, container
+        case referenceFrames = "reference_frames"
+        case passed
+    }
+
+    public init(
+        outputSHA256: String,
+        conversion: String,
+        track: DeliveryHDRTrackQCV1,
+        container: DeliveryHDRContainerQCV1,
+        referenceFrames: [DeliveryHDRReferenceFrameQCV1],
+        passed: Bool
+    ) {
+        schema = Self.schemaVersion
+        self.outputSHA256 = outputSHA256
+        self.conversion = conversion
+        self.track = track
+        self.container = container
+        self.referenceFrames = referenceFrames
+        self.passed = passed
+    }
+}
+
+public extension DeliveryValidatorV1 {
+    static func validate(
+        hdrQC: DeliveryHDRQCV1,
+        outputSHA256: String
+    ) throws {
+        guard hdrValidationFailures(hdrQC: hdrQC, outputSHA256: outputSHA256).isEmpty else {
+            throw DeliveryValidationErrorV1.unsuccessfulOutput
+        }
+    }
+
+    static func hdrValidationFailures(
+        hdrQC: DeliveryHDRQCV1,
+        outputSHA256: String
+    ) -> [String] {
+        var failures: [String] = []
+        check(
+            hdrQC.schema == DeliveryHDRQCV1.schemaVersion,
+            "schema",
+            DeliveryHDRQCV1.schemaVersion,
+            hdrQC.schema,
+            into: &failures
+        )
+        check(
+            hdrQC.outputSHA256 == outputSHA256,
+            "output_sha256",
+            outputSHA256,
+            hdrQC.outputSHA256,
+            into: &failures
+        )
+        check(
+            digest(outputSHA256),
+            "output_sha256_format",
+            "64 lowercase hexadecimal characters",
+            outputSHA256,
+            into: &failures
+        )
+        check(
+            hdrQC.conversion == "rec709-sdr-reference-white-75-to-bt2020-hlg",
+            "conversion",
+            "rec709-sdr-reference-white-75-to-bt2020-hlg",
+            hdrQC.conversion,
+            into: &failures
+        )
+        check(hdrQC.track.codec == "hvc1", "track.codec", "hvc1", hdrQC.track.codec, into: &failures)
+        check(hdrQC.track.bitsPerComponent == 10, "track.bits_per_component", 10, hdrQC.track.bitsPerComponent, into: &failures)
+        check(hdrQC.track.colorPrimaries == "bt2020", "track.color_primaries", "bt2020", hdrQC.track.colorPrimaries, into: &failures)
+        check(hdrQC.track.transferFunction == "hlg", "track.transfer_function", "hlg", hdrQC.track.transferFunction, into: &failures)
+        check(hdrQC.track.yCbCrMatrix == "bt2020-ncl", "track.ycbcr_matrix", "bt2020-ncl", hdrQC.track.yCbCrMatrix, into: &failures)
+        check(!hdrQC.track.fullRange, "track.full_range", false, hdrQC.track.fullRange, into: &failures)
+        check(hdrQC.container.fileType == "mov", "container.file_type", "mov", hdrQC.container.fileType, into: &failures)
+        check(hdrQC.container.sampleEntry == "hvc1", "container.sample_entry", "hvc1", hdrQC.container.sampleEntry, into: &failures)
+        check(hdrQC.container.hasHEVCConfiguration, "container.has_hevc_configuration", true, hdrQC.container.hasHEVCConfiguration, into: &failures)
+        check(hdrQC.container.profileIDC == 2, "container.profile_idc", 2, hdrQC.container.profileIDC, into: &failures)
+        check(hdrQC.container.lumaBitDepth == 10, "container.luma_bit_depth", 10, hdrQC.container.lumaBitDepth, into: &failures)
+        check(hdrQC.container.chromaBitDepth == 10, "container.chroma_bit_depth", 10, hdrQC.container.chromaBitDepth, into: &failures)
+        check(hdrQC.container.colorPrimariesIndex == 9, "container.color_primaries_index", 9, hdrQC.container.colorPrimariesIndex, into: &failures)
+        check(hdrQC.container.transferFunctionIndex == 18, "container.transfer_function_index", 18, hdrQC.container.transferFunctionIndex, into: &failures)
+        check(hdrQC.container.matrixIndex == 9, "container.matrix_index", 9, hdrQC.container.matrixIndex, into: &failures)
+        check(hdrQC.container.fullRangeFlag != true, "container.full_range_flag", "false or absent", String(describing: hdrQC.container.fullRangeFlag), into: &failures)
+        check(hdrQC.referenceFrames.count == 4, "reference_frames.count", 4, hdrQC.referenceFrames.count, into: &failures)
+        check(hdrQC.referenceFrames.map(\.index) == [0, 1, 2, 3], "reference_frames.indices", [0, 1, 2, 3], hdrQC.referenceFrames.map(\.index), into: &failures)
+
+        for frame in hdrQC.referenceFrames {
+            let prefix = "reference_frames[\(frame.index)]"
+            check(frame.presentationTimeTimescale > 0, "\(prefix).presentation_time_timescale", "> 0", frame.presentationTimeTimescale, into: &failures)
+            check(frame.pixelFormat == "x420", "\(prefix).pixel_format", "x420", frame.pixelFormat, into: &failures)
+            check(frame.lumaMinimumCode >= DeliveryHDRQCV1.decodedLumaMinimumCode, "\(prefix).luma_minimum_code", ">= \(DeliveryHDRQCV1.decodedLumaMinimumCode)", frame.lumaMinimumCode, into: &failures)
+            check(frame.lumaMaximumCode <= DeliveryHDRQCV1.decodedLumaMaximumCode, "\(prefix).luma_maximum_code", "<= \(DeliveryHDRQCV1.decodedLumaMaximumCode)", frame.lumaMaximumCode, into: &failures)
+            check(frame.lumaMaximumCode <= DeliveryHDRQCV1.sdrReferenceWhiteMaximumCode, "\(prefix).sdr_reference_white_maximum_code", "<= \(DeliveryHDRQCV1.sdrReferenceWhiteMaximumCode)", frame.lumaMaximumCode, into: &failures)
+            check(frame.lumaMinimumCode <= frame.lumaMaximumCode, "\(prefix).luma_code_order", "minimum <= maximum", "\(frame.lumaMinimumCode)...\(frame.lumaMaximumCode)", into: &failures)
+            check(frame.outOfRangePixelCount >= 0, "\(prefix).out_of_range_pixel_count", ">= 0", frame.outOfRangePixelCount, into: &failures)
+            check(frame.outOfRangePixelCount <= frame.pixelCount, "\(prefix).out_of_range_pixel_count", "<= pixel_count (\(frame.pixelCount))", frame.outOfRangePixelCount, into: &failures)
+            check(frame.pixelCount > 0, "\(prefix).pixel_count", "> 0", frame.pixelCount, into: &failures)
+            check(frame.chromaCbMeanCode.isFinite, "\(prefix).chroma_cb_mean_code", "finite", frame.chromaCbMeanCode, into: &failures)
+            check((60.0...964.0).contains(frame.chromaCbMeanCode), "\(prefix).chroma_cb_mean_code", "60...964", frame.chromaCbMeanCode, into: &failures)
+            check(frame.chromaCrMeanCode.isFinite, "\(prefix).chroma_cr_mean_code", "finite", frame.chromaCrMeanCode, into: &failures)
+            check((60.0...964.0).contains(frame.chromaCrMeanCode), "\(prefix).chroma_cr_mean_code", "60...964", frame.chromaCrMeanCode, into: &failures)
+            check(digest(frame.pixelSHA256), "\(prefix).pixel_sha256", "64 lowercase hexadecimal characters", frame.pixelSHA256, into: &failures)
+        }
+        check(hdrQC.passed, "passed", true, hdrQC.passed, into: &failures)
+        return failures
+    }
+
+    private static func check<Expected, Measured>(
+        _ condition: Bool,
+        _ predicate: String,
+        _ expected: Expected,
+        _ measured: Measured,
+        into failures: inout [String]
+    ) {
+        guard !condition else { return }
+        failures.append("\(predicate) expected \(expected) measured \(measured)")
+    }
+}
