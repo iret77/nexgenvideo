@@ -650,6 +650,38 @@ extension ToolExecutor {
         return .ok("Split clip \(clipId) at frame \(atFrame). Left: \(leftSummary)\(rightNote)")
     }
 
+    // MARK: ripple_trim
+
+    func rippleTrim(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+        let clipId = try args.requireString("clipId")
+        let edgeValue = try args.requireString("edge")
+        let deltaFrames = try args.requireInt("deltaFrames")
+        guard deltaFrames != 0 else { throw ToolError("deltaFrames must not be zero") }
+        guard editor.findClip(id: clipId) != nil else { throw ToolError("Clip not found: \(clipId)") }
+
+        let edge: TrimEdge
+        switch edgeValue {
+        case "left": edge = .left
+        case "right": edge = .right
+        default: throw ToolError("edge must be 'left' or 'right'")
+        }
+        guard let plan = editor.rippleTrimClip(
+            clipId: clipId,
+            edge: edge,
+            deltaFrames: deltaFrames,
+            propagateToLinked: args["includeLinked"] as? Bool ?? true
+        ) else {
+            throw ToolError("Ripple trim has no available source handle or timeline room")
+        }
+
+        let payload: [String: Any] = [
+            "appliedDurationDelta": plan.durationDelta,
+            "resizedClipIds": plan.resizes.map(\.clipId),
+            "shiftedClipCount": plan.shifts.count,
+        ]
+        return .ok(Self.jsonString(payload) ?? "Ripple trim applied")
+    }
+
     // MARK: ripple_delete_ranges
 
     func rippleDeleteRanges(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {

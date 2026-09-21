@@ -121,7 +121,16 @@ final class TimelineInputController {
             // Linked behavior is always on; Option is the per-drag override.
             let linkedOn = !isOption
 
-            if isShift {
+            let localX = point.x - rect.minX
+            let onTrimHandle = Self.isOnTrimZone(localX: localX, clipWidth: rect.width)
+            let rippleTrim = isShift && onTrimHandle
+            let allowsTrim = !isOption || rippleTrim
+
+            if rippleTrim {
+                if !editor.selectedClipIds.contains(clip.id) {
+                    editor.selectedClipIds = linkedOn ? editor.expandToLinkGroup([clip.id]) : [clip.id]
+                }
+            } else if isShift {
                 if editor.selectedClipIds.contains(clip.id) {
                     if linkedOn {
                         editor.selectedClipIds.subtract(editor.expandToLinkGroup([clip.id]))
@@ -139,7 +148,6 @@ final class TimelineInputController {
                 editor.selectedClipIds = linkedOn ? editor.expandToLinkGroup([clip.id]) : [clip.id]
             }
 
-            let localX = point.x - rect.minX
             let isCommand = event.modifierFlags.contains(.command)
             let allowsEditChrome = editor.allowsTimelineEditChrome
 
@@ -169,7 +177,7 @@ final class TimelineInputController {
             } else if allowsEditChrome, isCommand, clip.mediaType == .audio,
                       addVolumeKeyframeOnClick(at: point, clip: clip, clipRect: rect) {
                 dragState = .idle
-            } else if allowsEditChrome, !isOption, localX <= AppTheme.Timeline.trimHandleWidth {
+            } else if allowsEditChrome, allowsTrim, localX <= AppTheme.Timeline.trimHandleWidth {
                 dragState = .trimLeft(DragState.TrimDrag(
                     clipId: clip.id,
                     trackIndex: hit.trackIndex,
@@ -178,9 +186,10 @@ final class TimelineInputController {
                     originalStartFrame: clip.startFrame,
                     originalDuration: clip.durationFrames,
                     hasNoSourceMedia: clip.mediaType == .image || clip.mediaType == .text,
-                    propagateToLinked: linkedOn
+                    propagateToLinked: linkedOn,
+                    isRipple: rippleTrim
                 ))
-            } else if allowsEditChrome, !isOption, localX >= rect.width - AppTheme.Timeline.trimHandleWidth {
+            } else if allowsEditChrome, allowsTrim, localX >= rect.width - AppTheme.Timeline.trimHandleWidth {
                 dragState = .trimRight(DragState.TrimDrag(
                     clipId: clip.id,
                     trackIndex: hit.trackIndex,
@@ -189,7 +198,8 @@ final class TimelineInputController {
                     originalStartFrame: clip.startFrame,
                     originalDuration: clip.durationFrames,
                     hasNoSourceMedia: clip.mediaType == .image || clip.mediaType == .text,
-                    propagateToLinked: linkedOn
+                    propagateToLinked: linkedOn,
+                    isRipple: rippleTrim
                 ))
             } else {
                 let grabFrame = geometry.frameAt(x: point.x)
@@ -387,7 +397,9 @@ final class TimelineInputController {
             }
             let delta = snappedStart - drag.originalStartFrame
             let maxDelta = drag.originalDuration - 1
-            let minDelta = drag.hasNoSourceMedia ? -drag.originalStartFrame : -drag.originalTrimStart
+            let minDelta = drag.isRipple
+                ? -drag.originalStartFrame
+                : (drag.hasNoSourceMedia ? -drag.originalStartFrame : -drag.originalTrimStart)
             drag.deltaFrames = max(minDelta, min(maxDelta, delta))
             dragState = .trimLeft(drag)
 
@@ -416,9 +428,8 @@ final class TimelineInputController {
                 snappedEnd = candidateEnd
             }
             drag.deltaFrames = snappedEnd - originalEndFrame
-            // Can't shrink past 1 frame; for non-image clips, can't expand past source material
             let minDelta = -(drag.originalDuration - 1)
-            if drag.hasNoSourceMedia {
+            if drag.hasNoSourceMedia || drag.isRipple {
                 drag.deltaFrames = max(minDelta, drag.deltaFrames)
             } else {
                 let maxDelta = drag.originalTrimEnd
@@ -525,22 +536,40 @@ final class TimelineInputController {
 
         case .trimLeft(let drag):
             if drag.deltaFrames != 0 {
-                editor.commitTrim(
-                    clipId: drag.clipId,
-                    edge: .left,
-                    deltaFrames: drag.deltaFrames,
-                    propagateToLinked: drag.propagateToLinked
-                )
+                if drag.isRipple {
+                    editor.rippleTrimClip(
+                        clipId: drag.clipId,
+                        edge: .left,
+                        deltaFrames: drag.deltaFrames,
+                        propagateToLinked: drag.propagateToLinked
+                    )
+                } else {
+                    editor.commitTrim(
+                        clipId: drag.clipId,
+                        edge: .left,
+                        deltaFrames: drag.deltaFrames,
+                        propagateToLinked: drag.propagateToLinked
+                    )
+                }
             }
 
         case .trimRight(let drag):
             if drag.deltaFrames != 0 {
-                editor.commitTrim(
-                    clipId: drag.clipId,
-                    edge: .right,
-                    deltaFrames: drag.deltaFrames,
-                    propagateToLinked: drag.propagateToLinked
-                )
+                if drag.isRipple {
+                    editor.rippleTrimClip(
+                        clipId: drag.clipId,
+                        edge: .right,
+                        deltaFrames: drag.deltaFrames,
+                        propagateToLinked: drag.propagateToLinked
+                    )
+                } else {
+                    editor.commitTrim(
+                        clipId: drag.clipId,
+                        edge: .right,
+                        deltaFrames: drag.deltaFrames,
+                        propagateToLinked: drag.propagateToLinked
+                    )
+                }
             }
 
         case .audioVolumeKf(let drag):

@@ -15,6 +15,7 @@ enum ToolName: String, CaseIterable, Sendable {
     case setClipProperties = "set_clip_properties"
     case setKeyframes = "set_keyframes"
     case splitClip = "split_clip"
+    case rippleTrim = "ripple_trim"
     case rippleDeleteRanges = "ripple_delete_ranges"
     case removeWords = "remove_words"
     case syncAudio = "sync_audio"
@@ -649,6 +650,19 @@ enum ToolDefinitions {
                     "atFrame": ["type": "integer", "description": "Frame position to split at (must be between clip start and end)"],
                 ],
                 required: ["clipId", "atFrame"]
+            )
+        ),
+        AgentTool(
+            name: .rippleTrim,
+            description: "Ripple-trims one edge of a clip and shifts later clips in the same undoable operation. deltaFrames is the pointer-style edge movement: positive moves the edge later and negative moves it earlier. Linked clips follow by default, sync-locked tracks stay aligned, and markers ripple with the edit. Source handles and the one-frame minimum are enforced.",
+            inputSchema: objectSchema(
+                properties: [
+                    "clipId": ["type": "string", "description": "The clip whose edge anchors the trim"],
+                    "edge": ["type": "string", "enum": ["left", "right"]],
+                    "deltaFrames": ["type": "integer", "description": "Signed timeline-frame movement of the chosen edge; must not be zero"],
+                    "includeLinked": ["type": "boolean", "description": "Trim linked partners together (default true)"],
+                ],
+                required: ["clipId", "edge", "deltaFrames"]
             )
         ),
         AgentTool(

@@ -38,6 +38,7 @@ enum ToolRunPresentation {
         "set_clip_properties": "Adjusting clip properties",
         "set_keyframes": "Setting keyframes",
         "split_clip": "Splitting a clip",
+        "ripple_trim": "Ripple trimming a clip",
         "ripple_delete_ranges": "Closing gaps in the cut",
         "remove_words": "Cutting words from speech",
         "sync_audio": "Syncing audio",
