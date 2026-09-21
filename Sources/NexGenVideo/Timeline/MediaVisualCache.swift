@@ -1,7 +1,6 @@
 import AppKit
 import AVFoundation
 import CryptoKit
-import DSWaveformImage
 import ImageIO
 import UniformTypeIdentifiers
 
@@ -173,20 +172,15 @@ final class MediaVisualCache {
         }
         defer { Task { await waveformGate.signal() } }
 
-        let asset = AVURLAsset(url: url)
-        guard (try? await asset.loadTracks(withMediaType: .audio).first) != nil else { return nil }
-
-        let duration = (try? await asset.load(.duration).seconds) ?? 0
-        let count = waveformSampleCount(duration: duration)
-        guard let samples = try? await WaveformAnalyzer().samples(fromAudioAt: url, count: count) else { return nil }
+        let samples: [Float]
+        do {
+            samples = try await WaveformExtractor.peakEnvelope(from: url)
+        } catch {
+            Log.editor.warning("waveform failed file=\(url.lastPathComponent) error=\(Log.detail(error))")
+            return nil
+        }
         if let cacheKey { saveWaveform(samples, key: cacheKey) }
         return samples
-    }
-
-    private nonisolated static func waveformSampleCount(duration: Double) -> Int {
-        guard duration.isFinite, duration > 0 else { return 4000 }
-        if duration >= Double(20_000) / 150 { return 20_000 }
-        return max(4000, Int(duration * 150))
     }
 
     private nonisolated static func videoThumbnailTimes(duration: Double) -> [CMTime] {
@@ -215,15 +209,22 @@ final class MediaVisualCache {
         return digest.prefix(16).map { String(format: "%02x", $0) }.joined()
     }
 
-    private nonisolated static func loadWaveform(key: String) -> [Float]? {
-        let url = diskCache.directory.appendingPathComponent(key + ".waveform")
-        guard let data = try? Data(contentsOf: url), !data.isEmpty, data.count % 4 == 0 else { return nil }
-        return data.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
+    nonisolated static func loadWaveform(key: String) -> [Float]? {
+        let url = diskCache.directory.appendingPathComponent(key + ".waveform2")
+        guard let data = try? Data(contentsOf: url),
+              data.count <= WaveformExtractor.maxSamples * MemoryLayout<Float>.size,
+              data.count % MemoryLayout<Float>.size == 0 else { return nil }
+        var samples = [Float](repeating: 0, count: data.count / MemoryLayout<Float>.size)
+        samples.withUnsafeMutableBytes { data.copyBytes(to: $0) }
+        guard samples.allSatisfy({ $0.isFinite && (0...1).contains($0) }) else { return nil }
+        return samples
     }
 
-    private nonisolated static func saveWaveform(_ samples: [Float], key: String) {
-        let url = diskCache.directory.appendingPathComponent(key + ".waveform")
-        samples.withUnsafeBytes { try? Data($0).write(to: url) }
+    nonisolated static func saveWaveform(_ samples: [Float], key: String) {
+        guard samples.count <= WaveformExtractor.maxSamples,
+              samples.allSatisfy({ $0.isFinite && (0...1).contains($0) }) else { return }
+        let url = diskCache.directory.appendingPathComponent(key + ".waveform2")
+        samples.withUnsafeBytes { try? Data($0).write(to: url, options: .atomic) }
     }
 
     private struct ThumbnailCacheMeta: Codable {

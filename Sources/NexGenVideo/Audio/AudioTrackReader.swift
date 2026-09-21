@@ -5,11 +5,13 @@ import Foundation
 enum AudioTrackReader {
     enum ReadError: Error {
         case noAudioTrack(String)
+        case invalidRange
         case readFailed(String)
 
         var message: String {
             switch self {
             case .noAudioTrack(let name): "No audio track in \(name)"
+            case .invalidRange: "Invalid audio time range"
             case .readFailed(let reason): reason
             }
         }
@@ -23,6 +25,14 @@ enum AudioTrackReader {
         range: ClosedRange<Double>? = nil,
         onBuffer: (AVAudioPCMBuffer) throws -> Void
     ) async throws {
+        if let range {
+            guard range.lowerBound.isFinite, range.upperBound.isFinite,
+                  range.lowerBound >= 0, range.upperBound >= range.lowerBound else {
+                throw ReadError.invalidRange
+            }
+            if range.lowerBound == range.upperBound { return }
+        }
+
         let asset = AVURLAsset(url: url)
         guard let track = try await asset.loadTracks(withMediaType: .audio).first else {
             throw ReadError.noAudioTrack(url.lastPathComponent)
@@ -39,9 +49,18 @@ enum AudioTrackReader {
         }
         reader.add(output)
         if let range {
+            let timeScale: CMTimeScale
+            do {
+                timeScale = try await track.load(.naturalTimeScale)
+            } catch {
+                throw ReadError.readFailed(error.localizedDescription)
+            }
+            guard timeScale > 0 else {
+                throw ReadError.readFailed("Audio track has no valid timebase")
+            }
             reader.timeRange = CMTimeRange(
-                start: CMTime(seconds: range.lowerBound, preferredTimescale: 600),
-                end: CMTime(seconds: range.upperBound, preferredTimescale: 600)
+                start: CMTime(seconds: range.lowerBound, preferredTimescale: timeScale),
+                end: CMTime(seconds: range.upperBound, preferredTimescale: timeScale)
             )
         }
 
@@ -56,9 +75,12 @@ enum AudioTrackReader {
             let frames = AVAudioFrameCount(CMSampleBufferGetNumSamples(sample))
             guard frames > 0, let pcm = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames) else { continue }
             pcm.frameLength = frames
-            CMSampleBufferCopyPCMDataIntoAudioBufferList(
+            let status = CMSampleBufferCopyPCMDataIntoAudioBufferList(
                 sample, at: 0, frameCount: Int32(frames), into: pcm.mutableAudioBufferList
             )
+            guard status == noErr else {
+                throw ReadError.readFailed("PCM copy failed (OSStatus \(status))")
+            }
             try onBuffer(pcm)
         }
 
