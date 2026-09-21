@@ -497,6 +497,9 @@ enum WorkspaceUIAcceptance {
             secondImage.mediaType = .image
             secondImage.sourceClipType = .image
             secondImage.speed = 1.5
+            secondImage.transform.centerX = 0.6
+            secondImage.transform.rotation = 30
+            secondImage.opacity = 0.5
 
             var audioClip = Clip(mediaRef: "inspector-audio", startFrame: 0, durationFrames: 290)
             audioClip.id = "inspector-audio-clip"
