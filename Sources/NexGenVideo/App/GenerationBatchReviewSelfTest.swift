@@ -495,12 +495,12 @@ enum GenerationBatchReviewSelfTest {
               frame.width > AppTheme.Spacing.none,
               frame.height > AppTheme.Spacing.none else { return false }
         guard root.bounds.contains(probe.convert(frame, to: root)) else { return false }
-        var descendant = probe
-        while let ancestor = descendant.superview {
-            let frameInAncestor = descendant.convert(descendant.bounds, to: ancestor)
-            guard ancestor.visibleRect.contains(frameInAncestor) else { return false }
-            if ancestor === root { break }
-            descendant = ancestor
+        var ancestor = probe.superview
+        while let current = ancestor {
+            let frameInAncestor = probe.convert(frame, to: current)
+            guard current.visibleRect.contains(frameInAncestor) else { return false }
+            if current === root { break }
+            ancestor = current.superview
         }
         return true
     }
