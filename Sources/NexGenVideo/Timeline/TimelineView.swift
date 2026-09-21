@@ -1073,7 +1073,9 @@ final class TimelineView: NSView {
             snapOverlay.setExternalX(nil)
             return candidate
         }
-        let totalDur = assets.reduce(0) { $0 + editor.clipDurationFrames(for: $1, segment: externalDragSegments[$1.id]) }
+        let totalDur = assets.filter { $0.type != .subtitle }.reduce(0) {
+            $0 + editor.clipDurationFrames(for: $1, segment: externalDragSegments[$1.id])
+        }
         let targets = SnapEngine.collectTargets(
             tracks: editor.timeline.tracks
         )
@@ -1112,12 +1114,33 @@ final class TimelineView: NSView {
         let segments = editor.segmentsFromDragPayload(urlString)
         guard !assets.isEmpty else { return false }
 
+        let subtitleAssets = assets.filter { $0.type == .subtitle }
+        let placeableAssets = assets.filter(\.type.isPlaceable)
+
+        if !subtitleAssets.isEmpty {
+            Task { @MainActor in
+                do {
+                    _ = try await editor.placeCaptions(fromSubtitleAssets: subtitleAssets)
+                    self.needsDisplay = true
+                } catch is CancellationError {
+                    return
+                } catch {
+                    editor.mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
+                }
+            }
+        }
+
+        guard !placeableAssets.isEmpty else {
+            needsDisplay = true
+            return true
+        }
+
         let mods = NSEvent.modifierFlags
 
         let operation: @MainActor () -> Void = {
             editor.undoManager?.beginUndoGrouping()
 
-            let plan = editor.resolveDropPlan(cursor: cursorTarget, assets: assets, atFrame: targetFrame, segments: segments)
+            let plan = editor.resolveDropPlan(cursor: cursorTarget, assets: placeableAssets, atFrame: targetFrame, segments: segments)
             let (visualIdx, audioIdx) = editor.materialize(plan: plan)
             let ripple = mods.contains(.command)
 
@@ -1129,11 +1152,11 @@ final class TimelineView: NSView {
                 }
             }
 
-            let visualAssets = assets.filter { $0.type.isVisual }
+            let visualAssets = placeableAssets.filter { $0.type.isVisual }
             if !visualAssets.isEmpty, let vIdx = visualIdx {
                 insert(visualAssets, vIdx, audioIdx)
             }
-            let audioOnlyAssets = assets.filter { $0.type == .audio }
+            let audioOnlyAssets = placeableAssets.filter { $0.type == .audio }
             if !audioOnlyAssets.isEmpty, let aIdx = audioIdx {
                 insert(audioOnlyAssets, aIdx, nil)
             }
@@ -1142,7 +1165,7 @@ final class TimelineView: NSView {
             editor.undoManager?.setActionName("Add Clips")
         }
 
-        editor.addClipsWithSettingsCheck(assets: assets, operation: operation)
+        editor.addClipsWithSettingsCheck(assets: placeableAssets, operation: operation)
 
         needsDisplay = true
         return true

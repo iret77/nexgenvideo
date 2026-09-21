@@ -391,6 +391,12 @@ enum RemoteMediaPayloadValidator {
                     "the file is not a Lottie animation."
                 )
             }
+        case .subtitle:
+            guard let data = try? Data(contentsOf: url), !data.isEmpty else {
+                throw RemoteMediaPolicy.PolicyError.invalidPayload(
+                    "the caption file is empty or unreadable."
+                )
+            }
         case .document:
             guard let data = try? Data(contentsOf: url),
                   !data.isEmpty,

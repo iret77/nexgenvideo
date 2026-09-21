@@ -348,9 +348,37 @@ extension ToolExecutor {
         case .video: return try await readVideo(editor: editor, asset: asset, args: args, mapping: mapping)
         case .audio: return try await readAudio(editor: editor, asset: asset, args: args, mapping: mapping)
         case .lottie: return try await readLottie(asset: asset, args: args)
+        case .subtitle: return try await readSubtitle(asset: asset)
         case .document: return try readDocument(asset: asset)
         case .text: throw ToolError("Text clips are not stored as media assets.")
         }
+    }
+
+    private func readSubtitle(asset: MediaAsset) async throws -> ToolResult {
+        let document: SubtitleDocument
+        do {
+            document = try await SubtitleFileParser.parseFile(at: asset.url)
+        } catch {
+            throw ToolError("Failed to parse caption file: \(error.localizedDescription)")
+        }
+        let limit = 500
+        var meta = Self.baseMeta(for: asset)
+        meta["cueCount"] = document.cues.count
+        meta["language"] = document.languageIdentifier ?? NSNull()
+        meta["cues"] = document.cues.prefix(limit).map { cue in
+            [
+                "startSeconds": cue.start.seconds,
+                "endSeconds": cue.end.seconds,
+                "text": cue.text,
+            ] as [String: Any]
+        }
+        if document.cues.count > limit {
+            meta["note"] = "Showing the first \(limit) of \(document.cues.count) cues."
+        }
+        guard let json = Self.jsonString(roundJSONFloatingPointNumbers(meta, toPlaces: 3)) else {
+            throw ToolError("Failed to encode caption metadata")
+        }
+        return .ok(json)
     }
 
     private static func sourceRange(_ args: [String: Any], duration: Double) throws -> ClosedRange<Double>? {

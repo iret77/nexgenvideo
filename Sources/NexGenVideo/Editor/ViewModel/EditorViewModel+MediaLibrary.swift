@@ -214,6 +214,7 @@ enum MediaImportError: LocalizedError, Equatable, Sendable {
     case projectChanged
     case unsupportedFile(String)
     case invalidLottie(String)
+    case invalidSubtitle(String, String)
     case sourceUnavailable(String)
     case sourceNotFile(String)
     case folderUnreadable(String, String)
@@ -231,6 +232,8 @@ enum MediaImportError: LocalizedError, Equatable, Sendable {
             "Can't import \"\(name)\" — unsupported file type."
         case .invalidLottie(let name):
             "Can't import \"\(name)\" — not a Lottie animation."
+        case .invalidSubtitle(let name, let reason):
+            "Can't import \"\(name)\" — \(reason)"
         case .sourceUnavailable(let name):
             "Can't import \"\(name)\" — the file is unavailable."
         case .sourceNotFile(let name):
@@ -446,6 +449,16 @@ private enum MediaImportPreparer {
             for (index, file) in plan.files.enumerated() {
                 if Task.isCancelled { throw MediaImportError.cancelled }
                 await progress(index, file.name)
+                if file.type == .subtitle {
+                    do {
+                        _ = try await SubtitleFileParser.parseFile(at: file.url)
+                    } catch {
+                        throw MediaImportError.invalidSubtitle(
+                            file.url.lastPathComponent,
+                            error.localizedDescription
+                        )
+                    }
+                }
                 let copy = try await DurableMediaStore.copy(
                     file.url,
                     into: mediaDirectory,
@@ -514,7 +527,9 @@ extension EditorViewModel {
             guard let id = MediaTab.assetId(fromDragString: String(line)) else { return nil }
             // A document has no duration and nothing to draw — dropping one would make a clip no
             // player can render. Filtered here so the timeline never even offers the drop.
-            return mediaAssets.first { $0.id == id && $0.type.isPlaceable }
+            return mediaAssets.first {
+                $0.id == id && ($0.type.isPlaceable || $0.type == .subtitle)
+            }
         }
     }
 
@@ -1383,13 +1398,28 @@ extension EditorViewModel {
         return context.makeImage()
     }
 
-    func finalizeImportedAsset(_ asset: MediaAsset) async {
+    @discardableResult
+    func finalizeImportedAsset(_ asset: MediaAsset) async -> Bool {
         Log.project.notice(
             "media finalize start asset=\(asset.id.prefix(8)) type=\(asset.type.rawValue)",
             telemetry: "Media asset finalize started",
             data: ["assetId": Telemetry.shortId(asset.id), "type": asset.type.rawValue]
         )
-        await asset.loadMetadata()
+        if asset.type == .subtitle {
+            do {
+                let document = try await SubtitleFileParser.parseFile(at: asset.url)
+                asset.duration = document.cues.map(\.end.milliseconds).max()
+                    .map { Double($0) / 1_000 } ?? 0
+            } catch {
+                reportMediaImportFailure(MediaImportError.invalidSubtitle(
+                    asset.userFacingFilename,
+                    error.localizedDescription
+                ))
+                return false
+            }
+        } else {
+            await asset.loadMetadata()
+        }
         updateManifestMetadata(for: asset)
         refreshMissingMediaCache()
         searchIndex.schedule(asset)
@@ -1401,7 +1431,7 @@ extension EditorViewModel {
             mediaVisualCache.generateWaveform(for: asset)
         case .image:
             mediaVisualCache.generateImageThumbnail(for: asset)
-        case .text, .lottie, .document:
+        case .text, .lottie, .subtitle, .document:
             break
         }
         Log.project.notice(
@@ -1417,17 +1447,19 @@ extension EditorViewModel {
                 "hasAudio": asset.hasAudio
             ]
         )
+        return true
     }
 
-    struct TextClipSpec {
-        let trackIndex: Int
+    struct TextClipSpec: Sendable {
+        var trackIndex: Int
         let startFrame: Int
-        let durationFrames: Int
+        var durationFrames: Int
         let content: String
         let style: TextStyle
         /// When nil the box is auto-fit to content and centered on the canvas.
         let transform: Transform?
         var captionGroupId: String? = nil
+        var captionProvenance: CaptionProvenance? = nil
     }
 
     /// Batch variant of `addTextClip` for agent flows.
@@ -1471,6 +1503,7 @@ extension EditorViewModel {
                 clip.textContent = spec.content
                 clip.textStyle = spec.style
                 clip.captionGroupId = spec.captionGroupId
+                clip.captionProvenance = spec.captionProvenance
                 timeline.tracks[spec.trackIndex].clips.append(clip)
                 createdIds[i] = clip.id
             }

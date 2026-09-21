@@ -1072,7 +1072,7 @@ struct GenerationView: View {
             case .image: assets = refImages
             case .video: assets = refVideos
             case .audio: assets = refAudios
-            case .text, .lottie, .document: assets = []
+            case .text, .lottie, .subtitle, .document: assets = []
             }
             let noun = tagNoun(for: type)
             return assets.enumerated().map {
@@ -1088,7 +1088,7 @@ struct GenerationView: View {
             capabilities.maxReferenceImages(hasVideoReference: !refVideos.isEmpty)
         case .video: capabilities.maxReferenceVideos
         case .audio: capabilities.maxReferenceAudios
-        case .text, .lottie, .document: 0
+        case .text, .lottie, .subtitle, .document: 0
         }
     }
 
@@ -1097,7 +1097,7 @@ struct GenerationView: View {
         case .image: refImages.count
         case .video: refVideos.count
         case .audio: refAudios.count
-        case .text, .lottie, .document: 0
+        case .text, .lottie, .subtitle, .document: 0
         }
     }
 
@@ -1109,6 +1109,7 @@ struct GenerationView: View {
         case .audio: "Audio"
         case .text: "Text"
         case .lottie: "Lottie"
+        case .subtitle: "Captions"
         case .document: "Document"
         }
     }
@@ -1133,7 +1134,7 @@ struct GenerationView: View {
         case .image: selection.imageRefs.append(asset)
         case .video: selection.videoRefs.append(asset)
         case .audio: selection.audioRefs.append(asset)
-        case .text, .lottie, .document:
+        case .text, .lottie, .subtitle, .document:
             let supported = ClipType.allCases.filter { refCap(for: $0) > 0 }.map(\.rawValue).joined(separator: " and ")
             flashDropError("\(videoModel.displayName) only accepts \(supported) references.")
             return
@@ -1149,7 +1150,7 @@ struct GenerationView: View {
         case .image: refImages.append(asset)
         case .video: refVideos.append(asset)
         case .audio: refAudios.append(asset)
-        case .text, .lottie, .document: break
+        case .text, .lottie, .subtitle, .document: break
         }
     }
 
@@ -1187,7 +1188,7 @@ struct GenerationView: View {
         case .image: refImages.removeAll { $0.id == id }
         case .video: refVideos.removeAll { $0.id == id }
         case .audio: refAudios.removeAll { $0.id == id }
-        case .text, .lottie, .document: break
+        case .text, .lottie, .subtitle, .document: break
         }
     }
 
@@ -1200,7 +1201,7 @@ struct GenerationView: View {
     private var refCounterLabel: String {
         let total = totalRefCount
         if let cap = selectedVideoCapabilities?.maxTotalReferences {
-            let shortLabel: (ClipType) -> String = { switch $0 { case .image: "img"; case .video: "vid"; case .audio: "aud"; case .text: "txt"; case .lottie: "lot"; case .document: "doc" } }
+            let shortLabel: (ClipType) -> String = { switch $0 { case .image: "img"; case .video: "vid"; case .audio: "aud"; case .text: "txt"; case .lottie: "lot"; case .subtitle: "cap"; case .document: "doc" } }
             var parts = ClipType.allCases
                 .filter { refCap(for: $0) > 0 }
                 .map { "\(refCount(for: $0)) \(shortLabel($0))" }

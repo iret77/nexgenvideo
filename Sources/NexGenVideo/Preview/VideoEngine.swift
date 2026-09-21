@@ -118,8 +118,8 @@ final class VideoEngine {
         case .mediaAsset(let id, _, let type):
             textController.textRoot.isHidden = true
             guard let asset = editor.mediaAssets.first(where: { $0.id == id }) else { return }
-            if type == .image {
-                replacePlayerItem(nil, reason: "imagePreview")
+            if type == .image || type == .subtitle {
+                replacePlayerItem(nil, reason: "staticPreview")
             } else {
                 previewAsset(asset)
                 seek(to: editor.sourcePlayheadFrame, mode: .exact)

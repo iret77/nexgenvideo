@@ -6,6 +6,7 @@ struct PreviewContainerView: View {
 
     private var isTimeline: Bool { editor.activePreviewTab == .timeline }
     private var isImage: Bool { editor.activePreviewTab.clipType == .image }
+    private var isSubtitle: Bool { editor.activePreviewTab.clipType == .subtitle }
 
     @State private var hoveredTabId: String?
 
@@ -27,6 +28,9 @@ struct PreviewContainerView: View {
                     PreviewView()
                     if isImage {
                         imagePreview
+                    }
+                    if isSubtitle {
+                        SubtitlePreviewView(url: activeMediaAsset?.url)
                     }
                     if let error = activeFailedError {
                         failedPreview(error: error)
@@ -60,7 +64,7 @@ struct PreviewContainerView: View {
             }
             .clipped()
             if !editor.theaterActive {
-                if !isImage {
+                if !isImage && !isSubtitle {
                     scrubBar
                     transportBar
                 } else {

@@ -41,10 +41,18 @@ extension EditorViewModel {
 
     enum CaptionError: LocalizedError {
         case noSource
+        case timelineChanged
+        case notSubtitle(String)
+        case subtitleOffline(String)
+        case placementFailed
 
         var errorDescription: String? {
             switch self {
             case .noSource: "No audio clips to caption."
+            case .timelineChanged: "The timeline changed during caption import. Import again."
+            case .notSubtitle(let name): "“\(name)” is not an SRT or WebVTT file."
+            case .subtitleOffline(let name): "“\(name)” is offline. Relink it, then import again."
+            case .placementFailed: "The captions couldn't be placed. The timeline was not changed."
             }
         }
     }
@@ -113,7 +121,7 @@ extension EditorViewModel {
 
         let specs = captionSpecs(targets, results: results, request: request)
         guard !specs.isEmpty else { return [] }
-        return placeCaptionTrack(specs)
+        return placeCaptionTrack(specs, actionName: "Generate Captions")
     }
 
     private func transcribe(_ targets: [CaptionTarget], request: CaptionRequest) async throws -> [String: TranscriptionResult] {
@@ -223,21 +231,107 @@ extension EditorViewModel {
         }
     }
 
-    private func placeCaptionTrack(_ specs: [TextClipSpec]) -> [String] {
-        undoManager?.beginUndoGrouping()
-        defer { undoManager?.endUndoGrouping() }
-        let before = timeline
-        undoManager?.disableUndoRegistration()
-        timeline.tracks.insert(Track(type: .video), at: 0)
-        let ids = placeTextClips(specs)
-        undoManager?.enableUndoRegistration()
-        guard !ids.isEmpty else {
-            timeline = before
-            videoEngine?.syncTextLayers()
-            return []
+    private func placeCaptionTrack(_ specs: [TextClipSpec], actionName: String) -> [String] {
+        var ids: [String] = []
+        withTimelineSwap(actionName: actionName) {
+            timeline.tracks.insert(Track(type: .video), at: 0)
+            ids = placeTextClips(specs)
         }
-        registerTimelineSwap(undoState: before, redoState: timeline, actionName: "Generate Captions")
-        notifyTimelineChanged()
+        return ids
+    }
+
+    func subtitleCaptionPlan(
+        from url: URL,
+        sourceFilename: String? = nil,
+        sourceAssetID: String? = nil
+    ) async throws -> SubtitleCaptionPlan {
+        let snapshot = timeline
+        let document = try await SubtitleFileParser.parseFile(at: url)
+        let filename = MediaFilename.normalized(sourceFilename)
+            ?? MediaFilename.normalized(url.lastPathComponent)
+            ?? "Captions.\(document.format.rawValue)"
+        let provenance = CaptionProvenance(
+            sourceFilename: filename,
+            sourceFormat: document.format.rawValue,
+            languageIdentifier: document.languageIdentifier
+                ?? SubtitleFileParser.languageIdentifier(fromFilename: filename),
+            sourceAssetID: sourceAssetID
+        )
+        let plan = try await SubtitleCaptionBuilder.build(
+            document: document,
+            fps: snapshot.fps,
+            canvasWidth: snapshot.width,
+            canvasHeight: snapshot.height,
+            style: TextStyle(fontSize: AppTheme.Caption.defaultFontSize),
+            center: AppTheme.Caption.defaultCenter,
+            provenance: provenance
+        )
+        try Task.checkCancellation()
+        guard timeline == snapshot else { throw CaptionError.timelineChanged }
+        return plan
+    }
+
+    @discardableResult
+    func importCaptions(
+        from url: URL,
+        sourceFilename: String? = nil,
+        sourceAssetID: String? = nil
+    ) async throws -> [String] {
+        let plan = try await subtitleCaptionPlan(
+            from: url,
+            sourceFilename: sourceFilename,
+            sourceAssetID: sourceAssetID
+        )
+        return try placeSubtitleCaptionPlans([plan])
+    }
+
+    @discardableResult
+    func placeCaptions(fromSubtitleAssets assets: [MediaAsset]) async throws -> [String] {
+        let snapshot = timeline
+        var plans: [SubtitleCaptionPlan] = []
+        for asset in assets {
+            guard asset.type == .subtitle else { throw CaptionError.notSubtitle(asset.userFacingFilename) }
+            guard let url = mediaResolver.resolveURL(for: asset.id) else {
+                throw CaptionError.subtitleOffline(asset.userFacingFilename)
+            }
+            plans.append(try await subtitleCaptionPlan(
+                from: url,
+                sourceFilename: asset.userFacingFilename,
+                sourceAssetID: asset.id
+            ))
+        }
+        guard timeline == snapshot else { throw CaptionError.timelineChanged }
+        return try placeSubtitleCaptionPlans(plans)
+    }
+
+    private func placeSubtitleCaptionPlans(_ plans: [SubtitleCaptionPlan]) throws -> [String] {
+        guard !plans.isEmpty else { return [] }
+        var specs: [TextClipSpec] = []
+        var trackOffset = 0
+        for plan in plans {
+            specs.append(contentsOf: plan.specs.map { spec in
+                var shifted = spec
+                shifted.trackIndex += trackOffset
+                return shifted
+            })
+            trackOffset += plan.trackCount
+        }
+
+        var ids: [String] = []
+        try withTimelineSwap(actionName: "Add Captions") {
+            for _ in 0..<trackOffset {
+                timeline.tracks.insert(Track(type: .video), at: 0)
+            }
+            ids = placeTextClips(specs)
+            guard ids.count == specs.count else { throw CaptionError.placementFailed }
+        }
+        let overlapCount = plans.reduce(0) { $0 + $1.overlappingCueCount }
+        if overlapCount > 0 {
+            mediaPanelToast = MediaPanelToast(
+                message: "Added \(ids.count) captions. Preserved \(overlapCount) overlapping cues on separate tracks.",
+                kind: .success
+            )
+        }
         return ids
     }
 
