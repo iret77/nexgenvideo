@@ -54,11 +54,49 @@ enum WorkspaceUIAcceptance {
                 scale: scale,
                 fields: ["window": windowDiagnostics(window, contentView: host)]
             )
+            window.setContentSize(NSSize(width: 1470, height: 950))
+            if scale == 1.5 {
+                window.appearance = NSAppearance(named: .accessibilityHighContrastDarkAqua)
+            }
             window.makeKeyAndOrderFront(nil)
             app.activate(ignoringOtherApps: true)
-            editor.setWorkspaceFocus(.production)
-            try? await Task.sleep(for: .milliseconds(500))
+            editor.setWorkspaceFocus(.media)
+            guard await waitUntil(timeout: .seconds(5), {
+                host.layoutSubtreeIfNeeded()
+                let frames = visiblePanelFrames(in: host)
+                return abs(host.bounds.width - 1470) <= AppTheme.BorderWidth.thin
+                    && editor.workspaceFocus == .media
+                    && visiblePanelIDs(in: host) == expectedPanels(for: .media)
+                    && defaultPanelWidthsAreValid(workspace: .media, frames: frames)
+                    && previewTimecodeIsSingleLine(in: window, scale: scale)
+            }) else {
+                fail("could not prepare large media layout", scale: scale)
+            }
+            let preparedMediaFrames = visiblePanelFrames(in: host)
+            try? await Task.sleep(for: .milliseconds(300))
             host.layoutSubtreeIfNeeded()
+            guard visiblePanelFrames(in: host) == preparedMediaFrames else {
+                fail("large media layout did not settle", scale: scale)
+            }
+            resetSplitAutosaveDefaults()
+            editor.setWorkspaceFocus(.production)
+            guard await waitUntil(timeout: .seconds(5), {
+                host.layoutSubtreeIfNeeded()
+                let frames = visiblePanelFrames(in: host)
+                return editor.workspaceFocus == .production
+                    && visiblePanelIDs(in: host) == expectedPanels(for: .production)
+                    && defaultPanelWidthsAreValid(workspace: .production, frames: frames)
+                    && previewTimecodeIsSingleLine(in: window, scale: scale)
+                    && agentControlsAreContained(in: window)
+            }) else {
+                fail("could not prepare large production layout", scale: scale)
+            }
+            let preparedProductionFrames = visiblePanelFrames(in: host)
+            try? await Task.sleep(for: .milliseconds(300))
+            host.layoutSubtreeIfNeeded()
+            guard visiblePanelFrames(in: host) == preparedProductionFrames else {
+                fail("large production layout did not settle", scale: scale)
+            }
             emit(
                 "window-ready",
                 scale: scale,
@@ -310,17 +348,6 @@ enum WorkspaceUIAcceptance {
         exit(1)
     }
 
-    static func configureInitialWindowIfRequested(_ window: NSWindow) {
-        guard isRequested,
-              let requestedScale = ProcessInfo.processInfo.environment["NGV_WORKSPACE_UI_SCALE"],
-              let scale = Double(requestedScale),
-              AppTheme.Typography.validatedScale(scale) == scale else { return }
-        window.setContentSize(NSSize(width: 1470, height: 950))
-        if scale == 1.5 {
-            window.appearance = NSAppearance(named: .accessibilityHighContrastDarkAqua)
-        }
-    }
-
     private static func makeProjectFixture(scale: Double) throws -> URL {
         let title = scale == 1.25
             ? "An exceptionally long project name for the final picture lock"
@@ -378,6 +405,11 @@ enum WorkspaceUIAcceptance {
         defaults.set(scale, forKey: AppTheme.Typography.scaleKey)
         defaults.set(true, forKey: "mediaPanelVisible")
         defaults.set(true, forKey: "inspectorPanelVisible")
+        resetSplitAutosaveDefaults()
+    }
+
+    private static func resetSplitAutosaveDefaults() {
+        let defaults = UserDefaults.standard
         for key in defaults.dictionaryRepresentation().keys
             where key.hasPrefix("NSSplitView Subview Frames editor.") {
             defaults.removeObject(forKey: key)
