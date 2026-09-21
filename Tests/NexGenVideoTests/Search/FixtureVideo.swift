@@ -17,6 +17,11 @@ enum FixtureVideo {
             AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: size,
             AVVideoHeightKey: size,
+            AVVideoColorPropertiesKey: [
+                AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
+                AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+                AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
+            ],
         ])
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(
             assetWriterInput: input,

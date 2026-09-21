@@ -408,6 +408,9 @@ enum CompositionBuilder {
         var vcConfig = AVVideoComposition.Configuration()
         vcConfig.renderSize = renderSize
         vcConfig.frameDuration = CMTime(value: 1, timescale: timescale)
+        vcConfig.colorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
+        vcConfig.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
+        vcConfig.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
 
         vcConfig.customVideoCompositorClass = CustomVideoCompositor.self
         vcConfig.instructions = compositorInstructions(

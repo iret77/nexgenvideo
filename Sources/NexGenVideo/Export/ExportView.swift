@@ -15,6 +15,7 @@ struct ExportView: View {
     @State private var preview: NSImage?
     @State private var ngvResult: String?
     @State private var ngvSummary: (collect: Int, missing: Int, bytes: Int64) = (0, 0, 0)
+    @State private var hdrCapability: HDRExportCapability?
 
     var body: some View {
         VStack(spacing: AppTheme.Spacing.none) {
@@ -34,8 +35,17 @@ struct ExportView: View {
                 .background(.ultraThinMaterial)
         }
         .task {
-            loadPreview()
+            await loadPreview()
             ngvSummary = computeNGVSummary()
+        }
+        .task(id: hdrCapabilityKey) {
+            guard codec == .hdr else {
+                hdrCapability = nil
+                return
+            }
+            let capability = await HDRVideoExporter.capability(renderSize: selectedRenderSize)
+            guard !Task.isCancelled else { return }
+            hdrCapability = capability
         }
     }
 
@@ -67,6 +77,18 @@ struct ExportView: View {
         .background(AppTheme.Background.baseColor)
         .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
         .padding(AppTheme.Spacing.xl)
+        .overlay(alignment: .bottomTrailing) {
+            if codec == .hdr {
+                Text("Timeline preview · Rec. 709 SDR")
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                    .padding(.horizontal, AppTheme.Spacing.sm)
+                    .padding(.vertical, AppTheme.Spacing.xs)
+                    .background(AppTheme.Background.raisedColor.opacity(AppTheme.Opacity.strong))
+                    .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.xs))
+                    .padding(AppTheme.Spacing.xxl)
+            }
+        }
     }
 
     // MARK: - Settings (left)
@@ -129,6 +151,27 @@ struct ExportView: View {
                     }
 
                     AppDivider().opacity(AppTheme.Opacity.dim)
+
+                    if codec == .hdr {
+                        settingRow(label: "Color") {
+                            Text("BT.2020 · HLG · 10-bit")
+                                .foregroundStyle(AppTheme.Text.tertiaryColor)
+                        }
+
+                        Text("Maps the Rec. 709 SDR timeline white to 75% HLG reference white. No HDR highlight detail is synthesized.")
+                            .interfaceFont(size: AppTheme.Typography.ui)
+                            .foregroundStyle(AppTheme.Text.tertiaryColor)
+                            .padding(.bottom, AppTheme.Spacing.sm)
+
+                        if let hdrCapability, !hdrCapability.isSupported {
+                            Text(hdrCapability.reason ?? "HDR export is unavailable.")
+                                .interfaceFont(size: AppTheme.Typography.ui)
+                                .foregroundStyle(AppTheme.Status.errorColor)
+                                .padding(.bottom, AppTheme.Spacing.sm)
+                        }
+
+                        AppDivider().opacity(AppTheme.Opacity.dim)
+                    }
 
                     Toggle("Require current sequence review", isOn: $requireSequenceReview)
                         .interfaceFont(size: AppTheme.Typography.ui)
@@ -248,7 +291,10 @@ struct ExportView: View {
             Button("Export") { startExport() }
                 .buttonStyle(.glassProminent)
                 .buttonBorderShape(.capsule)
-                .disabled(service.isExporting || preparingDelivery)
+                .disabled(
+                    service.isExporting || preparingDelivery
+                        || (codec == .hdr && hdrCapability?.isSupported != true)
+                )
                 .keyboardShortcut(.defaultAction)
         }
         .padding(.horizontal, AppTheme.Spacing.xl)
@@ -277,6 +323,7 @@ struct ExportView: View {
         case .h264:   0.63e6
         case .h265:   0.32e6
         case .prores: 9.0e6
+        case .hdr:    0.45e6
         }
         let bytesPerSec = bytesPerSecPerMP * max(0.1, megapixels)
         return ByteCountFormatter.string(fromByteCount: Int64(bytesPerSec * seconds), countStyle: .file)
@@ -287,6 +334,17 @@ struct ExportView: View {
         case .xml, .ngvProject: .xml   // ngvProject has its own path; never rendered
         case .video: codec.exportFormat
         }
+    }
+
+    private var selectedRenderSize: CGSize {
+        resolution.renderSize(for: CGSize(
+            width: editor.timeline.width,
+            height: editor.timeline.height
+        ))
+    }
+
+    private var hdrCapabilityKey: String {
+        "\(codec.id)-\(resolution.id)-\(Int(selectedRenderSize.width))x\(Int(selectedRenderSize.height))"
     }
 
     /// Quick estimate for exporting a NexGenVideo Project
@@ -305,26 +363,45 @@ struct ExportView: View {
         return (collect, missing, bytes)
     }
 
-    private func loadPreview() {
-        for track in editor.timeline.tracks where track.type == .video {
-            for clip in track.clips {
-                guard let url = editor.mediaResolver.resolveURL(for: clip.mediaRef) else { continue }
-                let asset = AVURLAsset(url: url)
-                guard !asset.tracks(withMediaType: .video).isEmpty else { continue }
-                let generator = AVAssetImageGenerator(asset: asset)
-                generator.maximumSize = CGSize(width: 480, height: 270)
-                generator.appliesPreferredTrackTransform = true
-                let time = CMTime(value: CMTimeValue(clip.trimStartFrame), timescale: CMTimeScale(editor.timeline.fps))
-                generator.generateCGImagesAsynchronously(forTimes: [NSValue(time: time)]) { _, image, _, _, _ in
-                    if let image {
-                        Task { @MainActor in
-                            preview = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
-                        }
-                    }
-                }
-                return
-            }
+    private func loadPreview() async {
+        let timeline = editor.timeline
+        guard timeline.totalFrames > 0 else { return }
+        let resolver = editor.mediaResolver.snapshot()
+        let canvas = CGSize(width: timeline.width, height: timeline.height)
+        guard let result = try? await CompositionBuilder.build(
+            timeline: timeline,
+            resolveURL: { resolver.resolveURL(for: $0) },
+            renderSize: canvas
+        ), (try? await result.composition.loadTracks(withMediaType: .video).first) != nil else {
+            return
         }
+        let generator = AVAssetImageGenerator(asset: result.composition)
+        generator.videoComposition = result.videoComposition
+        generator.maximumSize = CGSize(width: 480, height: 270)
+        generator.appliesPreferredTrackTransform = true
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        let frame = min(max(0, editor.currentFrame), timeline.totalFrames - 1)
+        let time = CMTime(
+            value: CMTimeValue(frame),
+            timescale: CMTimeScale(max(1, timeline.fps))
+        )
+        guard let video = try? await generator.image(at: time).image else { return }
+        let renderedSize = CGSize(width: video.width, height: video.height)
+        let text = TextLayerController.buildSnapshot(
+            timeline: timeline,
+            canvasSize: renderedSize,
+            atFrame: frame
+        )
+        guard let image = EditorViewModel.compositeCapture(
+            video: video,
+            textRoot: text,
+            canvas: renderedSize
+        ) else { return }
+        preview = NSImage(
+            cgImage: image,
+            size: NSSize(width: image.width, height: image.height)
+        )
     }
 
     private func startExport() {
@@ -334,7 +411,7 @@ struct ExportView: View {
         panel.allowedContentTypes = [
             format == .xml
                 ? .xml
-                : (format == .prores ? .movie : .mpeg4Movie)
+                : (format == .prores || format.isHDR ? .movie : .mpeg4Movie)
         ]
         panel.nameFieldStringValue = "export.\(format.fileExtension)"
 

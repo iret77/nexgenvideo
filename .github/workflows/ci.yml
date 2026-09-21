@@ -120,6 +120,8 @@ jobs:
 
       - name: Test
         shell: bash
+        env:
+          NGV_HDR_QC_OUTPUT_DIR: ${{ runner.temp }}/hdr-export-qc
         run: |
           set +e  # GitHub's default `-e` would abort on the first failing attempt; we handle codes below.
           # macOS-runner SIGSEGV/SIGTRAP crashes here were traced (via SWIFT_BACKTRACE) to CODE traps, not the
@@ -153,6 +155,15 @@ jobs:
           done
           echo "::error::swift test hit the environmental crash on all $attempts attempts"
           exit 1
+
+      - name: Upload HDR export QC evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hdr-export-qc
+          path: ${{ runner.temp }}/hdr-export-qc
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Upload Lottie export evidence
         if: always()

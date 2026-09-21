@@ -169,7 +169,8 @@ enum AgentInstructions {
 
         # Export
         - When the user asks to export/render/save, call export_project. It matches the Export \
-          dialog modes: video, xml, and nexgen. Default mode is video: H.264, H.265, or ProRes; \
+          dialog modes: video, xml, and nexgen. Default mode is video: H.264, H.265, ProRes, or \
+          HEVC Main10 HDR (HLG); \
           720p, 1080p, 2K, 4K, or Match Timeline; defaults are H.264 at Match Timeline. Use mode=xml for \
           timeline XML and mode=nexgen for a self-contained .nexgen package. If the user did \
           not name a destination, omit outputPath; the export writes a unique project-named file \

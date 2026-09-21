@@ -1,12 +1,12 @@
 import AVFoundation
 
 enum ExportFormat {
-    case h264, h265, prores, xml
+    case h264, h265, prores, hevcMain10HLG, xml
 
     var fileExtension: String {
         switch self {
         case .h264, .h265: "mp4"
-        case .prores: "mov"
+        case .prores, .hevcMain10HLG: "mov"
         case .xml: "xml"
         }
     }
@@ -14,10 +14,12 @@ enum ExportFormat {
     var utType: AVFileType? {
         switch self {
         case .h264, .h265: .mp4
-        case .prores: .mov
+        case .prores, .hevcMain10HLG: .mov
         case .xml: nil
         }
     }
+
+    var isHDR: Bool { self == .hevcMain10HLG }
 }
 
 enum ExportResolution: String, CaseIterable, Identifiable {
@@ -55,7 +57,7 @@ enum ExportResolution: String, CaseIterable, Identifiable {
 }
 
 enum ExportMode: String, CaseIterable, Identifiable {
-    case video = "Video (.mp4)"
+    case video = "Video"
     case xml = "Timeline (.xml)"
     case ngvProject = "NexGenVideo Project (.ngv)"
 
@@ -66,6 +68,7 @@ enum VideoCodec: String, CaseIterable, Identifiable {
     case h264 = "H.264"
     case h265 = "H.265"
     case prores = "ProRes"
+    case hdr = "HEVC Main10 HDR (HLG)"
 
     var id: String { rawValue }
 
@@ -74,6 +77,7 @@ enum VideoCodec: String, CaseIterable, Identifiable {
         case .h264: .h264
         case .h265: .h265
         case .prores: .prores
+        case .hdr: .hevcMain10HLG
         }
     }
 
@@ -82,6 +86,7 @@ enum VideoCodec: String, CaseIterable, Identifiable {
         case .h264: self = .h264
         case .h265: self = .h265
         case .prores: self = .prores
+        case .hevcMain10HLG: self = .hdr
         case .xml: return nil
         }
     }
