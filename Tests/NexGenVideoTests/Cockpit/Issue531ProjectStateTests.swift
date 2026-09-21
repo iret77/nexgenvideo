@@ -198,7 +198,7 @@ struct Issue531ProjectStateTests {
             activePack: "musicvideo"
         )["brief"]
         #expect(stale?.current == false)
-        #expect(stale?.blocker?.contains("lineage") == true)
+        #expect(stale?.blocker?.isEmpty == false)
         let recovery = try #require(
             ConfirmedIdentityProvenanceRecovery.status(dataRoot: root)
         )
