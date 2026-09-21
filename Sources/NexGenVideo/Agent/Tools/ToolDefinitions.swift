@@ -17,6 +17,7 @@ enum ToolName: String, CaseIterable, Sendable {
     case setKeyframes = "set_keyframes"
     case splitClip = "split_clip"
     case rippleTrim = "ripple_trim"
+    case slipClip = "slip_clip"
     case rippleDeleteRanges = "ripple_delete_ranges"
     case removeWords = "remove_words"
     case syncAudio = "sync_audio"
@@ -675,6 +676,18 @@ enum ToolDefinitions {
                     "includeLinked": ["type": "boolean", "description": "Trim linked partners together (default true)"],
                 ],
                 required: ["clipId", "edge", "deltaFrames"]
+            )
+        ),
+        AgentTool(
+            name: .slipClip,
+            description: "Shifts the source in/out range inside a clip without changing its timeline start, duration, transitions, or keyframes. Positive deltaFrames reveals earlier source material; negative values reveal later material. Linked audio/video partners follow by default, and the shared edit clamps exactly to the tightest source handle.",
+            inputSchema: objectSchema(
+                properties: [
+                    "clipId": ["type": "string", "description": "The clip whose source range should shift"],
+                    "deltaFrames": ["type": "integer", "description": "Signed timeline-frame source shift; must not be zero"],
+                    "includeLinked": ["type": "boolean", "description": "Slip eligible linked partners together (default true)"],
+                ],
+                required: ["clipId", "deltaFrames"]
             )
         ),
         AgentTool(

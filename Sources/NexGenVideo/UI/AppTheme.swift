@@ -337,6 +337,7 @@ enum AppTheme {
         static let captionPreviewMaxHeight: CGFloat = 150
         static let captionPreviewMaxTextWidthRatio: CGFloat = 0.9
         static let toolImagePreviewMaxHeight: CGFloat = 220
+        static let slipPreviewMaxDimension: CGFloat = 960
         static let toolImageViewerMin = CGSize(width: 600, height: 480)
         static let toolImageViewerIdeal = CGSize(width: 900, height: 680)
         static let toolImageViewerMinZoom: CGFloat = 1
@@ -637,6 +638,7 @@ enum AppTheme {
         static let copyConfirmation: Double = 1.4
         static let splashHold: Double = 2.4
         static let splashFade: Double = 0.35
+        static let slipPreviewRefresh: Duration = .milliseconds(67)
     }
 }
 

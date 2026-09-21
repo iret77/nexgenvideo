@@ -12,6 +12,7 @@ struct ShortcutsPane: View {
         ShortcutGroup(title: "Tools", shortcuts: [
             ("V", "Selection Tool"),
             ("C", "Razor Tool"),
+            ("T", "Slip Tool"),
         ]),
         ShortcutGroup(title: "Editing", shortcuts: [
             ("Cmd + K", "Split at Playhead"),
@@ -21,6 +22,7 @@ struct ShortcutsPane: View {
             ("Shift + Backspace", "Ripple Delete"),
             ("Shift + Drag Edge", "Ripple Trim"),
             ("Shift + Opt + Drag Edge", "Ripple Trim Unlinked"),
+            ("Opt + Slip Drag", "Slip Unlinked"),
             ("Opt + Drag", "Duplicate Clip"),
         ]),
         ShortcutGroup(title: "Timeline", shortcuts: [

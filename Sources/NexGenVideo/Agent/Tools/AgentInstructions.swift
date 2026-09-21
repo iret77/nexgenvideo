@@ -157,6 +157,8 @@ enum AgentInstructions {
           • split_clip: atFrame must be strictly inside the clip.
           • ripple_trim: move one clip edge and shift later material. Linked clips and sync-locked \
             tracks follow by default; source handles bound the edit.
+          • slip_clip: shift source in/out points while timeline position, duration, transitions, \
+            and keyframes stay fixed. Linked partners follow by default.
           • sync_audio: align one or more clips to a reference (usually the camera) clip by \
             waveform — referenceClipId stays, the target(s) move. Use for dual-system sound \
             or multicam (pass targetClipIds); it returns per-clip confidence and refuses \

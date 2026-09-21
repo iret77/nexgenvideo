@@ -96,6 +96,54 @@ struct TimelineGestureToolTests {
         #expect(result.isError)
         #expect(harness.editor.timeline == before)
     }
+
+    @Test("slip_clip uses the same exact source-handle plan as native editing")
+    func slipClip() async throws {
+        let clip = Fixtures.clip(
+            id: "clip",
+            start: 40,
+            duration: 30,
+            trimStart: 1,
+            trimEnd: 8,
+            speed: 0.6
+        )
+        let harness = ToolHarness(timeline: Fixtures.timeline(tracks: [
+            Fixtures.videoTrack(clips: [clip]),
+        ]))
+        let undo = UndoManager()
+        harness.editor.undoManager = undo
+
+        let payload = try await harness.runOK("slip_clip", args: [
+            "clipId": "clip",
+            "deltaFrames": 20,
+        ]) as? [String: Any]
+        let updated = try #require(harness.editor.clipFor(id: "clip"))
+
+        #expect(payload?["appliedTimelineDelta"] as? Int == 2)
+        #expect(updated.startFrame == 40)
+        #expect(updated.durationFrames == 30)
+        #expect(updated.trimStartFrame == 0)
+        #expect(updated.trimEndFrame == 9)
+        #expect(undo.undoActionName == "Slip Clip")
+    }
+
+    @Test("slip_clip refuses source types without bounded temporal handles")
+    func slipClipValidation() async {
+        let harness = ToolHarness(timeline: Fixtures.timeline(tracks: [
+            Fixtures.videoTrack(clips: [
+                Fixtures.clip(id: "image", mediaType: .image, start: 0, duration: 10),
+            ]),
+        ]))
+        let before = harness.editor.timeline
+
+        let result = await harness.runRaw("slip_clip", args: [
+            "clipId": "image",
+            "deltaFrames": 1,
+        ])
+
+        #expect(result.isError)
+        #expect(harness.editor.timeline == before)
+    }
 }
 
 private func rippleSpansForTool(_ track: Track) -> [[Int]] {

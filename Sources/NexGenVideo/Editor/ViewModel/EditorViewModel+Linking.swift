@@ -169,6 +169,128 @@ extension EditorViewModel {
         }
     }
 
+    struct SlipEditPlan {
+        struct Update: Equatable {
+            let clipId: String
+            let trimStart: Int
+            let trimEnd: Int
+            let sourceShift: Int
+        }
+
+        let appliedTimelineDelta: Int
+        let updates: [Update]
+
+        var targetIds: Set<String> { Set(updates.map(\.clipId)) }
+    }
+
+    func isSlipEligible(_ clip: Clip) -> Bool {
+        clip.mediaType != .image
+            && clip.mediaType != .text
+            && clip.mediaType != .document
+            && clip.speed.isFinite
+            && clip.speed > 0
+    }
+
+    func slipPropagationPartnerIds(of clipId: String) -> [String] {
+        linkedPartnerIds(of: clipId).filter { id in
+            clipFor(id: id).map(isSlipEligible) ?? false
+        }
+    }
+
+    func slipTimelineLimits(
+        clipId: String,
+        propagateToLinked: Bool
+    ) -> (right: Int, left: Int)? {
+        let targets = slipTargets(clipId: clipId, propagateToLinked: propagateToLinked)
+        guard !targets.isEmpty else { return nil }
+        return (
+            targets.map { maximumSlipTimelineDelta(handle: $0.trimStartFrame, speed: $0.speed) }.min() ?? 0,
+            targets.map { maximumSlipTimelineDelta(handle: $0.trimEndFrame, speed: $0.speed) }.min() ?? 0
+        )
+    }
+
+    func planSlipEdit(
+        clipId: String,
+        deltaFrames: Int,
+        propagateToLinked: Bool
+    ) -> SlipEditPlan? {
+        guard deltaFrames != 0,
+              let limits = slipTimelineLimits(
+                clipId: clipId,
+                propagateToLinked: propagateToLinked
+              ) else { return nil }
+
+        let appliedDelta = deltaFrames > 0
+            ? min(deltaFrames, limits.right)
+            : max(deltaFrames, -limits.left)
+        guard appliedDelta != 0 else { return nil }
+
+        let updates = slipTargets(
+            clipId: clipId,
+            propagateToLinked: propagateToLinked
+        ).map { clip in
+            let sourceShift = Int((Double(appliedDelta) * clip.speed).rounded())
+            return SlipEditPlan.Update(
+                clipId: clip.id,
+                trimStart: clip.trimStartFrame - sourceShift,
+                trimEnd: clip.trimEndFrame + sourceShift,
+                sourceShift: sourceShift
+            )
+        }
+        guard updates.contains(where: { $0.sourceShift != 0 }),
+              updates.allSatisfy({ $0.trimStart >= 0 && $0.trimEnd >= 0 }) else { return nil }
+        return SlipEditPlan(appliedTimelineDelta: appliedDelta, updates: updates)
+    }
+
+    @discardableResult
+    func slipClip(
+        clipId: String,
+        deltaFrames: Int,
+        propagateToLinked: Bool
+    ) -> SlipEditPlan? {
+        guard let plan = planSlipEdit(
+            clipId: clipId,
+            deltaFrames: deltaFrames,
+            propagateToLinked: propagateToLinked
+        ) else { return nil }
+
+        withTimelineSwap(actionName: plan.updates.count == 1 ? "Slip Clip" : "Slip Clips") {
+            for update in plan.updates {
+                guard let location = findClip(id: update.clipId) else { continue }
+                timeline.tracks[location.trackIndex].clips[location.clipIndex].trimStartFrame = update.trimStart
+                timeline.tracks[location.trackIndex].clips[location.clipIndex].trimEndFrame = update.trimEnd
+            }
+        }
+        return plan
+    }
+
+    private func slipTargets(clipId: String, propagateToLinked: Bool) -> [Clip] {
+        guard let lead = clipFor(id: clipId), isSlipEligible(lead) else { return [] }
+        var ids: Set<String> = [clipId]
+        if propagateToLinked {
+            ids.formUnion(slipPropagationPartnerIds(of: clipId))
+        }
+        return timeline.tracks.flatMap(\.clips).filter { ids.contains($0.id) && isSlipEligible($0) }
+    }
+
+    private func maximumSlipTimelineDelta(handle: Int, speed: Double) -> Int {
+        guard handle > 0, speed.isFinite, speed > 0 else { return 0 }
+        let safeCeiling = Double(Int.max / 4)
+        let estimated = min(safeCeiling, ((Double(handle) + 1) / speed).rounded(.up) + 1)
+        var lower = 0
+        var upper = max(1, Int(estimated))
+        while lower < upper {
+            let candidate = lower + (upper - lower + 1) / 2
+            let sourceShift = (Double(candidate) * speed).rounded()
+            if sourceShift <= Double(handle) {
+                lower = candidate
+            } else {
+                upper = candidate - 1
+            }
+        }
+        return lower
+    }
+
     // MARK: - Track-zone routing for drops
 
     /// Index of the topmost video/image track, or nil if none exist.

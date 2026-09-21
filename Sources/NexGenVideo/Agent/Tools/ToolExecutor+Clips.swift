@@ -682,6 +682,34 @@ extension ToolExecutor {
         return .ok(Self.jsonString(payload) ?? "Ripple trim applied")
     }
 
+    // MARK: slip_clip
+
+    func slipClip(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+        let clipId = try args.requireString("clipId")
+        let deltaFrames = try args.requireInt("deltaFrames")
+        guard deltaFrames != 0 else { throw ToolError("deltaFrames must not be zero") }
+        guard editor.findClip(id: clipId) != nil else { throw ToolError("Clip not found: \(clipId)") }
+        guard let plan = editor.slipClip(
+            clipId: clipId,
+            deltaFrames: deltaFrames,
+            propagateToLinked: args["includeLinked"] as? Bool ?? true
+        ) else {
+            throw ToolError("Slip edit has no available source handle or the clip type is not eligible")
+        }
+
+        let payload: [String: Any] = [
+            "appliedTimelineDelta": plan.appliedTimelineDelta,
+            "clips": plan.updates.map {
+                [
+                    "clipId": $0.clipId,
+                    "trimStartFrame": $0.trimStart,
+                    "trimEndFrame": $0.trimEnd,
+                ]
+            },
+        ]
+        return .ok(Self.jsonString(payload) ?? "Slip edit applied")
+    }
+
     // MARK: ripple_delete_ranges
 
     func rippleDeleteRanges(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
