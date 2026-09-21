@@ -68,6 +68,72 @@ struct TextRasterizerTests {
         #expect(after.center.g > 245 && after.center.r < 10 && after.center.b < 10)
     }
 
+    private func uncachedContextPixels(_ source: TextRasterizer.Source, bounds: CGRect) throws -> [UInt8] {
+        let image = try #require(source.image())
+        let renderer = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull(), .cacheIntermediates: false])
+        var result = [UInt8](repeating: 0, count: Int(bounds.width * bounds.height) * 4)
+        renderer.render(image, toBitmap: &result, rowBytes: Int(bounds.width) * 4,
+                        bounds: bounds, format: .RGBA8, colorSpace: nil)
+        return result
+    }
+
+    @Test func consecutiveOversized4KFramesStayInTheBoundedTileCache() throws {
+        let canvas = CGSize(width: 4096, height: 2160)
+        var text = clip()
+        text.transform = Transform(centerX: 0.5, centerY: 0.5, width: 100, height: 100)
+        var budget = 0
+        let first = try #require(TextRasterizer.prepare(for: text, renderSize: canvas, budget: &budget)?.textSource)
+        let region = CGRect(x: 204813, y: 108017, width: canvas.width, height: canvas.height)
+        let firstPixels = try uncachedContextPixels(first, bounds: region)
+        let count = first.rasterizedTileCount
+        #expect(count > 0)
+        #expect(count * TextRasterizer.maximumRasterBytes < TextRasterizer.preparationBudget)
+        let second = try #require(TextRasterizer.prepare(for: text, renderSize: canvas, budget: &budget)?.textSource)
+        let secondPixels = try uncachedContextPixels(second, bounds: region)
+        #expect(firstPixels == secondPixels)
+        #expect(second.rasterizedTileCount == 0)
+        #expect(second.tileCacheHitCount > 0)
+        #expect(first.rasterizedTileCount == count)
+        #expect(first.maximumRasterizedTileBytes <= TextRasterizer.maximumRasterBytes)
+    }
+
+    @Test func cachedGlyphTilesAreReusedByAnIndependentSource() throws {
+        let canvas = CGSize(width: 320, height: 180)
+        var text = clip()
+        text.textContent = "Fg pq"
+        text.textStyle?.fontSize = 200
+        text.textStyle?.color = TextStyle.RGBA(r: 1, g: 0, b: 0, a: 1)
+        var budget = 0
+        let first = try #require(TextRasterizer.prepare(for: text, renderSize: canvas, budget: &budget)?.textSource)
+        let bounds = CGRect(origin: .zero, size: canvas)
+        let firstPixels = try uncachedContextPixels(first, bounds: bounds)
+        #expect(first.rasterizedTileCount > 0)
+        #expect(stride(from: 0, to: firstPixels.count, by: 4).contains { firstPixels[$0] > 230 && firstPixels[$0 + 1] < 25 })
+        let second = try #require(TextRasterizer.prepare(for: text, renderSize: canvas, budget: &budget)?.textSource)
+        let secondPixels = try uncachedContextPixels(second, bounds: bounds)
+        #expect(firstPixels == secondPixels)
+        #expect(second.rasterizedTileCount == 0)
+        #expect(second.tileCacheHitCount > 0)
+        #expect(second.tileCacheWriteCount == 0)
+    }
+
+    @Test func tileKeyEqualityChecksStyleAndCoordinatesDespiteHashCollision() {
+        let coordinates = [0, 0, 512, 512, 2048]
+        let first = TextRasterizer.TileKey(style: Data("style-a".utf8), styleHash: 0, coordinates: coordinates)
+        let collision = TextRasterizer.TileKey(style: Data("style-b".utf8), styleHash: 0, coordinates: coordinates)
+        let equal = TextRasterizer.TileKey(style: Data("style-a".utf8), styleHash: 0, coordinates: coordinates)
+        let neighbor = TextRasterizer.TileKey(style: Data("style-a".utf8), styleHash: 0, coordinates: [512, 0, 512, 512, 2048])
+        #expect(first.hash == collision.hash)
+        #expect(!first.isEqual(collision))
+        #expect(first.isEqual(equal) && first.hash == equal.hash)
+        #expect(!first.isEqual(neighbor))
+        let cache = NSCache<TextRasterizer.TileKey, NSString>()
+        cache.setObject("a", forKey: first)
+        cache.setObject("b", forKey: collision)
+        #expect(cache.object(forKey: equal) == "a")
+        #expect(cache.object(forKey: collision) == "b")
+    }
+
     @Test(arguments: 0..<4)
     func tiledDrawingMatchesLayerReferenceForTypographyAndDecoration(variant: Int) throws {
         let canvas = CGSize(width: 1920, height: 1080)

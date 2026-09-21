@@ -14,14 +14,37 @@ enum TextRasterizer {
 
     // Provider tiles, never full text boxes, enter the shared cache.
     private final class RasterCache: @unchecked Sendable {
-        let tiles = NSCache<NSData, NSData>()
+        let tiles = NSCache<TileKey, NSData>()
         init() { tiles.totalCostLimit = preparationBudget }
     }
     private static let cache = RasterCache()
     private static let context = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
     static let preparationBudget = 64 * 1024 * 1024
-    static let tileSide = 1024
+    static let tileSide = 512
     static let maximumRasterBytes = tileSide * tileSide * 4
+
+    final class TileKey: NSObject {
+        let style: Data
+        let coordinates: [Int]
+        private let combinedHash: Int
+
+        init(style: Data, styleHash: Int, coordinates: [Int]) {
+            self.style = style
+            self.coordinates = coordinates
+            var hasher = Hasher()
+            hasher.combine(styleHash)
+            hasher.combine(coordinates)
+            combinedHash = hasher.finalize()
+            super.init()
+        }
+
+        override var hash: Int { combinedHash }
+
+        override func isEqual(_ object: Any?) -> Bool {
+            guard let other = object as? TileKey else { return false }
+            return combinedHash == other.combinedHash && coordinates == other.coordinates && style == other.style
+        }
+    }
 
     struct Source: Sendable {
         fileprivate let provider: TileProvider
@@ -30,33 +53,47 @@ enum TextRasterizer {
         func image() -> CIImage? { recipe }
         var rasterizedTileCount: Int { provider.statistics.count }
         var maximumRasterizedTileBytes: Int { provider.statistics.bytes }
+        var tileCacheHitCount: Int { provider.statistics.hits }
+        var tileCacheWriteCount: Int { provider.statistics.writes }
     }
 
     fileprivate final class TileProvider: NSObject, @unchecked Sendable {
         let key: CacheKey
         let keyData: Data
+        let styleHash: Int
         let renderSize: CGSize
         private let lock = NSLock()
         private var count = 0
         private var bytes = 0
+        private var hits = 0
+        private var writes = 0
+        private var cacheWritesEnabled = true
 
-        var statistics: (count: Int, bytes: Int) { lock.withLock { (count, bytes) } }
+        var statistics: (count: Int, bytes: Int, hits: Int, writes: Int) {
+            lock.withLock { (count, bytes, hits, writes) }
+        }
+
+        func withoutCacheWrites<T>(_ work: () -> T) -> T {
+            lock.withLock { cacheWritesEnabled = false }
+            defer { lock.withLock { cacheWritesEnabled = true } }
+            return work()
+        }
 
         init(key: CacheKey, keyData: Data, renderSize: CGSize) {
             self.key = key
             self.keyData = keyData
+            self.styleHash = keyData.hashValue
             self.renderSize = renderSize
             super.init()
         }
 
         override func provideImageData(_ data: UnsafeMutableRawPointer, bytesPerRow rowbytes: Int,
             origin originx: Int, _ originy: Int, size width: Int, _ height: Int, userInfo info: Any?) {
-            var tileKey = keyData
-            for var value in [originx, originy, width, height, rowbytes] {
-                withUnsafeBytes(of: &value) { tileKey.append(contentsOf: $0) }
-            }
-            if let cached = cache.tiles.object(forKey: tileKey as NSData) {
+            let tileKey = TileKey(style: keyData, styleHash: styleHash,
+                                  coordinates: [originx, originy, width, height, rowbytes])
+            if let cached = cache.tiles.object(forKey: tileKey) {
                 data.copyMemory(from: cached.bytes, byteCount: cached.length)
+                lock.withLock { hits += 1 }
                 return
             }
             let byteCount = rowbytes * height
@@ -94,7 +131,13 @@ enum TextRasterizer {
                 count += 1
                 bytes = max(bytes, byteCount)
             }
-            cache.tiles.setObject(NSData(bytes: data, length: byteCount), forKey: tileKey as NSData, cost: byteCount)
+            let shouldCache = lock.withLock {
+                if cacheWritesEnabled { writes += 1 }
+                return cacheWritesEnabled
+            }
+            if shouldCache {
+                cache.tiles.setObject(NSData(bytes: data, length: byteCount), forKey: tileKey, cost: byteCount)
+            }
         }
     }
 
@@ -140,7 +183,9 @@ enum TextRasterizer {
         // Large virtual sources stay tiled; only small images consume the eager instruction budget.
         if recipe.extent.width <= CGFloat(tileSide), recipe.extent.height <= CGFloat(tileSide),
            cost <= CGFloat(min(budget, maximumRasterBytes)),
-           let image = context.createCGImage(recipe, from: recipe.extent, format: .RGBA8, colorSpace: nil),
+           let image = provider.withoutCacheWrites({
+               context.createCGImage(recipe, from: recipe.extent, format: .RGBA8, colorSpace: nil)
+           }),
            image.bytesPerRow * image.height <= budget {
             plan.stillImage = CIImage(cgImage: image, options: [.colorSpace: NSNull()])
                 .transformed(by: CGAffineTransform(translationX: recipe.extent.minX, y: recipe.extent.minY))

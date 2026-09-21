@@ -34,9 +34,10 @@ input color of a nonlinear blend. Pixels outside a placed/cropped layer preserve
 
 Text prepares immutable raster sources once per composition, retaining typography,
 fill, border, and shadow. Instructions eagerly retain at most 64 MB of small rasters per
-build, with a 4 MB per-image cap. Larger text boxes and canvases remain demand-tiled:
+build, with a 1 MB per-image cap. Eager materialization does not also populate the tile
+cache. Larger text boxes and canvases remain demand-tiled:
 Core Image requests only source regions needed by the visible canvas, including animated
-transforms and effect margins. Provider bitmaps are at most 1024 × 1024 RGBA pixels and
+transforms and effect margins. Provider bitmaps are at most 512 × 512 RGBA pixels and
 use a shared 64 MB tile cache without per-frame JSON encoding. Their virtual extent is
 not a bitmap allocation and is never clipped to the clip's initial placement.
 CATextLayer draws glyphs directly into clipped contexts without allocating a full-size

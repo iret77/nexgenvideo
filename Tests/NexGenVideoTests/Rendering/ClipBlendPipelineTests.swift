@@ -127,12 +127,17 @@ struct ClipBlendPipelineTests {
     @Test func preparedTextBudgetAndLazyFallbackProduceIdenticalPixels() throws {
         var text = textClip()
         text.textStyle?.fontName = "eager-\(UUID().uuidString)"
+        text.textContent = "Fg pq"
+        text.textStyle?.fontSize = 200
+        text.textStyle?.color = TextStyle.RGBA(r: 1, g: 0, b: 0, a: 1)
         var budget = TextRasterizer.preparationBudget
         let eager = try #require(TextRasterizer.prepare(for: text, renderSize: size, budget: &budget))
         let eagerImage = try #require(eager.stillImage)
+        let eagerSource = try #require(eager.textSource)
+        #expect(eagerSource.rasterizedTileCount > 0)
+        #expect(eagerSource.tileCacheWriteCount == 0)
         #expect(budget >= 0 && budget < TextRasterizer.preparationBudget)
         var exhausted = 0
-        text.textStyle?.fontName = "lazy-\(UUID().uuidString)"
         let lazy = try #require(TextRasterizer.prepare(for: text, renderSize: size, budget: &exhausted))
         #expect(lazy.stillImage == nil)
         #expect(exhausted == 0)
@@ -140,13 +145,13 @@ struct ClipBlendPipelineTests {
         #expect(lazySource.rasterizedTileCount == 0)
         let lazyImage = try #require(lazy.textSource?.image())
         let context = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
-        var eagerPixel = [Float](repeating: 0, count: 4)
+        let bounds = CGRect(origin: .zero, size: eager.natSize)
+        var eagerPixel = [Float](repeating: 0, count: Int(bounds.width * bounds.height) * 4)
         var lazyPixel = eagerPixel
-        let bounds = CGRect(x: 40, y: 45, width: 1, height: 1)
-        context.render(eagerImage, toBitmap: &eagerPixel, rowBytes: 16, bounds: bounds, format: .RGBAf, colorSpace: nil)
-        context.render(lazyImage, toBitmap: &lazyPixel, rowBytes: 16, bounds: bounds, format: .RGBAf, colorSpace: nil)
-        #expect(eagerPixel == lazyPixel)
-        #expect(lazyPixel[1] > 0.95 && lazyPixel[3] > 0.95)
+        context.render(eagerImage, toBitmap: &eagerPixel, rowBytes: Int(bounds.width) * 16, bounds: bounds, format: .RGBAf, colorSpace: nil)
+        context.render(lazyImage, toBitmap: &lazyPixel, rowBytes: Int(bounds.width) * 16, bounds: bounds, format: .RGBAf, colorSpace: nil)
+        #expect(zip(eagerPixel, lazyPixel).allSatisfy { abs($0 - $1) < 0.01 })
+        #expect(stride(from: 0, to: lazyPixel.count, by: 4).contains { lazyPixel[$0] > 0.9 && lazyPixel[$0 + 1] < 0.1 })
         #expect(lazySource.rasterizedTileCount > 0)
         #expect(lazySource.maximumRasterizedTileBytes <= TextRasterizer.maximumRasterBytes)
     }
