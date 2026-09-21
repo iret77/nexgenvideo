@@ -12,6 +12,10 @@ enum WorkspaceUIAcceptance {
         ProcessInfo.processInfo.environment["NGV_WORKSPACE_UI_ACCEPTANCE"] == "1"
     }
 
+    private static var inspectorRequested: Bool {
+        ProcessInfo.processInfo.environment["NGV_INSPECTOR_UI_ACCEPTANCE"] == "1"
+    }
+
     static func runIfRequested() {
         guard isRequested else { return }
         guard let evidencePath = ProcessInfo.processInfo.environment["NGV_WORKSPACE_UI_EVIDENCE"],
@@ -213,6 +217,15 @@ enum WorkspaceUIAcceptance {
                   returnedFrames == initialEditFrames else {
                 fail("edit workspace did not settle before panel controls", scale: scale)
             }
+            if inspectorRequested {
+                await captureInspectorCases(
+                    editor: editor,
+                    window: window,
+                    host: host,
+                    evidenceURL: evidenceURL,
+                    scale: scale
+                )
+            }
             guard click(identifier: "editor.panel.sidebar", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
                       host.layoutSubtreeIfNeeded()
@@ -373,6 +386,81 @@ enum WorkspaceUIAcceptance {
         exit(1)
     }
 
+    private static func captureInspectorCases(
+        editor: EditorViewModel,
+        window: NSWindow,
+        host: NSView,
+        evidenceURL: URL,
+        scale: Double
+    ) async {
+        let originalAssets = editor.mediaAssets
+        let originalClipIDs = editor.selectedClipIds
+        let originalObject = editor.inspectedObject
+        let image = MediaAsset(
+            id: "inspector-image",
+            url: FileManager.default.temporaryDirectory.appendingPathComponent("ngv-inspector-fixture.png"),
+            type: .image,
+            name: "Inspector reference"
+        )
+        let audio = MediaAsset(
+            id: "inspector-audio",
+            url: FileManager.default.temporaryDirectory.appendingPathComponent("ngv-inspector-fixture.wav"),
+            type: .audio,
+            name: "Inspector audio"
+        )
+        editor.mediaAssets.append(contentsOf: [image, audio])
+
+        let cases: [(family: String, clipIDs: Set<String>, tab: String?)] = [
+            ("text", ["inspector-text"], nil),
+            ("video", ["inspector-image-1"], "Video"),
+            ("effects", ["inspector-image-1"], "Adjust"),
+            ("ai", ["inspector-image-1"], "AI Edit"),
+            ("audio", ["inspector-audio-clip"], nil),
+            ("mixed", ["inspector-image-1", "inspector-image-2"], nil),
+            ("asset", [], nil),
+        ]
+        for item in cases {
+            editor.selectedClipIds = item.clipIDs
+            if item.family == "asset" {
+                editor.inspectedObject = .mediaAsset(image.id)
+            } else if item.clipIDs.count == 1, let clipID = item.clipIDs.first {
+                editor.inspectedObject = .clip(clipID)
+            } else {
+                editor.inspectedObject = nil
+            }
+            guard await waitUntil(timeout: .seconds(5), {
+                host.layoutSubtreeIfNeeded()
+                return visiblePanelIDs(in: host) == expectedPanels(for: .edit)
+                    && editor.selectedClipIds == item.clipIDs
+                    && (item.family != "asset" || editor.inspectedObject == .mediaAsset(image.id))
+            }) else {
+                fail("inspector \(item.family) did not settle", scale: scale)
+            }
+            if let tab = item.tab {
+                let identifier = "inspector.tab.\(tab)"
+                if probeState(identifier: identifier, in: window) != true {
+                    guard click(identifier: identifier, in: window) == nil,
+                          await waitUntil(timeout: .seconds(5), {
+                              host.layoutSubtreeIfNeeded()
+                              return probeState(identifier: identifier, in: window) == true
+                          }) else {
+                        fail("inspector tab \(tab) did not activate", scale: scale)
+                    }
+                }
+            }
+            try? await Task.sleep(for: .milliseconds(300))
+            host.layoutSubtreeIfNeeded()
+            let name = "scale-\(scaleLabel(scale))-inspector-\(item.family).png"
+            guard snapshot(host, at: evidenceURL.appendingPathComponent(name)) else {
+                fail("could not capture inspector \(item.family)", scale: scale)
+            }
+            emit("inspector", scale: scale, fields: ["family": item.family, "screenshot": name])
+        }
+        editor.selectedClipIds = originalClipIDs
+        editor.inspectedObject = originalObject
+        editor.mediaAssets = originalAssets
+    }
+
     private static func makeProjectFixture(scale: Double) throws -> URL {
         let title = scale == 1.25
             ? "An exceptionally long project name for the final picture lock"
@@ -385,7 +473,37 @@ enum WorkspaceUIAcceptance {
             at: projectURL,
             withIntermediateDirectories: true
         )
-        try JSONEncoder().encode(Timeline()).write(
+        var timeline = Timeline()
+        if inspectorRequested {
+            var textClip = Clip(mediaRef: "inspector-title", startFrame: 0, durationFrames: 90)
+            textClip.id = "inspector-text"
+            textClip.mediaType = .text
+            textClip.sourceClipType = .text
+            textClip.textContent = "Inspector title"
+
+            var firstImage = Clip(mediaRef: "inspector-image", startFrame: 100, durationFrames: 90)
+            firstImage.id = "inspector-image-1"
+            firstImage.mediaType = .image
+            firstImage.sourceClipType = .image
+
+            var secondImage = Clip(mediaRef: "inspector-image", startFrame: 200, durationFrames: 90)
+            secondImage.id = "inspector-image-2"
+            secondImage.mediaType = .image
+            secondImage.sourceClipType = .image
+            secondImage.speed = 1.5
+
+            var audioClip = Clip(mediaRef: "inspector-audio", startFrame: 0, durationFrames: 290)
+            audioClip.id = "inspector-audio-clip"
+            audioClip.mediaType = .audio
+            audioClip.sourceClipType = .audio
+
+            timeline.tracks = [
+                Track(type: .text, clips: [textClip]),
+                Track(type: .image, clips: [firstImage, secondImage]),
+                Track(type: .audio, clips: [audioClip]),
+            ]
+        }
+        try JSONEncoder().encode(timeline).write(
             to: projectURL.appendingPathComponent(Project.timelineFilename),
             options: .atomic
         )

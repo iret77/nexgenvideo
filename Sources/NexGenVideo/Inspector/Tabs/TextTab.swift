@@ -179,17 +179,8 @@ struct TextTab: View {
         setEnabled: @escaping (inout TextStyle, Bool) -> Void,
         setColor: @escaping (inout TextStyle, TextStyle.RGBA) -> Void
     ) -> some View {
-        InspectorRow(icon: icon, label: label) {
-            HStack(spacing: AppTheme.Spacing.sm) {
-                ColorField(
-                    displayColor: color,
-                    onUserChange: { new in
-                        editor.debouncedCommitTextStyle(clipId: clip.id, key: debounceKey) {
-                            setColor(&$0, TextStyle.RGBA(new))
-                        }
-                    }
-                )
-                .disabled(!enabled)
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+            InspectorRow(icon: icon, label: label) {
                 Toggle(
                     label,
                     isOn: Binding(
@@ -203,6 +194,18 @@ struct TextTab: View {
                 .tint(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.strong))
                 .accessibilityLabel(label)
             }
+            InspectorFormRow(label: "Color") {
+                ColorField(
+                    displayColor: color,
+                    onUserChange: { new in
+                        editor.debouncedCommitTextStyle(clipId: clip.id, key: debounceKey) {
+                            setColor(&$0, TextStyle.RGBA(new))
+                        }
+                    }
+                )
+                .disabled(!enabled)
+            }
+            .padding(.leading, AppTheme.Spacing.lgXl)
         }
     }
 

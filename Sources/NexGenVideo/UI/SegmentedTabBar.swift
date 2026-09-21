@@ -16,6 +16,7 @@ struct SegmentedTabBar: View {
     /// Titles with an explicit scope marker. Marking is caller-owned and independent of accenting.
     var markedTitles: Set<String> = []
     var accentColor: Color? = nil
+    var acceptanceProbePrefix: String? = nil
     let onSelect: (String) -> Void
 
     var body: some View {
@@ -78,6 +79,13 @@ struct SegmentedTabBar: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityAddTraits(isActive ? .isSelected : [])
+                .background {
+                    if let acceptanceProbePrefix {
+                        AppRelaunchClickProbe(
+                            identifier: "\(acceptanceProbePrefix).\(title)",
+                            acceptanceState: isActive
+                        )
+                    }
             }
             Spacer()
         }

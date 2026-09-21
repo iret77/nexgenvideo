@@ -98,7 +98,7 @@ struct AIEditTab: View {
 
     private func aiSection<Content: View>(
         title: String,
-        @ViewBuilder content: () -> Content
+        @ViewBuilder content: @escaping () -> Content
     ) -> some View {
         InspectorSection(title) {
             content()

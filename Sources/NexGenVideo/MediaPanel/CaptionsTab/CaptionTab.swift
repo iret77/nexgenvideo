@@ -171,12 +171,8 @@ struct CaptionTab: View {
             InspectorRow(icon: "paintpalette", label: "Color") {
                 ColorField(displayColor: style.color.swiftUIColor, onUserChange: { style.color = TextStyle.RGBA($0) })
             }
-            InspectorRow(icon: "rectangle.fill", label: "Background") {
-                HStack(spacing: AppTheme.Spacing.sm) {
-                    ColorField(displayColor: style.background.color.swiftUIColor) {
-                        style.background.color = TextStyle.RGBA($0)
-                    }
-                    .disabled(!style.background.enabled)
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                InspectorRow(icon: "rectangle.fill", label: "Background") {
                     Toggle("Background", isOn: $style.background.enabled)
                         .labelsHidden()
                         .toggleStyle(.switch)
@@ -184,6 +180,13 @@ struct CaptionTab: View {
                         .tint(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.strong))
                         .accessibilityLabel("Caption background")
                 }
+                InspectorFormRow(label: "Color") {
+                    ColorField(displayColor: style.background.color.swiftUIColor) {
+                        style.background.color = TextStyle.RGBA($0)
+                    }
+                    .disabled(!style.background.enabled)
+                }
+                .padding(.leading, AppTheme.Spacing.lgXl)
             }
             InspectorRow(icon: "textformat", label: "Case") {
                 Menu {

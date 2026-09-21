@@ -783,6 +783,7 @@ struct InspectorView: View {
             titles: titles, selected: selected,
             raisedBackground: raisedBackground,
             accentedTitles: [ClipTab.ai.rawValue],
+            acceptanceProbePrefix: "inspector.tab",
             onSelect: onSelect
         )
     }

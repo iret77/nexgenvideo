@@ -8,6 +8,7 @@ import time
 
 
 EXPECTED_WORKSPACES = {"media", "production", "edit", "postproduction", "export"}
+EXPECTED_INSPECTORS = {"text", "video", "effects", "ai", "audio", "mixed", "asset"}
 SCALES = (1.0, 1.25, 1.5)
 
 
@@ -25,6 +26,7 @@ def run_scale(executable, output, scale):
                 "NGV_WORKSPACE_UI_ACCEPTANCE": "1",
                 "NGV_WORKSPACE_UI_EVIDENCE": str(output.resolve()),
                 "NGV_WORKSPACE_UI_SCALE": str(scale),
+                "NGV_INSPECTOR_UI_ACCEPTANCE": "1",
             },
             timeout=90,
             check=False,
@@ -60,9 +62,10 @@ def run_scale(executable, output, scale):
     narrow = [row for row in rows if row.get("event") == "narrow-production"]
     pinned = [row for row in rows if row.get("event") == "narrow-production-pinned"]
     invariants = [row for row in rows if row.get("event") == "invariants"]
+    inspector = [row for row in rows if row.get("event") == "inspector"]
     screenshots = [
         row.get("screenshot")
-        for row in workspace_rows + hidden + narrow + pinned
+        for row in workspace_rows + hidden + narrow + pinned + inspector
     ]
     valid_images = all(
         isinstance(name, str)
@@ -80,11 +83,13 @@ def run_scale(executable, output, scale):
         and len(narrow) == 1
         and len(pinned) == 1
         and len(invariants) == 1
+        and {row.get("family") for row in inspector} == EXPECTED_INSPECTORS
+        and len(inspector) == len(EXPECTED_INSPECTORS)
         and invariants[0].get("liveStateUnchanged") is True
         and invariants[0].get("projectBytesUnchanged") is True
         and invariants[0].get("undoUnchanged") is True
         and invariants[0].get("workingCopyUnchanged") is True
-        and len(screenshots) == 8
+        and len(screenshots) == 8 + len(EXPECTED_INSPECTORS)
         and valid_images
     )
     return {
