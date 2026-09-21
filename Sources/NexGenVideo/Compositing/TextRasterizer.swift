@@ -59,6 +59,9 @@ enum TextRasterizer {
         root.isGeometryFlipped = true
         root.addSublayer(layer)
         layer.displayIfNeeded()
+        // CALayer.render ignores isGeometryFlipped; draw in top-left coordinates explicitly.
+        context.translateBy(x: 0, y: rasterSize.height)
+        context.scaleBy(x: 1, y: -1)
         root.render(in: context)
         guard let cgImage = context.makeImage() else { return nil }
         let image = CIImage(cgImage: cgImage, options: [.colorSpace: NSNull()])

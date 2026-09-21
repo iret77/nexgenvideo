@@ -112,10 +112,15 @@ struct ClipBlendPipelineTests {
         text.blendMode = .normal
         let frame = try await CompositorRenderTests.render(CompositorFixtures.timeline([Fixtures.videoTrack(clips: [text])]), frame: 0)
         var red = 0
+        var lowerHalfRed = 0
         for i in stride(from: 0, to: frame.bytes.count, by: 4) {
-            if frame.bytes[i] > 180 && frame.bytes[i + 1] < 80 { red += 1 }
+            if frame.bytes[i] > 180 && frame.bytes[i + 1] < 80 {
+                red += 1
+                if i / (4 * frame.w) > Int(size.height) / 2 { lowerHalfRed += 1 }
+            }
         }
         #expect(red > 100)
+        #expect(lowerHalfRed == 0)
         #expect(frame.br.g > 220)
     }
 
