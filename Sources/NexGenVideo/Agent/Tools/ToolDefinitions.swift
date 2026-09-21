@@ -650,14 +650,19 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .syncAudio,
-            description: "Align one or more clips to a reference clip by cross-correlating audio and shifting targets on the timeline. referenceClipId stays put — use for dual-system sound (camera + external audio) or multicam. Returns offsetFrames and confidence (0–1) per target; refuses weak matches.",
+            description: "Align one or more clips to a reference for dual-system sound or multicam. auto uses compatible embedded source timecode first, then multi-anchor audio matching; QuickTime capture dates narrow the audio search but never move a clip without audio confirmation. Audio matching checks several non-silent regions, estimates clock drift, and refuses weak or ambiguous repeated matches. Force one method with mode. Returns method, offsetFrames, confidence, reason, anchor counts, and drift per target. All accepted moves form one undoable timeline action; if a target would start before frame 0, the synchronized group shifts right together.",
             inputSchema: objectSchema(
                 properties: [
-                    "referenceClipId": ["type": "string", "description": "Clip the others align to. Stays put."],
+                    "referenceClipId": ["type": "string", "description": "Clip the others align to. It moves only when the synchronized group must shift right to stay at or after frame 0."],
                     "targetClipId": ["type": "string", "description": "Single clip to align. Use targetClipIds for several."],
                     "targetClipIds": ["type": "array", "items": ["type": "string"], "description": "Clips to align with the reference."],
-                    "searchWindowSeconds": ["type": "number", "description": "Max ± offset to search in seconds (default 30)."],
-                    "minConfidence": ["type": "number", "description": "Minimum correlation confidence 0–1 (default 0.5)."],
+                    "mode": [
+                        "type": "string",
+                        "enum": ["auto", "audio", "timecode"],
+                        "description": "auto (default), audio, or timecode. auto prefers compatible source timecode and falls back to audio.",
+                    ],
+                    "searchWindowSeconds": ["type": "number", "exclusiveMinimum": 0, "maximum": 3600, "description": "Max ± audio offset to search in seconds (default 30), centered on the current placement and separately on capture-date evidence when available."],
+                    "minConfidence": ["type": "number", "minimum": 0, "maximum": 1, "description": "Minimum audio confidence 0–1 (default 0.7)."],
                 ],
                 required: ["referenceClipId"]
             )
