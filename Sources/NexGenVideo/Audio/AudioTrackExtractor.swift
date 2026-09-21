@@ -93,12 +93,13 @@ enum AudioTrackExtractor {
         ) else {
             throw ExtractionError(reason: "M4A export is unavailable")
         }
+        nonisolated(unsafe) let unsafeSession = session
         try await withTaskCancellationHandler {
             try Task.checkCancellation()
-            try await session.export(to: destinationURL, as: .m4a)
+            try await unsafeSession.export(to: destinationURL, as: .m4a)
             try Task.checkCancellation()
         } onCancel: {
-            session.cancelExport()
+            unsafeSession.cancelExport()
         }
     }
 }
