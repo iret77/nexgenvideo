@@ -39,12 +39,17 @@ struct AddCaptionsSubtitleTests {
         defer { try? FileManager.default.removeItem(at: source.directory) }
         h.editor.importMediaAsset(source.asset)
 
-        _ = try await h.runOK(
+        let result = await h.runRaw(
             "add_captions",
             args: ["subtitleMediaRef": "AB107A6F"]
         )
 
-        let clips = h.editor.timeline.tracks.flatMap(\.clips)
+        #expect(!result.isError)
+        #expect(ToolHarness.textOf(result) == "Added 2 captions from 'dialogue.en.srt'.")
+        #expect(h.editor.timeline.tracks.count == 2)
+        #expect(h.editor.timeline.tracks[0].type == .video)
+        #expect(h.editor.timeline.tracks[1].clips.isEmpty)
+        let clips = h.editor.timeline.tracks[0].clips
         #expect(clips.map(\.textContent) == ["Hello.", "World."])
         #expect(clips.map(\.startFrame) == [30, 90])
         #expect(clips.allSatisfy {
