@@ -87,6 +87,12 @@ struct AssetThumbnailView: View {
             }
             Button("Rename") { beginRename() }
             AIEditMenu(asset: asset)
+            if asset.type == .video, asset.hasAudio {
+                Button("Extract Audio…") {
+                    editor.beginAudioExtraction(from: asset.id)
+                }
+                .disabled(!editor.canExtractAudio(from: asset))
+            }
             Divider() // app-theme: native-menu-divider
         }
         Button("Reveal in Finder") { revealInFinder(ids: ids) }

@@ -286,7 +286,13 @@ enum DurableMediaStore {
     ) async throws -> DurableMediaCopy {
         let fm = FileManager.default
         let source = fileURL.standardizedFileURL.resolvingSymlinksInPath()
-        let projectMedia = mediaDirectory.standardizedFileURL.resolvingSymlinksInPath()
+        let requestedMedia = mediaDirectory.standardizedFileURL
+        let projectMedia = requestedMedia.resolvingSymlinksInPath()
+        guard projectMedia.path == requestedMedia.path else {
+            throw MediaImportError.prepareFailed(
+                "the project media folder resolves outside its expected location"
+            )
+        }
         let values: URLResourceValues
         do {
             values = try source.resourceValues(forKeys: [.isRegularFileKey])
@@ -313,7 +319,7 @@ enum DurableMediaStore {
             }
         }
 
-        let staging = mediaDirectory.appendingPathComponent(
+        let staging = projectMedia.appendingPathComponent(
             ".import-\(UUID().uuidString).partial",
             isDirectory: false
         )
@@ -345,18 +351,34 @@ enum DurableMediaStore {
             }
             try output.synchronize()
             let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
-            if let reusable = reusableByDigest[digest],
-               fm.fileExists(atPath: reusable.path),
-               try Self.matchesDigest(digest, at: reusable) {
-                try fm.removeItem(at: staging)
-                completed = true
-                return DurableMediaCopy(url: reusable, created: false, digest: digest)
+            if let reusable = reusableByDigest[digest] {
+                let normalizedReusable = reusable.standardizedFileURL
+                let resolvedReusable = normalizedReusable.resolvingSymlinksInPath()
+                if resolvedReusable.path == normalizedReusable.path,
+                   resolvedReusable.path.hasPrefix(projectMedia.path + "/"),
+                   fm.fileExists(atPath: resolvedReusable.path),
+                   try Self.matchesDigest(digest, at: resolvedReusable) {
+                    try fm.removeItem(at: staging)
+                    completed = true
+                    return DurableMediaCopy(
+                        url: resolvedReusable,
+                        created: false,
+                        digest: digest
+                    )
+                }
             }
 
             let ext = (fileExtension ?? fileURL.pathExtension).lowercased()
             let filename = ext.isEmpty ? digest : "\(digest).\(ext)"
-            let destination = mediaDirectory.appendingPathComponent(filename)
+            let destination = projectMedia.appendingPathComponent(filename)
             if fm.fileExists(atPath: destination.path) {
+                guard destination.standardizedFileURL.resolvingSymlinksInPath().path
+                    == destination.standardizedFileURL.path else {
+                    throw MediaImportError.copyFailed(
+                        fileURL.lastPathComponent,
+                        "the content-addressed destination is a symbolic link"
+                    )
+                }
                 guard try Self.digest(of: destination) == digest else {
                     throw MediaImportError.copyFailed(
                         fileURL.lastPathComponent,
@@ -370,13 +392,22 @@ enum DurableMediaStore {
             do {
                 try fm.moveItem(at: staging, to: destination)
             } catch {
-                guard fm.fileExists(atPath: destination.path),
+                guard destination.standardizedFileURL.resolvingSymlinksInPath().path
+                        == destination.standardizedFileURL.path,
+                      fm.fileExists(atPath: destination.path),
                       try Self.matchesDigest(digest, at: destination) else {
                     throw error
                 }
                 try fm.removeItem(at: staging)
                 completed = true
                 return DurableMediaCopy(url: destination, created: false, digest: digest)
+            }
+            guard destination.standardizedFileURL.resolvingSymlinksInPath().path
+                == destination.standardizedFileURL.path else {
+                throw MediaImportError.copyFailed(
+                    fileURL.lastPathComponent,
+                    "the content-addressed destination escaped project storage"
+                )
             }
             completed = true
             return DurableMediaCopy(url: destination, created: true, digest: digest)
@@ -472,7 +503,8 @@ extension EditorViewModel {
         guard let workingRoot, let key = openWorkingCopyKey else {
             throw MediaImportError.projectMustBeSaved
         }
-        let mediaDir = workingRoot.appendingPathComponent(
+        let canonicalRoot = workingRoot.standardizedFileURL.resolvingSymlinksInPath()
+        let mediaDir = canonicalRoot.appendingPathComponent(
             Project.mediaDirectoryName,
             isDirectory: true
         )
@@ -482,7 +514,15 @@ extension EditorViewModel {
                 at: mediaDir,
                 withIntermediateDirectories: true
             )
-            return mediaDir
+            let canonicalMedia = mediaDir.standardizedFileURL.resolvingSymlinksInPath()
+            guard canonicalMedia.path == mediaDir.standardizedFileURL.path else {
+                throw MediaImportError.prepareFailed(
+                    "the project media folder resolves outside its expected location"
+                )
+            }
+            return canonicalMedia
+        } catch let error as MediaImportError {
+            throw error
         } catch {
             throw MediaImportError.prepareFailed(error.localizedDescription)
         }
@@ -1259,6 +1299,7 @@ extension EditorViewModel {
             mediaManifest.entries[idx].sourceFPS = asset.sourceFPS
             mediaManifest.entries[idx].hasAudio = asset.hasAudio
             mediaManifest.entries[idx].originalFilename = asset.originalFilename
+            mediaManifest.entries[idx].origin = asset.origin
         }
     }
 
