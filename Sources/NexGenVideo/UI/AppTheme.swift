@@ -323,6 +323,7 @@ enum AppTheme {
         static let settingsSidebarWidth: CGFloat = 220
         static let settingsRowLabelMinWidth: CGFloat = 180
         static let settingsContentMaxWidth: CGFloat = 760
+        static let settingsFieldWidth: CGFloat = 240
         static let settingsProviderCardMinWidth: CGFloat = 320
         static let settingsProviderHeaderMinHeight: CGFloat = 58
         static let settingsProviderControlMinHeight: CGFloat = 96

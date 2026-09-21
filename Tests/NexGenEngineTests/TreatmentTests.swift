@@ -98,7 +98,7 @@ struct TreatmentTests {
     }
 
     @Test(
-        "all 8 origin literal values round-trip",
+        "all origin literal values round-trip",
         arguments: [
             TreatmentOrigin.agentProposal,
             .agentRevision,
@@ -108,6 +108,7 @@ struct TreatmentTests {
             .brainstormOpenai,
             .brainstormGemini,
             .brainstormSynthesis,
+            .brainstormModel,
         ]
     )
     func originRoundTrips(_ origin: TreatmentOrigin) throws {
@@ -124,7 +125,7 @@ struct TreatmentTests {
         #expect(decoded.origin == origin)
     }
 
-    @Test("all 8 origin literal values match the exact Python raw strings")
+    @Test("all origin literal values match their persisted raw strings")
     func originRawValuesMatchPython() {
         #expect(TreatmentOrigin.agentProposal.rawValue == "agent_proposal")
         #expect(TreatmentOrigin.agentRevision.rawValue == "agent_revision")
@@ -134,7 +135,8 @@ struct TreatmentTests {
         #expect(TreatmentOrigin.brainstormOpenai.rawValue == "brainstorm_openai")
         #expect(TreatmentOrigin.brainstormGemini.rawValue == "brainstorm_gemini")
         #expect(TreatmentOrigin.brainstormSynthesis.rawValue == "brainstorm_synthesis")
-        #expect(TreatmentOrigin.allCases.count == 8)
+        #expect(TreatmentOrigin.brainstormModel.rawValue == "brainstorm_model")
+        #expect(TreatmentOrigin.allCases.count == 9)
     }
 
     @Test("parsing throws on missing frontmatter")

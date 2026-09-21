@@ -2293,6 +2293,35 @@ enum MusicvideoGateChecks {
         guard !treatment.bodyMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw GateBlocked("Can't approve \"treatment\": the treatment body is empty — write it.")
         }
+        let brainstormProvenance: TreatmentBrainstormProvenanceV1?
+        do {
+            brainstormProvenance = try TreatmentBrainstormStoreV1.requireCurrent(
+                version: latest,
+                dataRoot: dataRoot
+            )
+        } catch {
+            throw GateBlocked(
+                "Can't approve \"treatment\": its brainstorm provenance is missing, changed, or stale."
+            )
+        }
+        let brainstormOrigins: Set<TreatmentOrigin> = [
+            .brainstormClaude,
+            .brainstormOpenai,
+            .brainstormGemini,
+            .brainstormSynthesis,
+            .brainstormModel,
+        ]
+        if brainstormOrigins.contains(treatment.meta.origin) {
+            guard let provenance = brainstormProvenance,
+                  provenance.relationship == .exact,
+                  provenance.sources.count == 1,
+                  TreatmentBrainstormStoreV1.origin(forExact: provenance.sources[0])
+                    == treatment.meta.origin else {
+                throw GateBlocked(
+                    "Can't approve \"treatment\": its brainstorm origin has no matching host-recorded model result."
+                )
+            }
+        }
         try requireProjectIdentity(
             treatment.meta.project,
             phase: "treatment",

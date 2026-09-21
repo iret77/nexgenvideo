@@ -136,6 +136,7 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
         case analysisInterpretationReview = "analysis_interpretation_review"
         case analysisTrackReplacement = "analysis_track_replacement"
         case treatmentPath = "treatment_path"
+        case treatmentBrainstormApproval = "treatment_brainstorm_approval"
     }
 
     struct Choice: Identifiable, Equatable, Sendable, Codable {

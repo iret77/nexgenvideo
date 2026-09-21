@@ -291,14 +291,55 @@ extension ToolExecutor {
         guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ToolError("Treatment rejected: body_markdown is empty.")
         }
-        let treatment = Treatment(meta: meta, bodyMarkdown: body)
+        var treatment = Treatment(meta: meta, bodyMarkdown: body)
         let url: URL
         do {
             guard let payload = args["causality_plan"] as? [String: Any] else {
                 throw ToolError("write_treatment requires causality_plan with exact treatment excerpts and a change review.")
             }
             let draft = try JSONDecoder().decode(StoryCausalityDraftV1.self, from: JSONSerialization.data(withJSONObject: payload))
-            url = try StoryCausalityStoreV1.write(treatment: treatment, draft: draft, dataRoot: root)
+            var additionalArtifacts: [String: Data] = [:]
+            let brainstormOrigins: Set<TreatmentOrigin> = [
+                .brainstormClaude, .brainstormOpenai, .brainstormGemini, .brainstormSynthesis,
+                .brainstormModel,
+            ]
+            if let provenance = args["brainstorm_provenance"] as? [String: Any] {
+                guard let relationshipRaw = provenance["relationship"] as? String,
+                      let relationship = TreatmentBrainstormRelationshipV1(rawValue: relationshipRaw),
+                      let variantIDs = provenance["variant_ids"] as? [String] else {
+                    throw ToolError("write_treatment brainstorm_provenance is invalid.")
+                }
+                let resolved = try TreatmentBrainstormStoreV1.makeProvenance(
+                    treatment: treatment,
+                    runID: try provenance.requireString("run_id"),
+                    variantIDs: variantIDs,
+                    relationship: relationship,
+                    dataRoot: root
+                )
+                guard relationship == .exact || !brainstormOrigins.contains(origin) else {
+                    throw ToolError("A brainstorm origin is valid only for an exact host-recorded variant.")
+                }
+                let resolvedMeta = try TreatmentMeta(
+                    project: meta.project,
+                    version: meta.version,
+                    generated: meta.generated,
+                    origin: resolved.2,
+                    generator: meta.generator,
+                    summaryOneline: meta.summaryOneline,
+                    title: meta.title,
+                    notes: meta.notes
+                )
+                treatment = Treatment(meta: resolvedMeta, bodyMarkdown: body)
+                additionalArtifacts[TreatmentBrainstormStoreV1.provenancePath(version)] = resolved.1
+            } else if brainstormOrigins.contains(origin) {
+                throw ToolError("A brainstorm origin requires exact host-recorded brainstorm_provenance.")
+            }
+            url = try StoryCausalityStoreV1.write(
+                treatment: treatment,
+                draft: draft,
+                additionalArtifacts: additionalArtifacts,
+                dataRoot: root
+            )
         } catch {
             throw ToolError("Couldn't write treatment: \(error)")
         }

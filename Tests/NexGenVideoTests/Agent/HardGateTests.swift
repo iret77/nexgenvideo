@@ -19,6 +19,8 @@ struct HardGateTests {
         #expect(ToolName.writeBrief.advancingPhase(args: [:]) == "brief")
         #expect(ToolName.writeProductionDesign.advancingPhase(args: [:]) == "production_design")
         #expect(ToolName.writeTreatment.advancingPhase(args: [:]) == "treatment")
+        #expect(ToolName.brainstormTreatment.advancingPhase(args: [:]) == nil)
+        #expect(ToolName.brainstormTreatment.usesCurrentPipelinePhase)
         #expect(ToolName.writeStoryboard.advancingPhase(args: [:]) == "storyboard")
         #expect(ToolName.writeBible.advancingPhase(args: [:]) == "bible")
         #expect(ToolName.writeShotlist.advancingPhase(args: [:]) == "shotlist")
@@ -91,6 +93,7 @@ struct HardGateTests {
                 dataRoot: root
             )
         )
+        #expect(!ToolName.brainstormTreatment.writesPhaseArtifact(args: [:], dataRoot: root))
     }
 
     private func scaffold() throws -> (ToolHarness, String, URL) {

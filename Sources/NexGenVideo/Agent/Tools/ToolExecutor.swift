@@ -254,9 +254,12 @@ final class ToolExecutor {
                 }
             }
             if tool != .runPhase, let guardedRoot {
-                try requirePhaseIdle(editor, dataRoot: guardedRoot)
+                if tool != .brainstormTreatment || resolved["authorization_id"] == nil {
+                    try requirePhaseIdle(editor, dataRoot: guardedRoot)
+                }
             }
             if tool != .runPhase,
+               tool != .brainstormTreatment,
                tool.isDurableWrite,
                let guardedRoot {
                 let id = try reserveDurablePipelineMutation(
@@ -286,6 +289,7 @@ final class ToolExecutor {
             }
             if tool.isDurableWrite,
                tool != .writeShotlist,
+               (tool != .brainstormTreatment || resolved["authorization_id"] != nil),
                editor.projectURL != nil {
                 guard let key = editor.openWorkingCopyKey else {
                     throw ToolError(
@@ -453,6 +457,7 @@ final class ToolExecutor {
         case .writeBrief:           return try writeBriefTool(editor, args)
         case .writeProductionDesign: return try writeProductionDesignTool(editor, args)
         case .writeTreatment:       return try writeTreatmentTool(editor, args)
+        case .brainstormTreatment:  return try await brainstormTreatment(editor, args, origin: origin)
         case .writeStoryboard:      return try writeStoryboardTool(editor, args)
         case .writeBible:           return try writeBibleTool(editor, args)
         case .writeShotlist:        return try writeShotlistTool(editor, args)

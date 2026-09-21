@@ -379,6 +379,22 @@ struct StoryPanelView: View {
                 Text("v\(data.version)")
                     .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium, design: .monospaced)
                     .foregroundStyle(AppTheme.Text.mutedColor)
+                if let provenance = data.brainstormProvenance {
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                        Text(provenance.relationship == "exact" ? "MODEL SOURCE" : "MODEL INFLUENCE")
+                            .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
+                            .tracking(AppTheme.Tracking.wide)
+                            .foregroundStyle(AppTheme.Text.mutedColor)
+                        ForEach(Array(provenance.sources.enumerated()), id: \.offset) { _, source in
+                            Label(
+                                "\(brainstormProviderName(source.providerID)) · \(source.modelID) · \(source.role)",
+                                systemImage: source.role == "synthesis" ? "arrow.triangle.merge" : "sparkles"
+                            )
+                            .interfaceFont(size: AppTheme.Typography.metadata)
+                            .foregroundStyle(AppTheme.Text.secondaryColor)
+                        }
+                    }
+                }
                 Text(data.bodyMarkdown)
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
@@ -398,6 +414,15 @@ struct StoryPanelView: View {
                 action: "Revise treatment",
                 command: { "Revise the treatment (a new version, never overwrite): \($0). Then present it for review." }
             )
+        }
+    }
+
+    private func brainstormProviderName(_ id: String) -> String {
+        switch id {
+        case "anthropic": "Anthropic"
+        case "openai": "OpenAI"
+        case "google": "Google AI"
+        default: id
         }
     }
 

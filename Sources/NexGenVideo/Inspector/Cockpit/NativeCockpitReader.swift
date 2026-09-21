@@ -304,7 +304,22 @@ enum NativeCockpitReader {
                 body += "\n\n" + plan.reviewMarkdown
             }
         } catch { body += "\n\nStory causality unavailable: \(error.localizedDescription)" }
-        return try serialize(["meta": metaObject, "body_markdown": body])
+        let provenance = try TreatmentBrainstormStoreV1.requireCurrent(
+            version: treatment.meta.version,
+            dataRoot: dataRoot
+        )
+        let provenanceObject: Any
+        if let provenance {
+            let data = try JSONEncoder().encode(provenance)
+            provenanceObject = try JSONSerialization.jsonObject(with: data)
+        } else {
+            provenanceObject = NSNull()
+        }
+        return try serialize([
+            "meta": metaObject,
+            "body_markdown": body,
+            "brainstorm_provenance": provenanceObject,
+        ])
     }
 
     /// `read.py` "bible": `mcp_server.bible` → `Bible.model_dump(by_alias=True)` or literal `null`.

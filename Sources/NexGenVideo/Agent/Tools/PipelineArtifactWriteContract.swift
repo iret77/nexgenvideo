@@ -79,6 +79,11 @@ enum PipelineArtifactWriteContract {
             "title": string,
             "notes": string,
             "body_markdown": string,
+            "brainstorm_provenance": object([
+                "run_id": nonEmptyString,
+                "variant_ids": array(nonEmptyString, minimum: 1),
+                "relationship": enumeration(TreatmentBrainstormRelationshipV1.allCases.map(\.rawValue)),
+            ], required: ["run_id", "variant_ids", "relationship"]),
             "causality_plan": causalitySchema,
         ],
         required: ["origin", "summary_oneline", "body_markdown", "causality_plan"]

@@ -26,7 +26,7 @@ Packaged phase prose is guidance inside this state machine, never the state mach
 | Audio Analysis | `run_phase`, `write_analysis_interpretation` | measured and interpreted `analysis/` |
 | Brief | `record_affect`, then `write_brief` | `analysis/affect.json`, `brief.yaml`, synchronized `project.yaml` |
 | Production Design | `write_production_design` | `production_design/production_design.yaml` and referenced files |
-| Treatment | `write_treatment` | versioned treatment plus `treatment/current.md` |
+| Treatment | `brainstorm_treatment` (optional, approval-gated), `write_treatment` | immutable model-result run, versioned treatment plus `treatment/current.md` and bound provenance when used |
 | Storyboard | `write_storyboard` | versioned storyboard plus `storyboard/current.yaml` |
 | Bible | `write_bible` | `bible/bible.yaml`, generated-asset proof, and referenced files |
 | Shot List | `PipelineShotlistWriter` via `write_shotlist` or native source-mode edit | latest versioned shot list, canonical execution plan, and source-mode-owned production plans |

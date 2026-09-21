@@ -108,7 +108,7 @@
       },
       "capabilities": {
         "phaseBound": ["write_treatment"],
-        "supporting": []
+        "supporting": ["brainstorm_treatment"]
       },
       "instructions": "phases/treatment.md",
       "display": { "label": "Treatment" }

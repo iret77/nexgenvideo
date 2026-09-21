@@ -17,6 +17,7 @@ public enum TreatmentOrigin: String, Codable, Sendable, CaseIterable {
     case brainstormOpenai = "brainstorm_openai"
     case brainstormGemini = "brainstorm_gemini"
     case brainstormSynthesis = "brainstorm_synthesis"
+    case brainstormModel = "brainstorm_model"
 }
 
 /// The frontmatter header of a treatment file. Port of

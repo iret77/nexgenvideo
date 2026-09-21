@@ -2448,7 +2448,7 @@ struct WorkflowToolsTests {
         #expect(design.colorScript["intro"] == "Muted blue dawn.")
         try recordLineage("production_design", dataRoot: dataRoot)
 
-        _ = try await h.runOK("write_treatment", args: [
+        let treatmentArgs: [String: Any] = [
             "project_dir": dataRoot.path,
             "origin": "agent_proposal",
             "summary_oneline": "A quiet dawn begins the film.",
@@ -2465,7 +2465,15 @@ struct WorkflowToolsTests {
                     },
                 ],
             ],
-        ])
+        ]
+        var falseOriginArgs = treatmentArgs
+        falseOriginArgs["origin"] = "brainstorm_openai"
+        let falseOrigin = await h.runRaw("write_treatment", args: falseOriginArgs)
+        #expect(falseOrigin.isError)
+        #expect(ToolHarness.textOf(falseOrigin).contains("requires exact host-recorded brainstorm_provenance"))
+        #expect(TreatmentStore.versions(dataRoot: dataRoot).isEmpty)
+
+        _ = try await h.runOK("write_treatment", args: treatmentArgs)
         let treatment = try TreatmentStore.load(dataRoot: dataRoot)
         #expect(treatment.meta.project == "demo")
         #expect(treatment.meta.version == 1)

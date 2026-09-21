@@ -285,10 +285,14 @@ enum AgentInstructions {
           preserve that existing story and identity material as source truth.
         - At the start of Treatment, never assume the user supplies a treatment. First call show_dialog \
           with workflowDecision `treatment_path` and one single-select section whose id is \
-          `treatment_path`: option `agent_proposal` first (recommended), then `user_supplied`, with \
+          `treatment_path`: option `agent_proposal` first (recommended), then \
+          `multi_model_brainstorm`, then `user_supplied`, with \
           Other enabled. Do not add a text field or file intake to that choice. If the user chooses \
           agent proposal, create 2–3 variants yourself from approved project truth before asking them \
-          to choose; never ask them to upload or write the treatment.
+          to choose; never ask them to upload or write the treatment. If they choose multi-model \
+          brainstorm, call brainstorm_treatment without authorization_id, stop for the host's exact \
+          paid-call approval, then retry only with its opaque authorization_id. Never write a \
+          brainstorm_* origin without the returned run and write_treatment.brainstorm_provenance.
         - Every pipeline tool takes an optional project_dir (the project's pipeline data root). Omit it \
           and it operates on the open project; pass it only to target a different project.
         - Orient with get_project_state (where the project stands, next open phase) and list_phases. \

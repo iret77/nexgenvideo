@@ -34,7 +34,7 @@ enum GenerationProvider: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .fal: return "Video · Image · Audio"
         case .runway: return "Video · Image"
-        case .google: return "Image"
+        case .google: return "Image · Text"
         case .higgsfield: return "Video · Image"
         case .elevenlabs: return "Voice · SFX · Music"
         case .marble: return "3D World · Panorama"

@@ -74,11 +74,13 @@ You are spawned fresh on every `/continue`. Before asking anything:
 
 ### 2. Path choice
 
-Ask via `show_dialog` (2 options, plus "Other"):
+Ask via `show_dialog` (3 options, plus "Other"), in this exact order:
 
 1. **"I propose 2–3 treatment variants myself"** (K3a, **recommended**)
    — you write the variants directly, fast, no external spend.
-2. **"I supply a treatment myself"** (K3b).
+2. **"Use my activated models for independent ideas"** (K3b) — optional
+   provider-billed calls, always shown and approved before execution.
+3. **"I supply a treatment myself"** (K3c).
 
 ### 3. K3a — agent proposal (you write the variants) with revision loop
 
@@ -99,7 +101,24 @@ Ask via `show_dialog` (2 options, plus "Other"):
    The host chooses vN, validates the frontmatter, and keeps `current.md`
    in sync.
 
-### 4. K3b — user-supplied treatment, you review
+### 4. K3b — optional multi-model brainstorm
+
+1. Call `brainstorm_treatment` without an
+   authorization ID. The host compiles approved project truth, verifies activated models against
+   provider model lists, and presents the exact additional provider-billed call count. Stop until
+   the user approves. Retry only with the opaque authorization ID from the host. Never reproduce
+   that approval with `show_dialog`, pass a raw prompt, or infer a provider/model origin.
+2. Present the returned variants with their provider and model labels. A direct selection uses
+   `brainstorm_provenance.relationship=exact` with its one variant ID. A new agent-authored version
+   influenced by one or more variants uses `relationship=influenced` and keeps an
+   `agent_proposal`/`agent_revision` origin. The host derives exact brainstorm origins and writes the
+   immutable provenance sidecar; never claim one directly.
+3. Inspect `call_results`. Failed or not-attempted calls remain recorded beside successful paid
+   results; never relabel a partial run as complete. If fewer than two ideas succeeded, report the
+   failure and request a new explicit approval before retrying any provider call.
+4. Continue the same revision loop and persist only through `write_treatment`.
+
+### 5. K3c — user-supplied treatment, you review
 
 1. The user provides the treatment as free text or drops a file at
    `treatment/v1.md`.
@@ -110,13 +129,13 @@ Ask via `show_dialog` (2 options, plus "Other"):
 4. When nothing is missing: display the artifact, then call
    `approve_gate` directly so the host gate card owns the approval question.
 
-### 5. Report back & display
+### 6. Report back & display
 
 After every write, record for the orchestrator flow:
 
 - the files written (`treatment/vN.md` and `current.md`)
 - version N, `origin`
-  (agent_proposal/agent_revision/user_supplied/user_revision), and
+  (agent_proposal/agent_revision/user_supplied/user_revision; exact brainstorm origins are host-derived), and
   `summary_oneline`
 - for K3a with variants: how many there are and how they differ
   (one-liner per variant)
@@ -125,7 +144,7 @@ After every write, record for the orchestrator flow:
 tool `show_artifact(project_dir, "treatment")`. Do not dump the full
 treatment text into the report — that only doubles the context.
 
-### 6. Gate
+### 7. Gate
 
 After displaying the finished artifact, call
 `approve_gate(project_dir, "treatment", notes=...)` directly. Never add an

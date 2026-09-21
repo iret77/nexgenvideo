@@ -314,6 +314,7 @@ final class PipelineAgentHarness {
 
     enum TreatmentCreationPath: Equatable {
         case agentProposal
+        case multiModelBrainstorm
         case userSupplied
         case custom
     }
@@ -762,7 +763,7 @@ final class PipelineAgentHarness {
             if treatmentCreationPath == nil {
                 guard dialog.workflowDecision == .treatmentPath else {
                     throw ToolError(
-                        "Before requesting any treatment text, present the Treatment path choice: agent_proposal first (recommended), then user_supplied, with workflowDecision=treatment_path. The user is never required to upload a treatment."
+                        "Before requesting any treatment text, present the Treatment path choice: agent_proposal first (recommended), multi_model_brainstorm second, then user_supplied, with workflowDecision=treatment_path. The user is never required to upload a treatment."
                     )
                 }
                 try Self.validateTreatmentPathDialog(dialog)
@@ -772,6 +773,12 @@ final class PipelineAgentHarness {
                 throw ToolError(
                     "The Treatment path is already chosen. Continue with that path instead of asking again."
                 )
+            }
+            if dialog.workflowDecision == .treatmentBrainstormApproval {
+                guard treatmentCreationPath == .multiModelBrainstorm else {
+                    throw ToolError("Treatment Brainstorm cost approval is available only after choosing the multi-model path.")
+                }
+                return
             }
             if dialog.workflowDecision != nil {
                 throw ToolError(
@@ -806,6 +813,12 @@ final class PipelineAgentHarness {
         )
     }
 
+    func guardTreatmentBrainstormPath() throws {
+        guard treatmentCreationPath == .multiModelBrainstorm else {
+            throw ToolError("Choose the multi-model Treatment path before calling brainstorm_treatment.")
+        }
+    }
+
     static func resolveTreatmentCreationPath(
         _ dialog: AgentDialog,
         result: AgentDialogResult,
@@ -826,6 +839,8 @@ final class PipelineAgentHarness {
         }
         if selected == ["agent_proposal"] {
             return .agentProposal
+        } else if selected == ["multi_model_brainstorm"] {
+            return .multiModelBrainstorm
         } else if selected == ["user_supplied"] {
             return .userSupplied
         } else if selected.isEmpty,
@@ -847,9 +862,9 @@ final class PipelineAgentHarness {
               section.allowsCustom,
               case .choices(let options, let multiSelect) = section.kind,
               !multiSelect,
-              options.map(\.id) == ["agent_proposal", "user_supplied"] else {
+              options.map(\.id) == ["agent_proposal", "multi_model_brainstorm", "user_supplied"] else {
             throw ToolError(
-                "The Treatment path dialog must contain one single-select treatment_path section with agent_proposal first, user_supplied second, and Other enabled; it must not request text or a file."
+                "The Treatment path dialog must contain one single-select treatment_path section with agent_proposal first, multi_model_brainstorm second, user_supplied third, and Other enabled; it must not request text or a file."
             )
         }
     }

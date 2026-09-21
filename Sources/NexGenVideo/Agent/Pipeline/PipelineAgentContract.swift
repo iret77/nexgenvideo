@@ -56,7 +56,7 @@ enum PipelineAgentContract {
             .copyProjectFile,
             .runProviderTool,
         ],
-        "treatment": [],
+        "treatment": [.brainstormTreatment],
         "storyboard": [],
         "bible": [
             .compilePrompt,
@@ -109,6 +109,7 @@ enum PipelineAgentContract {
         .setLedgerAttribute,
         .lockLedgerAttribute,
         .removeLedgerAttribute,
+        .brainstormTreatment,
     ]
 
     static let postPipelineUtilityCapabilities: Set<ToolName> = [

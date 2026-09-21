@@ -13,6 +13,7 @@ final class AgentService {
     private var apiKeyGeneration = 0
     private let hostFollowUpReadinessOverride: (@MainActor () -> AgentStreamError?)?
     private let embeddedHostFollowUpSender: (@MainActor (String, [[String: Any]]) -> Bool)?
+    @ObservationIgnored let treatmentBrainstormState = TreatmentBrainstormSessionState()
 
     private(set) var backend: AgentBackend
     private(set) var claudeStatus: ClaudeCodeLocator.Status?
@@ -339,6 +340,9 @@ final class AgentService {
     }
 
     func abandonDialog() {
+        if let dialog = pendingDialog {
+            discardTreatmentBrainstormApproval(dialogID: dialog.id)
+        }
         if let dialog = pendingDialog,
            let origin = dialogOrigins.removeValue(forKey: dialog.id) {
             prepareToolCallsForFollowUp(from: origin)
@@ -449,6 +453,21 @@ final class AgentService {
                 dialogSubmissionError = error.localizedDescription
                 return
             }
+        }
+        if dialog.workflowDecision == .treatmentBrainstormApproval {
+            do {
+                let context = try resolveTreatmentBrainstormApproval(
+                    dialog,
+                    selected: dialogChoiceSelections["approval"] ?? []
+                )
+                submittingDialogID = dialog.id
+                dialogSubmissionError = nil
+                pendingDialog = nil
+                sendDialogResponse(dialog, result: result, agentContext: context)
+            } catch {
+                dialogSubmissionError = error.localizedDescription
+            }
+            return
         }
         submittingDialogID = dialog.id
         dialogSubmissionError = nil

@@ -242,6 +242,15 @@ enum MusicvideoPipelineLineage {
             if FileManager.default.fileExists(atPath: dataRoot.appendingPathComponent(StoryCausalityPlanV1.relativePath).path) {
                 selectors += [StoryCausalityPlanV1.relativePath, StoryCausalityStoreV1.versionPath(version)]
             }
+            if let provenance = try? TreatmentBrainstormStoreV1.requireCurrent(
+                version: version,
+                dataRoot: dataRoot
+            ) {
+                selectors += [
+                    TreatmentBrainstormStoreV1.provenancePath(version),
+                    TreatmentBrainstormStoreV1.runPath(provenance.runID),
+                ]
+            }
         }
         return selectors
     }

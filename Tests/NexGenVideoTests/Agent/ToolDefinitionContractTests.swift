@@ -465,7 +465,7 @@ struct ToolDefinitionContractTests {
             .setLedgerAttribute, .lockLedgerAttribute, .removeLedgerAttribute,
             .attachSong, .copyProjectFile, .extractScene3dPovs,
             .writeAnalysisInterpretation, .writeBrief, .writeProductionDesign,
-            .writeTreatment, .writeStoryboard, .writeBible, .writeShotlist,
+            .writeTreatment, .brainstormTreatment, .writeStoryboard, .writeBible, .writeShotlist,
             .writePhaseExtension, .nextRenderShot,
             .cropToAspect, .assembleTimeline, .runSanity,
         ]

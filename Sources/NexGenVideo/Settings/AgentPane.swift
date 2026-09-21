@@ -102,12 +102,19 @@ struct AgentPane: View {
     @State private var hasKey = false
     @State private var maskedKey = ""
     @State private var draft = ""
+    @State private var openAIKeyDraft = ""
+    @State private var hasOpenAIKey = false
+    @State private var brainstormRefresh = 0
+    @State private var brainstormDiscoveryRefresh = 0
+    @State private var brainstormOfferedRoutes: Set<String> = []
+    @State private var isCheckingBrainstormModels = false
     @State private var externalMcpServers: [ExternalMcpServers.SettingsEntry] = []
     @State private var externalMcpEditor = ExternalMcpServerEditorState()
     @State private var pendingExternalMcpRemoval: String?
     @State private var pendingExternalMcpTrust: PendingExternalMcpTrust?
     @State private var externalMcpError: String?
     @FocusState private var isFocused: Bool
+    @FocusState private var isOpenAIKeyFocused: Bool
     @FocusState private var externalMcpField: ExternalMcpField?
 
     @AppStorage(CostGuard.autoApproveKey) private var autoApproveCredits = 0
@@ -129,6 +136,7 @@ struct AgentPane: View {
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
             runtimeSection
+            treatmentBrainstormSection
             renderApprovalSection
             mcpSection
             externalMcpSection
@@ -136,6 +144,7 @@ struct AgentPane: View {
         .onAppear {
             backend = AgentBackendPreference.selected
             refreshKey()
+            hasOpenAIKey = OpenAIKeychain.load() != nil
             refreshExternalMcpServers()
         }
         .task {
@@ -143,9 +152,29 @@ struct AgentPane: View {
                 await checkClaude()
             }
         }
+        .task(id: brainstormDiscoveryRefresh) {
+            await refreshBrainstormModels()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .claudeCodeStatusChanged)) { notification in
             guard let status = notification.object as? ClaudeCodeLocator.Status else { return }
             claudeStatus = status
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .treatmentBrainstormSettingsChanged)) { _ in
+            hasOpenAIKey = OpenAIKeychain.load() != nil
+            brainstormRefresh &+= 1
+            brainstormDiscoveryRefresh &+= 1
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .anthropicAPIKeyChanged)) { _ in
+            refreshKey()
+            brainstormRefresh &+= 1
+            brainstormDiscoveryRefresh &+= 1
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .treatmentBrainstormPreferencesChanged)) { _ in
+            brainstormRefresh &+= 1
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .providerKeysChanged)) { _ in
+            brainstormRefresh &+= 1
+            brainstormDiscoveryRefresh &+= 1
         }
         .confirmationDialog(
             "Remove external MCP server?",
@@ -329,6 +358,156 @@ struct AgentPane: View {
                 }
             }
         }
+    }
+
+    private var treatmentBrainstormSection: some View {
+        SettingsSection(
+            "Treatment Brainstorm",
+            subtitle: "Optional independent Treatment ideas. Every run shows its exact provider-billed call plan for approval."
+        ) {
+            SettingsCard {
+                SettingsRow(
+                    title: "OpenAI API",
+                    subtitle: hasOpenAIKey ? "Key saved" : "Required for activated OpenAI models."
+                ) {
+                    SecureField(hasOpenAIKey ? "••••••••" : "API key", text: $openAIKeyDraft)
+                        .textFieldStyle(.plain)
+                        .focused($isOpenAIKeyFocused)
+                        .interfaceFont(size: AppTheme.Typography.ui, design: .monospaced)
+                        .foregroundStyle(AppTheme.Text.primaryColor)
+                        .padding(.horizontal, AppTheme.Spacing.md)
+                        .padding(.vertical, AppTheme.Spacing.smMd)
+                        .background(
+                            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                                .fill(AppTheme.Background.overlayColor.opacity(AppTheme.Opacity.muted))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                                .strokeBorder(
+                                    isOpenAIKeyFocused
+                                        ? AppTheme.Border.primaryColor
+                                        : AppTheme.Border.subtleColor,
+                                    lineWidth: AppTheme.BorderWidth.thin
+                                )
+                        )
+                        .animation(.easeOut(duration: AppTheme.Anim.hover), value: isOpenAIKeyFocused)
+                        .frame(maxWidth: AppTheme.ComponentSize.settingsFieldWidth)
+                        .onSubmit(saveOpenAIKey)
+                    Button(hasOpenAIKey ? "Replace" : "Save") { saveOpenAIKey() }
+                        .buttonStyle(.capsule(.prominent, size: .regular))
+                        .controlSize(.small)
+                        .disabled(openAIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    if hasOpenAIKey {
+                        Button("Remove", role: .destructive) {
+                            OpenAIKeychain.delete()
+                            openAIKeyDraft = ""
+                        }
+                        .buttonStyle(.capsule(.secondary, size: .regular))
+                        .controlSize(.small)
+                    }
+                }
+                SettingsDivider()
+                ForEach(TreatmentBrainstormProvider.allCases) { provider in
+                    SettingsRow(
+                        title: provider.displayName,
+                        subtitle: provider.hasCredential
+                            ? "Select models to make available for Treatment Brainstorm. Live availability is checked before approval."
+                            : brainstormConnectionHint(provider)
+                    ) {
+                        SettingsStatusBadge(
+                            text: brainstormProviderStatus(provider),
+                            tone: brainstormProviderTone(provider)
+                        )
+                        if provider.hasCredential {
+                            Button("Check again") { brainstormDiscoveryRefresh &+= 1 }
+                                .buttonStyle(.capsule(.secondary, size: .regular))
+                                .controlSize(.small)
+                                .disabled(isCheckingBrainstormModels)
+                        }
+                    }
+                    if provider.hasCredential {
+                        ForEach(availableBrainstormModels(provider)) { model in
+                            SettingsDivider()
+                            SettingsRow(title: model.displayName, subtitle: model.costDisclosure) {
+                                Toggle(
+                                    "Enable \(model.displayName)",
+                                    isOn: Binding(
+                                        get: {
+                                            _ = brainstormRefresh
+                                            return TreatmentBrainstormPreferences.isEnabled(model)
+                                        },
+                                        set: {
+                                            TreatmentBrainstormPreferences.setEnabled($0, model: model)
+                                        }
+                                    )
+                                )
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                                .controlSize(.small)
+                            }
+                        }
+                    }
+                    if provider.id != TreatmentBrainstormProvider.allCases.last?.id {
+                        SettingsDivider()
+                    }
+                }
+            }
+        }
+    }
+
+    private func brainstormConnectionHint(_ provider: TreatmentBrainstormProvider) -> String {
+        switch provider {
+        case .anthropic: "Add an Anthropic API key under Agent Runtime."
+        case .openai: "Add an OpenAI API key above."
+        case .google: "Add a Google AI key under Providers."
+        }
+    }
+
+    private func brainstormProviderStatus(_ provider: TreatmentBrainstormProvider) -> String {
+        guard provider.hasCredential else { return "Not configured" }
+        if isCheckingBrainstormModels { return "Checking" }
+        return availableBrainstormModels(provider).isEmpty ? "No supported models" : "Available"
+    }
+
+    private func brainstormProviderTone(_ provider: TreatmentBrainstormProvider) -> SettingsTone {
+        guard provider.hasCredential, !isCheckingBrainstormModels else { return .neutral }
+        return availableBrainstormModels(provider).isEmpty ? .warning : .success
+    }
+
+    private func availableBrainstormModels(
+        _ provider: TreatmentBrainstormProvider
+    ) -> [TreatmentBrainstormModel] {
+        TreatmentBrainstormModelCatalog.all.filter {
+            $0.provider == provider && brainstormOfferedRoutes.contains($0.preferenceID)
+        }
+    }
+
+    private func refreshBrainstormModels() async {
+        isCheckingBrainstormModels = true
+        let client = TreatmentBrainstormHTTPClient()
+        var routes = Set<String>()
+        for provider in TreatmentBrainstormProvider.allCases {
+            guard !Task.isCancelled, let key = provider.apiKey else { continue }
+            guard let offered = try? await client.offeredModelIDs(provider: provider, apiKey: key) else {
+                continue
+            }
+            routes.formUnion(
+                TreatmentBrainstormModelCatalog.all
+                    .filter { $0.provider == provider && offered.contains($0.id) }
+                    .map(\.preferenceID)
+            )
+        }
+        guard !Task.isCancelled else { return }
+        brainstormOfferedRoutes = routes
+        isCheckingBrainstormModels = false
+    }
+
+    private func saveOpenAIKey() {
+        let key = openAIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return }
+        OpenAIKeychain.save(key)
+        openAIKeyDraft = ""
+        hasOpenAIKey = true
     }
 
     private var mcpSection: some View {

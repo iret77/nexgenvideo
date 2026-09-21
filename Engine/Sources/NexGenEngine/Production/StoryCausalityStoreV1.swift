@@ -69,6 +69,21 @@ public enum StoryCausalityStoreV1 {
 
     @discardableResult
     public static func write(treatment: Treatment, draft: StoryCausalityDraftV1, dataRoot: URL) throws -> URL {
+        try write(
+            treatment: treatment,
+            draft: draft,
+            additionalArtifacts: [:],
+            dataRoot: dataRoot
+        )
+    }
+
+    @discardableResult
+    public static func write(
+        treatment: Treatment,
+        draft: StoryCausalityDraftV1,
+        additionalArtifacts: [String: Data],
+        dataRoot: URL
+    ) throws -> URL {
         let version = treatment.meta.version
         guard version == TreatmentStore.nextVersion(dataRoot: dataRoot) else { throw GateBlocked("Treatment versions cannot be overwritten.") }
         let previous = try history(dataRoot: dataRoot, through: version - 1)
@@ -85,8 +100,17 @@ public enum StoryCausalityStoreV1 {
             treatmentVersion: version, treatmentSHA256: FileDigest.sha256(of: treatmentBytes),
             briefSHA256: FileDigest.sha256(of: briefBytes), draft: draft,
             affectedBeatIDs: draft.affectedBeats(comparedWith: previous?.draft).sorted())
-        let paths = [PipelineLayout.treatmentVersionFile(version), PipelineLayout.treatmentCurrentFile,
-                     versionPath(version), StoryCausalityPlanV1.relativePath, PipelineLayout.lineageFile]
+        let basePaths = [PipelineLayout.treatmentVersionFile(version), PipelineLayout.treatmentCurrentFile,
+                         versionPath(version), StoryCausalityPlanV1.relativePath, PipelineLayout.lineageFile]
+        guard additionalArtifacts.keys.allSatisfy({ path in
+            !path.isEmpty && !path.hasPrefix("/") && !path.hasSuffix("/")
+                && !path.split(separator: "/", omittingEmptySubsequences: false).contains(where: {
+                    $0.isEmpty || $0 == "." || $0 == ".."
+                })
+                && !basePaths.contains(path)
+        }) else { throw GateBlocked("Treatment contains an unsafe supporting-artifact path.") }
+        let additionalPaths = additionalArtifacts.keys.sorted()
+        let paths = basePaths + additionalPaths
         let urls = paths.map { dataRoot.appendingPathComponent($0) }
         guard !FileManager.default.fileExists(atPath: urls[2].path) else { throw GateBlocked("Causality versions cannot be overwritten.") }
         let encoder = JSONEncoder()
@@ -99,6 +123,15 @@ public enum StoryCausalityStoreV1 {
             try treatmentBytes.write(to: urls[1], options: .atomic)
             try bytes.write(to: urls[2], options: .atomic)
             try bytes.write(to: urls[3], options: .atomic)
+            for path in additionalPaths {
+                guard let data = additionalArtifacts[path],
+                      let index = paths.firstIndex(of: path) else { continue }
+                try FileManager.default.createDirectory(
+                    at: urls[index].deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                try data.write(to: urls[index], options: .atomic)
+            }
             try PipelineLineageStore.record(phase: lineageID, snapshot: snapshot(dataRoot: dataRoot), dataRoot: dataRoot)
         }
         return urls[0]

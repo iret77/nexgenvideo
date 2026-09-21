@@ -167,26 +167,54 @@ struct BriefData: Decodable, Sendable, Equatable {
 
 struct TreatmentData: Decodable, Sendable, Equatable {
     var version: Int
+    var origin: String
     var bodyMarkdown: String
+    var brainstormProvenance: BrainstormProvenance?
+
+    struct BrainstormProvenance: Decodable, Sendable, Equatable {
+        var relationship: String
+        var sources: [Source]
+
+        struct Source: Decodable, Sendable, Equatable {
+            var role: String
+            var providerID: String
+            var modelID: String
+
+            enum CodingKeys: String, CodingKey {
+                case role
+                case providerID = "provider_id"
+                case modelID = "model_id"
+            }
+        }
+    }
 
     enum CodingKeys: String, CodingKey {
         case meta
         case bodyMarkdown = "body_markdown"
+        case brainstormProvenance = "brainstorm_provenance"
     }
 
     private struct Meta: Decodable {
         var version: Int?
-        enum CodingKeys: String, CodingKey { case version }
+        var origin: String?
+        enum CodingKeys: String, CodingKey { case version, origin }
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             version = try? c.decodeIfPresent(Int.self, forKey: .version)
+            origin = try? c.decodeIfPresent(String.self, forKey: .origin)
         }
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        version = ((try? c.decodeIfPresent(Meta.self, forKey: .meta)) ?? nil)?.version ?? 1
+        let meta = (try? c.decodeIfPresent(Meta.self, forKey: .meta)) ?? nil
+        version = meta?.version ?? 1
+        origin = meta?.origin ?? "unknown"
         bodyMarkdown = try c.decodeIfPresent(String.self, forKey: .bodyMarkdown) ?? ""
+        brainstormProvenance = try c.decodeIfPresent(
+            BrainstormProvenance.self,
+            forKey: .brainstormProvenance
+        )
     }
 }
 

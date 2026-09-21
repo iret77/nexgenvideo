@@ -16,6 +16,7 @@ struct AgentDialogSubmissionTests {
                 "allowsCustom": true,
                 "options": [
                     ["id": "agent_proposal", "label": "Create 2–3 proposals for me"],
+                    ["id": "multi_model_brainstorm", "label": "Use my activated models"],
                     ["id": "user_supplied", "label": "I will supply a treatment"],
                 ],
             ]],
@@ -31,6 +32,11 @@ struct AgentDialogSubmissionTests {
             ),
             selectedOptionIDs: ["treatment_path": ["agent_proposal"]]
         ) == .agentProposal)
+        #expect(try PipelineAgentHarness.resolveTreatmentCreationPath(
+            dialog,
+            result: AgentDialogResult(selectedLabels: [:], toggles: [:], direction: ""),
+            selectedOptionIDs: ["treatment_path": ["multi_model_brainstorm"]]
+        ) == .multiModelBrainstorm)
     }
 
     @Test func treatmentCannotStartWithAForcedUploadDialog() throws {
