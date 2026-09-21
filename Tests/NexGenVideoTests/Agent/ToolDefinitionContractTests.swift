@@ -5,6 +5,16 @@ import NexGenEngine
 
 @Suite("Agent tool semantic contracts")
 struct ToolDefinitionContractTests {
+    @Test("sync_audio exposes bounded methods and evidence")
+    func syncAudioSchemaCarriesEvidenceContract() throws {
+        let tool = try #require(ToolDefinitions.all.first { $0.name == .syncAudio })
+        let properties = try #require(tool.inputSchema["properties"] as? [String: Any])
+        let mode = try #require(properties["mode"] as? [String: Any])
+        #expect(mode["enum"] as? [String] == ["auto", "audio", "timecode"])
+        #expect(tool.description.contains("method, offsetFrames, confidence, reason"))
+        #expect(tool.description.contains("refuses weak or ambiguous repeated matches"))
+    }
+
     @Test("every object schema is closed or an explicitly typed dynamic map")
     func objectSchemasAreClosed() {
         let dynamicMaps: [String: String] = [
