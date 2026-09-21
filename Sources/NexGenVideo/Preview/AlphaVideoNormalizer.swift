@@ -16,6 +16,20 @@ enum AlphaVideoNormalizer {
     static func premultipliedVideo(for sourceURL: URL, mediaRef: String) async throws -> URL? {
         let asset = AVURLAsset(url: sourceURL)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else { return nil }
+        return try await premultipliedVideo(
+            for: sourceURL,
+            mediaRef: mediaRef,
+            asset: asset,
+            track: track
+        )
+    }
+
+    static func premultipliedVideo(
+        for sourceURL: URL,
+        mediaRef: String,
+        asset: AVURLAsset,
+        track: AVAssetTrack
+    ) async throws -> URL? {
         let alphaMode = try await trackAlphaMode(track)
         guard alphaMode == .straight || alphaMode == .unspecified else { return nil }
 
