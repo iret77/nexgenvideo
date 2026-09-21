@@ -53,9 +53,9 @@ enum InspectFrameGrid: Sendable {
     }
 
     private nonisolated static func drawLines(in context: CGContext, width: CGFloat, height: CGFloat) {
-        func stroke(lineWidth: CGFloat, gray: CGFloat, alpha: CGFloat) {
+        func stroke(lineWidth: CGFloat, color: CGColor) {
             context.setLineWidth(lineWidth)
-            context.setStrokeColor(CGColor(gray: gray, alpha: alpha))
+            context.setStrokeColor(color)
             for index in 0...10 {
                 let fraction = CGFloat(index) / 10
                 let x = min(max(0.5, fraction * width), width - 0.5)
@@ -67,16 +67,25 @@ enum InspectFrameGrid: Sendable {
             }
             context.strokePath()
         }
-        stroke(lineWidth: 2.5, gray: 0, alpha: 0.65)
-        stroke(lineWidth: 1, gray: 1, alpha: 0.9)
+        stroke(
+            lineWidth: AppTheme.BorderWidth.thick,
+            color: AppTheme.Background.overlay.withAlphaComponent(AppTheme.Opacity.disabled).cgColor
+        )
+        stroke(
+            lineWidth: AppTheme.BorderWidth.thin,
+            color: AppTheme.Text.primary.withAlphaComponent(AppTheme.Opacity.high).cgColor
+        )
     }
 
     private nonisolated static func drawLabels(in context: CGContext, width: CGFloat, height: CGFloat) {
-        let fontSize = min(12, max(8, min(width, height) / 42))
+        let fontSize = min(
+            AppTheme.FontSize.xs,
+            max(AppTheme.FontSize.minimumReadable, min(width, height) / 42)
+        )
         let font = CTFontCreateWithName("Helvetica-Bold" as CFString, fontSize, nil)
         let attributes: [NSAttributedString.Key: Any] = [
             kCTFontAttributeName as NSAttributedString.Key: font,
-            kCTForegroundColorAttributeName as NSAttributedString.Key: CGColor(gray: 1, alpha: 1),
+            kCTForegroundColorAttributeName as NSAttributedString.Key: AppTheme.Text.primary.cgColor,
         ]
 
         for index in 0...10 {
@@ -84,25 +93,51 @@ enum InspectFrameGrid: Sendable {
             let label = labels[index]
             let line = CTLineCreateWithAttributedString(NSAttributedString(string: label, attributes: attributes))
             let textWidth = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
-            let chipHeight = fontSize + 4
+            let chipHeight = fontSize + AppTheme.Spacing.xs
 
-            let x = min(max(1, fraction * width - textWidth / 2 - 2), width - textWidth - 5)
-            fillChip(in: context, rect: CGRect(x: x, y: 1, width: textWidth + 4, height: chipHeight))
-            context.textPosition = CGPoint(x: x + 2, y: 3)
+            let x = min(
+                max(AppTheme.Spacing.micro, fraction * width - textWidth / 2 - AppTheme.Spacing.xxs),
+                width - textWidth - AppTheme.Spacing.xs - AppTheme.Spacing.micro
+            )
+            fillChip(in: context, rect: CGRect(
+                x: x,
+                y: AppTheme.Spacing.micro,
+                width: textWidth + AppTheme.Spacing.xs,
+                height: chipHeight
+            ))
+            context.textPosition = CGPoint(x: x + AppTheme.Spacing.xxs, y: AppTheme.Spacing.xxs)
             CTLineDraw(line, context)
 
             let contextY = drawingY(forTopOriginFraction: fraction, height: height)
-            let alignedY = min(max(1, contextY - fontSize / 2 - 2), height - chipHeight - 1)
-            let y = index == 10 ? min(max(1, chipHeight + 3), height - chipHeight - 1) : alignedY
-            let rightX = width - textWidth - 5
-            fillChip(in: context, rect: CGRect(x: rightX, y: y, width: textWidth + 4, height: chipHeight))
-            context.textPosition = CGPoint(x: rightX + 2, y: y + 2)
+            let alignedY = min(
+                max(AppTheme.Spacing.micro, contextY - fontSize / 2 - AppTheme.Spacing.xxs),
+                height - chipHeight - AppTheme.Spacing.micro
+            )
+            let y = index == 10
+                ? min(
+                    max(AppTheme.Spacing.micro, chipHeight + AppTheme.Spacing.xxs),
+                    height - chipHeight - AppTheme.Spacing.micro
+                )
+                : alignedY
+            let rightX = width - textWidth - AppTheme.Spacing.xs - AppTheme.Spacing.micro
+            fillChip(in: context, rect: CGRect(
+                x: rightX,
+                y: y,
+                width: textWidth + AppTheme.Spacing.xs,
+                height: chipHeight
+            ))
+            context.textPosition = CGPoint(
+                x: rightX + AppTheme.Spacing.xxs,
+                y: y + AppTheme.Spacing.xxs
+            )
             CTLineDraw(line, context)
         }
     }
 
     private nonisolated static func fillChip(in context: CGContext, rect: CGRect) {
-        context.setFillColor(CGColor(gray: 0, alpha: 0.7))
+        context.setFillColor(
+            AppTheme.Background.overlay.withAlphaComponent(AppTheme.Opacity.scrim).cgColor
+        )
         context.fill(rect)
     }
 
