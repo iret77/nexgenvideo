@@ -88,6 +88,21 @@ struct PatternFitPilotTests {
         #expect(record.profileDecodeIssue?.contains("fit_profile decode failed") == true)
     }
 
+    @Test("invalid pattern content is reported without becoming recommendable")
+    func invalidPatternContentStaysLocal() throws {
+        let url = try #require(PackKnowledge.patternLibraryURLs().first {
+            $0.deletingPathExtension().lastPathComponent == pilotId
+        })
+        let valid = try String(contentsOf: url, encoding: .utf8)
+        let broken = valid.replacingOccurrences(
+            of: "framing_mix:\n",
+            with: "framing_mix:\n  dead_directive: facade\n"
+        )
+        let record = try PatternFitLibrary.recommendationRecord(yaml: broken, fileName: url.lastPathComponent)
+        #expect(record.profile != nil)
+        #expect(record.contentIssues.contains { $0.contains("dead_directive") })
+    }
+
     // MARK: Deterministic scoring
 
     @Test("an all-ideal project scores a perfect exceptional index")

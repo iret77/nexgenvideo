@@ -67,29 +67,49 @@ framing_mix:
   pov_pct: 0
   insert_pct: 10
   aerial_pct: 0
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Chris_Cunningham"
 
 asl_range:
   min_s: 2.0
   max_s: 15.0
   typical_s: 6.0
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Chris_Cunningham"
 
-camera_vocabulary:
-  - "ultra-slow-motion specialty camera"
-  - "static hold on uncanny subject"
-  - "slow lateral track through impossible space"
-  - "extreme push-in to ECU"
-  - "single-take vertical fall"
+camera:
+  vocabulary:
+    - "ultra-slow-motion specialty camera"
+    - "static hold on uncanny subject"
+    - "slow lateral track through impossible space"
+    - "extreme push-in to ECU"
+    - "single-take vertical fall"
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Chris_Cunningham"
 
-lighting_signature: |
-  high-contrast single hard key, deep clean shadows, often
-  monochromatic or two-tone grade, clinical/medical/uncanny
-  practicals, occasional desaturated palette interrupted by one
-  symbolic accent colour.
+lighting:
+  description: |
+    high-contrast single hard key, deep clean shadows, often
+    monochromatic or two-tone grade, clinical/medical/uncanny
+    practicals, occasional desaturated palette interrupted by one
+    symbolic accent colour.
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Chris_Cunningham"
 
-approximation_basis: |
-  Aggregation of the cited Wikipedia, MUBI, Sivasdescalzo, This Film
-  Should Be Played Loud, 200 Percent, I Love That Film and Far Out
-  Magazine sources describing Cunningham's "gothic, freakish but
-  arrestingly beautiful" approach and Glazer's "hauntingly beautiful"
-  surreal slow-motion work. Specific framing_mix derived
-  qualitatively from these analyses.
+color:
+  description: "Monochromatic or two-tone grading interrupted by one symbolic accent colour."
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Chris_Cunningham"
+
+craft_signature:
+  - technique: "Clinical hard-key isolation"
+    directive: "Use one hard key, deep clean shadows, uncanny practicals, and one symbolic accent within a restrained grade."
+    pipeline_levers: [visual_prompt, bible_look, bible_lighting]
+    basis: inferred
+    sources:
+    - "https://en.wikipedia.org/wiki/Chris_Cunningham"

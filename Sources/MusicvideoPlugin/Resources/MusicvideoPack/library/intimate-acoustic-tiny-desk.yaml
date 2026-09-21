@@ -47,23 +47,45 @@ framing_mix:
   pov_pct: 0
   insert_pct: 5
   aerial_pct: 0
+  basis: inferred
+  sources:
+    - "https://www.npr.org/sections/allsongs/2016/02/25/467952320/wilco-in-360-behind-the-scenes-at-npr-musics-tiny-desk"
 
 asl_range:
   min_s: 3.0
   max_s: 8.0
   typical_s: 5.0
+  basis: inferred
+  sources:
+    - "https://www.npr.org/sections/allsongs/2016/02/25/467952320/wilco-in-360-behind-the-scenes-at-npr-musics-tiny-desk"
 
-camera_vocabulary:
-  - "static hold"
-  - "slow push-in"
-  - "subtle handheld breathing"
+camera:
+  vocabulary:
+    - "static hold"
+    - "slow push-in"
+    - "subtle handheld breathing"
+  basis: inferred
+  sources:
+    - "https://www.npr.org/sections/allsongs/2016/02/25/467952320/wilco-in-360-behind-the-scenes-at-npr-musics-tiny-desk"
 
-lighting_signature: |
-  warm tungsten or natural-window key from one side, soft fall-off,
-  visible practical lamps in the room, low contrast, no harsh shadows.
+lighting:
+  description: |
+    warm tungsten or natural-window key from one side, soft fall-off,
+    visible practical lamps in the room, low contrast, no harsh shadows.
+  basis: inferred
+  sources:
+    - "https://www.npr.org/sections/allsongs/2016/02/25/467952320/wilco-in-360-behind-the-scenes-at-npr-musics-tiny-desk"
 
-approximation_basis: |
-  Qualitative aggregation from the cited Tiny Desk source pages and
-  general live-acoustic-format conventions. Not Cinemetrics-grade;
-  refine via real shot counts of specific Tiny Desk concerts if
-  needed.
+color:
+  description: "Warm tungsten or neutral window colour with low contrast."
+  basis: inferred
+  sources:
+    - "https://www.npr.org/sections/allsongs/2016/02/25/467952320/wilco-in-360-behind-the-scenes-at-npr-musics-tiny-desk"
+
+craft_signature:
+  - technique: "Visible practical intimacy"
+    directive: "Use a soft side key from tungsten or window light, visible practical lamps, and gentle fall-off."
+    pipeline_levers: [visual_prompt, bible_look, bible_lighting]
+    basis: inferred
+    sources:
+    - "https://www.npr.org/sections/allsongs/2016/02/25/467952320/wilco-in-360-behind-the-scenes-at-npr-musics-tiny-desk"

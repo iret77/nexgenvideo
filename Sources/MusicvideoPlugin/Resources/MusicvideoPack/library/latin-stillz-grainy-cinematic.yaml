@@ -56,26 +56,48 @@ framing_mix:
   pov_pct: 0
   insert_pct: 5
   aerial_pct: 0
+  basis: inferred
+  sources:
+    - "https://www.rollingstone.com/music/music-features/stillz-music-videos-interview-1378625/"
 
 asl_range:
   min_s: 1.5
   max_s: 6.0
   typical_s: 3.0
+  basis: inferred
+  sources:
+    - "https://www.rollingstone.com/music/music-features/stillz-music-videos-interview-1378625/"
 
-camera_vocabulary:
-  - "handheld lateral track"
-  - "16mm grain plate"
-  - "saturated push-in on emotional peak"
-  - "rack-focus between performer and crowd"
-  - "static portrait hold"
+camera:
+  vocabulary:
+    - "handheld lateral track"
+    - "16mm grain plate"
+    - "saturated push-in on emotional peak"
+    - "rack-focus between performer and crowd"
+    - "static portrait hold"
+  basis: inferred
+  sources:
+    - "https://www.rollingstone.com/music/music-features/stillz-music-videos-interview-1378625/"
 
-lighting_signature: |
-  warm sodium-street and tungsten practicals on 16mm grain plates,
-  saturated digital plates for transcendent moments, deep magenta-
-  cyan colour grade on shadows, soft fall-off on faces.
+lighting:
+  description: |
+    warm sodium-street and tungsten practicals on 16mm grain plates,
+    saturated digital plates for transcendent moments, deep magenta-
+    cyan colour grade on shadows, soft fall-off on faces.
+  basis: inferred
+  sources:
+    - "https://www.rollingstone.com/music/music-features/stillz-music-videos-interview-1378625/"
 
-approximation_basis: |
-  Aggregation of the cited Rolling Stone interview, Remezcla,
-  IMVDb, IMDb and Canada Canada pages describing Stillz' 16mm-vs-
-  digital approach and his repeat collaborations with Bad Bunny and
-  Rosalia. Specific framing_mix derived qualitatively.
+color:
+  description: "Warm sodium and tungsten with deep magenta-cyan shadow grading."
+  basis: inferred
+  sources:
+    - "https://www.rollingstone.com/music/music-features/stillz-music-videos-interview-1378625/"
+
+craft_signature:
+  - technique: "Sodium light on grain"
+    directive: "Use warm sodium and tungsten practicals over visible grain, with magenta-cyan shadow separation."
+    pipeline_levers: [visual_prompt, bible_look, bible_lighting]
+    basis: inferred
+    sources:
+    - "https://www.rollingstone.com/music/music-features/stillz-music-videos-interview-1378625/"

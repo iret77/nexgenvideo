@@ -64,28 +64,48 @@ framing_mix:
   pov_pct: 0
   insert_pct: 5
   aerial_pct: 0
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Russell_Mulcahy"
 
 asl_range:
   min_s: 0.5
   max_s: 3.0
   typical_s: 1.5
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Russell_Mulcahy"
 
-camera_vocabulary:
-  - "rapid tracking shot"
-  - "snap zoom on hook"
-  - "fan-blown wind motion"
-  - "tilt across neon facade"
-  - "spot-color in monochrome frame"
+camera:
+  vocabulary:
+    - "rapid tracking shot"
+    - "snap zoom on hook"
+    - "fan-blown wind motion"
+    - "tilt across neon facade"
+    - "spot-color in monochrome frame"
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Russell_Mulcahy"
 
-lighting_signature: |
-  hard neon and tungsten practicals, glowing rim-lights, theatrical
-  haze, saturated single-colour washes (red, magenta, cyan), faux-
-  widescreen mat with deliberate aspect crop.
+lighting:
+  description: |
+    hard neon and tungsten practicals, glowing rim-lights, theatrical
+    haze, saturated single-colour washes (red, magenta, cyan), faux-
+    widescreen mat with deliberate aspect crop.
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Russell_Mulcahy"
 
-approximation_basis: |
-  Aggregation of the cited Wikipedia, IMVDb, Billboard and Duran
-  Duran official interviews describing Mulcahy's "fast cuts,
-  tracking shots, glowing lights, neo-noir lighting, windblown
-  drapery, fans, spot color, body painting, glass matte shots and
-  faux widescreen aspect ratio". Pace values approximate the genre's
-  typical 80s MTV range.
+color:
+  description: "Saturated red, magenta, or cyan single-colour washes."
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Russell_Mulcahy"
+
+craft_signature:
+  - technique: "Neon rim through haze"
+    directive: "Use hard neon and tungsten practicals, glowing rim light, theatrical haze, and a saturated single-colour wash."
+    pipeline_levers: [visual_prompt, bible_look, bible_lighting]
+    basis: inferred
+    sources:
+    - "https://en.wikipedia.org/wiki/Russell_Mulcahy"

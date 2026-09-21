@@ -1,5 +1,5 @@
 id: visual-album-khalil-joseph
-name: "Visual Album / Documentary — Khalil Joseph + Beyoncé Lemonade school"
+name: "Visual Album / Documentary — Kahlil Joseph + Beyoncé Lemonade school"
 description: |
   Lange-Form visuelle Suiten, die Performance, narrative Mini-Filme,
   Doku-Verite und Voiceover-Poetry vermischen. Vorbild Kahlil Joseph
@@ -65,28 +65,49 @@ framing_mix:
   pov_pct: 0
   insert_pct: 10
   aerial_pct: 0
+  basis: inferred
+  sources:
+    - "https://www.hollywoodreporter.com/music/music-news/beyonces-lemonade-directors-cinematographer-behind-887337/"
 
 asl_range:
   min_s: 3.0
   max_s: 12.0
   typical_s: 5.0
+  basis: inferred
+  sources:
+    - "https://www.hollywoodreporter.com/music/music-news/beyonces-lemonade-directors-cinematographer-behind-887337/"
 
-camera_vocabulary:
-  - "static documentary hold"
-  - "gentle handheld follow"
-  - "anamorphic lateral track"
-  - "slow crane reveal"
-  - "Steadicam ensemble shot"
+camera:
+  vocabulary:
+    - "static documentary hold"
+    - "gentle handheld follow"
+    - "anamorphic lateral track"
+    - "slow crane reveal"
+    - "Steadicam ensemble shot"
+  basis: inferred
+  sources:
+    - "https://www.hollywoodreporter.com/music/music-news/beyonces-lemonade-directors-cinematographer-behind-887337/"
 
-lighting_signature: |
-  natural daylight bias, golden-hour heavy, motivated practicals
-  indoors, varying colour grade per mini-film (Lemonade's chapter-
-  by-chapter palettes), high contrast for narrative beats, soft
-  documentary feel for vérité segments.
+lighting:
+  description: |
+    natural daylight bias, golden-hour heavy, motivated practicals
+    indoors, varying colour grade per mini-film (Lemonade's chapter-
+    by-chapter palettes), high contrast for narrative beats, soft
+    documentary feel for vérité segments.
+  basis: inferred
+  sources:
+    - "https://www.hollywoodreporter.com/music/music-news/beyonces-lemonade-directors-cinematographer-behind-887337/"
 
-approximation_basis: |
-  Aggregation of the cited Hollywood Reporter, Billboard,
-  Filmcentric, Film School Rejects, IMDb and Film-Grab pages
-  describing Joseph's short-film approach and Beyoncé's Lemonade
-  + Homecoming as visual-album / performance-documentary hybrids.
-  Specific framing_mix derived qualitatively, not Cinemetrics-grade.
+color:
+  description: "A chapter-specific palette with golden-hour and natural-colour bias."
+  basis: inferred
+  sources:
+    - "https://www.hollywoodreporter.com/music/music-news/beyonces-lemonade-directors-cinematographer-behind-887337/"
+
+craft_signature:
+  - technique: "Chapter-specific naturalism"
+    directive: "Use natural or golden-hour light, motivated indoor practicals, and a distinct but coherent palette for each chapter."
+    pipeline_levers: [visual_prompt, bible_look, bible_lighting]
+    basis: inferred
+    sources:
+    - "https://www.hollywoodreporter.com/music/music-news/beyonces-lemonade-directors-cinematographer-behind-887337/"

@@ -59,23 +59,46 @@ framing_mix:
   pov_pct: 0
   insert_pct: 5
   aerial_pct: 0
+  basis: inferred
+  sources:
+    - "https://www.braeid.com/article/music-video-masterclass"
 
 asl_range:
   min_s: 3.0
   max_s: 12.0
   typical_s: 6.0
+  basis: inferred
+  sources:
+    - "https://www.braeid.com/article/music-video-masterclass"
 
-camera_vocabulary:
-  - "static hold"
-  - "slow lateral track"
-  - "gentle push-in"
-  - "long-take handheld follow"
+camera:
+  vocabulary:
+    - "static hold"
+    - "slow lateral track"
+    - "gentle push-in"
+    - "long-take handheld follow"
+  basis: inferred
+  sources:
+    - "https://www.braeid.com/article/music-video-masterclass"
 
-lighting_signature: |
-  natural daylight where possible, soft motivated practicals indoors,
-  bias toward overcast or golden-hour, low contrast, single key source.
+lighting:
+  description: |
+    natural daylight where possible, soft motivated practicals indoors,
+    bias toward overcast or golden-hour, low contrast, single key source.
+  basis: inferred
+  sources:
+    - "https://www.braeid.com/article/music-video-masterclass"
 
-approximation_basis: |
-  Aggregation of the cited Directors-Label, BRAEID, and IMDb pages
-  describing Gondry/Jonze long-take and storyboard-driven approach.
-  Not Cinemetrics-grade; ASL and framing_mix are general indications.
+color:
+  description: "Overcast or golden-hour natural colour with low contrast."
+  basis: inferred
+  sources:
+    - "https://www.braeid.com/article/music-video-masterclass"
+
+craft_signature:
+  - technique: "Natural single-source restraint"
+    directive: "Use natural daylight or a soft motivated indoor practical, with overcast or golden-hour bias and low contrast."
+    pipeline_levers: [visual_prompt, bible_look, bible_lighting]
+    basis: inferred
+    sources:
+    - "https://www.braeid.com/article/music-video-masterclass"

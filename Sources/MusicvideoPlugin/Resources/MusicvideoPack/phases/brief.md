@@ -331,10 +331,12 @@ explain the affected approvals and use an explicit rewind before rewriting it.
     2-3 fitting director patterns from the pack's pattern library. Each
     pattern has referenced templates (director / film / DOP / music
     video) with verifiable sources. In the storyboard, the pattern acts
-    as a compose backbone (framing_mix, section_arc, asl_range,
-    lighting_signature, camera_vocabulary). The sanity check
-    `PATTERN_DRIFT` (warn) mirrors the real framing distribution against
-    the pattern.
+    as a compose backbone (`framing_mix`, `section_arc`, `asl_range`,
+    `camera`, `lighting`, `color`, and `craft_signature`). Every operative
+    value says whether it is measured, documented, or inferred; preserve that
+    distinction when presenting it. The sanity check
+    `PATTERN_DRIFT` (warn) mirrors the real framing distribution and
+    average shot length against the pattern.
 
     a) **Read the affect first, then generate suggestions.** Before
        `suggest_patterns`, determine the track's emotional register

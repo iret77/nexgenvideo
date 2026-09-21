@@ -65,30 +65,51 @@ framing_mix:
   pov_pct: 0
   insert_pct: 5
   aerial_pct: 0
+  basis: inferred
+  sources:
+    - "https://bampfa.org/program/mood-love-films-wong-kar-wai"
 
 asl_range:
   min_s: 2.0
   max_s: 10.0
   typical_s: 4.5
+  basis: inferred
+  sources:
+    - "https://bampfa.org/program/mood-love-films-wong-kar-wai"
 
-camera_vocabulary:
-  - "step-printing slow motion"
-  - "static hold through architectural frame"
-  - "slow lateral drift"
-  - "rack-focus between near and far"
+camera:
+  vocabulary:
+    - "step-printing slow motion"
+    - "static hold through architectural frame"
+    - "slow lateral drift"
+    - "rack-focus between near and far"
+  basis: inferred
+  sources:
+    - "https://bampfa.org/program/mood-love-films-wong-kar-wai"
 
-lighting_signature: |
-  saturated neon practicals, deep cyan-magenta or amber-teal pairings,
-  motivated lamps and signage as key, soft shadow detail preserved,
-  often a single signature colour per sequence (Chungking yellow,
-  Fallen Angels blue).
+lighting:
+  description: |
+    saturated neon practicals, deep cyan-magenta or amber-teal pairings,
+    motivated lamps and signage as key, soft shadow detail preserved,
+    often a single signature colour per sequence (Chungking yellow,
+    Fallen Angels blue).
+  basis: inferred
+  sources:
+    - "https://bampfa.org/program/mood-love-films-wong-kar-wai"
 
-approximation_basis: |
-  Aggregation of the cited BFI interview, Criterion Collection box set
-  materials, Wikipedia, SCMP and Independent Photographer essays
-  describing the Wong/Doyle partnership. Step-Printing-Technik aus
-  dem BFI-Interview. Values are qualitative, derived from cited
-  analyses, not from per-frame Cinemetrics.
+color:
+  description: "Deep cyan-magenta or amber-teal pairing with one signature colour per sequence."
+  basis: inferred
+  sources:
+    - "https://bampfa.org/program/mood-love-films-wong-kar-wai"
+
+craft_signature:
+  - technique: "Neon step-printing dream"
+    directive: "Use step-printed motion with neon practicals, cyan-magenta or amber-teal separation, and one signature colour per sequence."
+    pipeline_levers: [visual_prompt, bible_look, bible_lighting]
+    basis: inferred
+    sources:
+    - "https://bampfa.org/program/mood-love-films-wong-kar-wai"
 
 fit_profile:
   schema_version: pattern-fit/1.0

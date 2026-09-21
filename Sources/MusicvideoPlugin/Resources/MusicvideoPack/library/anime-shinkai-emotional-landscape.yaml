@@ -64,27 +64,48 @@ framing_mix:
   pov_pct: 0
   insert_pct: 10
   aerial_pct: 0
+  basis: inferred
+  sources:
+    - "https://www.researchgate.net/publication/381230722_An_Analysis_of_Aesthetics_in_Makoto_Shinkai's_Animated_Films"
 
 asl_range:
   min_s: 3.0
   max_s: 12.0
   typical_s: 6.0
+  basis: inferred
+  sources:
+    - "https://www.researchgate.net/publication/381230722_An_Analysis_of_Aesthetics_in_Makoto_Shinkai's_Animated_Films"
 
-camera_vocabulary:
-  - "static hold on landscape"
-  - "slow vertical tilt across sky"
-  - "gentle lateral push across foreground while sky stays"
-  - "parallax-only motion (multi-plane background)"
+camera:
+  vocabulary:
+    - "static hold on landscape"
+    - "slow vertical tilt across sky"
+    - "gentle lateral push across foreground while sky stays"
+    - "parallax-only motion (multi-plane background)"
+  basis: inferred
+  sources:
+    - "https://www.researchgate.net/publication/381230722_An_Analysis_of_Aesthetics_in_Makoto_Shinkai's_Animated_Films"
 
-lighting_signature: |
-  single dominant light source per frame (sun, lantern, window),
-  saturated cinematic colour grading with deep blues in shadows and
-  warm orange highlights, soft cloud volumetrics, occasional rain or
-  petal particles as motion-carrier in otherwise still frames.
+lighting:
+  description: |
+    single dominant light source per frame (sun, lantern, window),
+    saturated cinematic colour grading with deep blues in shadows and
+    warm orange highlights, soft cloud volumetrics, occasional rain or
+    petal particles as motion-carrier in otherwise still frames.
+  basis: inferred
+  sources:
+    - "https://www.researchgate.net/publication/381230722_An_Analysis_of_Aesthetics_in_Makoto_Shinkai's_Animated_Films"
 
-approximation_basis: |
-  Aggregation of the cited ResearchGate analysis, No Film School,
-  Foro3D, FandomWire and Screen Arts essays describing Shinkai's
-  landscape-emotion approach and Ghibli's classic compositional
-  reduction. Specific framing_mix derived qualitatively from these
-  analyses, not from per-frame Cinemetrics counts.
+color:
+  description: "Saturated cinematic colour with deep blue shadows and warm orange highlights."
+  basis: inferred
+  sources:
+    - "https://www.researchgate.net/publication/381230722_An_Analysis_of_Aesthetics_in_Makoto_Shinkai's_Animated_Films"
+
+craft_signature:
+  - technique: "Motivated luminous landscape"
+    directive: "Use one dominant source, deep blue shadows, warm orange highlights, and soft cloud volumetrics."
+    pipeline_levers: [visual_prompt, bible_look, bible_lighting]
+    basis: inferred
+    sources:
+    - "https://www.researchgate.net/publication/381230722_An_Analysis_of_Aesthetics_in_Makoto_Shinkai's_Animated_Films"

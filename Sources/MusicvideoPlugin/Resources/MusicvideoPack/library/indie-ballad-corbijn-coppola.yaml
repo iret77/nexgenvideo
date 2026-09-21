@@ -66,24 +66,46 @@ framing_mix:
   pov_pct: 0
   insert_pct: 0
   aerial_pct: 0
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Anton_Corbijn"
 
 asl_range:
   min_s: 3.0
   max_s: 10.0
   typical_s: 5.5
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Anton_Corbijn"
 
-camera_vocabulary:
-  - "static hold"
-  - "slow push-in"
-  - "gentle handheld"
-  - "single dolly move per phrase"
+camera:
+  vocabulary:
+    - "static hold"
+    - "slow push-in"
+    - "gentle handheld"
+    - "single dolly move per phrase"
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Anton_Corbijn"
 
-lighting_signature: |
-  black-and-white frequent in Corbijn work, otherwise muted natural
-  light with single window/lamp key, soft fall-off, low saturation.
+lighting:
+  description: |
+    black-and-white frequent in Corbijn work, otherwise muted natural
+    light with single window/lamp key, soft fall-off, low saturation.
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Anton_Corbijn"
 
-approximation_basis: |
-  Aggregation of the cited Wikipedia, Musée Magazine, IMVDb and IMDb
-  pages describing Corbijn's reduced black-and-white portrait style
-  and Coppola's restrained naturalist aesthetic. Specific ASL and
-  framing distribution vary per video.
+color:
+  description: "Black-and-white or muted natural colour with low saturation."
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Anton_Corbijn"
+
+craft_signature:
+  - technique: "Soft single-source intimacy"
+    directive: "Use a single window or lamp key with soft fall-off and black-and-white or muted low-saturation colour."
+    pipeline_levers: [visual_prompt, bible_look, bible_lighting]
+    basis: inferred
+    sources:
+    - "https://en.wikipedia.org/wiki/Anton_Corbijn"

@@ -59,28 +59,49 @@ framing_mix:
   pov_pct: 0
   insert_pct: 5
   aerial_pct: 0
+  basis: inferred
+  sources:
+    - "https://www.billboard.com/music/pop/kpop-choreographer-kyle-hanagami-blackpink-interview-1235310481/"
 
 asl_range:
   min_s: 0.8
   max_s: 3.0
   typical_s: 1.5
+  basis: inferred
+  sources:
+    - "https://www.billboard.com/music/pop/kpop-choreographer-kyle-hanagami-blackpink-interview-1235310481/"
 
-camera_vocabulary:
-  - "orbital crane around dance formation"
-  - "rapid push-in on Lead"
-  - "synchronized whip pan between performers"
-  - "drone reveal above choreography"
-  - "match-cut on choreographed beat"
+camera:
+  vocabulary:
+    - "orbital crane around dance formation"
+    - "rapid push-in on Lead"
+    - "synchronized whip pan between performers"
+    - "drone reveal above choreography"
+    - "match-cut on choreographed beat"
+  basis: inferred
+  sources:
+    - "https://www.billboard.com/music/pop/kpop-choreographer-kyle-hanagami-blackpink-interview-1235310481/"
 
-lighting_signature: |
-  saturated set-piece keys (single bold accent colour per concept),
-  strong frontal soft key with rim/back light separation, neon/LED
-  practicals as part of choreographed visuals, frequent concept-
-  driven colour shifts mid-section.
+lighting:
+  description: |
+    saturated set-piece keys (single bold accent colour per concept),
+    strong frontal soft key with rim/back light separation, neon/LED
+    practicals as part of choreographed visuals, frequent concept-
+    driven colour shifts mid-section.
+  basis: inferred
+  sources:
+    - "https://www.billboard.com/music/pop/kpop-choreographer-kyle-hanagami-blackpink-interview-1235310481/"
 
-approximation_basis: |
-  Aggregation of the cited Billboard, AllKpop, Yahoo Entertainment,
-  Wikipedia and The Bias List sources describing Kyle Hanagami's
-  K-Pop choreography work and Stray Kids' "Concept Matjib" approach.
-  Specific framing_mix derived qualitatively, not from per-video
-  Cinemetrics.
+color:
+  description: "One saturated accent per concept with deliberate mid-section colour shifts."
+  basis: inferred
+  sources:
+    - "https://www.billboard.com/music/pop/kpop-choreographer-kyle-hanagami-blackpink-interview-1235310481/"
+
+craft_signature:
+  - technique: "Choreographed LED separation"
+    directive: "Use a frontal soft key, rim/back-light separation, and LED practicals that participate in the choreography."
+    pipeline_levers: [visual_prompt, bible_look, bible_lighting]
+    basis: inferred
+    sources:
+    - "https://www.billboard.com/music/pop/kpop-choreographer-kyle-hanagami-blackpink-interview-1235310481/"

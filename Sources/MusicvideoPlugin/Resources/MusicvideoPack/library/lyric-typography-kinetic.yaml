@@ -54,28 +54,49 @@ framing_mix:
   pov_pct: 0
   insert_pct: 40
   aerial_pct: 0
+  basis: inferred
+  sources:
+    - "https://www.b2w.tv/blog/kinetic-typography-animation-videos"
 
 asl_range:
   min_s: 0.3
   max_s: 4.0
   typical_s: 1.2
+  basis: inferred
+  sources:
+    - "https://www.b2w.tv/blog/kinetic-typography-animation-videos"
 
-camera_vocabulary:
-  - "static composition with animated type"
-  - "type-driven push-in"
-  - "type-driven whip pan"
-  - "match-cut on word-replacement"
-  - "kinetic letter-reveal"
+camera:
+  vocabulary:
+    - "static composition with animated type"
+    - "type-driven push-in"
+    - "type-driven whip pan"
+    - "match-cut on word-replacement"
+    - "kinetic letter-reveal"
+  basis: inferred
+  sources:
+    - "https://www.b2w.tv/blog/kinetic-typography-animation-videos"
 
-lighting_signature: |
-  flat motion-graphics background — single solid colour or gradient,
-  occasional textured or photographic plate behind type, genre-
-  specific palette (hip-hop: high-contrast bold; EDM: neon-geometric;
-  indie/folk: muted-organic; rock: distressed-monochrome).
+lighting:
+  description: |
+    flat motion-graphics background — single solid colour or gradient,
+    occasional textured or photographic plate behind type, genre-
+    specific palette (hip-hop: high-contrast bold; EDM: neon-geometric;
+    indie/folk: muted-organic; rock: distressed-monochrome).
+  basis: inferred
+  sources:
+    - "https://www.b2w.tv/blog/kinetic-typography-animation-videos"
 
-approximation_basis: |
-  Aggregation of the cited B2W, PremiumBeat, Adobe, Envato Elements,
-  Motion for Music and Opus pages describing kinetic typography
-  conventions and genre-specific lyric-video tonalities. The genre
-  has no single auteur — pattern reflects the widely-published
-  conventions of the form.
+color:
+  description: "A genre-specific palette: bold high contrast, neon geometry, muted organic colour, or distressed monochrome."
+  basis: inferred
+  sources:
+    - "https://www.b2w.tv/blog/kinetic-typography-animation-videos"
+
+craft_signature:
+  - technique: "Type-led graphic plate"
+    directive: "Use animated type over a flat solid, gradient, textured, or photographic plate with a genre-specific palette."
+    pipeline_levers: [visual_prompt, bible_look, bible_lighting]
+    basis: inferred
+    sources:
+    - "https://www.b2w.tv/blog/kinetic-typography-animation-videos"
