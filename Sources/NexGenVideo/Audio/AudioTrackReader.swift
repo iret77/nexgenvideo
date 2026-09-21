@@ -51,19 +51,12 @@ enum AudioTrackReader {
         }
         reader.add(output)
         if let range {
-            let timeScale: CMTimeScale
-            do {
-                timeScale = try await track.load(.naturalTimeScale)
-            } catch {
-                throw ReadError.readFailed(error.localizedDescription)
+            let start = CMTime(seconds: range.lowerBound, preferredTimescale: 1_000_000_000)
+            let end = CMTime(seconds: range.upperBound, preferredTimescale: 1_000_000_000)
+            guard start.isNumeric, end.isNumeric, start <= end else {
+                throw ReadError.invalidRange
             }
-            guard timeScale > 0 else {
-                throw ReadError.readFailed("Audio track has no valid timebase")
-            }
-            reader.timeRange = CMTimeRange(
-                start: CMTime(seconds: range.lowerBound, preferredTimescale: timeScale),
-                end: CMTime(seconds: range.upperBound, preferredTimescale: timeScale)
-            )
+            reader.timeRange = CMTimeRange(start: start, end: end)
         }
 
         guard reader.startReading() else {
