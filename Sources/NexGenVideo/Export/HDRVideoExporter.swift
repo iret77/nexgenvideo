@@ -600,7 +600,15 @@ enum HDRVideoExporter {
 
                     let pts = CMSampleBufferGetPresentationTimeStamp(sample)
                     let frame = Int((pts.seconds * Double(max(1, pump.fps))).rounded())
+                    // Reader alpha isn't delivery truth; the rendered timeline canvas is opaque.
                     var image = CIImage(cvPixelBuffer: source, options: [.colorSpace: inputSpace])
+                        .applyingFilter("CIColorMatrix", parameters: [
+                            "inputRVector": CIVector(x: 1, y: 0, z: 0, w: 0),
+                            "inputGVector": CIVector(x: 0, y: 1, z: 0, w: 0),
+                            "inputBVector": CIVector(x: 0, y: 0, z: 1, w: 0),
+                            "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+                            "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 1),
+                        ])
                     for overlay in pump.overlays
                         where frame >= overlay.clip.startFrame && frame < overlay.clip.endFrame {
                         var title = CIImage(cgImage: overlay.image, options: [.colorSpace: inputSpace])
