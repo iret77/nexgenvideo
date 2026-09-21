@@ -22,7 +22,7 @@ enum HangDiagnosticSelfTest {
         HangDiagnosticRecorder.shared.start(includeContent: content)
         if content {
             let editor = EditorViewModel()
-            editor.workspaceFocus = .produce
+            editor.setWorkspaceFocus(.production)
             editor.agentPanelVisible = true
             self.editor = editor
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1470, height: 950),

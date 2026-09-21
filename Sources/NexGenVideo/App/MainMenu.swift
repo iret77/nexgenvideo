@@ -104,18 +104,18 @@ enum MainMenuBuilder {
         let item = NSMenuItem()
         let menu = NSMenu(title: "View")
 
-        // Stage order, left-to-right: Produce · Edit · Finish.
-        let produceFocusItem = NSMenuItem(title: "Produce Focus", action: #selector(EditorActions.setFocusProduce(_:)), keyEquivalent: "p")
-        produceFocusItem.keyEquivalentModifierMask = [.command, .option]
-        menu.addItem(produceFocusItem)
-
-        let editFocusItem = NSMenuItem(title: "Edit Focus", action: #selector(EditorActions.setFocusEdit(_:)), keyEquivalent: "e")
-        editFocusItem.keyEquivalentModifierMask = [.command, .option]
-        menu.addItem(editFocusItem)
-
-        let finishFocusItem = NSMenuItem(title: "Finish Focus", action: #selector(EditorActions.setFocusFinish(_:)), keyEquivalent: "f")
-        finishFocusItem.keyEquivalentModifierMask = [.command, .option]
-        menu.addItem(finishFocusItem)
+        let workspaces: [(String, Selector, String)] = [
+            ("Media Workspace", #selector(EditorActions.setWorkspaceMedia(_:)), "m"),
+            ("Production Workspace", #selector(EditorActions.setWorkspaceProduction(_:)), "p"),
+            ("Edit Workspace", #selector(EditorActions.setWorkspaceEdit(_:)), "e"),
+            ("Postproduction Workspace", #selector(EditorActions.setWorkspacePostproduction(_:)), "o"),
+            ("Export Workspace", #selector(EditorActions.setWorkspaceExport(_:)), "x"),
+        ]
+        for (title, action, key) in workspaces {
+            let workspaceItem = NSMenuItem(title: title, action: action, keyEquivalent: key)
+            workspaceItem.keyEquivalentModifierMask = [.command, .option]
+            menu.addItem(workspaceItem)
+        }
 
         menu.addItem(.separator())
 
@@ -262,9 +262,11 @@ enum MainMenuBuilder {
     func setLayoutDefault(_ sender: Any?)
     func setLayoutMedia(_ sender: Any?)
     func setLayoutVertical(_ sender: Any?)
-    func setFocusEdit(_ sender: Any?)
-    func setFocusProduce(_ sender: Any?)
-    func setFocusFinish(_ sender: Any?)
+    func setWorkspaceMedia(_ sender: Any?)
+    func setWorkspaceProduction(_ sender: Any?)
+    func setWorkspaceEdit(_ sender: Any?)
+    func setWorkspacePostproduction(_ sender: Any?)
+    func setWorkspaceExport(_ sender: Any?)
     func toggleTheater(_ sender: Any?)
     func newAgentConversation(_ sender: Any?)
     func showAgentConversationHistory(_ sender: Any?)

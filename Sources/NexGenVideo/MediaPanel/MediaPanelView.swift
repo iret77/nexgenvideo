@@ -6,21 +6,24 @@ import SwiftUI
 /// lives on the view model, so switching sidebar tabs never loses the sub-tab.
 struct MediaPanelView: View {
     @Environment(EditorViewModel.self) private var editor
+    let workspace: EditorViewModel.WorkspaceFocus
 
     var body: some View {
         @Bindable var editor = editor
         VStack(spacing: AppTheme.Spacing.none) {
             SegmentedTabBar(
                 titles: EditorViewModel.MediaPanelTab.allCases.map(\.rawValue),
-                selected: editor.mediaPanelTab.rawValue
+                selected: editor.mediaPanelTab(for: workspace).rawValue
             ) { title in
                 if let tab = EditorViewModel.MediaPanelTab(rawValue: title) {
-                    withAnimation(.easeInOut(duration: AppTheme.Anim.transition)) { editor.mediaPanelTab = tab }
+                    withAnimation(.easeInOut(duration: AppTheme.Anim.transition)) {
+                        editor.setMediaPanelTab(tab, for: workspace)
+                    }
                 }
             }
             Group {
-                switch editor.mediaPanelTab {
-                case .assets: MediaTab()
+                switch editor.mediaPanelTab(for: workspace) {
+                case .assets: MediaTab(workspace: workspace)
                 case .captions: CaptionTab()
                 case .music: MusicTab()
                 }

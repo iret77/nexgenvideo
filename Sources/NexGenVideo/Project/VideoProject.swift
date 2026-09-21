@@ -690,6 +690,7 @@ final class VideoProject: NSDocument {
         let editorView = EditorWindowContentView()
             .environment(editorViewModel)
         let hostingController = NSHostingController(rootView: editorView.tint(AppTheme.Accent.primary))
+        hostingController.sizingOptions = []
         // fullSizeContentView adds a titlebar-height safe-area inset; without dropping it the layout
         // slides down a full row (an empty strip above TitleBarView, panel headers hidden behind it).
         // TitleBarView must occupy the real titlebar row — traffic lights overlay its leading inset.

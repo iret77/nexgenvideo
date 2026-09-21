@@ -4,19 +4,29 @@ import SwiftUI
 
 struct AppRelaunchClickProbe: NSViewRepresentable {
     let identifier: String
+    var acceptanceState: Bool?
+
+    init(identifier: String, acceptanceState: Bool? = nil) {
+        self.identifier = identifier
+        self.acceptanceState = acceptanceState
+    }
 
     func makeNSView(context: Context) -> AppRelaunchClickProbeView {
         let view = AppRelaunchClickProbeView()
         view.identifier = NSUserInterfaceItemIdentifier(identifier)
+        view.acceptanceState = acceptanceState
         return view
     }
 
     func updateNSView(_ nsView: AppRelaunchClickProbeView, context: Context) {
         nsView.identifier = NSUserInterfaceItemIdentifier(identifier)
+        nsView.acceptanceState = acceptanceState
     }
 }
 
 final class AppRelaunchClickProbeView: NSView {
+    var acceptanceState: Bool?
+
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 

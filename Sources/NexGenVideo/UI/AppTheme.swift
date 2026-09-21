@@ -402,6 +402,7 @@ enum AppTheme {
         static let searchThumbnailWidth: CGFloat = 80
         static let searchThumbnailHeight: CGFloat = 45
         static let previewToolbarHeight: CGFloat = 36
+        static let previewCompactToolbarHeight: CGFloat = 60
         static let previewErrorMaxWidth: CGFloat = 520
         static let previewErrorMaxHeight: CGFloat = 240
         static let previewScrubberHeight: CGFloat = 12
@@ -440,6 +441,7 @@ enum AppTheme {
         static let mediaPanelMin: CGFloat = 280
         static let inspectorDefault: CGFloat = 260
         static let inspectorMin: CGFloat = 150
+        static let inspectorMinHeight: CGFloat = 120
         static let agentPanelMin: CGFloat = 240
         static let agentPanelMax: CGFloat = 640
         static let chatColumnMax: CGFloat = 640
@@ -448,6 +450,8 @@ enum AppTheme {
         static let toolbarHeight: CGFloat = 38
         static let titleBarChromeHeight: CGFloat = 36
         static let trafficLightInset: CGFloat = 70
+        static let titleBarProjectNameMaxWidth: CGFloat = 180
+        static let titleBarFormatStatusMaxWidth: CGFloat = 150
         static let panelGap: CGFloat = 5
         static let timelineMinHeight: CGFloat = 100
         static let timelineMaxHeight: CGFloat = 700
@@ -455,6 +459,7 @@ enum AppTheme {
         static let produceTimelineStripDefault: CGFloat = 280
         static let producePreviewMinHeight: CGFloat = 180
         static let producePreviewDefaultWidth: CGFloat = 360
+        static let produceRightColumnMinWidth: CGFloat = 280
         static let trackHeight: CGFloat = 50
         static let rulerHeight: CGFloat = 24
         static let trackHeaderWidth: CGFloat = 100

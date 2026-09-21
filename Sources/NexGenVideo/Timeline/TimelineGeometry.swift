@@ -26,9 +26,9 @@ struct TimelineGeometry {
             headerWidth: headerWidth,
             trackHeights: editor.timeline.tracks.map(\.displayHeight),
             bounds: bounds,
-            // Produce is a compact display strip — drop the drag-to-create-track padding above
+            // Production is a compact display strip — drop the drag-to-create-track padding above
             // and below so video + audio pack directly under the ruler.
-            dropZoneHeight: editor.workspaceFocus == .produce ? 0 : AppTheme.Layout.dropZoneHeight
+            dropZoneHeight: editor.workspaceFocus == .production ? 0 : AppTheme.Layout.dropZoneHeight
         )
     }
 
@@ -88,7 +88,7 @@ struct TimelineGeometry {
         guard trackCount > 0 else { return .newTrackAt(0) }
 
         // Top drop zone
-        if y < Double(cumulativeY[0]) {
+        if y >= Double(rulerHeight), y < Double(cumulativeY[0]) {
             return .newTrackAt(0)
         }
 

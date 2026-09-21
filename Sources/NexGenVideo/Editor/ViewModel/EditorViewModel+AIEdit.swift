@@ -97,6 +97,7 @@ extension EditorViewModel {
         pendingEditTrimmedSource = trimmedSource
         pendingEditAudioPlacement = audioPlacement
         pendingPanelSeed = PendingPanelSeed(asset: asset, stored: stored)
+        revealMediaTools()
         showGenerationPanel = true
     }
 

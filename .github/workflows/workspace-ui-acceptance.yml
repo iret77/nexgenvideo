@@ -1,0 +1,61 @@
+name: Workspace UI Acceptance
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/workspace-ui-acceptance.yml'
+      - 'scripts/workspace_ui_acceptance.py'
+      - 'Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift'
+      - 'Sources/NexGenVideo/App/main.swift'
+      - 'Sources/NexGenVideo/Agent/AgentService.swift'
+      - 'Sources/NexGenVideo/Editor/TitleBarView.swift'
+
+concurrency:
+  group: workspace-ui-acceptance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: xcode-27
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-xcode-27
+      - uses: ./.github/actions/cache-swiftpm-dependencies
+      - name: Build acceptance app
+        run: |
+          scripts/bundle.sh debug
+          tar -czf "$RUNNER_TEMP/workspace-ui.tar.gz" -C .build NexGenVideo.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: workspace-ui-app
+          path: ${{ runner.temp }}/workspace-ui.tar.gz
+          retention-days: 3
+
+  acceptance:
+    needs: build
+    runs-on: macos-26
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: workspace-ui-app
+          path: ${{ runner.temp }}/workspace-ui
+      - name: Exercise native workspace and panel controls
+        run: |
+          set -euo pipefail
+          test "$(sw_vers -productVersion | cut -d. -f1)" = 26
+          tar -xzf "$RUNNER_TEMP/workspace-ui/workspace-ui.tar.gz" -C "$RUNNER_TEMP/workspace-ui"
+          python3 scripts/workspace_ui_acceptance.py \
+            "$RUNNER_TEMP/workspace-ui/NexGenVideo.app/Contents/MacOS/NexGenVideo" \
+            "$RUNNER_TEMP/evidence"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: workspace-ui-evidence
+          path: |
+            ${{ runner.temp }}/evidence/result.json
+            ${{ runner.temp }}/evidence/scale-*.log
+            ${{ runner.temp }}/evidence/scale-*.png
+          retention-days: 14
