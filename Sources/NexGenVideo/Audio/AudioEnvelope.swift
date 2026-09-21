@@ -62,6 +62,7 @@ enum AudioEnvelopeExtractor {
         } catch let error as AudioTrackReader.ReadError {
             switch error {
             case .noAudioTrack(let name): throw AudioEnvelopeError.noAudioTrack(name)
+            case .invalidRange: throw AudioEnvelopeError.readFailed(error.message)
             case .readFailed(let reason): throw AudioEnvelopeError.readFailed(reason)
             }
         }
