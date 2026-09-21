@@ -62,17 +62,45 @@ final class TimelineInputController {
 
         if point.y >= scrollOffsetY && point.y < scrollOffsetY + geometry.rulerHeight {
             let frame = geometry.frameAt(x: point.x)
-            if let edge = timelineRangeEdgeHit(at: point, geometry: geometry) {
+            if let hit = TimelineMarkerRenderer.hitTest(
+                point: point,
+                markers: editor.displayedTimelineMarkers,
+                geometry: geometry,
+                scrollOffsetY: scrollOffsetY
+            ) {
+                editor.selectedTimelineMarkerIds = [hit.marker.id]
+                editor.selectedClipIds = []
+                editor.selectedGap = nil
+                if event.clickCount == 2 {
+                    editor.jumpToTimelineMarker(id: hit.marker.id)
+                    editor.markerPanelPresented = true
+                }
+                if editor.allowsTimelineEditChrome {
+                    dragState = .timelineMarker(DragState.TimelineMarkerDrag(
+                        original: hit.marker,
+                        grabOffsetFrames: max(0, frame - hit.marker.startFrame),
+                        resizesEnd: hit.resizesEnd,
+                        current: hit.marker
+                    ))
+                    snapState = SnapEngine.SnapState()
+                }
+                view.needsDisplay = true
+            } else if let edge = timelineRangeEdgeHit(at: point, geometry: geometry) {
+                editor.selectedTimelineMarkerIds = []
                 beginTimelineRangeEdgeDrag(edge)
             } else if event.modifierFlags.contains(.shift) {
+                editor.selectedTimelineMarkerIds = []
                 beginTimelineRangeSelection(at: frame)
             } else {
+                editor.selectedTimelineMarkerIds = []
                 beginPlayheadScrub(at: frame)
             }
             return
         }
 
         let trackIndex = geometry.trackAt(y: point.y)
+        editor.selectedTimelineMarkerIds = []
+        editor.timelineMarkerPreview = nil
         editor.selectedGap = nil // re-selected below if this lands in a gap
 
         if editor.toolMode == .razor, editor.allowsTimelineEditChrome {
@@ -222,7 +250,8 @@ final class TimelineInputController {
             let targets = SnapEngine.collectTargets(
                 tracks: editor.timeline.tracks,
                 playheadFrame: editor.currentFrame,
-                includePlayhead: true
+                includePlayhead: true,
+                markerFrames: editor.timelineMarkerSnapFrames()
             )
             let rangeEndFrame: Int
             if let snap = SnapEngine.findSnap(
@@ -240,6 +269,51 @@ final class TimelineInputController {
             }
             editor.setTimelineRange(startFrame: drag.anchorFrame, endFrame: rangeEndFrame)
 
+        case .timelineMarker(var drag):
+            let targets = SnapEngine.collectTargets(
+                tracks: editor.timeline.tracks,
+                playheadFrame: editor.currentFrame,
+                includePlayhead: true,
+                markerFrames: editor.timelineMarkerSnapFrames(excluding: drag.original.id)
+            )
+            if drag.resizesEnd {
+                let candidateEnd = max(drag.original.startFrame + 1, frame)
+                let snappedEnd: Int
+                if let snap = SnapEngine.findSnap(
+                    position: candidateEnd,
+                    targets: targets,
+                    state: &snapState,
+                    baseThreshold: Snap.thresholdPixels,
+                    pixelsPerFrame: geometry.pixelsPerFrame
+                ) {
+                    snapIndicatorX = snap.x
+                    snappedEnd = snap.frame
+                } else {
+                    snapIndicatorX = nil
+                    snappedEnd = candidateEnd
+                }
+                drag.current.durationFrames = max(1, snappedEnd - drag.original.startFrame)
+            } else {
+                let candidateStart = max(0, frame - drag.grabOffsetFrames)
+                let probes = drag.original.durationFrames > 0 ? [0, drag.original.durationFrames] : [0]
+                if let snap = SnapEngine.findSnap(
+                    position: candidateStart,
+                    probeOffsets: probes,
+                    targets: targets,
+                    state: &snapState,
+                    baseThreshold: Snap.thresholdPixels,
+                    pixelsPerFrame: geometry.pixelsPerFrame
+                ) {
+                    snapIndicatorX = snap.x
+                    drag.current.startFrame = max(0, snap.frame - snap.probeOffset)
+                } else {
+                    snapIndicatorX = nil
+                    drag.current.startFrame = candidateStart
+                }
+            }
+            editor.timelineMarkerPreview = drag.current
+            dragState = .timelineMarker(drag)
+
         case .moveClip(var drag):
             let candidateFrame = frame - drag.grabOffsetFrames
             let allDraggedIds = Set(drag.all.map(\.clipId))
@@ -247,7 +321,8 @@ final class TimelineInputController {
                 tracks: editor.timeline.tracks,
                 playheadFrame: editor.currentFrame,
                 excludeClipIds: allDraggedIds,
-                includePlayhead: true
+                includePlayhead: true,
+                markerFrames: editor.timelineMarkerSnapFrames()
             )
 
             // Let any selected edge drive snapping, not just the lead start.
@@ -293,7 +368,8 @@ final class TimelineInputController {
                 tracks: editor.timeline.tracks,
                 playheadFrame: editor.currentFrame,
                 excludeClipIds: [drag.clipId],
-                includePlayhead: true
+                includePlayhead: true,
+                markerFrames: editor.timelineMarkerSnapFrames()
             )
             let snappedStart: Int
             if let snap = SnapEngine.findSnap(
@@ -322,7 +398,8 @@ final class TimelineInputController {
                 tracks: editor.timeline.tracks,
                 playheadFrame: editor.currentFrame,
                 excludeClipIds: [drag.clipId],
-                includePlayhead: true
+                includePlayhead: true,
+                markerFrames: editor.timelineMarkerSnapFrames()
             )
             let snappedEnd: Int
             if let snap = SnapEngine.findSnap(
@@ -489,6 +566,18 @@ final class TimelineInputController {
         case .timelineRange:
             editor.keepValidTimelineRangeOrClear()
 
+        case .timelineMarker(let drag):
+            editor.timelineMarkerPreview = nil
+            if drag.current != drag.original {
+                do {
+                    _ = try editor.updateTimelineMarker(id: drag.original.id, actionName: "Move Marker") {
+                        $0 = drag.current
+                    }
+                } catch {
+                    NSSound.beep()
+                }
+            }
+
         case .idle:
             break
         }
@@ -505,7 +594,14 @@ final class TimelineInputController {
         let scrollOffsetY = view.enclosingScrollView?.contentView.bounds.origin.y ?? 0
 
         if point.y >= scrollOffsetY && point.y < scrollOffsetY + geometry.rulerHeight {
-            if timelineRangeEdgeHit(at: point, geometry: geometry) != nil {
+            if let hit = TimelineMarkerRenderer.hitTest(
+                point: point,
+                markers: editor.displayedTimelineMarkers,
+                geometry: geometry,
+                scrollOffsetY: scrollOffsetY
+            ) {
+                (hit.resizesEnd ? NSCursor.resizeLeftRight : NSCursor.openHand).set()
+            } else if timelineRangeEdgeHit(at: point, geometry: geometry) != nil {
                 NSCursor.resizeLeftRight.set()
             } else if event.modifierFlags.contains(.shift) {
                 NSCursor.crosshair.set()
@@ -522,7 +618,8 @@ final class TimelineInputController {
             let targets = SnapEngine.collectTargets(
                 tracks: editor.timeline.tracks,
                 playheadFrame: editor.currentFrame,
-                includePlayhead: true
+                includePlayhead: true,
+                markerFrames: editor.timelineMarkerSnapFrames()
             )
             if let snap = SnapEngine.findSnap(
                 position: candidate,

@@ -116,6 +116,79 @@ struct RippleEngineTests {
         )
         #expect(shifts == [ClipShift(clipId: "b", newStartFrame: 225)])
     }
+
+    @Test func rippleDeleteMapsPointAndRangeMarkersWithHalfOpenEdges() {
+        let markers = [
+            TimelineMarker(id: "inside", startFrame: 45, title: "Inside"),
+            TimelineMarker(id: "edge", startFrame: 50, title: "Edge"),
+            TimelineMarker(id: "after", startFrame: 80, title: "After"),
+            TimelineMarker(id: "range", startFrame: 10, durationFrames: 40, title: "Range"),
+            TimelineMarker(id: "consumed", startFrame: 40, durationFrames: 10, title: "Consumed"),
+        ]
+
+        let mapped = RippleEngine.rippleMarkers(
+            markers,
+            closing: [[FrameRange(start: 40, end: 50)]]
+        )
+
+        #expect(mapped.first { $0.id == "inside" } == nil)
+        #expect(mapped.first { $0.id == "edge" }?.startFrame == 40)
+        #expect(mapped.first { $0.id == "after" }?.startFrame == 70)
+        #expect(mapped.first { $0.id == "range" }?.durationFrames == 30)
+        #expect(mapped.first { $0.id == "consumed" } == nil)
+    }
+
+    @Test func markersSurviveWhenOneRippleTrackStillRetainsTheirTime() {
+        let marker = TimelineMarker(id: "shared", startFrame: 45, title: "Shared")
+        let mapped = RippleEngine.rippleMarkers(
+            [marker],
+            closing: [
+                [FrameRange(start: 40, end: 50)],
+                [FrameRange(start: 0, end: 10)],
+            ]
+        )
+
+        #expect(mapped.first?.startFrame == 35)
+    }
+
+    @Test func multiTrackRippleUsesTheEarliestSurvivingRangeEnd() {
+        let marker = TimelineMarker(id: "range", startFrame: 300, durationFrames: 50, title: "Range")
+        let mapped = RippleEngine.rippleMarkers(
+            [marker],
+            closing: [
+                [FrameRange(start: 0, end: 50)],
+                [FrameRange(start: 100, end: 120)],
+            ]
+        )
+
+        #expect(mapped.first?.startFrame == 250)
+        #expect(mapped.first?.durationFrames == 50)
+    }
+
+    @Test func positiveTimelineOffsetMovesPointsAndExtendsSpanningRanges() {
+        let markers = [
+            TimelineMarker(id: "point", startFrame: 50, title: "Point"),
+            TimelineMarker(id: "span", startFrame: 20, durationFrames: 40, title: "Span"),
+        ]
+        let mapped = RippleEngine.rippleMarkers(markers, openingAt: 50, by: 20)
+
+        #expect(mapped[0].startFrame == 70)
+        #expect(mapped[1].startFrame == 20)
+        #expect(mapped[1].durationFrames == 60)
+    }
+
+    @Test func negativeTimelineOffsetUsesRippleTrimTailSemantics() {
+        let markers = [
+            TimelineMarker(id: "removed", startFrame: 45, title: "Removed"),
+            TimelineMarker(id: "boundary", startFrame: 50, title: "Boundary"),
+            TimelineMarker(id: "after", startFrame: 70, title: "After"),
+        ]
+        let mapped = RippleEngine.rippleMarkers(markers, openingAt: 50, by: -10)
+
+        #expect(mapped.first { $0.id == "removed" } == nil)
+        #expect(mapped.first { $0.id == "boundary" }?.startFrame == 40)
+        #expect(mapped.first { $0.id == "after" }?.startFrame == 60)
+    }
 }
 
 // MARK: - Adversarial

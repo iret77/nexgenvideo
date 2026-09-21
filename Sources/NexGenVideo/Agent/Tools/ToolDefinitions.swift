@@ -4,6 +4,7 @@ import NexGenEngine
 
 enum ToolName: String, CaseIterable, Sendable {
     case getTimeline = "get_timeline"
+    case manageMarkers = "manage_markers"
     case getProductionKnowledge = "get_production_knowledge"
     case getMedia = "get_media"
     case addClips = "add_clips"
@@ -225,13 +226,51 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .getTimeline,
-            description: "Always call at the start of a session. Returns project settings (fps, resolution, totalFrames), track list with types and order, and all clips with their frames and properties. The clipId/trackId values here are what every other tool accepts.\n\nClip and track fields equal to their defaults are omitted: mediaType 'video', sourceClipType = mediaType, speed 1, volume 1, opacity 1, trims/fades 0, identity transform/crop, default textStyle, track muted/hidden false. Text clips never report trims (no source media).\n\nCaption clips (sharing a captionGroupId) come back per track as captionGroups instead of clips entries: properties common to the group are hoisted into 'shared' and each clip is a [clipId, startFrame, durationFrames, text] row (caption box width/height are auto-fit per text and omitted). Rows are capped at 200 per group — when clipCount exceeds the rows shown, page with startFrame/endFrame. Caption clips whose properties deviate from the group appear individually in clips.",
+            description: "Always call at the start of a session. Returns project settings (fps, resolution, totalFrames), persistent project markers, track list with types and order, and all clips with their frames and properties. markerId/clipId/trackId values are stable references accepted by mutation tools. Windowed reads return markers intersecting the same half-open frame range.\n\nClip and track fields equal to their defaults are omitted: mediaType 'video', sourceClipType = mediaType, speed 1, volume 1, opacity 1, trims/fades 0, identity transform/crop, default textStyle, track muted/hidden false. Text clips never report trims (no source media).\n\nCaption clips (sharing a captionGroupId) come back per track as captionGroups instead of clips entries: properties common to the group are hoisted into 'shared' and each clip is a [clipId, startFrame, durationFrames, text] row (caption box width/height are auto-fit per text and omitted). Rows are capped at 200 per group — when clipCount exceeds the rows shown, page with startFrame/endFrame. Caption clips whose properties deviate from the group appear individually in clips.",
             inputSchema: objectSchema(
                 properties: [
                     "startFrame": ["type": "integer", "description": "Optional. Window start (inclusive); only clips intersecting [startFrame, endFrame) are returned. Tracks report totalClips when the window hides some."],
                     "endFrame": ["type": "integer", "description": "Optional. Window end (exclusive)."],
                 ]
             )
+        ),
+        AgentTool(
+            name: .manageMarkers,
+            description: "Create, update, or delete one persistent timeline marker as one atomic undoable edit. Times are project frames; durationFrames=0 is a point and positive duration is [startFrame,endFrame). Use type=none or color=automatic to clear optional metadata. Markers annotate review, shot, chapter, cue, or general notes; they never replace canonical pipeline artifacts or approvals.",
+            inputSchema: ["anyOf": [
+                objectSchema(
+                    properties: [
+                        "action": ["type": "string", "enum": ["create"]],
+                        "startFrame": ["type": "integer", "minimum": 0],
+                        "durationFrames": ["type": "integer", "minimum": 0],
+                        "title": ["type": "string", "minLength": 1, "maxLength": TimelineMarker.maxTitleLength],
+                        "note": ["type": "string", "maxLength": TimelineMarker.maxNoteLength],
+                        "type": ["type": "string", "enum": TimelineMarker.Kind.allCases.map(\.rawValue)],
+                        "color": ["type": "string", "pattern": "^#?(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$", "description": "#RGB, #RRGGBB, or #RRGGBBAA."],
+                    ],
+                    required: ["action", "startFrame", "title"]
+                ),
+                objectSchema(
+                    properties: [
+                        "action": ["type": "string", "enum": ["update"]],
+                        "markerId": ["type": "string", "minLength": 1],
+                        "startFrame": ["type": "integer", "minimum": 0],
+                        "durationFrames": ["type": "integer", "minimum": 0],
+                        "title": ["type": "string", "minLength": 1, "maxLength": TimelineMarker.maxTitleLength],
+                        "note": ["type": "string", "maxLength": TimelineMarker.maxNoteLength],
+                        "type": ["type": "string", "enum": TimelineMarker.Kind.allCases.map(\.rawValue) + ["none"]],
+                        "color": ["type": "string", "pattern": "^(?:automatic|#?(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8}))$", "description": "#RGB, #RRGGBB, #RRGGBBAA, or automatic."],
+                    ],
+                    required: ["action", "markerId"]
+                ),
+                objectSchema(
+                    properties: [
+                        "action": ["type": "string", "enum": ["delete"]],
+                        "markerId": ["type": "string", "minLength": 1],
+                    ],
+                    required: ["action", "markerId"]
+                ),
+            ]]
         ),
         AgentTool(
             name: .showDialog,

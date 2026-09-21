@@ -59,6 +59,10 @@ extension ToolExecutor {
             }
             dict["tracks"] = tracks
         }
+        let visibleMarkers = window.map { range in
+            editor.timeline.markers.filter { $0.intersects(range) }
+        } ?? editor.timeline.markers
+        dict["markers"] = visibleMarkers.map(Self.timelineMarkerPayload)
         dict["totalFrames"] = editor.timeline.totalFrames
         if let window {
             dict["window"] = [window.lowerBound, min(window.upperBound, editor.timeline.totalFrames)]
@@ -81,6 +85,20 @@ extension ToolExecutor {
             throw ToolError("Failed to encode timeline")
         }
         return .ok(json)
+    }
+
+    static func timelineMarkerPayload(_ marker: TimelineMarker) -> [String: Any] {
+        var payload: [String: Any] = [
+            "markerId": marker.id,
+            "startFrame": marker.startFrame,
+            "durationFrames": marker.durationFrames,
+            "endFrame": marker.endFrame,
+            "title": marker.title,
+            "note": marker.note,
+        ]
+        if let type = marker.type { payload["type"] = type.rawValue }
+        if let color = marker.color { payload["color"] = color.hexString }
+        return payload
     }
 
     private static let trackDefaults: [String: Any] = ["muted": false, "hidden": false, "syncLocked": true]
