@@ -51,6 +51,51 @@ struct TimelineGestureToolTests {
         #expect(noHandle.isError)
         #expect(harness.editor.timeline == before)
     }
+
+    @Test("reorder_track moves a stable track ID through the canonical zone clamp")
+    func reorderTrack() async throws {
+        var first = Fixtures.videoTrack(
+            id: "visual-first",
+            clips: [Fixtures.clip(id: "selected", start: 0, duration: 20)]
+        )
+        first.hidden = true
+        let harness = ToolHarness(timeline: Fixtures.timeline(tracks: [
+            first,
+            Fixtures.videoTrack(id: "visual-second"),
+            Fixtures.audioTrack(id: "audio"),
+        ]))
+        harness.editor.selectedClipIds = ["selected"]
+        let undo = UndoManager()
+        harness.editor.undoManager = undo
+
+        let payload = try await harness.runOK("reorder_track", args: [
+            "trackId": "visual-first",
+            "toIndex": 99,
+        ]) as? [String: Any]
+
+        #expect(payload?["fromIndex"] as? Int == 0)
+        #expect(payload?["toIndex"] as? Int == 1)
+        #expect(harness.editor.timeline.tracks.map(\.id) == ["visual-second", "visual-first", "audio"])
+        #expect(harness.editor.timeline.tracks[1].hidden)
+        #expect(harness.editor.selectedClipIds == ["selected"])
+        #expect(undo.undoActionName == "Reorder Track")
+    }
+
+    @Test("reorder_track rejects an unknown stable track ID")
+    func reorderTrackValidation() async {
+        let harness = ToolHarness(timeline: Fixtures.timeline(tracks: [
+            Fixtures.videoTrack(id: "visual"),
+        ]))
+        let before = harness.editor.timeline
+
+        let result = await harness.runRaw("reorder_track", args: [
+            "trackId": "missing",
+            "toIndex": 0,
+        ])
+
+        #expect(result.isError)
+        #expect(harness.editor.timeline == before)
+    }
 }
 
 private func rippleSpansForTool(_ track: Track) -> [[Int]] {

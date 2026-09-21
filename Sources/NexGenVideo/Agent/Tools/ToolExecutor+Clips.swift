@@ -878,4 +878,23 @@ extension ToolExecutor {
         }
         return .ok(json)
     }
+
+    func reorderTrack(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+        let trackId = try args.requireString("trackId")
+        let toIndex = try args.requireInt("toIndex")
+        guard editor.timeline.tracks.contains(where: { $0.id == trackId }) else {
+            throw ToolError("Track not found: \(trackId)")
+        }
+        guard let result = editor.reorderTrack(id: trackId, to: toIndex) else {
+            throw ToolError("Unable to reorder track: \(trackId)")
+        }
+        guard let json = Self.jsonString([
+            "trackId": result.trackId,
+            "fromIndex": result.fromIndex,
+            "toIndex": result.toIndex,
+        ]) else {
+            throw ToolError("Failed to encode result")
+        }
+        return .ok(json)
+    }
 }

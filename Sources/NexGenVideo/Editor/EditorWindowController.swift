@@ -184,6 +184,10 @@ final class EditorWindowController: NSWindowController {
                 editorViewModel.maximizedPanel = nil
                 return true
             }
+            NotificationCenter.default.post(
+                name: .cancelTimelineInteraction,
+                object: editorViewModel
+            )
             editorViewModel.selectedClipIds.removeAll()
             editorViewModel.selectedTimelineMarkerIds.removeAll()
             editorViewModel.timelineMarkerPreview = nil

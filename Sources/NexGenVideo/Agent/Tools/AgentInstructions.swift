@@ -146,6 +146,8 @@ enum AgentInstructions {
           selection:
           • move_clips: change track and/or startFrame. Linked partners follow the frame delta; \
             track changes don't propagate.
+          • reorder_track: move a stable trackId within its visual or audio zone without changing \
+            the track's clips, flags, or routing role.
           • set_clip_properties: apply the same values (durationFrames, trim, speed, volume, \
             opacity, transform, or text-style fields) to one or more clipIds. For per-clip \
             differences, make separate calls. Setting volume or opacity here clears any \

@@ -11,6 +11,7 @@ enum ToolName: String, CaseIterable, Sendable {
     case insertClips = "insert_clips"
     case removeClips = "remove_clips"
     case removeTracks = "remove_tracks"
+    case reorderTrack = "reorder_track"
     case moveClips = "move_clips"
     case setClipProperties = "set_clip_properties"
     case setKeyframes = "set_keyframes"
@@ -545,6 +546,17 @@ enum ToolDefinitions {
                     ],
                 ],
                 required: ["trackIndexes"]
+            )
+        ),
+        AgentTool(
+            name: .reorderTrack,
+            description: "Moves one track to a new 0-based timeline index in one undoable action. Use its stable trackId from get_timeline. Visual tracks remain in the visual Z-order zone and audio tracks remain in the audio routing zone, so an out-of-zone destination is clamped to the nearest valid index. The track's ID, role, clips, flags, and selection stay intact.",
+            inputSchema: objectSchema(
+                properties: [
+                    "trackId": ["type": "string", "description": "Stable track ID from get_timeline"],
+                    "toIndex": ["type": "integer", "minimum": 0, "description": "Requested destination index"],
+                ],
+                required: ["trackId", "toIndex"]
             )
         ),
         AgentTool(

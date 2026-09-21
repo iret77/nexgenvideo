@@ -34,6 +34,7 @@ enum ToolRunPresentation {
         "insert_clips": "Inserting clips",
         "remove_clips": "Removing clips",
         "remove_tracks": "Removing tracks",
+        "reorder_track": "Reordering a track",
         "move_clips": "Moving clips",
         "set_clip_properties": "Adjusting clip properties",
         "set_keyframes": "Setting keyframes",

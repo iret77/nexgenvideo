@@ -401,6 +401,7 @@ final class ToolExecutor {
         case .insertClips:      return try insertClips(editor, args)
         case .removeClips:      return try removeClips(editor, args)
         case .removeTracks:     return try removeTracks(editor, args)
+        case .reorderTrack:     return try reorderTrack(editor, args)
         case .moveClips:        return try moveClips(editor, args)
         case .setClipProperties: return try setClipProperties(editor, args)
         case .setKeyframes:     return try setKeyframes(editor, args)
