@@ -207,7 +207,7 @@ struct CompositionBuildAudioTrackTests {
             renderSize: CGSize(width: 320, height: 180)
         )
 
-        #expect(result.trackMappings.allSatisfy(\.isVideo))
+        #expect(result.trackMappings.allSatisfy { $0.isVideo })
         #expect(result.audioMix.inputParameters.isEmpty)
         #expect(try await result.composition.loadTracks(withMediaType: .audio).isEmpty)
         #expect(result.offlineMediaRefs.isEmpty)
