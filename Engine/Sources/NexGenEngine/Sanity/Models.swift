@@ -104,6 +104,7 @@ public enum SanityArtifactStore {
             PipelineLayout.briefFile,
             PipelineLayout.bibleFile,
             PipelineLayout.confirmedIdentityAssetsFile,
+            PipelineLayout.confirmedIdentityAdoptionsFile,
             PipelineLayout.bibleIdentityVariantsFile,
             PipelineLayout.assetProofFile(scope: "bible"),
             PipelineLayout.treatmentCurrentFile,

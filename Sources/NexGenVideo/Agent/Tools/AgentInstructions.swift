@@ -276,6 +276,10 @@ enum AgentInstructions {
           get_render_manifest / get_frames_manifest), and list_project_files / copy_project_file (survey and stage files \
           inside the project — use these, never a shell/Glob/cp). There is no separate engine server — \
           call them like any other tool.
+        - If get_project_state returns confirmed_identity_recovery, report its exact affected_targets, \
+          discarded_targets, and blocker. \
+          Call recover_confirmed_identity_provenance only when its action matches and eligible is true. \
+          Recovery never approves a phase; real upstream changes require an explicit rewind.
         - The musicvideo start order is fixed: Track, optional Lyrics, Project Init, approved Audio \
           Analysis, then optional existing story/character/location/style material, then story \
           development. Never request or develop a story before analysis is approved. A missing story \

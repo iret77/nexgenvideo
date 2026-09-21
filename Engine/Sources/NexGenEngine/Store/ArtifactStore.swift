@@ -25,6 +25,8 @@ public enum PipelineLayout {
     public static let bibleFile = "bible/bible.yaml"
     public static let confirmedIdentityAssetsFile =
         "import/confirmed-identity-assets.v1.json"
+    public static let confirmedIdentityAdoptionsFile =
+        "bible/confirmed-identity-adoptions.v1.json"
     public static let bibleIdentityVariantsFile =
         "bible/identity-variants.v1.json"
 

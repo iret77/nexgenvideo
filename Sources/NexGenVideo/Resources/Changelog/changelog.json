@@ -2,6 +2,19 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.5.9",
+      "date": "2026-09-21",
+      "sections": [
+        {
+          "heading": "Reliability",
+          "items": [
+            "Confirmed identity references keep creative intake lineage stable while retaining exact source and staged-target hash proofs.",
+            "Affected older projects show outdated approvals and offer an explicit audited provenance recovery without changing gate decisions."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.5.8",
       "date": "2026-09-11",
       "sections": [

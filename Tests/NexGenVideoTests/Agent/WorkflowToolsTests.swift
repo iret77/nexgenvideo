@@ -1572,6 +1572,7 @@ struct WorkflowToolsTests {
     func projectFileTools() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
+        _ = try activatePack("musicvideo", dataRoot: dataRoot)
         let importDir = dataRoot.appendingPathComponent("import/characters/mouse", isDirectory: true)
         try FileManager.default.createDirectory(at: importDir, withIntermediateDirectories: true)
         try Data("x".utf8).write(to: importDir.appendingPathComponent("face.png"))
@@ -1698,18 +1699,112 @@ struct WorkflowToolsTests {
         // A symlink escaping the project is refused too.
         let outside = cleanup.appendingPathComponent("outside", isDirectory: true)
         try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
-        try FileManager.default.createSymbolicLink(at: dataRoot.appendingPathComponent("import/link"), withDestinationURL: outside)
+        try FileManager.default.createSymbolicLink(
+            at: dataRoot.appendingPathComponent("bible/link"),
+            withDestinationURL: outside
+        )
         let symlinkEscape = await h.runRaw("copy_project_file", args: [
-            "project_dir": dataRoot.path, "from": "import/characters/mouse/face.png", "to": "import/link/stolen.png",
+            "project_dir": dataRoot.path,
+            "from": "import/characters/mouse/face.png",
+            "to": "bible/link/stolen.png",
         ])
         #expect(symlinkEscape.isError == true)
         #expect(!FileManager.default.fileExists(atPath: outside.appendingPathComponent("stolen.png").path))
+    }
+
+    @Test("recover_confirmed_identity_provenance performs explicit audited recovery")
+    func confirmedIdentityProvenanceRecoveryTool() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        _ = try activatePack("musicvideo", dataRoot: dataRoot)
+        let sourcePath = "import/characters/mouse/face.png"
+        let targetPath = "bible/refs/mouse/face.png"
+        for path in [sourcePath, targetPath] {
+            let url = dataRoot.appendingPathComponent(path)
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try Data("confirmed".utf8).write(to: url)
+        }
+        try ConfirmedIdentityAssetStoreV1.recordIntake(
+            role: .character,
+            identityName: "Mouse",
+            identitySlug: "mouse",
+            paths: [sourcePath],
+            dataRoot: dataRoot,
+            confirmedAt: "2026-09-21T00:00:00Z"
+        )
+        var mixed = try ConfirmedIdentityAssetStoreV1.load(dataRoot: dataRoot)
+        let source = try #require(mixed.entries[sourcePath])
+        let idData = Data(
+            "\(source.id)\n\(targetPath)\n\(source.sha256)".utf8
+        )
+        mixed.entries[targetPath] = ConfirmedIdentityAssetV1(
+            id: "confirmed-identity-\(FileDigest.sha256(of: idData))",
+            role: source.role,
+            identityName: source.identityName,
+            identitySlug: source.identitySlug,
+            path: targetPath,
+            sha256: source.sha256,
+            originalPath: source.path,
+            originalSHA256: source.originalSHA256,
+            confirmedAt: source.confirmedAt
+        )
+        try JSONArtifactStore(dataRoot: dataRoot).save(
+            mixed,
+            to: PipelineLayout.confirmedIdentityAssetsFile
+        )
+        let gatesURL = PipelineLayout.url(PipelineLayout.gatesFile, in: dataRoot)
+        let gatesBefore = try Data(contentsOf: gatesURL)
+
+        let result = try #require(try await h.runOK(
+            "recover_confirmed_identity_provenance",
+            args: ["project_dir": dataRoot.path]
+        ) as? [String: Any])
+
+        #expect(result["recovered_targets"] as? [String] == [targetPath])
+        #expect(result["discarded_non_bible_targets"] as? [String] == [])
+        #expect(result["discarded_stale_targets"] as? [String] == [])
+        #expect(result["gates_changed"] as? Bool == false)
+        #expect(try Data(contentsOf: gatesURL) == gatesBefore)
+        #expect(try ConfirmedIdentityAssetStoreV1.load(dataRoot: dataRoot)
+            .entries[targetPath] == nil)
+        #expect(try ConfirmedIdentityAssetStoreV1.currentEntry(
+            targetPath,
+            dataRoot: dataRoot
+        ) != nil)
     }
 
     @Test("copy_project_file stages generated media with exact pipeline provenance")
     func projectMediaCopyRecordsProvenance() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
+        _ = try activatePack("musicvideo", dataRoot: dataRoot)
+        let confirmedPath = "import/characters/mouse/front.png"
+        let confirmedURL = dataRoot.appendingPathComponent(confirmedPath)
+        try FileManager.default.createDirectory(
+            at: confirmedURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("confirmed".utf8).write(to: confirmedURL)
+        try ConfirmedIdentityAssetStoreV1.recordIntake(
+            role: .character,
+            identityName: "Mouse",
+            identitySlug: "mouse",
+            paths: [confirmedPath],
+            dataRoot: dataRoot,
+            confirmedAt: "2026-09-21T00:00:00Z"
+        )
+        _ = try await h.runOK("copy_project_file", args: [
+            "project_dir": dataRoot.path,
+            "from": confirmedPath,
+            "to": "bible/mouse/front.png",
+        ])
+        #expect(try ConfirmedIdentityAssetStoreV1.currentEntry(
+            "bible/mouse/front.png",
+            dataRoot: dataRoot
+        ) != nil)
         let source = FrameInventory.projectHome(of: dataRoot)
             .appendingPathComponent("sheet.png")
         try addGeneratedImage("sheet-media", at: source, to: h)
@@ -1723,6 +1818,9 @@ struct WorkflowToolsTests {
             ]
         ) as? [String: Any])
         #expect(result["generated_provenance"] as? Bool == true)
+        #expect(try ConfirmedIdentityAssetStoreV1.loadAdoptions(
+            dataRoot: dataRoot
+        ).entries["bible/mouse/front.png"] == nil)
 
         let proof = try loadPipelineAssetProof(
             dataRoot: dataRoot,
