@@ -171,8 +171,10 @@ extension InspectorView {
                 }
                 .buttonStyle(.plain)
                 .disabled(!hasEffects)
-                .help(hasEffects ? "Enable \(title.lowercased())" : "No adjustments yet")
-                .accessibilityLabel("Enable \(title)")
+                .help(hasEffects
+                    ? "\(enablement == .on ? "Disable" : "Enable") \(title.lowercased())"
+                    : "No adjustments yet")
+                .accessibilityLabel("\(enablement == .on ? "Disable" : "Enable") \(title)")
                 .accessibilityValue(enablement.accessibilityValue)
             }
             .padding(.horizontal, AppTheme.Spacing.lg)

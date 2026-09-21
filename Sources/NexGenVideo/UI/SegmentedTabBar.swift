@@ -86,6 +86,7 @@ struct SegmentedTabBar: View {
                             acceptanceState: isActive
                         )
                     }
+                }
             }
             Spacer()
         }
