@@ -253,7 +253,7 @@ enum NativeCockpitReader {
     ) -> [String: Any] {
         let phases: [[String: Any]] = s.phases.map { p in
             let evidence = approvalEvidence[p.phase]
-            [
+            return [
                 "phase": p.phase,
                 "approved": p.approved,
                 "approval_current": evidence?.current ?? p.approved,
