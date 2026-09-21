@@ -422,6 +422,12 @@ enum WorkspaceUIAcceptance {
         for item in cases {
             editor.selectedClipIds = item.clipIDs
             if item.family == "asset" {
+                guard await waitUntil(timeout: .seconds(5), {
+                    host.layoutSubtreeIfNeeded()
+                    return editor.selectedClipIds.isEmpty && editor.inspectedObject == nil
+                }) else {
+                    fail("could not clear the clip inspection before asset inspection", scale: scale)
+                }
                 editor.inspectedObject = .mediaAsset(image.id)
             } else if item.clipIDs.count == 1, let clipID = item.clipIDs.first {
                 editor.inspectedObject = .clip(clipID)
