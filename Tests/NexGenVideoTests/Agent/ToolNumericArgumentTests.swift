@@ -172,8 +172,8 @@ struct ToolNumericArgumentTests {
     @MainActor
     func audioSyncRejectsUnsafeSearchWindow() async {
         let harness = ToolHarness(timeline: Fixtures.timeline(tracks: [
-            Fixtures.audioTrack(clips: [Fixtures.clip(id: "reference", duration: 100)]),
-            Fixtures.audioTrack(clips: [Fixtures.clip(id: "target", duration: 100)]),
+            Fixtures.audioTrack(clips: [Fixtures.clip(id: "reference", start: 0, duration: 100)]),
+            Fixtures.audioTrack(clips: [Fixtures.clip(id: "target", start: 0, duration: 100)]),
         ]))
         let before = harness.editor.timeline
         let result = await harness.runRaw("sync_audio", args: [
