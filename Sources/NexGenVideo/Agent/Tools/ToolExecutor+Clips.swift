@@ -659,7 +659,7 @@ extension ToolExecutor {
         guard deltaFrames != 0 else { throw ToolError("deltaFrames must not be zero") }
         guard editor.findClip(id: clipId) != nil else { throw ToolError("Clip not found: \(clipId)") }
 
-        let edge: TrimEdge
+        let edge: EditorViewModel.TrimEdge
         switch edgeValue {
         case "left": edge = .left
         case "right": edge = .right
@@ -676,7 +676,7 @@ extension ToolExecutor {
 
         let payload: [String: Any] = [
             "appliedDurationDelta": plan.durationDelta,
-            "resizedClipIds": plan.resizes.map(\.clipId),
+            "resizedClipIds": plan.resizes.map { $0.clipId },
             "shiftedClipCount": plan.shifts.count,
         ]
         return .ok(Self.jsonString(payload) ?? "Ripple trim applied")
