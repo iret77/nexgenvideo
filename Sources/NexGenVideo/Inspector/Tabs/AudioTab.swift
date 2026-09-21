@@ -46,7 +46,6 @@ extension InspectorView {
             }
         }
 
-        keyframesToggleBar(enabled: single != nil)
     }
 
     @ViewBuilder
@@ -60,6 +59,7 @@ extension InspectorView {
                 range: VolumeScale.floorDb...VolumeScale.ceilingDb,
                 format: "%.1f",
                 valueSuffix: " dB",
+                accessibilityName: "Volume",
                 dragSensitivity: 0.3,
                 fieldWidth: 56,
                 displayTextOverride: { db in db <= VolumeScale.floorDb ? "-∞ dB" : nil },
@@ -88,6 +88,7 @@ extension InspectorView {
                 range: 0...maxSeconds,
                 format: "%.2f",
                 valueSuffix: " s",
+                accessibilityName: label,
                 dragSensitivity: 0.02,
                 fieldWidth: 56,
                 onChanged: { seconds in
@@ -101,6 +102,6 @@ extension InspectorView {
                 }
             }
         }
-        .frame(height: AppTheme.Timeline.keyframeRowHeight)
+        .frame(minHeight: AppTheme.Timeline.keyframeRowHeight)
     }
 }

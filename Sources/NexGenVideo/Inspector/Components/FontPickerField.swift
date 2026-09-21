@@ -26,13 +26,12 @@ struct FontPickerField: View {
             .padding(.horizontal, AppTheme.Spacing.smMd)
             .padding(.vertical, AppTheme.Spacing.xs)
             .frame(maxWidth: AppTheme.ComponentSize.fontPickerMaxWidth, alignment: .trailing)
-            .background(
-                RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                    .fill(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.hint))
-            )
+            .inspectorControlChrome()
         }
         .buttonStyle(.plain)
         .fixedSize()
+        .accessibilityLabel("Font")
+        .accessibilityValue(displayName)
         .background(FontMenuAnchorView(holder: anchorHolder))
     }
 

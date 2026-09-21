@@ -164,6 +164,7 @@ struct CaptionTab: View {
                     range: AppTheme.Caption.minFontSize...AppTheme.Caption.maxFontSize,
                     format: "%.0f",
                     valueSuffix: " pt",
+                    accessibilityName: "Caption size",
                     onChanged: { style.fontSize = $0 }
                 ) { style.fontSize = $0 }
             }
@@ -175,13 +176,13 @@ struct CaptionTab: View {
                     ColorField(displayColor: style.background.color.swiftUIColor) {
                         style.background.color = TextStyle.RGBA($0)
                     }
-                    .opacity(style.background.enabled ? AppTheme.Opacity.opaque : AppTheme.Opacity.medium)
                     .disabled(!style.background.enabled)
-                    Toggle("", isOn: $style.background.enabled)
+                    Toggle("Background", isOn: $style.background.enabled)
                         .labelsHidden()
                         .toggleStyle(.switch)
                         .controlSize(.mini)
                         .tint(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.strong))
+                        .accessibilityLabel("Caption background")
                 }
             }
             InspectorRow(icon: "textformat", label: "Case") {
@@ -200,11 +201,12 @@ struct CaptionTab: View {
                 .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().focusable(false)
             }
             InspectorRow(icon: "exclamationmark.bubble", label: "Censor profanity") {
-                Toggle("", isOn: $censorProfanity)
+                Toggle("Censor profanity", isOn: $censorProfanity)
                     .labelsHidden()
                     .toggleStyle(.switch)
                     .controlSize(.mini)
                     .tint(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.strong))
+                    .accessibilityLabel("Censor profanity")
             }
         }
     }
@@ -212,10 +214,11 @@ struct CaptionTab: View {
     private var placementSection: some View {
         InspectorSection("Placement") {
             previewBox
-            HStack(spacing: AppTheme.Spacing.mdLg) {
-                Spacer(minLength: AppTheme.Spacing.xs)
-                posField("X", value: center.x) { center.x = $0 }
-                posField("Y", value: center.y) { center.y = $0 }
+            InspectorFormRow(label: "Position") {
+                HStack(spacing: AppTheme.Spacing.mdLg) {
+                    posField("X", value: center.x) { center.x = $0 }
+                    posField("Y", value: center.y) { center.y = $0 }
+                }
             }
         }
     }
@@ -349,6 +352,7 @@ struct CaptionTab: View {
                 displayMultiplier: 100,
                 format: "%.0f",
                 valueSuffix: "%",
+                accessibilityName: "Caption position \(label)",
                 onChanged: { onChange(snapCenter($0)) }
             ) { onChange(snapCenter($0)) }
         }
@@ -366,15 +370,9 @@ struct CaptionTab: View {
             HStack(spacing: AppTheme.Spacing.sm) {
                 Button(action: generate) {
                     Text("Generate Captions")
-                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
-                        .foregroundStyle(AppTheme.Background.baseColor)
-                        .lineLimit(1)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, AppTheme.Spacing.smMd)
-                        .background(RoundedRectangle(cornerRadius: AppTheme.Radius.sm).fill(AppTheme.Accent.primary))
-                        .opacity(effectiveCount == 0 ? AppTheme.Opacity.medium : AppTheme.Opacity.opaque)
                 }
-                .buttonStyle(.plain).focusable(false)
+                .buttonStyle(.capsule(.prominent, size: .regular))
                 .disabled(effectiveCount == 0 || isGenerating)
 
                 agentMenu

@@ -9,6 +9,7 @@ struct ScrubbableNumberField: View {
     var displayMultiplier: Double = 1
     var format: String = "%.0f"
     var valueSuffix: String = ""
+    var accessibilityName: String? = nil
     /// Display units changed per pixel of horizontal drag.
     var dragSensitivity: Double = 1
     var fieldWidth: CGFloat = 50
@@ -19,11 +20,13 @@ struct ScrubbableNumberField: View {
 
     @State private var isEditing = false
     @State private var editText = ""
+    @State private var hasError = false
     @FocusState private var editFocused: Bool
 
     @State private var isDragging = false
     @State private var dragStartValue: Double = 0
     @State private var liveValue: Double = 0
+    @Environment(\.isEnabled) private var isEnabled
 
     private var isMixed: Bool { value == nil && !isDragging }
     private var sourceValue: Double { isDragging ? liveValue : (value ?? liveValue) }
@@ -65,6 +68,7 @@ struct ScrubbableNumberField: View {
             .frame(width: fieldWidth, alignment: .trailing)
             .padding(.horizontal, AppTheme.Spacing.sm)
             .padding(.vertical, AppTheme.Spacing.xxs)
+            .inspectorControlChrome(focused: isEditing, mixed: isMixed, error: hasError)
             .overlay(scrubOverlay)
 
             if let trailingLabel {
@@ -75,6 +79,9 @@ struct ScrubbableNumberField: View {
             }
         }
         .fixedSize(horizontal: true, vertical: false)
+        .accessibilityLabel(accessibilityName ?? "Value")
+        .accessibilityValue(isMixed ? "Mixed values" : displayText)
+        .accessibilityHint(hasError ? "Enter a number" : "Drag to adjust or click to type")
         .onAppear { liveValue = value ?? range.lowerBound }
         .onChange(of: value) { _, new in
             if !isDragging { liveValue = new ?? liveValue }
@@ -93,7 +100,7 @@ struct ScrubbableNumberField: View {
             EmptyView()
         } else {
             ScrubMouseArea(
-                canScrub: !isMixed,
+                canScrub: isEnabled && !isMixed,
                 onDragStart: {
                     dragStartValue = value ?? liveValue
                     isDragging = true
@@ -116,6 +123,8 @@ struct ScrubbableNumberField: View {
                     }
                 },
                 onClick: {
+                    guard isEnabled else { return }
+                    hasError = false
                     editText = editingText
                     isEditing = true
                 }
@@ -132,7 +141,11 @@ struct ScrubbableNumberField: View {
         let cleaned = withoutSuffix
             .trimmingCharacters(in: .whitespaces)
             .replacingOccurrences(of: ",", with: ".")
-        guard let parsed = Double(cleaned) else { return }
+        guard let parsed = Double(cleaned) else {
+            hasError = true
+            return
+        }
+        hasError = false
         let mult = displayMultiplier == 0 ? 1 : displayMultiplier
         let raw = (parsed / mult).clamped(to: range)
         liveValue = raw
@@ -163,6 +176,7 @@ private struct ScrubMouseArea: NSViewRepresentable {
     }
 
     private func apply(to v: ScrubArea) {
+        if v.canScrub != canScrub { v.window?.invalidateCursorRects(for: v) }
         v.canScrub = canScrub
         v.onDragStart = onDragStart
         v.onDragChanged = onDragChanged
@@ -183,7 +197,7 @@ private struct ScrubMouseArea: NSViewRepresentable {
         override var acceptsFirstResponder: Bool { false }
 
         override func resetCursorRects() {
-            addCursorRect(bounds, cursor: .resizeLeftRight)
+            if canScrub { addCursorRect(bounds, cursor: .resizeLeftRight) }
         }
 
         override func mouseDown(with event: NSEvent) {

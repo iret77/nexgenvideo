@@ -570,7 +570,8 @@ struct InspectorView: View {
                     let label = Text(segment.label)
                         .interfaceFont(size: AppTheme.Typography.ui, weight: isLast ? .semibold : .regular)
                         .foregroundStyle(isLast ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
-                        .lineLimit(1)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                     // Parent segments that resolve to an object navigate to it — the graph's payoff.
                     if !isLast, let target = segment.object {
                         Button { editor.inspectedObject = target } label: { label }
@@ -646,10 +647,7 @@ struct InspectorView: View {
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
-            Text(title.uppercased())
-                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
-                .tracking(AppTheme.Tracking.wide)
-                .foregroundStyle(AppTheme.Text.mutedColor)
+            InspectorSectionHeading(title: title)
             VStack(spacing: AppTheme.Spacing.sm) {
                 content()
             }
@@ -659,26 +657,18 @@ struct InspectorView: View {
     private func plainMetadataRow(
         label: String,
         value: String,
-        valueHelp: String? = nil,
-        truncate: Text.TruncationMode = .tail
+        valueHelp: String? = nil
     ) -> some View {
-        HStack(spacing: AppTheme.Spacing.sm) {
-            Text(label)
-                .interfaceFont(size: AppTheme.Typography.ui)
-                .foregroundStyle(AppTheme.Text.tertiaryColor)
-                .fixedSize()
-            Spacer()
+        InspectorFormRow(label: label) {
             Text(value)
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
-                .lineLimit(1)
-                .truncationMode(truncate)
                 .multilineTextAlignment(.trailing)
+                .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
                 .help(valueHelp ?? value)
-                .padding(.horizontal, AppTheme.Spacing.xs)
         }
-        .frame(height: AppTheme.IconSize.md)
+        .frame(minHeight: AppTheme.IconSize.md)
     }
 
     // MARK: - Clip Inspector
@@ -758,6 +748,17 @@ struct InspectorView: View {
                     }
                 }
             }
+            if activeTab == .video || activeTab == .audio {
+                keyframesToggleBar(
+                    enabled: activeTab == .video
+                        ? nonTextVisualClips.count == 1
+                        : selectedAudioClips.count == 1
+                )
+                    .padding(.horizontal, AppTheme.Spacing.lg)
+                    .padding(.vertical, AppTheme.Spacing.xs)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .background(AppTheme.Background.surfaceColor)
+            }
         }
     }
 
@@ -811,7 +812,6 @@ struct InspectorView: View {
             speedSection(clips: clips + selectedAudioClips)
         }
 
-        keyframesToggleBar(enabled: single != nil)
     }
 
     func keyframesToggleBar(enabled: Bool) -> some View {
@@ -850,6 +850,7 @@ struct InspectorView: View {
                         range: 0.25...4.0,
                         format: "%.2f",
                         valueSuffix: "x",
+                        accessibilityName: "Speed",
                         dragSensitivity: 0.01,
                         fieldWidth: 50,
                         onChanged: { newVal in
@@ -916,7 +917,7 @@ struct InspectorView: View {
                 }
             }
         }
-        .frame(height: AppTheme.Timeline.keyframeRowHeight)
+        .frame(minHeight: AppTheme.Timeline.keyframeRowHeight)
     }
 
     private func keyframeControls(clipId: String, property: AnimatableProperty) -> some View {
@@ -1009,6 +1010,7 @@ struct InspectorView: View {
             displayMultiplier: 100,
             format: "%.0f",
             valueSuffix: "%",
+            accessibilityName: "Scale",
             fieldWidth: 50,
             onChanged: { newVal in
                 for c in clips { editor.applyScale(clipId: c.id, newScale: newVal) }
@@ -1029,6 +1031,7 @@ struct InspectorView: View {
             displayMultiplier: 1,
             format: "%.0f",
             valueSuffix: "°",
+            accessibilityName: "Rotation",
             fieldWidth: 50,
             onChanged: { newVal in
                 for c in clips { editor.applyRotation(clipId: c.id, valueDeg: newVal) }
@@ -1049,6 +1052,7 @@ struct InspectorView: View {
             displayMultiplier: 100,
             format: "%.0f",
             valueSuffix: "%",
+            accessibilityName: "Opacity",
             fieldWidth: 50,
             onChanged: { newVal in
                 for c in clips { editor.applyOpacity(clipId: c.id, value: newVal) }
@@ -1070,18 +1074,7 @@ struct InspectorView: View {
         resetHelp: String? = nil,
         onReset: (() -> Void)? = nil
     ) -> some View {
-        HStack {
-            Button(action: onToggle) {
-                HStack(spacing: AppTheme.Spacing.xs) {
-                    sectionTitleLabel(title: title)
-                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                        .interfaceFont(size: AppTheme.Typography.metadata)
-                        .foregroundStyle(AppTheme.Text.mutedColor)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            Spacer()
+        InspectorSectionHeading(title: title, expanded: expanded, onToggle: onToggle) {
             if let onReset {
                 resetButton(onReset: onReset, help: resetHelp)
             }
@@ -1089,11 +1082,7 @@ struct InspectorView: View {
     }
 
     func sectionTitleLabel(title: String) -> some View {
-        Text(title.uppercased())
-            .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
-            .tracking(AppTheme.Tracking.wide)
-            .foregroundStyle(AppTheme.Text.mutedColor)
-            .fixedSize()
+        InspectorSectionLabel(title: title)
     }
 
     func resetButton(onReset: @escaping () -> Void, help: String?) -> some View {
@@ -1106,21 +1095,14 @@ struct InspectorView: View {
         }
         .buttonStyle(.plain)
         .help(help ?? "Reset")
+        .accessibilityLabel(help ?? "Reset")
     }
 
     func propertyRow<Trailing: View>(
         label: String,
         @ViewBuilder trailing: () -> Trailing
     ) -> some View {
-        HStack(spacing: AppTheme.Spacing.sm) {
-            Text(label)
-                .interfaceFont(size: AppTheme.Typography.ui)
-                .foregroundStyle(AppTheme.Text.secondaryColor)
-                .lineLimit(1)
-                .fixedSize()
-            Spacer()
-            trailing()
-        }
+        InspectorFormRow(label: label, trailing: trailing)
     }
 
     // MARK: - Flip
@@ -1153,7 +1135,7 @@ struct InspectorView: View {
                 }
             }
         }
-        .frame(height: AppTheme.Timeline.keyframeRowHeight)
+        .frame(minHeight: AppTheme.Timeline.keyframeRowHeight)
     }
 
     private func iconToggleButton(
@@ -1205,7 +1187,7 @@ struct InspectorView: View {
                 }
             }
         }
-        .frame(height: AppTheme.Timeline.keyframeRowHeight)
+        .frame(minHeight: AppTheme.Timeline.keyframeRowHeight)
         .opacity(disabled ? AppTheme.Opacity.settingsWindow : AppTheme.Opacity.opaque)
     }
 
@@ -1330,8 +1312,7 @@ struct InspectorView: View {
             }
             plainMetadataRow(
                 label: "Path",
-                value: asset.url.path,
-                truncate: .middle
+                value: asset.url.path
             )
         }
     }

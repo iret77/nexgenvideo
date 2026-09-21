@@ -17,6 +17,7 @@ struct InspectorPositionFields: View {
                 range: -10...10,
                 displayMultiplier: canvasW,
                 format: "%.0f",
+                accessibilityName: "Position X",
                 fieldWidth: 36,
                 trailingLabel: "X",
                 onChanged: { newX in apply(setX: newX, setY: nil) }
@@ -27,6 +28,7 @@ struct InspectorPositionFields: View {
                 range: -10...10,
                 displayMultiplier: canvasH,
                 format: "%.0f",
+                accessibilityName: "Position Y",
                 fieldWidth: 36,
                 trailingLabel: "Y",
                 onChanged: { newY in apply(setX: nil, setY: newY) }

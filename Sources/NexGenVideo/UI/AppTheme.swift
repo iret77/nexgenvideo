@@ -393,6 +393,10 @@ enum AppTheme {
         static let reviewSourceLabelWidth: CGFloat = 110
         static let reviewRemixPopoverWidth: CGFloat = 340
         static let inspectorPopoverWidth: CGFloat = 340
+        static let inspectorLabelWidth: CGFloat = 104
+        static let inspectorInlineMinWidth: CGFloat = 220
+        static let inspectorActionInlineMinWidth: CGFloat = 300
+        static let inspectorSliderMinWidth: CGFloat = 44
         static let fontPickerMaxWidth: CGFloat = 160
         static let generationReferenceWidth: CGFloat = 72
         static let generationReferenceHeight: CGFloat = 41

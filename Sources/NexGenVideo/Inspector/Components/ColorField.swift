@@ -19,6 +19,8 @@ struct ColorField: View {
                 )
         }
         .buttonStyle(.plain)
+        .inspectorControlChrome()
+        .accessibilityLabel("Color")
     }
 
     private func open() {

@@ -148,39 +148,37 @@ extension InspectorView {
     ) -> some View {
         let expanded = !collapsedAdjustSections.contains(title)
         let hasEffects = anyAdjusted(effectIds, clips: clips)
-        let isOn = !hasEffects || sectionEnabled(effectIds, clips: clips)
+        let enablement = sectionEnablement(effectIds, clips: clips)
         VStack(spacing: AppTheme.Spacing.none) {
-            HStack(spacing: AppTheme.Spacing.sm) {
-                Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                    .interfaceFont(size: AppTheme.Typography.metadata)
-                    .foregroundStyle(AppTheme.Text.mutedColor)
-                    .frame(width: AppTheme.IconSize.xxs, alignment: .center)
-                sectionTitleLabel(title: title)
-                Spacer(minLength: AppTheme.Spacing.sm)
+            InspectorSectionHeading(title: title, expanded: expanded, onToggle: {
+                if expanded { collapsedAdjustSections.insert(title) }
+                else { collapsedAdjustSections.remove(title) }
+            }) {
                 if hasEffects {
                     resetButton(
                         onReset: { resetEffects(effectIds, clips: clips, actionName: "Reset \(title)") },
                         help: "Reset \(title.lowercased())"
                     )
                 }
-                Toggle("", isOn: Binding(
-                    get: { isOn },
-                    set: { setSectionEnabled(effectIds, clips: clips, enabled: $0) }
-                ))
-                .toggleStyle(.checkbox)
-                .labelsHidden()
+                Button {
+                    setSectionEnabled(effectIds, clips: clips, enabled: enablement != .on)
+                } label: {
+                    Image(systemName: enablement.iconName)
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .foregroundStyle(hasEffects ? AppTheme.Text.secondaryColor : AppTheme.Text.mutedColor)
+                        .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.sm)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
                 .disabled(!hasEffects)
                 .help(hasEffects ? "Enable \(title.lowercased())" : "No adjustments yet")
+                .accessibilityLabel("Enable \(title)")
+                .accessibilityValue(enablement.accessibilityValue)
             }
             .padding(.horizontal, AppTheme.Spacing.lg)
             .padding(.vertical, AppTheme.Spacing.smMd)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(AppTheme.Background.raisedColor)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                if expanded { collapsedAdjustSections.insert(title) }
-                else { collapsedAdjustSections.remove(title) }
-            }
             .overlay(alignment: .bottom) {
                 if expanded { sectionDivider }
             }
@@ -206,19 +204,10 @@ extension InspectorView {
     private func adjustSubgroup(title: String, controls: [EffectControl], clips: [Clip]) -> some View {
         let expanded = !collapsedAdjustSubgroups.contains(title)
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-            HStack(spacing: AppTheme.Spacing.xs) {
-                Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                    .interfaceFont(size: AppTheme.Typography.metadata)
-                    .foregroundStyle(AppTheme.Text.mutedColor)
-                    .frame(width: AppTheme.IconSize.xxs, alignment: .center)
-                sectionTitleLabel(title: title)
-                Spacer(minLength: 0)
-            }
-            .contentShape(Rectangle())
-            .onTapGesture {
+            InspectorSectionHeading(title: title, expanded: expanded, onToggle: {
                 if expanded { collapsedAdjustSubgroups.insert(title) }
                 else { collapsedAdjustSubgroups.remove(title) }
-            }
+            })
             if expanded {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                     ForEach(controls, id: \.self) { control in
@@ -405,40 +394,42 @@ extension InspectorView {
             .buttonStyle(.plain)
             .help(path ?? "Choose a .cube LUT file")
         }
-        .frame(height: AppTheme.Timeline.keyframeRowHeight)
+        .frame(minHeight: AppTheme.Timeline.keyframeRowHeight)
     }
 
     private func lutIntensityRow(clips: [Clip]) -> some View {
         let spec = EffectRegistry.descriptor(id: "color.lut")?.params.first { $0.key == "intensity" }
         let range = spec?.range ?? 0...1
         let value = lutIntensity(in: clips)
-        return HStack(spacing: AppTheme.Spacing.sm) {
-            Text("Intensity")
-                .interfaceFont(size: AppTheme.Typography.ui)
-                .foregroundStyle(AppTheme.Text.secondaryColor)
-                .lineLimit(1)
-                .frame(width: AppTheme.Slider.labelColumn, alignment: .leading)
-            AdjustSlider(
-                value: value, range: range, defaultValue: spec?.defaultValue ?? 1,
-                onChanged: { setLUTIntensity($0, clips: clips, commit: false) },
-                onCommit: { setLUTIntensity($0, clips: clips, commit: true) }
-            )
-            ScrubbableNumberField(
-                value: value, range: range, displayMultiplier: 100, format: "%.0f",
-                valueSuffix: "%", dragSensitivity: 0.5, fieldWidth: 50,
-                onChanged: { setLUTIntensity($0 / 100, clips: clips, commit: false) }
-            ) { setLUTIntensity($0 / 100, clips: clips, commit: true) }
+        return InspectorFormRow(label: "Intensity") {
+            HStack(spacing: AppTheme.Spacing.sm) {
+                AdjustSlider(
+                    value: value, range: range, defaultValue: spec?.defaultValue ?? 1,
+                    accessibilityName: "LUT intensity",
+                    onChanged: { setLUTIntensity($0, clips: clips, commit: false) },
+                    onCommit: { setLUTIntensity($0, clips: clips, commit: true) }
+                )
+                .frame(minWidth: AppTheme.ComponentSize.inspectorSliderMinWidth)
+                ScrubbableNumberField(
+                    value: value, range: range, displayMultiplier: 100, format: "%.0f",
+                    valueSuffix: "%", accessibilityName: "LUT intensity",
+                    dragSensitivity: 0.5, fieldWidth: 50,
+                    onChanged: { setLUTIntensity($0, clips: clips, commit: false) }
+                ) { setLUTIntensity($0, clips: clips, commit: true) }
+            }
         }
-        .frame(height: AppTheme.Timeline.keyframeRowHeight)
+        .frame(minHeight: AppTheme.Timeline.keyframeRowHeight)
     }
 
     private func lutPath(in clips: [Clip]) -> String? {
         (clips.first?.effects ?? []).first { $0.type == "color.lut" }?.params["path"]?.string
     }
 
-    private func lutIntensity(in clips: [Clip]) -> Double {
-        (clips.first?.effects ?? []).first { $0.type == "color.lut" }?
-            .params["intensity"]?.resolved(at: 0, default: 1) ?? 1
+    private func lutIntensity(in clips: [Clip]) -> Double? {
+        sharedClipValue(clips) { clip in
+            (clip.effects ?? []).first { $0.type == "color.lut" }?
+                .params["intensity"]?.resolved(at: 0, default: 1) ?? 1
+        }
     }
 
     private func chooseLUT(clips: [Clip]) {
@@ -487,31 +478,32 @@ extension InspectorView {
         if let descriptor = EffectRegistry.descriptor(id: control.effectId),
            let spec = descriptor.params.first(where: { $0.key == control.paramKey }) {
             let label = control.label ?? spec.label
-            HStack(spacing: AppTheme.Spacing.sm) {
-                Text(label)
-                    .interfaceFont(size: AppTheme.Typography.ui)
-                    .foregroundStyle(AppTheme.Text.secondaryColor)
-                    .lineLimit(1)
-                    .frame(width: AppTheme.Slider.labelColumn, alignment: .leading)
-                AdjustSlider(
-                    value: sharedClipValue(clips) { controlValue($0, control, spec) } ?? spec.defaultValue,
-                    range: spec.range,
-                    gradient: control.gradient,
-                    defaultValue: spec.defaultValue,
-                    onChanged: { setControlParam(control, label: label, value: $0, clips: clips, commit: false) },
-                    onCommit: { setControlParam(control, label: label, value: $0, clips: clips, commit: true) }
-                )
-                ScrubbableNumberField(
-                    value: sharedClipValue(clips) { controlValue($0, control, spec) },
-                    range: spec.range,
-                    format: effectParamFormat(spec),
-                    valueSuffix: spec.unit.isEmpty ? "" : " \(spec.unit)",
-                    dragSensitivity: effectParamSensitivity(spec),
-                    fieldWidth: 50,
-                    onChanged: { setControlParam(control, label: label, value: $0, clips: clips, commit: false) }
-                ) { setControlParam(control, label: label, value: $0, clips: clips, commit: true) }
+            let value = sharedClipValue(clips) { controlValue($0, control, spec) }
+            InspectorFormRow(label: label) {
+                HStack(spacing: AppTheme.Spacing.sm) {
+                    AdjustSlider(
+                        value: value,
+                        range: spec.range,
+                        gradient: control.gradient,
+                        defaultValue: spec.defaultValue,
+                        accessibilityName: label,
+                        onChanged: { setControlParam(control, label: label, value: $0, clips: clips, commit: false) },
+                        onCommit: { setControlParam(control, label: label, value: $0, clips: clips, commit: true) }
+                    )
+                    .frame(minWidth: AppTheme.ComponentSize.inspectorSliderMinWidth)
+                    ScrubbableNumberField(
+                        value: value,
+                        range: spec.range,
+                        format: effectParamFormat(spec),
+                        valueSuffix: spec.unit.isEmpty ? "" : " \(spec.unit)",
+                        accessibilityName: label,
+                        dragSensitivity: effectParamSensitivity(spec),
+                        fieldWidth: 50,
+                        onChanged: { setControlParam(control, label: label, value: $0, clips: clips, commit: false) }
+                    ) { setControlParam(control, label: label, value: $0, clips: clips, commit: true) }
+                }
             }
-            .frame(height: AppTheme.Timeline.keyframeRowHeight)
+            .frame(minHeight: AppTheme.Timeline.keyframeRowHeight)
         }
     }
 
@@ -567,8 +559,34 @@ extension InspectorView {
         }
     }
 
-    private func sectionEnabled(_ ids: Set<String>, clips: [Clip]) -> Bool {
-        !clips.contains { ($0.effects ?? []).contains { ids.contains($0.type) && !$0.enabled } }
+    private enum SectionEnablement {
+        case on
+        case off
+        case mixed
+
+        var iconName: String {
+            switch self {
+            case .on: "checkmark.square"
+            case .off: "square"
+            case .mixed: "minus.square"
+            }
+        }
+
+        var accessibilityValue: String {
+            switch self {
+            case .on: "On"
+            case .off: "Off"
+            case .mixed: "Mixed"
+            }
+        }
+    }
+
+    private func sectionEnablement(_ ids: Set<String>, clips: [Clip]) -> SectionEnablement {
+        let states = clips.flatMap { clip in
+            (clip.effects ?? []).filter { ids.contains($0.type) }.map(\.enabled)
+        }
+        guard states.contains(false) else { return .on }
+        return states.contains(true) ? .mixed : .off
     }
 
     private func setSectionEnabled(_ ids: Set<String>, clips: [Clip], enabled: Bool) {
