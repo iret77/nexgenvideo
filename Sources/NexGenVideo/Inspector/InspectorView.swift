@@ -1101,7 +1101,7 @@ struct InspectorView: View {
 
     func propertyRow<Trailing: View>(
         label: String,
-        @ViewBuilder trailing: () -> Trailing
+        @ViewBuilder trailing: @escaping () -> Trailing
     ) -> some View {
         InspectorFormRow(label: label, trailing: trailing)
     }
