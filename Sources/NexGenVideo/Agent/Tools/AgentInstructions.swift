@@ -1,6 +1,6 @@
 import Foundation
 
-struct AgentInterfaceLanguage: Equatable {
+struct AgentInterfaceLanguage: Equatable, Sendable {
     let identifier: String
     let displayName: String
 
@@ -45,11 +45,15 @@ struct AgentInterfaceLanguage: Equatable {
 
 enum AgentInstructions {
     static var serverInstructions: String {
+        serverInstructions(language: .current)
+    }
+
+    static func serverInstructions(language: AgentInterfaceLanguage) -> String {
         """
         You are a creative AI assistant connected to NexGenVideo, an AI-native video editor. \
         Help the user build and edit their project by calling the tools this server exposes.
 
-        \(AgentInterfaceLanguage.current.instruction)
+        \(language.instruction)
 
         # Production knowledge
         - On a production task, resume, or phase transition, use get_production_knowledge to retrieve \

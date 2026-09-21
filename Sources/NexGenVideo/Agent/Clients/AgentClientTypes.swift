@@ -41,10 +41,11 @@ struct AnthropicToolSchema: @unchecked Sendable {
 enum AnthropicStreamEvent: Sendable {
     case textDelta(String)
     case toolUseComplete(id: String, name: String, inputJSON: String)
+    case usage(AgentRuntimeUsage)
     case messageStop(stopReason: AnthropicStopReason)
 }
 
-enum AnthropicClientError: LocalizedError {
+enum AnthropicClientError: LocalizedError, Sendable {
     case missingAPIKey
     case httpError(status: Int, body: String)
     case streamError(String)
@@ -103,6 +104,7 @@ enum AnthropicSSE {
                 if let message = event["message"] as? [String: Any],
                    let usage = message["usage"] as? [String: Any] {
                     AgentUsageLog.record(usage)
+                    continuation.yield(.usage(runtimeUsage(usage)))
                 }
 
             case "content_block_start":
@@ -136,6 +138,10 @@ enum AnthropicSSE {
                 }
 
             case "message_delta":
+                if let usage = event["usage"] as? [String: Any] {
+                    AgentUsageLog.record(usage)
+                    continuation.yield(.usage(runtimeUsage(usage)))
+                }
                 if let delta = event["delta"] as? [String: Any],
                    let raw = delta["stop_reason"] as? String {
                     continuation.yield(.messageStop(stopReason: AnthropicStopReason(rawValue: raw) ?? .other))
@@ -150,6 +156,16 @@ enum AnthropicSSE {
             default: break
             }
         }
+    }
+
+    private static func runtimeUsage(_ usage: [String: Any]) -> AgentRuntimeUsage {
+        AgentRuntimeUsage(
+            inputTokens: usage["input_tokens"] as? Int,
+            outputTokens: usage["output_tokens"] as? Int,
+            cacheCreationInputTokens: usage["cache_creation_input_tokens"] as? Int,
+            cacheReadInputTokens: usage["cache_read_input_tokens"] as? Int,
+            costUSD: nil
+        )
     }
 }
 

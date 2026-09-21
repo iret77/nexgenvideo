@@ -13,6 +13,9 @@ final class AgentService {
     private var apiKeyGeneration = 0
     private let hostFollowUpReadinessOverride: (@MainActor () -> AgentStreamError?)?
     private let embeddedHostFollowUpSender: (@MainActor (String, [[String: Any]]) -> Bool)?
+    private let runtimeAdapterFactory: (@MainActor (AgentBackend) -> (any AgentRuntimeAdapter)?)?
+    private let runtimeReadinessOverride: (@MainActor () -> AgentStreamError?)?
+    private let runtimeHostContextOverride: (@MainActor () throws -> AgentRuntimeHostContext)?
 
     private(set) var backend: AgentBackend
     private(set) var claudeStatus: ClaudeCodeLocator.Status?
@@ -24,11 +27,17 @@ final class AgentService {
         backend: AgentBackend = AgentBackendPreference.selected,
         refreshBackendStatusOnInit: Bool = true,
         hostFollowUpReadinessOverride: (@MainActor () -> AgentStreamError?)? = nil,
-        embeddedHostFollowUpSender: (@MainActor (String, [[String: Any]]) -> Bool)? = nil
+        embeddedHostFollowUpSender: (@MainActor (String, [[String: Any]]) -> Bool)? = nil,
+        runtimeAdapterFactory: (@MainActor (AgentBackend) -> (any AgentRuntimeAdapter)?)? = nil,
+        runtimeReadinessOverride: (@MainActor () -> AgentStreamError?)? = nil,
+        runtimeHostContextOverride: (@MainActor () throws -> AgentRuntimeHostContext)? = nil
     ) {
         self.backend = backend
         self.hostFollowUpReadinessOverride = hostFollowUpReadinessOverride
         self.embeddedHostFollowUpSender = embeddedHostFollowUpSender
+        self.runtimeAdapterFactory = runtimeAdapterFactory
+        self.runtimeReadinessOverride = runtimeReadinessOverride
+        self.runtimeHostContextOverride = runtimeHostContextOverride
         apiKeyObserver = NotificationCenter.default.addObserver(
             forName: .anthropicAPIKeyChanged,
             object: nil,
@@ -85,6 +94,7 @@ final class AgentService {
             }.value
             guard let self, self.apiKeyGeneration == generation else { return }
             self.apiKey = key
+            self.apiKeyGeneration &+= 1
             self.isCheckingAPIKey = false
         }
     }
@@ -118,9 +128,18 @@ final class AgentService {
     }
 
     var canStream: Bool {
+        runtimeReadinessError == nil
+    }
+
+    private var runtimeReadinessError: AgentStreamError? {
+        if let runtimeReadinessOverride { return runtimeReadinessOverride() }
         switch backend {
-        case .anthropicAPI: return hasApiKey
-        case .claudeCode: return claudeStatus?.isAuthenticated == true
+        case .anthropicAPI:
+            return hasApiKey ? nil : .upstream("Add an Anthropic API key in Settings to start.")
+        case .claudeCode:
+            return claudeStatus?.isAuthenticated == true
+                ? nil
+                : .upstream(setupPrompt + " Agent settings.")
         }
     }
 
@@ -1236,12 +1255,7 @@ final class AgentService {
                 )
             )
         )
-        if claudeRuntimeEnabled, let runtime = _claudeRuntime {
-            runtime.appendTranscriptOnly(message)
-            messages = runtime.messages
-        } else {
-            messages.append(message)
-        }
+        messages.append(message)
         checkpointCurrentSession()
     }
 
@@ -1837,10 +1851,6 @@ final class AgentService {
         guard let sessionID = origin.chatSessionID else { return }
         if sessionID == currentSessionId {
             guard Self.replacePendingSpendToolResult(result, in: &messages, marker: marker) else { return }
-            _claudeRuntime?.replaceToolResult(
-                containingText: marker,
-                with: result
-            )
             syncMessagesIntoCurrentSession()
             onSessionsChanged?()
             return
@@ -1903,26 +1913,16 @@ final class AgentService {
         defer { hostFollowUpStartInProgress = false }
         prepareSpendToolCallsForFollowUp(from: followUp.origin)
         let followUpText = "Host generation result: \(followUp.text) Continue from this result; do not request the same spend approval again."
-        let started: Bool
-        if claudeRuntimeEnabled {
-            streamError = nil
-            started = embeddedHostFollowUpSender?(
-                followUpText,
-                followUp.imageBlocks
-            ) ?? claudeRuntime.send(
-                    text: followUpText,
-                    imageBlocks: followUp.imageBlocks,
-                    hidden: true
-                )
-            checkpointCurrentSession()
-        } else {
-            started = send(
-                text: followUpText,
-                mentions: [],
-                hidden: true,
-                allowWhileBlocked: true
-            )
-        }
+        let started = embeddedHostFollowUpSender?(
+            followUpText,
+            followUp.imageBlocks
+        ) ?? send(
+            text: followUpText,
+            mentions: [],
+            hidden: true,
+            allowWhileBlocked: true,
+            runtimeImages: Self.runtimeImages(from: followUp.imageBlocks)
+        )
         if started {
             pendingSpendFollowUps.remove(at: followUpIndex)
         } else if streamError == nil {
@@ -1934,10 +1934,10 @@ final class AgentService {
     }
 
     private func prepareHostFollowUp() -> Bool {
-        guard canStream else {
-            streamError = backend == .claudeCode
+        if let readinessError = runtimeReadinessError {
+            streamError = backend == .claudeCode && runtimeReadinessOverride == nil
                 ? .authenticationRequired
-                : .upstream("Add an Anthropic API key in Settings to continue the agent.")
+                : readinessError
             return false
         }
         if let error = hostFollowUpReadinessOverride?() {
@@ -2015,10 +2015,7 @@ final class AgentService {
         case .inAppChat:
             resumeToolCalls(from: origin)
         case .embeddedRuntime:
-            let preservedMessages = messages
-            _claudeRuntime?.stop()
-            messages = preservedMessages
-            _claudeRuntime = nil
+            rotateRuntime()
         case .direct, .externalMCP:
             break
         }
@@ -2373,6 +2370,38 @@ final class AgentService {
     private var toolExecutor: ToolExecutor?
     private var currentTask: Task<Void, Never>?
 
+    @ObservationIgnored
+    private var runtimeAdapter: (any AgentRuntimeAdapter)?
+
+    @ObservationIgnored
+    private var runtimeContextSignature: String?
+
+    @ObservationIgnored
+    private var runtimeSessionID: UUID?
+
+    @ObservationIgnored
+    private var pendingTurnImages: [AgentRuntimeImage] = []
+
+    private(set) var lastRuntimeUsage: AgentRuntimeUsage?
+
+    var runtimeDescriptor: AgentRuntimeDescriptor {
+        if let runtimeAdapter { return runtimeAdapter.descriptor }
+        let toolNames: Set<String> = toolExecutor == nil
+            ? []
+            : Set(ToolDefinitions.all.map { $0.name.rawValue })
+        let pluginDirectories = backend == .claudeCode ? configuredPluginDirectories() : []
+        let externalMCPServers = backend == .claudeCode
+            ? ClaudeCodeRuntime.externalMcpServers()
+            : [:]
+        return backend.runtimeDescriptor(
+            toolNames: toolNames,
+            providerExtensions: configuredProviderExtensions(
+                pluginDirectories: pluginDirectories,
+                externalMCPServers: externalMCPServers
+            )
+        )
+    }
+
     func loadSessions(from projectURL: URL?) {
         // Opening a project tears down any runtime from the previous one: its `claude` process has the
         // OLD working directory, so reusing it would run the new project's turns against the wrong folder.
@@ -2384,8 +2413,7 @@ final class AgentService {
         pendingSpendFollowUps.removeAll()
         currentTask?.cancel()
         currentTask = nil
-        _claudeRuntime?.stop()
-        _claudeRuntime = nil
+        rotateRuntime()
         composerStates.removeAll()
         sessions = ChatSessionStore.load(from: projectURL)
             .filter { !$0.messages.isEmpty }
@@ -2433,8 +2461,7 @@ final class AgentService {
         abandonSpendApproval()
         // The runtime process IS a single conversation kept alive for the whole session — a fresh chat
         // must therefore START a fresh process, or it would silently continue the previous conversation.
-        _claudeRuntime?.stop()
-        _claudeRuntime = nil
+        rotateRuntime()
         syncMessagesIntoCurrentSession()
         if let id = currentSessionId,
            let idx = sessions.firstIndex(where: { $0.id == id }),
@@ -2513,8 +2540,7 @@ final class AgentService {
         messages = sessions[idx].messages
         restoreComposerState(for: id)
         isStreaming = false
-        _claudeRuntime?.stop()
-        _claudeRuntime = nil
+        rotateRuntime()
         streamError = nil
         if currentSpendFollowUp != nil {
             Task { @MainActor [weak self] in self?.resumePendingSpendFollowUp() }
@@ -2550,8 +2576,7 @@ final class AgentService {
                 currentSessionId = next.id
                 messages = next.messages
                 restoreComposerState(for: next.id)
-                _claudeRuntime?.stop()
-                _claudeRuntime = nil
+                rotateRuntime()
             } else {
                 newChat()
                 return
@@ -2594,8 +2619,7 @@ final class AgentService {
                 restoreComposerState(for: currentSessionId)
             }
             isStreaming = false
-            _claudeRuntime?.stop()      // its process belonged to the deleted chat
-            _claudeRuntime = nil
+            rotateRuntime()
         }
         if openSessions.isEmpty { newChat(); return }
         onSessionsChanged?()
@@ -2609,28 +2633,14 @@ final class AgentService {
         mentions: [AgentMention],
         hidden: Bool = false,
         presentation: AgentUserPresentation? = nil,
-        allowWhileBlocked: Bool = false
+        allowWhileBlocked: Bool = false,
+        runtimeImages: [AgentRuntimeImage] = []
     ) -> Bool {
         guard ProcessInfo.processInfo.environment["NGV_DIAGNOSTIC_REPLAY"] == nil else { return false }
+        guard !isStreaming else { return false }
         guard allowWhileBlocked || !isComposerBlocked else { return false }
-        if claudeRuntimeEnabled {
-            guard canStream else {
-                streamError = .upstream(setupPrompt + " Agent settings.")
-                return false
-            }
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return false }
-            guard prepareWorkingCopyForTurn() else { return false }
-            streamError = nil
-            return sendViaClaudeRuntime(
-                trimmed,
-                mentions: mentions,
-                hidden: hidden,
-                presentation: presentation
-            )
-        }
-        guard canStream else {
-            streamError = .upstream("Add an Anthropic API key in Settings to start.")
+        if let readinessError = runtimeReadinessError {
+            streamError = readinessError
             return false
         }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2640,7 +2650,11 @@ final class AgentService {
         let mentionHint = referencedMentions.isEmpty
             ? nil
             : AgentMentionContext.hint(referencedMentions, editor: editor)
-        let hints = [mentionHint, Self.selectionHint(editor: editor)].compactMap(\.self)
+        let hints = [
+            mentionHint,
+            Self.selectionHint(editor: editor),
+            Self.mentionPathNote(referencedMentions, editor: editor),
+        ].compactMap(\.self)
         let contextHint = hints.isEmpty ? nil : hints.joined(separator: " ")
 
         resolveOrphanToolUses()
@@ -2651,7 +2665,8 @@ final class AgentService {
         ))
         checkpointCurrentSession()
         streamError = nil
-        kickOffStream()
+        pendingTurnImages = runtimeImages
+        kickOffRuntimeTurn()
         return true
     }
 
@@ -2695,65 +2710,18 @@ final class AgentService {
     func cancel() {
         // Gate approval remains open because its tool call has already returned.
         abandonSpendApproval()
-        if claudeRuntimeEnabled {
-            currentTask?.cancel()          // a pending attachment encode
-            currentTask = nil
-            _claudeRuntime?.stop()
-            _claudeRuntime = nil           // next send rebuilds + `--resume`s this chat
-            isStreaming = false
-            return
+        if let currentSessionId {
+            runtimeAdapter?.cancel(sessionID: currentSessionId)
         }
         currentTask?.cancel()
         currentTask = nil
+        runtimeAdapter = nil
+        runtimeSessionID = nil
+        runtimeContextSignature = nil
         isStreaming = false
     }
 
-    // MARK: - Claude Code runtime (Stufe B)
-
-    private var claudeRuntimeEnabled: Bool {
-        backend == .claudeCode
-    }
-
-    @ObservationIgnored
-    private var _claudeRuntime: ClaudeCodeRuntime?
-
-    /// The embedded Claude Code runtime for the CURRENT chat, built lazily so its seed + `--resume`
-    /// reflect that chat. Alive across the chat's turns; a switch / cancel / reload rotates it.
-    private var claudeRuntime: ClaudeCodeRuntime {
-        _claudeRuntime ?? makeClaudeRuntime()
-    }
-
-    @discardableResult
-    private func makeClaudeRuntime() -> ClaudeCodeRuntime {
-        let boundSessionId = currentSessionId
-        let chat = boundSessionId.flatMap { id in sessions.first { $0.id == id } }
-        let runtime = ClaudeCodeRuntime(
-            pluginDirectories: configuredPluginDirectories(),
-            mcpPort: Int(MCPService.port),
-            appSessionId: boundSessionId,
-            resumeSessionId: chat?.claudeSessionId,
-            seedMessages: messages,
-            resolveWorkingDirectory: { [weak self] in
-                Self.configuredWorkingDirectory(projectURL: self?.editor?.workingRoot)
-            },
-            onSessionId: { [weak self] sid in
-                self?.storeClaudeSessionId(sid, for: boundSessionId)
-            },
-            onResumeFailed: { [weak self] in
-                self?.clearClaudeSessionId(for: boundSessionId)
-            },
-            onAuthenticationRequired: { [weak self] in
-                self?.requireClaudeAuthentication(for: boundSessionId)
-            },
-            onUpdate: { [weak self] messages, isStreaming in
-                guard let self, self.currentSessionId == boundSessionId else { return }
-                self.messages = messages
-                self.isStreaming = isStreaming
-            }
-        )
-        _claudeRuntime = runtime
-        return runtime
-    }
+    // MARK: - Host-owned runtime
 
     private func requireClaudeAuthentication(for sessionId: UUID?) {
         guard currentSessionId == sessionId else { return }
@@ -2766,7 +2734,7 @@ final class AgentService {
         claudeStatus = status
         isCheckingClaude = false
         streamError = .authenticationRequired
-        _claudeRuntime = nil
+        runtimeContextSignature = nil
         NotificationCenter.default.post(name: .claudeCodeStatusChanged, object: status)
     }
 
@@ -2783,68 +2751,7 @@ final class AgentService {
     private func clearClaudeSessionId(for sessionId: UUID?) {
         guard let sessionId, let idx = sessions.firstIndex(where: { $0.id == sessionId }) else { return }
         sessions[idx].claudeSessionId = nil
-        if currentSessionId == sessionId { _claudeRuntime = nil }
-    }
-
-    /// Route a message to the embedded Claude Code runtime. Mirrors the API path's attachment handling
-    /// (`apiMessages`/`inlineImageBlocks`) so uploaded images actually REACH the subprocess instead of
-    /// being dropped: referenced image mentions are inlined as base64 image blocks, and the mention JSON
-    /// + each asset's on-disk path go into the app-context so the agent can Read / inspect_media a
-    /// non-image too.
-    @discardableResult
-    private func sendViaClaudeRuntime(
-        _ trimmed: String,
-        mentions: [AgentMention],
-        hidden: Bool = false,
-        presentation: AgentUserPresentation? = nil
-    ) -> Bool {
-        // One turn at a time per chat: the composer disables send while streaming, but programmatic
-        // callers (kickoffs, pack starters) don't — without this a second send could jump ahead of a
-        // first turn still encoding its attachments, delivering the two out of order. Marking busy NOW
-        // also means a synchronous launch failure (no binary / no project dir) still transitions
-        // true→false, so its error note + the user message get flushed into the chat and the doc dirtied.
-        guard !isStreaming else { return false }
-        isStreaming = true
-        let referenced = AgentMentionContext.referencedMentions(mentions, in: trimmed)
-        guard !referenced.isEmpty else {
-            // No attachments — send synchronously (the selection/plugin context only).
-            let context = Self.selectionHint(editor: editor).map { "<app-context>\($0)</app-context>" }
-            let started = claudeRuntime.send(
-                text: trimmed,
-                context: context,
-                hidden: hidden,
-                presentation: presentation
-            )
-            checkpointCurrentSession()
-            return started
-        }
-        let selection = Self.selectionHint(editor: editor)
-        let mentionHint = AgentMentionContext.hint(referenced, editor: editor)
-        let pathNote = Self.mentionPathNote(referenced, editor: editor)
-        // Encoding is async: fence the turn to the chat that sent it, so a switch / new-chat / second
-        // send during encode can't deliver this turn into a different chat's process.
-        let turn = currentSessionId
-        currentTask?.cancel()
-        currentTask = Task { [weak self] in
-            guard let self else { return }
-            let inlined = await self.inlineImageBlocks(for: referenced)  // base64-encodes off the main actor
-            guard !Task.isCancelled, self.currentSessionId == turn else { return }
-            var parts: [String] = []
-            if let selection { parts.append(selection) }
-            parts.append(mentionHint)
-            if let pathNote { parts.append(pathNote) }
-            if let note = AgentMentionContext.inlineNote(for: inlined) { parts.append(note) }
-            let context = "<app-context>\(parts.joined(separator: " "))</app-context>"
-            self.claudeRuntime.send(
-                text: trimmed,
-                context: context,
-                imageBlocks: inlined.blocks,
-                hidden: hidden,
-                presentation: presentation
-            )
-            self.checkpointCurrentSession()
-        }
-        return true
+        if currentSessionId == sessionId { runtimeContextSignature = nil }
     }
 
     /// The on-disk path of each mentioned library asset, so the runtime agent (which has native Read over
@@ -2873,89 +2780,310 @@ final class AgentService {
         #endif
     }
 
-    private static func configuredWorkingDirectory(projectURL: URL?) -> URL? {
-        projectURL
+    private func configuredProviderExtensions(
+        pluginDirectories: [URL],
+        externalMCPServers: [String: String]
+    ) -> Set<String> {
+        guard backend == .claudeCode else { return [] }
+        return Set(
+            pluginDirectories.map { "claude-code-plugin:\($0.lastPathComponent)" }
+                + externalMCPServers.keys.map { "mcp:\($0)" }
+        )
     }
 
-    private func kickOffStream() {
+    private func runtimeHostContext() throws -> AgentRuntimeHostContext {
+        if let runtimeHostContextOverride {
+            return try runtimeHostContextOverride()
+        }
+        let language = AgentInterfaceLanguage.current
+        guard let editor,
+              let workingRoot = editor.workingRoot else {
+            if editor?.declaredPluginName != nil {
+                throw ToolError("The format-pack project context is unavailable. Reopen the project.")
+            }
+            return .hostOwned(interfaceLanguage: language, tools: toolExecutor == nil ? [] : ToolDefinitions.all)
+        }
+        let resolved: PipelineAgentHarness.RuntimeContext
+        if let dataRoot = DataRootResolver.dataRoot(of: workingRoot) {
+            resolved = try editor.pipelineAgentHarness.runtimeContext(
+                dataRoot: dataRoot,
+                declaredPack: editor.declaredPluginName,
+                declaredBinding: editor.declaredPluginBinding
+            )
+        } else {
+            let packID = try ProjectPackGate.requireLiveMutation(
+                projectURL: workingRoot,
+                declaredPack: editor.declaredPluginName,
+                declaredBinding: editor.declaredPluginBinding
+            )
+            resolved = .init(packID: packID, currentPhase: nil, instructions: nil)
+        }
+        let pack: AgentRuntimePackContext?
+        if let packID = resolved.packID {
+            guard let binding = editor.declaredPluginBinding,
+                  binding.id == packID else {
+                throw ToolError("The trusted format-pack declaration is unavailable. Reopen the project.")
+            }
+            pack = .init(
+                id: binding.id,
+                version: binding.version,
+                projectSchema: binding.projectSchema,
+                currentPhase: resolved.currentPhase
+            )
+        } else {
+            pack = nil
+        }
+        return .hostOwned(
+            interfaceLanguage: language,
+            pack: pack,
+            phaseInstructions: resolved.instructions
+        )
+    }
+
+    private func configuredRuntime(
+        sessionID: UUID,
+        hostContext: AgentRuntimeHostContext
+    ) throws -> any AgentRuntimeAdapter {
+        let pluginDirectories = backend == .claudeCode ? configuredPluginDirectories() : []
+        let externalMCPServers = backend == .claudeCode
+            ? ClaudeCodeRuntime.externalMcpServers()
+            : [:]
+        let providerExtensions = configuredProviderExtensions(
+            pluginDirectories: pluginDirectories,
+            externalMCPServers: externalMCPServers
+        )
+        let providerConfiguration = backend == .anthropicAPI
+            ? "\(effectiveModel.rawValue):\(apiKeyGeneration)"
+            : externalMCPServers.keys.sorted().map {
+                "\($0)=\(externalMCPServers[$0] ?? "")"
+            }.joined(separator: ",")
+        let signature = [
+            backend.runtimeID.rawValue,
+            providerConfiguration,
+            sessionID.uuidString,
+            hostContext.systemInstructions,
+            hostContext.toolSchemas.map(\.name).sorted().joined(separator: ","),
+            editor?.workingRoot?.standardizedFileURL.path ?? "",
+            pluginDirectories.map { $0.standardizedFileURL.path }.joined(separator: ","),
+            providerExtensions.sorted().joined(separator: ","),
+        ].joined(separator: "\u{1F}")
+        if let runtimeAdapter,
+           runtimeSessionID == sessionID,
+           runtimeContextSignature == signature {
+            return runtimeAdapter
+        }
+        rotateRuntime()
+        let adapter: any AgentRuntimeAdapter
+        if let injected = runtimeAdapterFactory?(backend) {
+            adapter = injected
+        } else {
+            switch backend {
+            case .claudeCode:
+                adapter = ClaudeCodeRuntimeAdapter()
+            case .anthropicAPI:
+                guard let client = selectClient() else {
+                    throw AgentRuntimeContractError.sessionNotStarted
+                }
+                adapter = AnthropicRuntimeAdapter(client: client)
+            }
+        }
+        let providerSessionID = sessions.first { $0.id == sessionID }?.claudeSessionId
+        let request = AgentRuntimeSessionRequest(
+            sessionID: sessionID,
+            providerSessionID: providerSessionID,
+            priorMessages: messages,
+            hostContext: hostContext,
+            workingDirectory: editor?.workingRoot,
+            pluginDirectories: pluginDirectories,
+            providerExtensions: providerExtensions,
+            mcpPort: Int(MCPService.port),
+            executeTool: { [weak self] id, name, inputJSON in
+                guard let self, self.currentSessionId == sessionID else {
+                    return .error("The originating chat session is no longer active.")
+                }
+                guard let executor = self.toolExecutor else {
+                    return .error("Tool executor unavailable.")
+                }
+                return await executor.execute(
+                    name: name,
+                    args: Self.parseJSONObject(inputJSON),
+                    origin: .inAppChat(sessionID: sessionID)
+                )
+            }
+        )
+        if providerSessionID != nil || messages.dropLast().isEmpty == false {
+            try adapter.resume(request)
+        } else {
+            try adapter.start(request)
+        }
+        runtimeAdapter = adapter
+        runtimeSessionID = sessionID
+        runtimeContextSignature = signature
+        return adapter
+    }
+
+    private func rotateRuntime() {
+        if let runtimeSessionID {
+            runtimeAdapter?.end(sessionID: runtimeSessionID)
+        }
+        runtimeAdapter = nil
+        runtimeSessionID = nil
+        runtimeContextSignature = nil
+    }
+
+    private func applyRuntimeEvent(
+        _ event: AgentRuntimeEvent,
+        sessionID: UUID,
+        messageIDs: inout [String: UUID],
+        defaultAssistantID: inout UUID?
+    ) {
+        switch event {
+        case .providerSessionStarted(let providerID):
+            storeClaudeSessionId(providerID, for: sessionID)
+        case .providerSessionInvalidated:
+            clearClaudeSessionId(for: sessionID)
+        case .text(let messageID, let value, _):
+            let id = assistantID(
+                providerMessageID: messageID,
+                messageIDs: &messageIDs,
+                defaultAssistantID: &defaultAssistantID
+            )
+            appendTextDelta(value, toAssistant: id)
+        case .toolCall(let messageID, let id, let name, let inputJSON):
+            let assistantID = assistantID(
+                providerMessageID: messageID,
+                messageIDs: &messageIDs,
+                defaultAssistantID: &defaultAssistantID
+            )
+            appendToolUse(id: id, name: name, inputJSON: inputJSON, toAssistant: assistantID)
+        case .toolResult(let id, let content, let isError):
+            let block = AgentContentBlock.toolResult(
+                toolUseId: id,
+                content: content,
+                isError: isError
+            )
+            if messages.last?.role == .user,
+               messages.last?.blocks.allSatisfy({
+                   if case .toolResult = $0 { return true }
+                   return false
+               }) == true {
+                messages[messages.count - 1].blocks.append(block)
+            } else {
+                messages.append(.init(role: .user, blocks: [block]))
+            }
+            defaultAssistantID = nil
+        case .usage(let usage):
+            lastRuntimeUsage = lastRuntimeUsage?.merging(usage) ?? usage
+        case .error(let failure):
+            if failure.kind == .authenticationRequired, backend == .claudeCode {
+                requireClaudeAuthentication(for: sessionID)
+            } else {
+                streamError = .upstream(failure.message)
+            }
+        case .terminal:
+            break
+        }
+    }
+
+    private func assistantID(
+        providerMessageID: String?,
+        messageIDs: inout [String: UUID],
+        defaultAssistantID: inout UUID?
+    ) -> UUID {
+        if let providerMessageID, let existing = messageIDs[providerMessageID] {
+            return existing
+        }
+        if providerMessageID == nil, let defaultAssistantID {
+            return defaultAssistantID
+        }
+        let message = AgentMessage(role: .assistant, blocks: [])
+        messages.append(message)
+        if let providerMessageID {
+            messageIDs[providerMessageID] = message.id
+        } else {
+            defaultAssistantID = message.id
+        }
+        return message.id
+    }
+
+    private func kickOffRuntimeTurn() {
         currentTask?.cancel()
+        lastRuntimeUsage = nil
         isStreaming = true
+        let boundSessionID = currentSessionId
+        let transientImages = pendingTurnImages
+        pendingTurnImages = []
         currentTask = Task { [weak self] in
             defer {
-                self?.isStreaming = false
-                self?.syncMessagesIntoCurrentSession()
-                self?.onSessionsChanged?()
+                guard let self, self.currentSessionId == boundSessionID else { return }
+                self.isStreaming = false
+                self.syncMessagesIntoCurrentSession()
+                self.onSessionsChanged?()
             }
-            await self?.runLoop()
+            await self?.runRuntimeTurn(
+                sessionID: boundSessionID,
+                transientImages: transientImages
+            )
         }
     }
 
-    private func runLoop() async {
-        guard let client = selectClient() else {
-            streamError = .upstream("No backend available.")
+    private func runRuntimeTurn(
+        sessionID: UUID?,
+        transientImages: [AgentRuntimeImage]
+    ) async {
+        guard let sessionID, currentSessionId == sessionID else { return }
+        let hostContext: AgentRuntimeHostContext
+        do {
+            hostContext = try runtimeHostContext()
+        } catch {
+            streamError = .upstream(error.localizedDescription)
             return
         }
-        let origin = currentSessionId.map {
-            ToolCallOrigin.inAppChat(sessionID: $0)
-        } ?? .direct
-        let tools = ToolDefinitions.all.map {
-            AnthropicToolSchema(name: $0.name.rawValue, description: $0.description, inputSchema: $0.inputSchema)
+        let runtimeMessages = await runtimeMessages(transientImages: transientImages)
+        guard !Task.isCancelled,
+              currentSessionId == sessionID,
+              let currentMessage = runtimeMessages.last else { return }
+        let adapter: any AgentRuntimeAdapter
+        do {
+            adapter = try configuredRuntime(
+                sessionID: sessionID,
+                hostContext: hostContext
+            )
+        } catch {
+            streamError = .upstream(error.localizedDescription)
+            return
         }
-
-        loop: while !Task.isCancelled {
-            resolveOrphanToolUses()
-            let apiMsgs = await apiMessages()
-            let assistant = AgentMessage(role: .assistant, blocks: [])
-            messages.append(assistant)
-            let assistantID = assistant.id
-
-            do {
-                let stream = client.stream(
-                    system: AgentInstructions.serverInstructions,
-                    tools: tools,
-                    messages: apiMsgs
+        let turnID = UUID()
+        var fence = AgentRuntimeEventFence()
+        fence.begin(sessionID: sessionID, turnID: turnID)
+        do {
+            let stream = try adapter.send(.init(
+                sessionID: sessionID,
+                turnID: turnID,
+                messages: runtimeMessages,
+                currentMessage: currentMessage
+            ))
+            var messageIDs: [String: UUID] = [:]
+            var defaultAssistantID: UUID?
+            for await envelope in stream {
+                guard !Task.isCancelled,
+                      currentSessionId == sessionID,
+                      fence.accepts(envelope) else { continue }
+                applyRuntimeEvent(
+                    envelope.event,
+                    sessionID: sessionID,
+                    messageIDs: &messageIDs,
+                    defaultAssistantID: &defaultAssistantID
                 )
-
-                var stopReason: AnthropicStopReason = .endTurn
-
-                for try await event in stream {
-                    let diagnosticID = HangDiagnosticRecorder.shared.record(.apiApply)
-                    defer {
-                        HangDiagnosticRecorder.shared.record(.apiApply, correlation: diagnosticID, end: true)
-                    }
-                    try Task.checkCancellation()
-                    switch event {
-                    case .textDelta(let chunk):
-                        appendTextDelta(chunk, toAssistant: assistantID)
-                    case .toolUseComplete(let id, let name, let inputJSON):
-                        appendToolUse(id: id, name: name, inputJSON: inputJSON, toAssistant: assistantID)
-                    case .messageStop(let reason):
-                        stopReason = reason
-                    }
-                }
-
-                if stopReason == .toolUse {
-                    if await runPendingToolUses(
-                        assistantID: assistantID,
-                        origin: origin
-                    ) {
-                        break loop
-                    }
-                    continue loop
-                }
-                break loop
-            } catch is CancellationError {
-                dropEmptyAssistantTurn(id: assistantID)
-                break loop
-            } catch let err as AgentStreamError {
-                dropEmptyAssistantTurn(id: assistantID)
-                streamError = err
-                break loop
-            } catch {
-                dropEmptyAssistantTurn(id: assistantID)
-                streamError = .upstream(error.localizedDescription)
-                break loop
             }
+            guard fence.receivedTerminal || Task.isCancelled else {
+                streamError = .upstream("The agent runtime ended without a terminal state.")
+                return
+            }
+        } catch is CancellationError {
+            adapter.cancel(sessionID: sessionID)
+        } catch {
+            streamError = .upstream(error.localizedDescription)
         }
     }
 
@@ -3150,19 +3278,22 @@ final class AgentService {
         }
     }
 
-    private func apiMessages() async -> [AnthropicMessage] {
-        var result: [AnthropicMessage] = []
-        for msg in messages {
-            var content = msg.blocks.compactMap(Self.contentBlockJSON)
+    private func runtimeMessages(transientImages: [AgentRuntimeImage]) async -> [AgentRuntimeMessage] {
+        var result: [AgentRuntimeMessage] = []
+        for (index, msg) in messages.enumerated() {
+            var content = msg.blocks.compactMap(Self.runtimeContent)
             if msg.role == .user, !msg.mentions.isEmpty || msg.contextHint != nil {
                 let inlined = await inlineImageBlocks(for: msg.mentions)
                 var hint = msg.contextHint ?? AgentMentionContext.hint(msg.mentions, editor: editor)
                 if let note = AgentMentionContext.inlineNote(for: inlined) { hint += " " + note }
-                content.insert(contentsOf: inlined.blocks, at: 0)
-                content.insert(["type": "text", "text": hint], at: 0)
+                content.insert(contentsOf: Self.runtimeImages(from: inlined.blocks).map(AgentRuntimeContent.image), at: 0)
+                content.insert(.text("<app-context>\(hint)</app-context>"), at: 0)
+            }
+            if index == messages.indices.last, msg.role == .user {
+                content.append(contentsOf: transientImages.map(AgentRuntimeContent.image))
             }
             guard !content.isEmpty else { continue }
-            result.append(AnthropicMessage(role: msg.role == .user ? .user : .assistant, content: content))
+            result.append(AgentRuntimeMessage(role: msg.role, content: content))
         }
         return result
     }
@@ -3205,28 +3336,26 @@ final class AgentService {
         return out
     }
 
-    private static func contentBlockJSON(_ block: AgentContentBlock) -> [String: Any]? {
+    private static func runtimeContent(_ block: AgentContentBlock) -> AgentRuntimeContent? {
         switch block {
         case .text(let s):
             guard !s.isEmpty else { return nil }
-            return ["type": "text", "text": s]
+            return .text(s)
         case .toolUse(let id, let name, let inputJSON):
-            return [
-                "type": "tool_use", "id": id, "name": name,
-                "input": parseJSONObject(inputJSON),
-            ]
+            return .toolUse(id: id, name: name, inputJSON: inputJSON)
         case .toolResult(let toolUseId, let content, let isError):
-            let contentJSON: [[String: Any]] = content.map {
-                switch $0 {
-                case .text(let s): return ["type": "text", "text": s]
-                case .image(let base64, let mime):
-                    return ["type": "image", "source": ["type": "base64", "media_type": mime, "data": base64]]
-                }
-            }
-            return [
-                "type": "tool_result", "tool_use_id": toolUseId,
-                "content": contentJSON, "is_error": isError,
-            ]
+            return .toolResult(id: toolUseId, content: content, isError: isError)
+        }
+    }
+
+    private static func runtimeImages(from blocks: [[String: Any]]) -> [AgentRuntimeImage] {
+        blocks.compactMap { block in
+            guard block["type"] as? String == "image",
+                  let source = block["source"] as? [String: Any],
+                  source["type"] as? String == "base64",
+                  let mediaType = source["media_type"] as? String,
+                  let base64 = source["data"] as? String else { return nil }
+            return AgentRuntimeImage(mediaType: mediaType, base64: base64)
         }
     }
 
