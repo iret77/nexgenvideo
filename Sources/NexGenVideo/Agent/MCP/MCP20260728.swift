@@ -79,13 +79,13 @@ enum MCP20260728 {
             switch value {
             case is NSNull: return .null
             case let value as Bool: return .bool(value)
-            case let value as Int: return .int(value)
             case let value as NSNumber:
                 let number = value.doubleValue
                 if let integer = ToolIntegerArgument.exact(value) {
                     return .int(integer)
                 }
                 return .double(number)
+            case let value as Int: return .int(value)
             case let value as Double: return .double(value)
             case let value as String: return .string(value)
             case let value as [Any]: return .array(value.map(fromAny))
