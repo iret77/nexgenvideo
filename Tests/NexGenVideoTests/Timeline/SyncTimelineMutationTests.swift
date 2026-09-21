@@ -55,7 +55,7 @@ struct SyncTimelineMutationTests {
         let referenceSamples = signal(count: 2_000, seed: 101)
         let targetSamples = Array(referenceSamples[300..<1_500])
         let reference = Fixtures.clip(id: "reference", mediaRef: "ref", start: 0, duration: 300)
-        let target = Fixtures.clip(id: "target", mediaRef: "target", start: 500, duration: 300)
+        let target = Fixtures.clip(id: "target", mediaRef: "target", start: 300, duration: 300)
         let editor = EditorViewModel()
         editor.timeline = Fixtures.timeline(tracks: [
             Fixtures.videoTrack(clips: [reference]),
@@ -78,7 +78,7 @@ struct SyncTimelineMutationTests {
         let success = try #require(report.synced.first)
         #expect(success.method == .audio)
         #expect(success.reason.contains("rates differ"))
-        #expect(abs(success.offsetFrames + 410) <= 1)
+        #expect(abs(success.offsetFrames + 210) <= 1)
     }
 
     @Test func captureDateWithoutAudioNeverMovesAClip() async throws {
