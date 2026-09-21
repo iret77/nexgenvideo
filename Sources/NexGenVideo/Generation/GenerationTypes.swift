@@ -39,7 +39,30 @@ struct GenerationPricingInput: Sendable, Equatable {
     let resolution: String?
     let quality: String?
     let promptCharacterCount: Int
+    let promptUTF8ByteCount: Int
     let generateAudio: Bool?
+
+    init(
+        modelId: String,
+        modality: GenerationRequest.Modality,
+        durationSeconds: Double?,
+        outputCount: Int,
+        resolution: String?,
+        quality: String?,
+        promptCharacterCount: Int,
+        promptUTF8ByteCount: Int? = nil,
+        generateAudio: Bool?
+    ) {
+        self.modelId = modelId
+        self.modality = modality
+        self.durationSeconds = durationSeconds
+        self.outputCount = outputCount
+        self.resolution = resolution
+        self.quality = quality
+        self.promptCharacterCount = promptCharacterCount
+        self.promptUTF8ByteCount = max(promptCharacterCount, promptUTF8ByteCount ?? promptCharacterCount)
+        self.generateAudio = generateAudio
+    }
 }
 
 struct GenerationMoney: Codable, Sendable, Equatable {

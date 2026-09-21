@@ -299,14 +299,24 @@ enum EditSubmitter {
             // A provider that takes its references inline (#212) never persists hosted URLs, so
             // `imageURLs` is empty for it and the durable record is `imageURLAssetIds`. Replaying
             // only `imageURLs` would silently turn an image-to-image rerun into plain text-to-image.
-            let replayURLs = (preUploaded?.isEmpty == false) ? preUploaded : nil
-            let refs = replayURLs == nil
+            let hasMask = gen.imageMaskAssetId != nil
+            let replayURLs = !hasMask && preUploaded?.isEmpty == false ? preUploaded : nil
+            let primaryRefs = replayURLs == nil
                 ? try referenceAssets(gen.imageURLAssetIds, editor: editor)
                 : []
-            let refCount = replayURLs?.count ?? refs.count
+            let mask = try referenceAssets(
+                gen.imageMaskAssetId.map { [$0] },
+                editor: editor
+            ).first
+            let refs = primaryRefs + [mask].compactMap { $0 }
+            let refCount = replayURLs?.count ?? primaryRefs.count
             if let err = imageModel.validate(
                 aspectRatio: gen.aspectRatio, resolution: gen.resolution, quality: gen.quality,
-                imageRefCount: refCount, numImages: count
+                imageRefCount: refCount, numImages: count,
+                background: gen.imageBackground,
+                outputFormat: gen.imageOutputFormat,
+                outputCompression: gen.imageOutputCompression,
+                hasMask: hasMask
             ) {
                 throw RerunError.invalid(err)
             }
@@ -327,16 +337,31 @@ enum EditSubmitter {
                 numImages: count,
                 folderId: asset.folderId,
                 buildParams: { uploaded in
-                    .image(ImageGenerationParams(
+                    let primaryCount = replayURLs?.count ?? primaryRefs.count
+                    return .image(ImageGenerationParams(
                         prompt: gen.prompt,
                         aspectRatio: gen.aspectRatio,
                         resolution: gen.resolution,
                         quality: gen.quality,
-                        imageURLs: uploaded,
-                        numImages: count
+                        imageURLs: Array(uploaded.prefix(primaryCount)),
+                        numImages: count,
+                        maskURL: uploaded.count > primaryCount ? uploaded[primaryCount] : nil,
+                        background: gen.imageBackground,
+                        outputFormat: gen.imageOutputFormat,
+                        outputCompression: gen.imageOutputCompression
                     ))
                 },
-                fileExtension: "jpg",
+                snapshotRefs: { input, uploaded in
+                    let primaryCount = replayURLs?.count ?? primaryRefs.count
+                    let primary = Array(uploaded.prefix(primaryCount))
+                    input.imageURLs = primary.isEmpty ? nil : primary
+                    input.imageMaskURL = uploaded.count > primaryCount
+                        ? uploaded[primaryCount]
+                        : nil
+                },
+                fileExtension: gen.imageOutputFormat == "png"
+                    ? "png"
+                    : (gen.imageOutputFormat == "webp" ? "webp" : "jpg"),
                 projectURL: editor.workingRoot,
                 editor: editor,
                 authorization: authorization,
@@ -454,6 +479,7 @@ enum EditSubmitter {
                     resolution: gen.resolution,
                     quality: gen.quality,
                     promptCharacterCount: gen.prompt.count,
+                    promptUTF8ByteCount: gen.prompt.utf8.count,
                     generateAudio: generateAudio
                 ),
                 target: target ?? GenerationService.dispatchTarget(modelId: gen.model),

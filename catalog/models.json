@@ -199,5 +199,159 @@
         }
       }
     ]
+  },
+  {
+    "id": "fal-ai/gpt-image-2.5/flare/text-to-image",
+    "kind": "image",
+    "displayName": "GPT Image 2.5 Flare",
+    "allowedEndpoints": ["fal-ai/gpt-image-2.5/flare/text-to-image"],
+    "responseShape": "images",
+    "uiCapabilities": {
+      "resolutions": ["auto", "1024x768", "768x1024", "1024x1024", "1024x1536", "1536x1024", "1920x1080", "1080x1920", "2560x1440", "1440x2560", "3840x2160", "2160x3840"],
+      "aspectRatios": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "auto"],
+      "qualities": ["auto", "low", "medium", "high", "xhigh", "max"],
+      "supportsImageReference": false,
+      "requiresImageReference": false,
+      "maxReferenceImages": 0,
+      "maxImages": 10,
+      "backgrounds": ["auto", "transparent", "opaque"],
+      "outputFormats": ["png", "jpeg", "webp"],
+      "defaultOutputFormat": "png",
+      "supportsOutputCompression": true,
+      "supportsMask": false,
+      "customSize": {"dimensionMultiple": 16, "maxEdge": 3840, "minPixels": 655360, "maxPixels": 8294400, "minAspectRatio": 0.3333333333333333, "maxAspectRatio": 3.0}
+    },
+    "creditsPerImage": {
+      "1024x768|low": 0.0041, "1024x768|medium": 0.0091, "1024x768|high": 0.0362, "1024x768|xhigh": 0.06420, "1024x768|max": 0.14445,
+      "1024x1024|low": 0.0060, "1024x1024|medium": 0.0133, "1024x1024|high": 0.0528, "1024x1024|xhigh": 0.09366, "1024x1024|max": 0.21072,
+      "1024x1536|low": 0.0048, "1024x1536|medium": 0.0104, "1024x1536|high": 0.0413, "1024x1536|xhigh": 0.07377, "1024x1536|max": 0.16464,
+      "1920x1080|low": 0.0045, "1920x1080|medium": 0.0096, "1920x1080|high": 0.0395, "1920x1080|xhigh": 0.07041, "1920x1080|max": 0.15840,
+      "2560x1440|low": 0.0062, "2560x1440|medium": 0.0144, "2560x1440|high": 0.0554, "2560x1440|xhigh": 0.09828, "2560x1440|max": 0.22110,
+      "3840x2160|low": 0.0112, "3840x2160|medium": 0.0260, "3840x2160|high": 0.1002, "3840x2160|xhigh": 0.17790, "3840x2160|max": 0.40026
+    },
+    "qualities": ["auto", "low", "medium", "high", "xhigh", "max"],
+    "card": {
+      "strengths": ["Fast image generation", "High-resolution output", "Transparent output"],
+      "bestFor": "Default sketches, storyboards, Bible sheets, and frames",
+      "rank": 1,
+      "tags": ["GPT Image 2.5", "text-to-image"]
+    },
+    "offers": [{"provider": "fal", "transport": "api", "providerRef": "openai/gpt-image-2.5/flare/text-to-image", "productionQualityTargetIDs": ["auto", "low", "medium", "high", "xhigh", "max"]}]
+  },
+  {
+    "id": "fal-ai/gpt-image-2.5/flare/edit",
+    "kind": "image",
+    "displayName": "GPT Image 2.5 Flare (edit)",
+    "allowedEndpoints": ["fal-ai/gpt-image-2.5/flare/edit"],
+    "responseShape": "images",
+    "uiCapabilities": {
+      "resolutions": ["auto", "1024x768", "768x1024", "1024x1024", "1024x1536", "1536x1024", "1920x1080", "1080x1920", "2560x1440", "1440x2560", "3840x2160", "2160x3840"],
+      "aspectRatios": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "auto"],
+      "qualities": ["auto", "low", "medium", "high", "xhigh", "max"],
+      "supportsImageReference": true,
+      "requiresImageReference": true,
+      "minReferenceImages": 1,
+      "maxReferenceImages": 16,
+      "maxImages": 10,
+      "backgrounds": ["auto", "transparent", "opaque"],
+      "outputFormats": ["png", "jpeg", "webp"],
+      "defaultOutputFormat": "png",
+      "supportsOutputCompression": true,
+      "supportsMask": true,
+      "customSize": {"dimensionMultiple": 16, "maxEdge": 3840, "minPixels": 655360, "maxPixels": 8294400, "minAspectRatio": 0.3333333333333333, "maxAspectRatio": 3.0}
+    },
+    "creditsPerImage": {
+      "1024x768|low": 0.0124, "1024x768|medium": 0.0174, "1024x768|high": 0.0445,
+      "1024x1024|low": 0.0142, "1024x1024|medium": 0.0215, "1024x1024|high": 0.0610,
+      "1024x1536|low": 0.0131, "1024x1536|medium": 0.0186, "1024x1536|high": 0.0495,
+      "1920x1080|low": 0.0128, "1920x1080|medium": 0.0179, "1920x1080|high": 0.0478,
+      "2560x1440|low": 0.0145, "2560x1440|medium": 0.0227, "2560x1440|high": 0.0636,
+      "3840x2160|low": 0.0195, "3840x2160|medium": 0.0343, "3840x2160|high": 0.1084
+    },
+    "qualities": ["auto", "low", "medium", "high", "xhigh", "max"],
+    "card": {
+      "strengths": ["Up to 16 references", "Mask-guided edits", "Transparent output"],
+      "bestFor": "Default reference-guided Bible sheets and frame edits",
+      "rank": 1,
+      "tags": ["GPT Image 2.5", "edit"]
+    },
+    "offers": [{"provider": "fal", "transport": "api", "providerRef": "openai/gpt-image-2.5/flare/edit", "productionQualityTargetIDs": ["auto", "low", "medium", "high", "xhigh", "max"]}]
+  },
+  {
+    "id": "fal-ai/gpt-image-2.5/sunburst/text-to-image",
+    "kind": "image",
+    "displayName": "GPT Image 2.5 Sunburst",
+    "allowedEndpoints": ["fal-ai/gpt-image-2.5/sunburst/text-to-image"],
+    "responseShape": "images",
+    "uiCapabilities": {
+      "resolutions": ["auto", "1024x768", "768x1024", "1024x1024", "1024x1536", "1536x1024", "1920x1080", "1080x1920", "2560x1440", "1440x2560", "3840x2160", "2160x3840"],
+      "aspectRatios": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "auto"],
+      "qualities": ["auto", "low", "medium", "high", "xhigh", "max"],
+      "supportsImageReference": false,
+      "requiresImageReference": false,
+      "maxReferenceImages": 0,
+      "maxImages": 10,
+      "backgrounds": ["auto", "transparent", "opaque"],
+      "outputFormats": ["png", "jpeg", "webp"],
+      "defaultOutputFormat": "png",
+      "supportsOutputCompression": true,
+      "supportsMask": false,
+      "customSize": {"dimensionMultiple": 16, "maxEdge": 3840, "minPixels": 655360, "maxPixels": 8294400, "minAspectRatio": 0.3333333333333333, "maxAspectRatio": 3.0}
+    },
+    "creditsPerImage": {
+      "1024x768|low": 0.0041, "1024x768|medium": 0.0091, "1024x768|high": 0.0362, "1024x768|xhigh": 0.06420, "1024x768|max": 0.14445,
+      "1024x1024|low": 0.0060, "1024x1024|medium": 0.0133, "1024x1024|high": 0.0528, "1024x1024|xhigh": 0.09366, "1024x1024|max": 0.21072,
+      "1024x1536|low": 0.0048, "1024x1536|medium": 0.0104, "1024x1536|high": 0.0413, "1024x1536|xhigh": 0.07377, "1024x1536|max": 0.16464,
+      "1920x1080|low": 0.0045, "1920x1080|medium": 0.0096, "1920x1080|high": 0.0395, "1920x1080|xhigh": 0.07041, "1920x1080|max": 0.15840,
+      "2560x1440|low": 0.0062, "2560x1440|medium": 0.0144, "2560x1440|high": 0.0554, "2560x1440|xhigh": 0.09828, "2560x1440|max": 0.22110,
+      "3840x2160|low": 0.0112, "3840x2160|medium": 0.0260, "3840x2160|high": 0.1002, "3840x2160|xhigh": 0.17790, "3840x2160|max": 0.40026
+    },
+    "qualities": ["auto", "low", "medium", "high", "xhigh", "max"],
+    "card": {
+      "strengths": ["Precise instruction following", "Identity preservation", "High-resolution output"],
+      "bestFor": "Precision-critical keyframes and identity-sensitive images",
+      "rank": 2,
+      "tags": ["GPT Image 2.5", "text-to-image"]
+    },
+    "offers": [{"provider": "fal", "transport": "api", "providerRef": "openai/gpt-image-2.5/sunburst/text-to-image", "productionQualityTargetIDs": ["auto", "low", "medium", "high", "xhigh", "max"]}]
+  },
+  {
+    "id": "fal-ai/gpt-image-2.5/sunburst/edit",
+    "kind": "image",
+    "displayName": "GPT Image 2.5 Sunburst (edit)",
+    "allowedEndpoints": ["fal-ai/gpt-image-2.5/sunburst/edit"],
+    "responseShape": "images",
+    "uiCapabilities": {
+      "resolutions": ["auto", "1024x768", "768x1024", "1024x1024", "1024x1536", "1536x1024", "1920x1080", "1080x1920", "2560x1440", "1440x2560", "3840x2160", "2160x3840"],
+      "aspectRatios": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "auto"],
+      "qualities": ["auto", "low", "medium", "high", "xhigh", "max"],
+      "supportsImageReference": true,
+      "requiresImageReference": true,
+      "minReferenceImages": 1,
+      "maxReferenceImages": 16,
+      "maxImages": 10,
+      "backgrounds": ["auto", "transparent", "opaque"],
+      "outputFormats": ["png", "jpeg", "webp"],
+      "defaultOutputFormat": "png",
+      "supportsOutputCompression": true,
+      "supportsMask": true,
+      "customSize": {"dimensionMultiple": 16, "maxEdge": 3840, "minPixels": 655360, "maxPixels": 8294400, "minAspectRatio": 0.3333333333333333, "maxAspectRatio": 3.0}
+    },
+    "creditsPerImage": {
+      "1024x768|low": 0.0124, "1024x768|medium": 0.0174, "1024x768|high": 0.0445,
+      "1024x1024|low": 0.0142, "1024x1024|medium": 0.0215, "1024x1024|high": 0.0610,
+      "1024x1536|low": 0.0131, "1024x1536|medium": 0.0186, "1024x1536|high": 0.0495,
+      "1920x1080|low": 0.0128, "1920x1080|medium": 0.0179, "1920x1080|high": 0.0478,
+      "2560x1440|low": 0.0145, "2560x1440|medium": 0.0227, "2560x1440|high": 0.0636,
+      "3840x2160|low": 0.0195, "3840x2160|medium": 0.0343, "3840x2160|high": 0.1084
+    },
+    "qualities": ["auto", "low", "medium", "high", "xhigh", "max"],
+    "card": {
+      "strengths": ["Precise masked edits", "Up to 16 references", "Identity preservation"],
+      "bestFor": "Precision-critical reference edits and hero keyframes",
+      "rank": 2,
+      "tags": ["GPT Image 2.5", "edit"]
+    },
+    "offers": [{"provider": "fal", "transport": "api", "providerRef": "openai/gpt-image-2.5/sunburst/edit", "productionQualityTargetIDs": ["auto", "low", "medium", "high", "xhigh", "max"]}]
   }
 ]

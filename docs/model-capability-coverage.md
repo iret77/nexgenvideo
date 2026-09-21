@@ -1,13 +1,13 @@
 # Model capability coverage
 
-Inventory date: `2026-08-31`. Stale threshold: `120 days`.
+Inventory date: `2026-09-21`. Stale threshold: `120 days`.
 The report is generated offline from the checked-in corpus; web access is not part of CI.
 
 ## Summary
 
 | Offers | Non-fixture | Exact | Inherited | Defensive | Stale | Conflicting | Research-needed | Unclassified |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 87 | 85 | 75 | 1 | 11 | 3 | 4 | 87 | 0 |
+| 89 | 87 | 77 | 1 | 11 | 3 | 4 | 89 | 0 |
 
 `exact` identifies a concrete intrinsic profile. `inherited` is an explicit family/variant lineage miss. `defensive` is used for unknown or deliberately unversioned IDs. Stale and conflicting evidence stays visible and forces research-needed.
 
@@ -46,8 +46,10 @@ These explicit conservative values are the production fallback for unresolved ca
 | image | fal | `fal-ai/flux/schnell` | `fal-ai/flux/schnell` | `flux/schnell/1` | exact | research-needed |
 | image | fal | `fal-ai/nano-banana/edit` | `fal-ai/gemini-25-flash-image/edit` | `gemini-image/unified/2.5-flash` | exact | research-needed |
 | image | google | `gemini-2.5-flash-image` | `fal-ai/gemini-25-flash-image/edit` | `gemini-image/unified/2.5-flash` | exact | research-needed |
-| image | fal | `fal-ai/gpt-image-2` | `fal-ai/gpt-image-2` | `gpt-image/unified/2` | exact | research-needed |
-| image | fal | `openai/gpt-image-2/edit` | `fal-ai/gpt-image-2/edit` | `gpt-image/unified/2` | exact | research-needed |
+| image | fal | `openai/gpt-image-2.5/flare/edit` | `fal-ai/gpt-image-2.5/flare/edit` | `gpt-image/flare-edit/2.5` | exact | research-needed |
+| image | fal | `openai/gpt-image-2.5/flare/text-to-image` | `fal-ai/gpt-image-2.5/flare/text-to-image` | `gpt-image/flare-text-to-image/2.5` | exact | research-needed |
+| image | fal | `openai/gpt-image-2.5/sunburst/edit` | `fal-ai/gpt-image-2.5/sunburst/edit` | `gpt-image/sunburst-edit/2.5` | exact | research-needed |
+| image | fal | `openai/gpt-image-2.5/sunburst/text-to-image` | `fal-ai/gpt-image-2.5/sunburst/text-to-image` | `gpt-image/sunburst-text-to-image/2.5` | exact | research-needed |
 | image | fal | `fal-ai/ideogram/v3` | `fal-ai/ideogram/v3` | `ideogram/text-to-image/3` | exact | research-needed |
 | image | fal | `fal-ai/imagen4` | `fal-ai/imagen4` | `imagen/text-to-image/4` | exact | stale, research-needed |
 | image | fal | `fal-ai/nano-banana` | `fal-ai/nano-banana` | `gemini-image/unified/2.5-flash` | exact | research-needed |
@@ -141,7 +143,6 @@ These explicit conservative values are the production fallback for unresolved ca
 - [fal endpoint metadata: fal-ai/flux-pro/v1.1-ultra](https://api.fal.ai/v1/models?endpoint_id=fal-ai%2Fflux-pro%2Fv1.1-ultra) — Free endpoint metadata lookup; no generation call.
 - [fal endpoint metadata: fal-ai/flux/dev](https://api.fal.ai/v1/models?endpoint_id=fal-ai%2Fflux%2Fdev) — Free endpoint metadata lookup; no generation call.
 - [fal endpoint metadata: fal-ai/flux/schnell](https://api.fal.ai/v1/models?endpoint_id=fal-ai%2Fflux%2Fschnell) — Free endpoint metadata lookup; no generation call.
-- [fal endpoint metadata: fal-ai/gpt-image-2](https://api.fal.ai/v1/models?endpoint_id=fal-ai%2Fgpt-image-2) — Free endpoint metadata lookup; no generation call.
 - [fal endpoint metadata: fal-ai/ideogram/v3](https://api.fal.ai/v1/models?endpoint_id=fal-ai%2Fideogram%2Fv3) — Free endpoint metadata lookup; no generation call.
 - [fal endpoint lookup result: fal-ai/imagen4](https://api.fal.ai/v1/models?endpoint_id=fal-ai%2Fimagen4) — Free endpoint metadata lookup returned HTTP 404; no generation call.
 - [fal endpoint metadata: fal-ai/kling-video/v2.5-turbo/pro/image-to-video](https://api.fal.ai/v1/models?endpoint_id=fal-ai%2Fkling-video%2Fv2.5-turbo%2Fpro%2Fimage-to-video) — Free endpoint metadata lookup; no generation call.
@@ -159,10 +160,14 @@ These explicit conservative values are the production fallback for unresolved ca
 - [fal endpoint metadata: fal-ai/stable-diffusion-v35-large](https://api.fal.ai/v1/models?endpoint_id=fal-ai%2Fstable-diffusion-v35-large) — Free endpoint metadata lookup; no generation call.
 - [fal endpoint metadata: fal-ai/topaz/upscale/video](https://api.fal.ai/v1/models?endpoint_id=fal-ai%2Ftopaz%2Fupscale%2Fvideo) — Free endpoint metadata lookup; no generation call.
 - [fal endpoint metadata: fal-ai/veo3](https://api.fal.ai/v1/models?endpoint_id=fal-ai%2Fveo3) — Free endpoint metadata lookup; no generation call.
-- [fal endpoint metadata: openai/gpt-image-2/edit](https://api.fal.ai/v1/models?endpoint_id=openai%2Fgpt-image-2%2Fedit) — Free endpoint metadata lookup; no generation call.
+- [fal endpoint metadata: openai/gpt-image-2.5/flare/edit](https://api.fal.ai/v1/models?endpoint_id=openai%2Fgpt-image-2.5%2Fflare%2Fedit&expand=openapi-3.0) — Free live endpoint metadata and expanded OpenAPI lookup; no generation call.
+- [fal endpoint metadata: openai/gpt-image-2.5/flare/text-to-image](https://api.fal.ai/v1/models?endpoint_id=openai%2Fgpt-image-2.5%2Fflare%2Ftext-to-image&expand=openapi-3.0) — Free live endpoint metadata and expanded OpenAPI lookup; no generation call.
+- [fal endpoint metadata: openai/gpt-image-2.5/sunburst/edit](https://api.fal.ai/v1/models?endpoint_id=openai%2Fgpt-image-2.5%2Fsunburst%2Fedit&expand=openapi-3.0) — Free live endpoint metadata and expanded OpenAPI lookup; no generation call.
+- [fal endpoint metadata: openai/gpt-image-2.5/sunburst/text-to-image](https://api.fal.ai/v1/models?endpoint_id=openai%2Fgpt-image-2.5%2Fsunburst%2Ftext-to-image&expand=openapi-3.0) — Free live endpoint metadata and expanded OpenAPI lookup; no generation call.
 - [Google Gemini model deprecations](https://ai.google.dev/gemini-api/docs/deprecations) — Stable and retired Gemini image aliases.
 - [Google Gemini image generation documentation](https://ai.google.dev/gemini-api/docs/image-generation) — Gemini image IDs, reference/identity capacity, resolutions and aspect ratios.
 - [MiniMax H3 open model specification](https://www.minimax.io/news/minimax-h3-open-source) — Creator specification for FL2VA and Ref2VA, durations, FPS, audio and multimodal references.
+- [OpenAI GPT Image 2.5 image generation guide](https://developers.openai.com/api/docs/guides/image-generation) — Flare default routing, Sunburst precision routing, editing, identity preservation, and transparency.
 - [Runway Dev API changelog](https://docs.dev.runwayml.com/api-details/api_changelog/) — Version-specific limits for newly added Runway models.
 - [Runway Dev available models](https://docs.dev.runwayml.com/guides/models/) — Complete public Runway model inventory at the inventory date.
 - [World Labs API model inventory](https://docs.worldlabs.ai/api/models) — Complete public Marble model inventory at the inventory date.

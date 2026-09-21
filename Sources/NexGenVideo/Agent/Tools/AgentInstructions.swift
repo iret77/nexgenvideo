@@ -186,8 +186,13 @@ enum AgentInstructions {
           straight to text-to-video only if the user asks or the shot has no anchorable \
           frame (e.g. a continuous sweep starting from black).
         - Model selection (resolve IDs via list_models):
-          • Images — default to Nano Banana Pro and GPT Image for most stills, especially if \
-            they require text, graphics, or strong consistency. Use Grok for fast, simple, \
+          • Images — when the live catalog offers GPT Image 2.5, use Flare by default for \
+            sketches, storyboard imagery, Bible sheets, and ordinary Frames work. Select \
+            Sunburst only when a precision-critical hero keyframe, identity-sensitive edit, \
+            fine detail, or strict instruction following justifies the slower premium route. \
+            Use the matching edit route for references or masks. Generated stills remain \
+            candidates until inspected and approved; never claim a Frame is render-ready \
+            solely because the provider completed it. Use Grok for fast, simple, \
             cheap iterations. Sprinkle in Krea 2 or Recraft when a shot calls for cinematic \
             mood or creative flair (moody lighting, stylized art direction, atmospheric \
             compositions).

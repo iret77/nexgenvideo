@@ -702,6 +702,17 @@ struct GenerationView: View {
                 resetSettings()
             }
         }
+        .onChange(of: selectedAspectRatio) { _, _ in
+            guard !isPopulatingPanel, selectedType == .image else { return }
+            if let resolution = imageModel.defaultResolution(for: selectedAspectRatio) {
+                selectedResolution = resolution
+            }
+        }
+        .onChange(of: selectedResolution) { _, newValue in
+            guard !isPopulatingPanel, selectedType == .image,
+                  imageModel.customSize != nil, newValue == "auto" else { return }
+            selectedAspectRatio = "auto"
+        }
         .onChange(of: selectedAudioModelIndex) { _, _ in
             guard !isPopulatingPanel else { return }
             if selectedType == .audio { resetAudioState() }
@@ -1845,6 +1856,9 @@ struct GenerationView: View {
                 : selectedDuration
         }
         if imageCount > 1 { genInput.numImages = imageCount }
+        if selectedType == .image {
+            genInput.imageOutputFormat = imageModel.defaultOutputFormat
+        }
         return genInput
     }
 
@@ -2097,10 +2111,12 @@ struct GenerationView: View {
             selectedAspectRatio = currentAspectRatios.first ?? "16:9"
         }
         if let resolutions = currentResolutions, !resolutions.contains(selectedResolution) {
-            selectedResolution = resolutions.first ?? "1080p"
+            selectedResolution = selectedType == .image
+                ? (imageModel.defaultResolution(for: selectedAspectRatio) ?? resolutions.first ?? "1080p")
+                : (resolutions.first ?? "1080p")
         }
         if let qualities = currentQualities, !qualities.contains(selectedQuality) {
-            selectedQuality = qualities.last ?? "high"
+            selectedQuality = qualities.contains("high") ? "high" : (qualities.last ?? "high")
         }
         if selectedType == .video,
            let durationCapabilities = selectedVideoCapabilities?.durationCapabilities,

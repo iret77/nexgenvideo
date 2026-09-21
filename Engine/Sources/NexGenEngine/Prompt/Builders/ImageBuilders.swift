@@ -135,6 +135,10 @@ enum ImageBuilders {
             .joined(separator: "\n\n")
     }
 
+    static func gptImage25(_ payload: PromptPayload, sheetKind: String = "character") throws -> String {
+        try gptImage2(payload, sheetKind: sheetKind)
+    }
+
     /// Port of `build_for_imagen`.
     static func imagen(_ payload: PromptPayload, sheetKind: String = "character") throws -> String {
         let subject = SlopStripper.strip(payload.subject)

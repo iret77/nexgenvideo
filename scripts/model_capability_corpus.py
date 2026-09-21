@@ -17,6 +17,7 @@ RESOURCE_DIR = ROOT / "Sources/NexGenVideo/Resources/ModelCapabilities"
 CORPUS_PATH = RESOURCE_DIR / "model-capability-corpus-v1.json"
 REPORT_PATH = ROOT / "docs/model-capability-coverage.md"
 OBSERVED_AT = "2026-08-31"
+CORPUS_OBSERVED_AT = "2026-09-21"
 CORPUS_SCHEMA = "model-capability-corpus/v1"
 KB_SCHEMA = "model-capability-kb/v1"
 STALE_AFTER_DAYS = 120
@@ -269,6 +270,15 @@ SOURCES: dict[str, dict[str, Any]] = {
         "primary": False,
         "scope": "Explicit conservative values accepted as the production fallback policy.",
     },
+    "openai-gpt-image-2.5": {
+        "title": "OpenAI GPT Image 2.5 image generation guide",
+        "url": "https://developers.openai.com/api/docs/guides/image-generation",
+        "observed_at": CORPUS_OBSERVED_AT,
+        "kind": "documented_api",
+        "confidence": 0.99,
+        "primary": True,
+        "scope": "Flare default routing, Sunburst precision routing, editing, identity preservation, and transparency.",
+    },
 }
 
 
@@ -383,10 +393,34 @@ gemini25 = ident("gemini-image", "unified", "2.5-flash", "image")
 gemini31 = ident("gemini-image", "unified", "3.1-flash", "image")
 gemini3pro = ident("gemini-image", "unified", "3-pro", "image")
 gpt_image2 = ident("gpt-image", "unified", "2", "image")
+gpt25_flare_text = ident("gpt-image", "flare-text-to-image", "2.5", "image")
+gpt25_flare_edit = ident("gpt-image", "flare-edit", "2.5", "image")
+gpt25_sunburst_text = ident("gpt-image", "sunburst-text-to-image", "2.5", "image")
+gpt25_sunburst_edit = ident("gpt-image", "sunburst-edit", "2.5", "image")
 fal_offer("fal-ai/nano-banana", "image", gemini25)
 fal_offer("fal-ai/nano-banana-2", "image", gemini31)
 fal_offer("fal-ai/nano-banana-pro", "image", gemini3pro)
-fal_offer("fal-ai/gpt-image-2", "image", gpt_image2)
+for catalog_id, provider_id, identity in [
+    ("fal-ai/gpt-image-2.5/flare/text-to-image", "openai/gpt-image-2.5/flare/text-to-image", gpt25_flare_text),
+    ("fal-ai/gpt-image-2.5/flare/edit", "openai/gpt-image-2.5/flare/edit", gpt25_flare_edit),
+    ("fal-ai/gpt-image-2.5/sunburst/text-to-image", "openai/gpt-image-2.5/sunburst/text-to-image", gpt25_sunburst_text),
+    ("fal-ai/gpt-image-2.5/sunburst/edit", "openai/gpt-image-2.5/sunburst/edit", gpt25_sunburst_edit),
+]:
+    fal_offer(
+        catalog_id,
+        "image",
+        identity,
+        provider_model_id=provider_id,
+        origins=["offline_registry", "catalog/models.json", "free_provider_schema"],
+    )
+    SOURCES[fal_source(provider_id)].update(
+        url="https://api.fal.ai/v1/models?endpoint_id="
+        + quote(provider_id, safe="")
+        + "&expand=openapi-3.0",
+        observed_at=CORPUS_OBSERVED_AT,
+        confidence=0.99,
+        scope="Free live endpoint metadata and expanded OpenAPI lookup; no generation call.",
+    )
 fal_offer("fal-ai/flux-pro/kontext", "image", ident("flux-kontext", "pro", "1", "image"))
 fal_offer(
     "fal-ai/gemini-25-flash-image/edit",
@@ -396,7 +430,6 @@ fal_offer(
 )
 fal_offer("fal-ai/nano-banana-2/edit", "image", gemini31)
 fal_offer("fal-ai/nano-banana-pro/edit", "image", gemini3pro)
-fal_offer("fal-ai/gpt-image-2/edit", "image", gpt_image2, provider_model_id="openai/gpt-image-2/edit")
 
 kling25_text = ident("kling", "text-to-video", "2.5-turbo-pro", "video")
 kling25_image = ident("kling", "image-to-video", "2.5-turbo-pro", "video")
@@ -854,6 +887,41 @@ if gpt_image2 in PROFILES:
     put(gpt_image2, "image.identity", True, "supported_value", RUNWAY)
     put(gpt_image2, "image.outputs_per_request", 4, "hard_api_limit", RUNWAY)
 
+GPT_IMAGE25_SOURCE = ["openai-gpt-image-2.5"]
+GPT_IMAGE25_RESOLUTIONS = [
+    "auto", "1024x768", "768x1024", "1024x1024", "1024x1536", "1536x1024",
+    "1920x1080", "1080x1920", "2560x1440", "1440x2560", "3840x2160", "2160x3840",
+]
+GPT_IMAGE25_ASPECTS = ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "auto"]
+for identity, endpoint, edit in [
+    (gpt25_flare_text, "openai/gpt-image-2.5/flare/text-to-image", False),
+    (gpt25_flare_edit, "openai/gpt-image-2.5/flare/edit", True),
+    (gpt25_sunburst_text, "openai/gpt-image-2.5/sunburst/text-to-image", False),
+    (gpt25_sunburst_edit, "openai/gpt-image-2.5/sunburst/edit", True),
+]:
+    sources = [fal_source(endpoint)] + GPT_IMAGE25_SOURCE
+    set_inputs(identity, ["text", "image"] if edit else ["text"], sources)
+    set_outputs(identity, ["image"], sources)
+    put(identity, "common.prompt_characters", 32000, "hard_api_limit", sources)
+    put(identity, "common.resolutions", GPT_IMAGE25_RESOLUTIONS, "supported_set", sources)
+    put(identity, "common.aspect_ratios", GPT_IMAGE25_ASPECTS, "supported_set", sources)
+    put(
+        identity,
+        "common.known_exclusivities",
+        ["custom sizes: dimensions divisible by 16; max edge 3840; 655360…8294400 pixels; aspect ratio 1:3…3:1"],
+        "supported_set",
+        sources,
+    )
+    put(identity, "image.references", 16 if edit else 0, "hard_api_limit", sources)
+    put(identity, "image.outputs_per_request", 10, "hard_api_limit", sources)
+    put(identity, "image.mask", edit, "supported_value", sources)
+    put(identity, "image.inpaint", edit, "supported_value", sources)
+    put(identity, "image.edit", edit, "supported_value", sources)
+    put(identity, "image.identity", edit, "supported_value", sources)
+    put(identity, "image.reference_roles", ["identity", "style", "composition"] if edit else [], "supported_set", sources)
+    gap(identity, "image.visible_characters", "No official numeric reliable visible-character capacity is published.")
+    gap(identity, "image.outpaint", "The live schema supports masked editing but does not publish a distinct outpaint contract.")
+
 for identity, refs, outputs in [
     (ident("seedream", "pro", "5", "image"), 10, 4),
     (ident("seedream", "lite", "5", "image"), 14, 4),
@@ -1001,7 +1069,7 @@ def profile_gaps() -> list[dict[str, Any]]:
 def build_corpus() -> dict[str, Any]:
     return {
         "schema": CORPUS_SCHEMA,
-        "observed_at": OBSERVED_AT,
+        "observed_at": CORPUS_OBSERVED_AT,
         "stale_after_days": STALE_AFTER_DAYS,
         "defensive_defaults": {
             "owner_confirmation": "confirmed",

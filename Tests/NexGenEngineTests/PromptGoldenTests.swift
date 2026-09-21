@@ -90,6 +90,8 @@ struct PromptGoldenTests {
             return try ImageBuilders.nanoBanana(payload, sheetKind: sheetKind)
         case "gpt_image_2":
             return try ImageBuilders.gptImage2(payload, sheetKind: sheetKind)
+        case "gpt_image_2_5":
+            return try ImageBuilders.gptImage25(payload, sheetKind: sheetKind)
         case "imagen":
             return try ImageBuilders.imagen(payload, sheetKind: sheetKind)
         case "runway_image":
@@ -114,6 +116,23 @@ struct PromptGoldenTests {
             Issue.record("unknown builder \(v.builder) in vector \(v.caseName)")
             return ""
         }
+    }
+
+    @Test("GPT Image 2.5 routes through its compiled image dialect")
+    func gptImage25Dialect() throws {
+        let payload = PromptPayload(
+            subject: "A production sketch of a lighthouse",
+            setting: "A rocky coast",
+            composition: "Wide frame"
+        )
+        let compiled = try PromptGenerator.buildImagePrompt(
+            modelID: "fal-ai/gpt-image-2.5/flare/text-to-image",
+            payload: payload
+        )
+        let expected = try ImageBuilders.gptImage25(payload)
+        #expect(compiled == expected)
+        #expect(compiled.contains("Subject:"))
+        #expect(compiled.contains("Use case:"))
     }
 
     @Test("every prompt vector matches the Python oracle byte-exact")
