@@ -11,10 +11,13 @@ enum ToolName: String, CaseIterable, Sendable {
     case insertClips = "insert_clips"
     case removeClips = "remove_clips"
     case removeTracks = "remove_tracks"
+    case reorderTrack = "reorder_track"
     case moveClips = "move_clips"
     case setClipProperties = "set_clip_properties"
     case setKeyframes = "set_keyframes"
     case splitClip = "split_clip"
+    case rippleTrim = "ripple_trim"
+    case slipClip = "slip_clip"
     case rippleDeleteRanges = "ripple_delete_ranges"
     case removeWords = "remove_words"
     case syncAudio = "sync_audio"
@@ -547,6 +550,17 @@ enum ToolDefinitions {
             )
         ),
         AgentTool(
+            name: .reorderTrack,
+            description: "Moves one track to a new 0-based timeline index in one undoable action. Use its stable trackId from get_timeline. Visual tracks remain in the visual Z-order zone and audio tracks remain in the audio routing zone, so an out-of-zone destination is clamped to the nearest valid index. The track's ID, role, clips, flags, and selection stay intact.",
+            inputSchema: objectSchema(
+                properties: [
+                    "trackId": ["type": "string", "description": "Stable track ID from get_timeline"],
+                    "toIndex": ["type": "integer", "minimum": 0, "description": "Requested destination index"],
+                ],
+                required: ["trackId", "toIndex"]
+            )
+        ),
+        AgentTool(
             name: .moveClips,
             description: "Moves one or more clips to a new track and/or frame position. Single undoable action. Each move specifies the clip ID and at least one of toTrack (must be compatible with the clip's media type) and toFrame. Overlap on the destination is resolved as in add_clips (existing clips on the destination track are trimmed/split/removed). Linked partners follow the named clip: startFrame propagates as a delta to preserve l-cut / j-cut offsets; tracks stay with the named clip.",
             inputSchema: objectSchema(
@@ -649,6 +663,31 @@ enum ToolDefinitions {
                     "atFrame": ["type": "integer", "description": "Frame position to split at (must be between clip start and end)"],
                 ],
                 required: ["clipId", "atFrame"]
+            )
+        ),
+        AgentTool(
+            name: .rippleTrim,
+            description: "Ripple-trims one edge of a clip and shifts later clips in the same undoable operation. deltaFrames is the pointer-style edge movement: positive moves the edge later and negative moves it earlier. Linked clips follow by default, sync-locked tracks stay aligned, and markers ripple with the edit. Source handles and the one-frame minimum are enforced.",
+            inputSchema: objectSchema(
+                properties: [
+                    "clipId": ["type": "string", "description": "The clip whose edge anchors the trim"],
+                    "edge": ["type": "string", "enum": ["left", "right"]],
+                    "deltaFrames": ["type": "integer", "description": "Signed timeline-frame movement of the chosen edge; must not be zero"],
+                    "includeLinked": ["type": "boolean", "description": "Trim linked partners together (default true)"],
+                ],
+                required: ["clipId", "edge", "deltaFrames"]
+            )
+        ),
+        AgentTool(
+            name: .slipClip,
+            description: "Shifts the source in/out range inside a clip without changing its timeline start, duration, transitions, or keyframes. Positive deltaFrames reveals earlier source material; negative values reveal later material. Linked audio/video partners follow by default, and the shared edit clamps exactly to the tightest source handle.",
+            inputSchema: objectSchema(
+                properties: [
+                    "clipId": ["type": "string", "description": "The clip whose source range should shift"],
+                    "deltaFrames": ["type": "integer", "description": "Signed timeline-frame source shift; must not be zero"],
+                    "includeLinked": ["type": "boolean", "description": "Slip eligible linked partners together (default true)"],
+                ],
+                required: ["clipId", "deltaFrames"]
             )
         ),
         AgentTool(

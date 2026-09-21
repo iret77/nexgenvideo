@@ -108,6 +108,13 @@ final class EditorWindowController: NSWindowController {
             }
             return false
 
+        case 17: // T key
+            if !cmd, editorViewModel.allowsTimelineEditChrome {
+                editorViewModel.toolMode = .slip
+                return true
+            }
+            return false
+
         case 34: // I key
             if rangeMarkShortcut {
                 editorViewModel.markTimelineRangeStart()
@@ -184,6 +191,10 @@ final class EditorWindowController: NSWindowController {
                 editorViewModel.maximizedPanel = nil
                 return true
             }
+            NotificationCenter.default.post(
+                name: .cancelTimelineInteraction,
+                object: editorViewModel
+            )
             editorViewModel.selectedClipIds.removeAll()
             editorViewModel.selectedTimelineMarkerIds.removeAll()
             editorViewModel.timelineMarkerPreview = nil

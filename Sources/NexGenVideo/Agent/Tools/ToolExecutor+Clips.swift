@@ -650,6 +650,66 @@ extension ToolExecutor {
         return .ok("Split clip \(clipId) at frame \(atFrame). Left: \(leftSummary)\(rightNote)")
     }
 
+    // MARK: ripple_trim
+
+    func rippleTrim(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+        let clipId = try args.requireString("clipId")
+        let edgeValue = try args.requireString("edge")
+        let deltaFrames = try args.requireInt("deltaFrames")
+        guard deltaFrames != 0 else { throw ToolError("deltaFrames must not be zero") }
+        guard editor.findClip(id: clipId) != nil else { throw ToolError("Clip not found: \(clipId)") }
+
+        let edge: EditorViewModel.TrimEdge
+        switch edgeValue {
+        case "left": edge = .left
+        case "right": edge = .right
+        default: throw ToolError("edge must be 'left' or 'right'")
+        }
+        guard let plan = editor.rippleTrimClip(
+            clipId: clipId,
+            edge: edge,
+            deltaFrames: deltaFrames,
+            propagateToLinked: args["includeLinked"] as? Bool ?? true
+        ) else {
+            throw ToolError("Ripple trim has no available source handle or timeline room")
+        }
+
+        let payload: [String: Any] = [
+            "appliedDurationDelta": plan.durationDelta,
+            "resizedClipIds": plan.resizes.map { $0.clipId },
+            "shiftedClipCount": plan.shifts.count,
+        ]
+        return .ok(Self.jsonString(payload) ?? "Ripple trim applied")
+    }
+
+    // MARK: slip_clip
+
+    func slipClip(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+        let clipId = try args.requireString("clipId")
+        let deltaFrames = try args.requireInt("deltaFrames")
+        guard deltaFrames != 0 else { throw ToolError("deltaFrames must not be zero") }
+        guard editor.findClip(id: clipId) != nil else { throw ToolError("Clip not found: \(clipId)") }
+        guard let plan = editor.slipClip(
+            clipId: clipId,
+            deltaFrames: deltaFrames,
+            propagateToLinked: args["includeLinked"] as? Bool ?? true
+        ) else {
+            throw ToolError("Slip edit has no available source handle or the clip type is not eligible")
+        }
+
+        let payload: [String: Any] = [
+            "appliedTimelineDelta": plan.appliedTimelineDelta,
+            "clips": plan.updates.map {
+                [
+                    "clipId": $0.clipId,
+                    "trimStartFrame": $0.trimStart,
+                    "trimEndFrame": $0.trimEnd,
+                ]
+            },
+        ]
+        return .ok(Self.jsonString(payload) ?? "Slip edit applied")
+    }
+
     // MARK: ripple_delete_ranges
 
     func rippleDeleteRanges(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
@@ -842,6 +902,25 @@ extension ToolExecutor {
         }
         editor.removeTracks(ids: ids)
         guard let json = Self.jsonString(["removedTracks": removed]) else {
+            throw ToolError("Failed to encode result")
+        }
+        return .ok(json)
+    }
+
+    func reorderTrack(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+        let trackId = try args.requireString("trackId")
+        let toIndex = try args.requireInt("toIndex")
+        guard editor.timeline.tracks.contains(where: { $0.id == trackId }) else {
+            throw ToolError("Track not found: \(trackId)")
+        }
+        guard let result = editor.reorderTrack(id: trackId, to: toIndex) else {
+            throw ToolError("Unable to reorder track: \(trackId)")
+        }
+        guard let json = Self.jsonString([
+            "trackId": result.trackId,
+            "fromIndex": result.fromIndex,
+            "toIndex": result.toIndex,
+        ]) else {
             throw ToolError("Failed to encode result")
         }
         return .ok(json)
