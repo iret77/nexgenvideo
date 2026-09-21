@@ -274,6 +274,14 @@ final class TimelineView: NSView {
         )
         drawTimelineRangeSelectionRulerFill(geometry: geo, scrollOffset: scrollOffset, context: ctx)
         drawTimelineRangeSelectionEdges(geometry: geo, scrollOffset: scrollOffset, context: ctx)
+        TimelineMarkerRenderer.draw(
+            markers: editor.displayedTimelineMarkers,
+            selectedIDs: editor.selectedTimelineMarkerIds,
+            geometry: geo,
+            scrollOffsetY: scrollOffset.y,
+            viewHeight: bounds.height,
+            context: ctx
+        )
     }
 
     func updatePlayheadLayer() { playheadOverlay.update() }
@@ -1075,7 +1083,8 @@ final class TimelineView: NSView {
         }
         let totalDur = assets.reduce(0) { $0 + editor.clipDurationFrames(for: $1, segment: externalDragSegments[$1.id]) }
         let targets = SnapEngine.collectTargets(
-            tracks: editor.timeline.tracks
+            tracks: editor.timeline.tracks,
+            markerFrames: editor.timelineMarkerSnapFrames()
         )
         if let snap = SnapEngine.findSnap(
             position: candidate,

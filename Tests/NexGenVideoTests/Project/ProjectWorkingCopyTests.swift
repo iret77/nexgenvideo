@@ -100,6 +100,55 @@ struct ProjectWorkingCopyTests {
         #expect(second.recoveredUnsaved == true)
     }
 
+    @Test("markers survive recovery, save, and package reopen")
+    func markerRecoveryAndSaveRoundTrip() throws {
+        let pkg = try tempPackage()
+        let key = uniqueKey()
+        defer { ProjectWorkingCopy.discard(key: key); try? FileManager.default.removeItem(at: pkg) }
+        _ = try ProjectWorkingCopy.open(key: key, packageURL: pkg)
+        let marker = TimelineMarker(
+            id: "persistent-marker",
+            startFrame: 72,
+            durationFrames: 24,
+            title: "Review shot",
+            note: "Confirm continuity.",
+            type: .shot,
+            color: TextStyle.RGBA(r: 0.1, g: 0.5, b: 0.8, a: 1)
+        )
+        let timeline = Timeline(fps: 24, markers: [marker])
+        try ProjectWorkingCopy.checkpoint(key: key, snapshot: .init(
+            timeline: JSONEncoder().encode(timeline),
+            manifest: nil,
+            generationLog: nil,
+            thumbnail: nil,
+            chatSessionFiles: []
+        ))
+
+        let recovered = try ProjectWorkingCopy.open(key: key, packageURL: pkg)
+        #expect(recovered.recoveredUnsaved)
+        let recoveryTimeline = try JSONDecoder().decode(
+            Timeline.self,
+            from: Data(contentsOf: recovered.home.appendingPathComponent(Project.timelineFilename))
+        )
+        #expect(recoveryTimeline.markers == [marker])
+
+        try ProjectWorkingCopy.persist(key: key, to: pkg)
+        let savedTimeline = try JSONDecoder().decode(
+            Timeline.self,
+            from: Data(contentsOf: pkg.appendingPathComponent(Project.timelineFilename))
+        )
+        #expect(savedTimeline.markers == [marker])
+
+        ProjectWorkingCopy.discard(key: key)
+        let reopened = try ProjectWorkingCopy.open(key: key, packageURL: pkg)
+        #expect(reopened.recoveredUnsaved == false)
+        let reopenedTimeline = try JSONDecoder().decode(
+            Timeline.self,
+            from: Data(contentsOf: reopened.home.appendingPathComponent(Project.timelineFilename))
+        )
+        #expect(reopenedTimeline.markers == [marker])
+    }
+
     @Test("a working copy missing the completion sentinel is rebuilt, not recovered")
     func partialCopyNotRecovered() throws {
         let pkg = try tempPackage()

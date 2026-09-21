@@ -235,6 +235,11 @@ extension EditorViewModel {
     func registerTimelineSwap(undoState: Timeline, redoState: Timeline, actionName: String) {
         undoManager?.registerUndo(withTarget: self) { vm in
             vm.timeline = undoState
+            vm.selectedTimelineMarkerIds.formIntersection(undoState.markers.map(\.id))
+            if let preview = vm.timelineMarkerPreview,
+               !undoState.markers.contains(where: { $0.id == preview.id }) {
+                vm.timelineMarkerPreview = nil
+            }
             vm.notifyTimelineChanged()
             vm.registerTimelineSwap(undoState: redoState, redoState: undoState, actionName: actionName)
         }

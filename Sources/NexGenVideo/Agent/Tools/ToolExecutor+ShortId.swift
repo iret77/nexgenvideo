@@ -12,6 +12,7 @@ extension ToolExecutor {
         "mediaRef", "startFrameMediaRef", "endFrameMediaRef",
         "sourceVideoMediaRef", "videoSourceMediaRef",
         "folderId", "parentFolderId",
+        "markerId",
         "media",
     ]
     private static let arrayIdKeys: Set<String> = [
@@ -34,6 +35,7 @@ extension ToolExecutor {
                 clip.linkGroupId.map { ids.insert($0) }
             }
         }
+        for marker in editor.timeline.markers { ids.insert(marker.id) }
         for asset in editor.mediaAssets { ids.insert(asset.id) }
         for folder in editor.folders { ids.insert(folder.id) }
         return ids

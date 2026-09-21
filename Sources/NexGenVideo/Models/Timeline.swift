@@ -12,13 +12,140 @@ struct Timeline: Codable, Sendable, Equatable {
     var height: Int = 1080
     var settingsConfigured: Bool = false
     var tracks: [Track] = []
+    var markers: [TimelineMarker] = []
 
     var totalFrames: Int {
         var maxFrame = 0
         for track in tracks {
             maxFrame = max(maxFrame, track.endFrame)
         }
+        for marker in markers {
+            let pointEnd = marker.startFrame.addingReportingOverflow(1)
+            maxFrame = max(maxFrame, marker.durationFrames == 0
+                ? (pointEnd.overflow ? Int.max : pointEnd.partialValue)
+                : marker.endFrame)
+        }
         return maxFrame
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case fps, width, height, settingsConfigured, tracks, markers
+    }
+}
+
+extension Timeline {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            fps: try c.decode(Int.self, forKey: .fps),
+            width: try c.decode(Int.self, forKey: .width),
+            height: try c.decode(Int.self, forKey: .height),
+            settingsConfigured: try c.decode(Bool.self, forKey: .settingsConfigured),
+            tracks: try c.decode([Track].self, forKey: .tracks),
+            markers: try c.decodeIfPresent([TimelineMarker].self, forKey: .markers) ?? []
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(fps, forKey: .fps)
+        try c.encode(width, forKey: .width)
+        try c.encode(height, forKey: .height)
+        try c.encode(settingsConfigured, forKey: .settingsConfigured)
+        try c.encode(tracks, forKey: .tracks)
+        try c.encode(markers, forKey: .markers)
+    }
+}
+
+struct TimelineMarker: Codable, Sendable, Equatable, Identifiable {
+    static let maxTitleLength = 120
+    static let maxNoteLength = 4_000
+
+    enum Kind: String, Codable, Sendable, CaseIterable {
+        case note
+        case review
+        case shot
+        case chapter
+        case cue
+    }
+
+    var id: String = UUID().uuidString
+    var startFrame: Int
+    var durationFrames: Int = 0
+    var title: String
+    var note: String = ""
+    var type: Kind?
+    var color: TextStyle.RGBA?
+
+    var endFrame: Int {
+        let result = startFrame.addingReportingOverflow(durationFrames)
+        return result.overflow ? Int.max : result.partialValue
+    }
+
+    func intersects(_ range: Range<Int>) -> Bool {
+        durationFrames == 0
+            ? range.contains(startFrame)
+            : startFrame < range.upperBound && endFrame > range.lowerBound
+    }
+
+    mutating func rescaleFrames(by scale: Double) {
+        let scaledStart = Int((Double(startFrame) * scale).rounded())
+        let scaledEnd = Int((Double(endFrame) * scale).rounded())
+        startFrame = max(0, scaledStart)
+        durationFrames = durationFrames == 0 ? 0 : max(1, scaledEnd - startFrame)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, startFrame, durationFrames, title, note, type, color
+        case legacyName = "name"
+        case legacyComment = "comment"
+    }
+
+    init(
+        id: String = UUID().uuidString,
+        startFrame: Int,
+        durationFrames: Int = 0,
+        title: String,
+        note: String = "",
+        type: Kind? = nil,
+        color: TextStyle.RGBA? = nil
+    ) {
+        self.id = id
+        self.startFrame = startFrame
+        self.durationFrames = durationFrames
+        self.title = title
+        self.note = note
+        self.type = type
+        self.color = color
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let title = (try? c.decode(String.self, forKey: .title))
+            ?? (try? c.decode(String.self, forKey: .legacyName))
+            ?? "Marker"
+        self.init(
+            id: (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString,
+            startFrame: (try? c.decode(Int.self, forKey: .startFrame)) ?? 0,
+            durationFrames: (try? c.decode(Int.self, forKey: .durationFrames)) ?? 0,
+            title: title,
+            note: (try? c.decode(String.self, forKey: .note))
+                ?? (try? c.decode(String.self, forKey: .legacyComment))
+                ?? "",
+            type: try? c.decode(Kind.self, forKey: .type),
+            color: try? c.decode(TextStyle.RGBA.self, forKey: .color)
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(startFrame, forKey: .startFrame)
+        try c.encode(durationFrames, forKey: .durationFrames)
+        try c.encode(title, forKey: .title)
+        try c.encode(note, forKey: .note)
+        try c.encodeIfPresent(type, forKey: .type)
+        try c.encodeIfPresent(color, forKey: .color)
     }
 }
 

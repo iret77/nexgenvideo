@@ -73,7 +73,10 @@ final class EditorWindowController: NSWindowController {
             return true
 
         case 51: // Delete/Backspace
-            if !editorViewModel.selectedFolderIds.isEmpty || !editorViewModel.selectedMediaAssetIds.isEmpty {
+            if editorViewModel.focusedPanel == .timeline,
+               !editorViewModel.selectedTimelineMarkerIds.isEmpty {
+                deleteTimelineSelection()
+            } else if !editorViewModel.selectedFolderIds.isEmpty || !editorViewModel.selectedMediaAssetIds.isEmpty {
                 if !editorViewModel.selectedFolderIds.isEmpty {
                     editorViewModel.deleteFolders(ids: editorViewModel.selectedFolderIds)
                 }
@@ -87,7 +90,7 @@ final class EditorWindowController: NSWindowController {
                     editorViewModel.rippleDeleteSelectedClips()
                 }
             } else {
-                editorViewModel.deleteSelectedClips()
+                deleteTimelineSelection()
             }
             return true
 
@@ -118,6 +121,17 @@ final class EditorWindowController: NSWindowController {
                 return true
             }
             return false
+
+        case 46: // M key
+            guard !cmd else { return false }
+            if shift {
+                editorViewModel.markerPanelPresented = true
+            } else if editorViewModel.allowsTimelineEditChrome {
+                editorViewModel.addTimelineMarkerAtSelection()
+            } else {
+                return false
+            }
+            return true
 
         case 33: // [ key
             guard editorViewModel.allowsTimelineEditChrome else { return false }
@@ -171,6 +185,8 @@ final class EditorWindowController: NSWindowController {
                 return true
             }
             editorViewModel.selectedClipIds.removeAll()
+            editorViewModel.selectedTimelineMarkerIds.removeAll()
+            editorViewModel.timelineMarkerPreview = nil
             editorViewModel.clearTimelineRange()
             editorViewModel.toolMode = .pointer
             return true
@@ -226,7 +242,9 @@ extension EditorWindowController: EditorActions {
     @objc func splitAtPlayhead(_ sender: Any?) { editorViewModel.splitAtPlayhead() }
     @objc func trimStartToPlayhead(_ sender: Any?) { editorViewModel.trimStartToPlayhead() }
     @objc func trimEndToPlayhead(_ sender: Any?) { editorViewModel.trimEndToPlayhead() }
-    @objc func deleteSelectedClips(_ sender: Any?) { editorViewModel.deleteSelectedClips() }
+    @objc func addTimelineMarker(_ sender: Any?) { editorViewModel.addTimelineMarkerAtSelection() }
+    @objc func showTimelineMarkers(_ sender: Any?) { editorViewModel.markerPanelPresented = true }
+    @objc func deleteSelectedClips(_ sender: Any?) { deleteTimelineSelection() }
     @objc func playPause(_ sender: Any?) { editorViewModel.togglePlayback() }
     @objc func stepFrameForward(_ sender: Any?) { editorViewModel.stepForward() }
     @objc func stepFrameBackward(_ sender: Any?) { editorViewModel.stepBackward() }
@@ -269,6 +287,15 @@ extension EditorWindowController: EditorActions {
 
     private func canHandleClipboardShortcut() -> Bool {
         editorViewModel.focusedPanel == .timeline
+    }
+
+    private func deleteTimelineSelection() {
+        if editorViewModel.focusedPanel == .timeline,
+           !editorViewModel.selectedTimelineMarkerIds.isEmpty {
+            try? editorViewModel.deleteTimelineMarkers(ids: editorViewModel.selectedTimelineMarkerIds)
+        } else {
+            editorViewModel.deleteSelectedClips()
+        }
     }
 
     @objc func toggleMediaPanel(_ sender: Any?) { editorViewModel.mediaPanelVisible.toggle() }
@@ -361,6 +388,8 @@ extension EditorWindowController: EditorActions {
             menuItem.state = editorViewModel.theaterActive ? .on : .off
             return true
         case #selector(trimStartToPlayhead(_:)), #selector(trimEndToPlayhead(_:)):
+            return editorViewModel.allowsTimelineEditChrome
+        case #selector(addTimelineMarker(_:)):
             return editorViewModel.allowsTimelineEditChrome
         case #selector(copy(_:)), #selector(cut(_:)):
             return canHandleClipboardShortcut() && !editorViewModel.selectedClipIds.isEmpty

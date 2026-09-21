@@ -65,6 +65,14 @@ extension TextStyle {
 // MARK: - Rendering helpers
 
 extension TextStyle.RGBA {
+    var hexString: String {
+        let values = [r, g, b, a].map { Int((min(1, max(0, $0)) * 255).rounded()) }
+        if values[3] == 255 {
+            return String(format: "#%02X%02X%02X", values[0], values[1], values[2])
+        }
+        return String(format: "#%02X%02X%02X%02X", values[0], values[1], values[2], values[3])
+    }
+
     var nsColor: NSColor {
         NSColor(
             srgbRed: CGFloat(r),

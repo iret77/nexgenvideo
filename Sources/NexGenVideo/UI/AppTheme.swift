@@ -468,6 +468,10 @@ enum AppTheme {
         static let finishPreviewMinHeight: CGFloat = 280
         static let finishReviewMinHeight: CGFloat = 200
         static let finishPreviewFraction: CGFloat = 0.68
+        static let markerPanelWidth: CGFloat = 420
+        static let markerPanelHeight: CGFloat = 500
+        static let markerNoteHeight: CGFloat = 96
+        static let markerTimeFieldWidth: CGFloat = 84
     }
 
     enum Timeline {
@@ -514,6 +518,12 @@ enum AppTheme {
         static let offsetBadgeHorizontalPadding: CGFloat = 4
         static let offsetBadgeVerticalPadding: CGFloat = 1
         static let waveformBarWidth: CGFloat = 1
+        static let markerFlagWidth: CGFloat = 12
+        static let markerFlagHeight: CGFloat = 10
+        static let markerRangeHeight: CGFloat = 4
+        static let markerHitSlop: CGFloat = 6
+        static let markerLineWidth: CGFloat = BorderWidth.thin
+        static let markerDefault = NSColor.systemPurple
     }
 
     enum BlendFraction {

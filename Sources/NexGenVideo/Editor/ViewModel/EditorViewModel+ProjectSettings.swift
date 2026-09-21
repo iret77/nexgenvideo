@@ -21,12 +21,16 @@ extension EditorViewModel {
         let prevWidth = timeline.width
         let prevHeight = timeline.height
         let prevConfigured = timeline.settingsConfigured
+        let prevMarkers = timeline.markers
 
         // Rescale all frame-based values when FPS changes
         if fps != prevFPS && prevFPS > 0 && fps > 0 {
             let scale = Double(fps) / Double(prevFPS)
             currentFrame = Int((Double(currentFrame) * scale).rounded())
             sourcePlayheadFrame = Int((Double(sourcePlayheadFrame) * scale).rounded())
+            for index in timeline.markers.indices {
+                timeline.markers[index].rescaleFrames(by: scale)
+            }
             for ti in timeline.tracks.indices {
                 let clipIndices = timeline.tracks[ti].clips.indices.sorted {
                     timeline.tracks[ti].clips[$0].startFrame < timeline.tracks[ti].clips[$1].startFrame
@@ -71,6 +75,8 @@ extension EditorViewModel {
         undoManager?.registerUndo(withTarget: self) { vm in
             vm.applyTimelineSettings(fps: prevFPS, width: prevWidth, height: prevHeight)
             vm.timeline.settingsConfigured = prevConfigured
+            vm.timeline.markers = prevMarkers
+            vm.notifyTimelineChanged()
         }
         undoManager?.setActionName("Change Project Settings")
         notifyTimelineChanged()

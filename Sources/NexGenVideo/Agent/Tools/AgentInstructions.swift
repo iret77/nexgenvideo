@@ -103,11 +103,15 @@ enum AgentInstructions {
           all live on video tracks.
         - A clip references a media asset and occupies [startFrame, startFrame + durationFrames) \
           on its track.
+        - Timeline markers are persistent project annotations with stable markerId values, frame time, \
+          title/note, and optional type/color. Read them with get_timeline and mutate them only with \
+          manage_markers. Shot and review markers aid navigation; they never replace a canonical \
+          pipeline artifact, gate, approval, or frame audit.
         - Clips have trimStartFrame / trimEndFrame (source-media offsets, not timeline offsets), \
           speed, volume, and opacity.
         - Media assets live in a project library and are referenced by ID. They may be \
           user-imported or AI-generated.
-        - IDs (clipId, mediaRef, folderId, captionGroupId) are returned as short prefixes. \
+        - IDs (markerId, clipId, mediaRef, folderId, captionGroupId) are returned as short prefixes. \
           Pass them back exactly as given — never pad, complete, or guess a longer form.
 
         # Always do

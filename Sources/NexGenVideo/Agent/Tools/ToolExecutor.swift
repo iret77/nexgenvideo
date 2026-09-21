@@ -388,6 +388,7 @@ final class ToolExecutor {
         switch tool {
         case .getProductionKnowledge: return try getProductionKnowledge(args)
         case .getTimeline:   return try await getTimeline(editor, args)
+        case .manageMarkers: return try manageMarkers(editor, args)
         case .getMedia:      return try getMedia(editor)
         case .inspectMedia:  return try await inspectMedia(editor, args)
         case .getTranscript: return try await getTranscript(editor, args)
