@@ -43,7 +43,7 @@ extension EditorViewModel {
         case .audio:
             // Audio tracks must come at or after the first audio track
             return max(bounded, z.firstAudioIndex)
-        case .document:
+        case .subtitle, .document:
             // Never placed on a track (isPlaceable == false), so there is no zone to clamp into.
             return bounded
         }

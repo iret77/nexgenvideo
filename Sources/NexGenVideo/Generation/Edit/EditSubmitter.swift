@@ -511,7 +511,7 @@ enum EditSubmitter {
         case .image:
             guard let m = ImageModelConfig.nanoBananaPro else { return nil }
             modelId = m.id
-        case .audio, .text, .lottie, .document:
+        case .audio, .text, .lottie, .subtitle, .document:
             return nil
         }
         var stored = GenerationInput(prompt: "", model: modelId, duration: 0, aspectRatio: "", resolution: nil)

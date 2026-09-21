@@ -22,6 +22,13 @@ struct Timeline: Codable, Sendable, Equatable {
     }
 }
 
+struct CaptionProvenance: Codable, Sendable, Equatable {
+    let sourceFilename: String
+    let sourceFormat: String
+    let languageIdentifier: String?
+    let sourceAssetID: String?
+}
+
 struct Track: Codable, Sendable, Equatable, Identifiable {
     var id: String = UUID().uuidString
     var type: ClipType
@@ -93,6 +100,7 @@ struct Clip: Codable, Sendable, Equatable, Identifiable {
     var crop: Crop = Crop()
     var linkGroupId: String?
     var captionGroupId: String?
+    var captionProvenance: CaptionProvenance?
 
     // Text clips only.
     var textContent: String?
@@ -113,7 +121,7 @@ struct Clip: Codable, Sendable, Equatable, Identifiable {
         case trimStartFrame, trimEndFrame, speed, volume
         case fadeInFrames, fadeOutFrames, fadeInInterpolation, fadeOutInterpolation
         case opacity, transform, crop
-        case linkGroupId, captionGroupId, textContent, textStyle
+        case linkGroupId, captionGroupId, captionProvenance, textContent, textStyle
         case opacityTrack, positionTrack, scaleTrack, rotationTrack, cropTrack, volumeTrack
         case effects
     }
@@ -352,6 +360,7 @@ extension Clip {
             crop: (try? c.decode(Crop.self, forKey: .crop)) ?? Crop(),
             linkGroupId: try? c.decode(String.self, forKey: .linkGroupId),
             captionGroupId: try? c.decode(String.self, forKey: .captionGroupId),
+            captionProvenance: try? c.decode(CaptionProvenance.self, forKey: .captionProvenance),
             textContent: try? c.decode(String.self, forKey: .textContent),
             textStyle: try? c.decode(TextStyle.self, forKey: .textStyle),
             opacityTrack: try? c.decode(KeyframeTrack<Double>.self, forKey: .opacityTrack),

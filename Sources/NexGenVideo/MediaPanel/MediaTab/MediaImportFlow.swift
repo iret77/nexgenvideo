@@ -10,6 +10,7 @@ enum MediaImportFlow {
             if let type = UTType(filenameExtension: ext) { types.append(type) }
         }
         if let lottie = UTType(filenameExtension: "lottie") { types.append(lottie) }
+        types.append(contentsOf: SubtitleFileParser.contentTypes)
         return types
     }
 

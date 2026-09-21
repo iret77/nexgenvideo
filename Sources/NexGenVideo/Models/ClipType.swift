@@ -9,6 +9,8 @@ enum ClipType: String, Codable, Sendable, CaseIterable {
     /// `.text` as "has no source media", which is false for a script on disk.
     case text
     case lottie
+    /// An SRT or WebVTT source expanded into editable `.text` clips.
+    case subtitle
     /// A text document in the library — story script, outline, notes. Source MATERIAL the pipeline
     /// reads; never placeable on the timeline (see `isPlaceable`).
     case document
@@ -20,6 +22,7 @@ enum ClipType: String, Codable, Sendable, CaseIterable {
         case .image: "photo"
         case .text: "textformat"
         case .lottie: "sparkles"
+        case .subtitle: "captions.bubble"
         case .document: "doc.text"
         }
     }
@@ -31,6 +34,7 @@ enum ClipType: String, Codable, Sendable, CaseIterable {
         case .image: "Image"
         case .text: "Text"
         case .lottie: "Lottie"
+        case .subtitle: "Subtitle"
         case .document: "Document"
         }
     }
@@ -41,10 +45,8 @@ enum ClipType: String, Codable, Sendable, CaseIterable {
         self == .video || self == .image || self == .text || self == .lottie
     }
 
-    /// Whether an asset of this kind can become a timeline clip at all. A document has no duration and
-    /// nothing to render — placing one would produce a clip no player can draw, so the drop, insert and
-    /// swap paths refuse it instead of creating a broken clip.
-    var isPlaceable: Bool { self != .document }
+    /// Whether an asset of this kind can become one timeline clip.
+    var isPlaceable: Bool { self != .document && self != .subtitle }
 
     func isCompatible(with other: ClipType) -> Bool {
         guard isPlaceable, other.isPlaceable else { return false }
@@ -65,6 +67,7 @@ enum ClipType: String, Codable, Sendable, CaseIterable {
             self = .video
         case "mp3", "wav", "aac", "m4a", "aiff", "aif", "aifc", "flac": self = .audio
         case "json", "lottie": self = .lottie
+        case "srt", "vtt": self = .subtitle
         default:
             guard Self.documentExtensions.contains(ext) else { return nil }
             self = .document

@@ -142,6 +142,12 @@ extension ToolExecutor {
         specs.reserveCapacity(input.entries.count)
         for (idx, entry) in input.entries.enumerated() {
             let asset = try asset(entry.mediaRef, editor: editor)
+            guard asset.type.isPlaceable else {
+                if asset.type == .subtitle {
+                    throw ToolError("entries[\(idx)]: use add_captions with subtitleMediaRef for caption files.")
+                }
+                throw ToolError("entries[\(idx)]: \(asset.type.rawValue) assets can't be placed as clips.")
+            }
             var trackId: String? = nil
             if let ti = entry.trackIndex {
                 guard editor.timeline.tracks.indices.contains(ti) else {

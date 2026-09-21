@@ -67,7 +67,7 @@ extension ToolExecutor {
         }
         let ext = fileURL.pathExtension.lowercased()
         guard let type = ClipType(fileExtension: ext) else {
-            throw ToolError("Unsupported file extension '.\(ext)'. Supported: mov/mp4/m4v, mp3/wav/aac/m4a/aiff/aifc/flac, png/jpg/jpeg/tiff/heic, json (Lottie).")
+            throw ToolError("Unsupported file extension '.\(ext)'. Supported: mov/mp4/m4v, mp3/wav/aac/m4a/aiff/aifc/flac, png/jpg/jpeg/tiff/heic, json (Lottie), srt/vtt (captions).")
         }
         let asset = try await importLocalFile(
             editor: editor,
@@ -76,7 +76,9 @@ extension ToolExecutor {
             folderId: folderId
         )
         applyImportMetadata(editor: editor, asset: asset, name: name, folderId: folderId)
-        await editor.finalizeImportedAsset(asset)
+        guard await editor.finalizeImportedAsset(asset) else {
+            throw ToolError("Imported caption file is malformed: \(asset.userFacingFilename)")
+        }
         return .ok("Imported '\(asset.name)' (id: \(asset.id), type: \(asset.type.rawValue)) from path. Available now in get_media.")
     }
 
@@ -91,7 +93,7 @@ extension ToolExecutor {
             throw ToolError("source.bytes is too large (\(base64.utf8.count) chars; max \(Self.importBytesMaxBase64Length)). Use source.url or source.path for larger files.")
         }
         guard let fileExt = Self.fileExtension(forMime: mimeType) else {
-            throw ToolError("Unsupported mimeType '\(mimeType)'. Accepted: video/mp4, video/quicktime, audio/mpeg, audio/wav, audio/aac, audio/mp4, audio/aiff, audio/flac, image/png, image/jpeg, image/tiff, image/heic.")
+            throw ToolError("Unsupported mimeType '\(mimeType)'. Accepted: video/mp4, video/quicktime, audio/mpeg, audio/wav, audio/aac, audio/mp4, audio/aiff, audio/flac, image/png, image/jpeg, image/tiff, image/heic, application/x-subrip, text/vtt.")
         }
         guard editor.workingRoot != nil else {
             throw ToolError(MediaImportError.projectMustBeSaved.localizedDescription)
@@ -136,7 +138,9 @@ extension ToolExecutor {
             ),
             folderId: folderId
         )
-        await editor.finalizeImportedAsset(asset)
+        guard await editor.finalizeImportedAsset(asset) else {
+            throw ToolError("Imported caption file is malformed: \(asset.userFacingFilename)")
+        }
         return .ok("Imported '\(asset.name)' (id: \(asset.id), type: \(asset.type.rawValue), \(byteCount) bytes). Available now in get_media.")
     }
 
@@ -173,7 +177,7 @@ extension ToolExecutor {
         let fileExt: String
         if let mimeOverride {
             guard let mapped = Self.fileExtension(forMime: mimeOverride) else {
-                throw ToolError("Unsupported mimeType '\(mimeOverride)'. Accepted: video/mp4, video/quicktime, audio/mpeg, audio/wav, audio/aac, audio/mp4, audio/aiff, audio/flac, image/png, image/jpeg, image/tiff, image/heic.")
+                throw ToolError("Unsupported mimeType '\(mimeOverride)'. Accepted: video/mp4, video/quicktime, audio/mpeg, audio/wav, audio/aac, audio/mp4, audio/aiff, audio/flac, image/png, image/jpeg, image/tiff, image/heic, application/x-subrip, text/vtt.")
             }
             fileExt = mapped
         } else {
@@ -204,6 +208,13 @@ extension ToolExecutor {
                 download.temporaryURL,
                 expectedType: type
             )
+            if type == .subtitle,
+               let format = SubtitleFileParser.Format(fileExtension: fileExt) {
+                _ = try await SubtitleFileParser.parseFile(
+                    at: download.temporaryURL,
+                    format: format
+                )
+            }
         } catch {
             throw ToolError(error.localizedDescription)
         }
@@ -270,7 +281,9 @@ extension ToolExecutor {
                 folderId: folderId
             )
         }
-        await editor.finalizeImportedAsset(asset)
+        guard await editor.finalizeImportedAsset(asset) else {
+            throw ToolError("Imported caption file is malformed: \(asset.userFacingFilename)")
+        }
         return .ok(
             "Imported '\(asset.name)' (id: \(asset.id), type: \(asset.type.rawValue)) "
                 + "from URL. Available now in get_media."
@@ -317,6 +330,8 @@ extension ToolExecutor {
         case "image/tiff": return "tiff"
         case "image/heic", "image/heif": return "heic"
         case "application/json", "application/vnd.lottie+json": return "json"
+        case "application/x-subrip", "text/srt": return "srt"
+        case "text/vtt": return "vtt"
         default: return nil
         }
     }
