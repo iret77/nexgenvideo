@@ -181,6 +181,42 @@ struct AgentServiceRuntimeContractTests {
         #expect(!service.isStreaming)
     }
 
+    @Test("cancelled turn completion cannot clear a replacement turn in the same chat")
+    func cancelledTurnCannotFinishReplacementTurn() async throws {
+        let adapter = FakeRuntimeAdapter(backend: .anthropicAPI)
+        let service = makeService(backend: .anthropicAPI, adapter: adapter)
+
+        #expect(service.send(text: "First turn", mentions: []))
+        await waitUntil { adapter.sendRequests.count == 1 }
+        let firstTurn = try #require(adapter.sendRequests.first)
+        adapter.emit(
+            .text(messageID: "first-answer", value: "Partial", isDelta: true),
+            for: firstTurn
+        )
+        await waitUntil { assistantText(in: service.messages) == "Partial" }
+
+        service.cancel()
+        let sessionID = try #require(service.currentSessionId)
+        let storedSession = try #require(service.sessions.first { $0.id == sessionID })
+        #expect(assistantText(in: storedSession.messages) == "Partial")
+
+        #expect(service.send(text: "Replacement turn", mentions: []))
+        await waitUntil { adapter.sendRequests.count == 2 }
+        let replacementTurn = adapter.sendRequests[1]
+        await Task.yield()
+        #expect(service.isStreaming)
+
+        adapter.emit(
+            .text(messageID: "replacement-answer", value: "Complete", isDelta: true),
+            for: replacementTurn
+        )
+        adapter.emit(.terminal(.completed(.endTurn)), for: replacementTurn)
+        adapter.finish(replacementTurn)
+        await waitUntil { !service.isStreaming }
+
+        #expect(assistantText(in: service.messages) == "PartialComplete")
+    }
+
     @Test("a second send cannot replace an in-flight runtime turn")
     func backToBackSendIsRejectedWithoutChangingTranscript() async {
         let adapter = FakeRuntimeAdapter(backend: .claudeCode)

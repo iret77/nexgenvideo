@@ -2710,6 +2710,7 @@ final class AgentService {
     func cancel() {
         // Gate approval remains open because its tool call has already returned.
         abandonSpendApproval()
+        let wasStreaming = isStreaming
         if let currentSessionId {
             runtimeAdapter?.cancel(sessionID: currentSessionId)
         }
@@ -2719,6 +2720,10 @@ final class AgentService {
         runtimeSessionID = nil
         runtimeContextSignature = nil
         isStreaming = false
+        if wasStreaming {
+            syncMessagesIntoCurrentSession()
+            onSessionsChanged?()
+        }
     }
 
     // MARK: - Host-owned runtime
@@ -3014,16 +3019,16 @@ final class AgentService {
         let transientImages = pendingTurnImages
         pendingTurnImages = []
         currentTask = Task { [weak self] in
-            defer {
-                guard let self, self.currentSessionId == boundSessionID else { return }
-                self.isStreaming = false
-                self.syncMessagesIntoCurrentSession()
-                self.onSessionsChanged?()
-            }
             await self?.runRuntimeTurn(
                 sessionID: boundSessionID,
                 transientImages: transientImages
             )
+            guard !Task.isCancelled,
+                  let self,
+                  self.currentSessionId == boundSessionID else { return }
+            self.isStreaming = false
+            self.syncMessagesIntoCurrentSession()
+            self.onSessionsChanged?()
         }
     }
 
