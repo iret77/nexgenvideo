@@ -145,6 +145,25 @@ struct InspectorAdaptiveControlPair<First: View, Second: View>: View {
     }
 }
 
+struct InspectorCropAspectLabel: View {
+    let label: String
+
+    var body: some View {
+        HStack(spacing: AppTheme.Spacing.xs) {
+            Text(label)
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
+                .monospacedDigit()
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+            Image(systemName: "chevron.down")
+                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
+                .foregroundStyle(AppTheme.Text.tertiaryColor)
+        }
+        .padding(.horizontal, AppTheme.Spacing.sm)
+        .padding(.vertical, AppTheme.Spacing.xxs)
+        .contentShape(Rectangle())
+    }
+}
+
 private struct InspectorControlChrome: ViewModifier {
     var focused = false
     var mixed = false

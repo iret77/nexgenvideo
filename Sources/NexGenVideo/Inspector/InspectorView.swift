@@ -1215,17 +1215,7 @@ struct InspectorView: View {
                 }
             }
         } label: {
-            HStack(spacing: AppTheme.Spacing.xs) {
-                Text(active.label)
-                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium).monospacedDigit()
-                    .foregroundStyle(AppTheme.Text.secondaryColor)
-                Image(systemName: "chevron.down")
-                    .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
-            }
-            .padding(.horizontal, AppTheme.Spacing.sm)
-            .padding(.vertical, AppTheme.Spacing.xxs)
-            .contentShape(Rectangle())
+            InspectorCropAspectLabel(label: active.label)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)

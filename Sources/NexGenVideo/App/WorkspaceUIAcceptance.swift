@@ -482,6 +482,19 @@ enum WorkspaceUIAcceptance {
                       }) else {
                     fail("inspector \(item.family) keyframes did not open", scale: scale)
                 }
+                let expectedLaneProperties: [AnimatableProperty] = item.family == "audio"
+                    ? [.volume]
+                    : [.position, .scale, .rotation, .opacity, .crop]
+                guard let inspectorFrame = visiblePanelFrames(in: host)["inspectorPanel"],
+                      expectedLaneProperties.allSatisfy({ property in
+                          visibleProbe(
+                              identifier: "inspector.keyframes.lane.\(property.rawValue).label",
+                              in: window,
+                              containedBy: inspectorFrame
+                          )
+                      }) else {
+                    fail("inspector \(item.family) keyframe lane labels were not visible", scale: scale)
+                }
                 try? await Task.sleep(for: .milliseconds(300))
                 host.layoutSubtreeIfNeeded()
                 let openName = "scale-\(scaleLabel(scale))-inspector-\(item.family)-keyframes-open.png"
@@ -494,6 +507,7 @@ enum WorkspaceUIAcceptance {
                     fields: [
                         "family": item.family,
                         "keyframes": "open",
+                        "laneLabels": expectedLaneProperties.map(\.rawValue),
                         "screenshot": openName,
                     ]
                 )

@@ -43,12 +43,28 @@ struct InspectorFormLayoutTests {
                     }
                     let volumeKeyframe = try frame("volume-keyframe", in: host)
                     let positionKeyframe = try frame("position-keyframe", in: host)
+                    let cropKeyframe = try frame("crop-keyframe", in: host)
                     #expect(isContained(volumeKeyframe, in: rows[1]))
                     #expect(isContained(positionKeyframe, in: rows[0]))
 
                     let expectedAxis = controls[0].maxX
                     for control in controls.dropFirst() {
                         #expect(abs(control.maxX - expectedAxis) < 1)
+                    }
+                    let accessories = [positionKeyframe, volumeKeyframe, cropKeyframe]
+                    let expectedAccessoryAxis = accessories[0].maxX
+                    for accessory in accessories.dropFirst() {
+                        #expect(abs(accessory.maxX - expectedAccessoryAxis) < 1)
+                    }
+                    for (control, accessory) in zip(
+                        [controls[0], controls[1], controls[3]],
+                        accessories
+                    ) {
+                        let horizontallySeparated = accessory.minX
+                            >= control.maxX + AppTheme.Spacing.sm - 1
+                        let verticallySeparated = accessory.minY
+                            >= control.maxY + AppTheme.Spacing.sm - 1
+                        #expect(horizontallySeparated || verticallySeparated)
                     }
 
                     if keyframesPanelVisible {
@@ -63,6 +79,81 @@ struct InspectorFormLayoutTests {
                         #expect(find("keyframes-pane", in: host) == nil)
                     }
                 }
+            }
+        }
+    }
+
+    @Test func everyCropAspectLabelFitsAtMinimumWidthAndLargestScale() throws {
+        for aspect in CropAspectLock.allCases {
+            let totalWidth = AppTheme.Layout.inspectorMin
+            let fixture = InspectorAxisFixture(
+                keyframesPanelVisible: true,
+                cropAspect: aspect
+            )
+            .environment(\.interfaceScale, 1.5)
+            .padding(AppTheme.Spacing.lg)
+            .frame(width: totalWidth)
+            let host = NSHostingView(rootView: fixture)
+            host.setFrameSize(.init(width: totalWidth, height: AppTheme.Window.projectMin.height))
+            host.layoutSubtreeIfNeeded()
+            _ = host.fittingSize
+            host.layoutSubtreeIfNeeded()
+
+            let label = try frame("crop-menu-label", in: host)
+            let menu = try frame("crop-menu", in: host)
+            let control = try frame("crop-control", in: host)
+            let row = try frame("crop-row", in: host)
+            #expect(label.width > 0)
+            #expect(label.height > 0)
+            #expect(isContained(label, in: menu))
+            #expect(isContained(menu, in: control))
+            #expect(isContained(control, in: row))
+        }
+    }
+
+    @Test func realAudioAndVideoPanelsExposeVisibleNamedAlignedLanes() throws {
+        let video = Fixtures.clip(id: "video", mediaType: .video, start: 0, duration: 90)
+        let audio = Fixtures.clip(id: "audio", mediaType: .audio, start: 0, duration: 90)
+        for (clip, properties) in [
+            (video, [AnimatableProperty.position, .scale, .rotation, .opacity, .crop]),
+            (audio, [AnimatableProperty.volume]),
+        ] {
+            let editor = EditorViewModel()
+            let track = clip.mediaType == .audio
+                ? Fixtures.audioTrack(clips: [clip])
+                : Fixtures.videoTrack(clips: [clip])
+            editor.timeline = Fixtures.timeline(tracks: [track])
+            let panelWidth = AppTheme.Layout.inspectorDefault - AppTheme.Spacing.lg * 2
+            let fixture = KeyframesPanel(clip: clip)
+                .environment(editor)
+                .environment(\.interfaceScale, 1.5)
+                .frame(width: panelWidth)
+                .background(InspectorGeometryProbe(name: "keyframes-panel"))
+            let host = NSHostingView(rootView: fixture)
+            host.setFrameSize(.init(width: panelWidth, height: AppTheme.Window.projectMin.height))
+            host.layoutSubtreeIfNeeded()
+            _ = host.fittingSize
+            host.layoutSubtreeIfNeeded()
+
+            let panel = try frame("keyframes-panel", in: host)
+            let ruler = try frame("inspector.keyframes.ruler", in: host)
+            #expect(isContained(ruler, in: panel))
+            for property in properties {
+                let label = try frame(
+                    "inspector.keyframes.lane.\(property.rawValue).label",
+                    in: host
+                )
+                let track = try frame(
+                    "inspector.keyframes.lane.\(property.rawValue).track",
+                    in: host
+                )
+                #expect(label.width > 0)
+                #expect(label.height > 0)
+                #expect(isContained(label, in: panel))
+                #expect(isContained(track, in: panel))
+                #expect(label.maxX + AppTheme.Spacing.sm <= track.minX + 1)
+                #expect(abs(track.minX - ruler.minX) < 1)
+                #expect(abs(track.maxX - ruler.maxX) < 1)
             }
         }
     }
@@ -115,6 +206,7 @@ struct InspectorFormLayoutTests {
 
 private struct InspectorAxisFixture: View {
     let keyframesPanelVisible: Bool
+    var cropAspect: CropAspectLock = .original
 
     var body: some View {
         InspectorKeyframesContent(isPresented: keyframesPanelVisible) {
@@ -170,15 +262,8 @@ private struct InspectorAxisFixture: View {
                     Menu {
                         Button("Custom") {}
                     } label: {
-                        HStack(spacing: AppTheme.Spacing.xs) {
-                            Text("Original")
-                                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
-                            Image(systemName: "chevron.down")
-                                .interfaceFont(
-                                    size: AppTheme.Typography.metadata,
-                                    weight: AppTheme.FontWeight.semibold
-                                )
-                        }
+                        InspectorCropAspectLabel(label: cropAspect.label)
+                            .background(InspectorGeometryProbe(name: "crop-menu-label"))
                     }
                     .menuStyle(.borderlessButton)
                     .menuIndicator(.hidden)

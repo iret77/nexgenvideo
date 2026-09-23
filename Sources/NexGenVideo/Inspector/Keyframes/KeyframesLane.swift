@@ -60,6 +60,7 @@ struct ClipRulerBlock: View {
 struct KeyframesLaneRow: View {
     let clip: Clip
     let property: AnimatableProperty
+    let accessibilityName: String
     let frames: [Int]
     let tint: Color
     @Binding var snapX: CGFloat?
@@ -114,6 +115,8 @@ struct KeyframesLaneRow: View {
             .contentShape(Rectangle())
             .gesture(dragGesture(width: proxy.size.width))
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(accessibilityName)
     }
 
     private func displayedFrames() -> [Int] {
@@ -259,43 +262,77 @@ struct KeyframesLaneRow: View {
 struct KeyframesPanel: View {
     let clip: Clip
     @Environment(EditorViewModel.self) private var editor
+    @Environment(\.interfaceScale) private var interfaceScale
     @State private var snapX: CGFloat?
 
-    private static let videoRows: [(AnimatableProperty, String)] = [
-        (.position, "Position"),
-        (.scale,    "Scale"),
-        (.rotation, "Rotation"),
-        (.opacity,  "Opacity"),
-        (.crop,     "Crop"),
+    private static let videoRows: [AnimatableProperty] = [
+        .position, .scale, .rotation, .opacity, .crop,
     ]
-    private static let audioRows: [(AnimatableProperty, String)] = [
-        (.volume, "Volume"),
-    ]
+    private static let audioRows: [AnimatableProperty] = [.volume]
 
-    private var rows: [(AnimatableProperty, String)] {
+    private var rows: [AnimatableProperty] {
         clip.mediaType == .audio ? Self.audioRows : Self.videoRows
     }
 
     private var tint: Color { Color(nsColor: clip.sourceClipType.themeColor) }
     private var span: Int { max(1, clip.endFrame - clip.startFrame) }
+    private var timelineLeadingInset: CGFloat {
+        AppTheme.Timeline.keyframeLaneLabelWidth + AppTheme.Spacing.sm
+    }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-                ClipRulerBlock(clip: clip, tint: tint, onSeek: { editor.seekToFrame($0) })
-                ForEach(rows, id: \.0) { row in
-                    KeyframesLaneRow(
-                        clip: clip,
-                        property: row.0,
-                        frames: editor.keyframeFrames(clipId: clip.id, property: row.0),
-                        tint: tint,
-                        snapX: $snapX
-                    )
-                    .frame(height: AppTheme.Timeline.keyframeRowHeight)
+                HStack(spacing: AppTheme.Spacing.sm) {
+                    AppTheme.Background.clearColor
+                        .frame(width: AppTheme.Timeline.keyframeLaneLabelWidth)
+                    ClipRulerBlock(clip: clip, tint: tint, onSeek: { editor.seekToFrame($0) })
+                        .background {
+                            AppRelaunchClickProbe(identifier: "inspector.keyframes.ruler")
+                        }
+                }
+                ForEach(rows, id: \.self) { property in
+                    HStack(spacing: AppTheme.Spacing.sm) {
+                        Text(property.displayName)
+                            .interfaceFont(
+                                size: AppTheme.Typography.metadata,
+                                weight: AppTheme.FontWeight.medium
+                            )
+                            .foregroundStyle(AppTheme.Text.secondaryColor)
+                            .lineLimit(1)
+                            .minimumScaleFactor(CGFloat(1 / max(1, interfaceScale)))
+                            .allowsTightening(true)
+                            .frame(
+                                width: AppTheme.Timeline.keyframeLaneLabelWidth,
+                                alignment: .trailing
+                            )
+                            .accessibilityHidden(true)
+                            .background {
+                                AppRelaunchClickProbe(
+                                    identifier: "inspector.keyframes.lane.\(property.rawValue).label"
+                                )
+                            }
+                        KeyframesLaneRow(
+                            clip: clip,
+                            property: property,
+                            accessibilityName: property.displayName,
+                            frames: editor.keyframeFrames(clipId: clip.id, property: property),
+                            tint: tint,
+                            snapX: $snapX
+                        )
+                        .frame(height: AppTheme.Timeline.keyframeRowHeight)
+                        .background {
+                            AppRelaunchClickProbe(
+                                identifier: "inspector.keyframes.lane.\(property.rawValue).track"
+                            )
+                        }
+                    }
                 }
             }
             playheadOverlay
+                .padding(.leading, timelineLeadingInset)
             snapOverlay
+                .padding(.leading, timelineLeadingInset)
         }
     }
 
