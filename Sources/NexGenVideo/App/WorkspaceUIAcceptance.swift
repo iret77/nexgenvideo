@@ -424,6 +424,7 @@ enum WorkspaceUIAcceptance {
             }
 
             let timelineBeforePlacement = editor.timeline
+            let timelinePlayheadBeforeInsertUndoRedo = editor.currentFrame
             guard let acceptanceUndoManager = document.undoManager else {
                 fail("selection acceptance has no undo manager", scale: scale)
             }
@@ -462,6 +463,8 @@ enum WorkspaceUIAcceptance {
                   click(identifier: "selection.ruler", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
                       editor.isTimelinePreviewActive
+                          && editor.currentFrame == 96
+                          && editor.sourcePlayheadFrame == 42
                           && editor.inspectedObject == .clip("selection-clip")
                           && probeState(
                               identifier: "preview.selectionContext.selection-clip",
@@ -481,6 +484,8 @@ enum WorkspaceUIAcceptance {
                   await waitUntil(timeout: .seconds(5), {
                       editor.timeline == timelineBeforePlacement
                           && editor.isTimelinePreviewActive
+                          && editor.currentFrame == 96
+                          && editor.sourcePlayheadFrame == 42
                           && editor.inspectedObject == .clip("selection-clip")
                           && editor.timelineInspectorClipIDs == ["selection-clip"]
                           && probeState(
@@ -501,6 +506,8 @@ enum WorkspaceUIAcceptance {
                   await waitUntil(timeout: .seconds(5), {
                       editor.timeline != timelineBeforePlacement
                           && editor.isTimelinePreviewActive
+                          && editor.currentFrame == 96
+                          && editor.sourcePlayheadFrame == 42
                           && editor.inspectedObject == .clip("selection-clip")
                           && editor.timelineInspectorClipIDs == ["selection-clip"]
                   }),
@@ -513,14 +520,28 @@ enum WorkspaceUIAcceptance {
                   await waitUntil(timeout: .seconds(5), {
                       editor.timeline == timelineBeforePlacement
                           && editor.isTimelinePreviewActive
+                          && editor.currentFrame == 96
+                          && editor.sourcePlayheadFrame == 42
                           && editor.inspectedObject == .clip("selection-clip")
                   }),
                   click(identifier: "selection.asset.selection-source", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
                       editor.activeSourceAsset?.id == "selection-source"
                           && editor.inspectedObject == .mediaAsset("selection-source")
+                          && editor.currentFrame == 96
+                          && editor.sourcePlayheadFrame == 42
                   }) else {
                 fail("source Insert Undo/Redo replaced the active timeline context", scale: scale)
+            }
+            editor.currentFrame = timelinePlayheadBeforeInsertUndoRedo
+            guard await waitUntil(timeout: .seconds(5), {
+                editor.currentFrame == timelinePlayheadBeforeInsertUndoRedo
+                    && editor.sourcePlayheadFrame == 42
+            }) else {
+                fail(
+                    "source Insert Undo/Redo did not restore the prior timeline playhead",
+                    scale: scale
+                )
             }
             guard click(identifier: "source.overwrite", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
@@ -666,6 +687,7 @@ enum WorkspaceUIAcceptance {
                   }) else {
                 fail("linked A/V context Copy did not capture only the clicked link group", scale: scale)
             }
+            let timelinePlayheadBeforePositivePaste = editor.currentFrame
             editor.currentFrame = 210
             guard await waitUntil(timeout: .seconds(5), {
                       editor.focusedPanel == .timeline
@@ -724,8 +746,16 @@ enum WorkspaceUIAcceptance {
                       editor.timeline == timelineBeforePositivePaste
                           && editor.focusedPanel == .timeline
                           && validatedMainMenuItemEnabled(title: "Paste") == true
-                  }),
-                  click(identifier: "selection.clip.selection-title", in: window) == nil,
+                  }) else {
+                fail("Paste positive control or Undo failed", scale: scale)
+            }
+            editor.currentFrame = timelinePlayheadBeforePositivePaste
+            guard await waitUntil(timeout: .seconds(5), {
+                editor.currentFrame == timelinePlayheadBeforePositivePaste
+            }) else {
+                fail("Paste positive control did not restore the prior timeline playhead", scale: scale)
+            }
+            guard click(identifier: "selection.clip.selection-title", in: window) == nil,
                   click(
                       identifier: "selection.clip.selection-clip",
                       modifiers: [.shift],
@@ -736,7 +766,7 @@ enum WorkspaceUIAcceptance {
                           && editor.isTimelineBatchSelection
                           && editor.inspectedObject == nil
                   }) else {
-                fail("Paste positive control, Undo, or batch selection failed", scale: scale)
+                fail("batch selection after Paste Undo failed", scale: scale)
             }
             guard contextClick(identifier: "selection.clip.selection-clip", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
