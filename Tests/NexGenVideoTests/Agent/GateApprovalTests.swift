@@ -193,7 +193,7 @@ struct GateApprovalTests {
         service.isStreaming = true
         let origin = ToolCallOrigin.embeddedRuntime(
             chatSessionID: try #require(service.currentSessionId),
-            mcpSessionID: UUID()
+            runtimeGenerationID: UUID()
         )
 
         _ = try service.requestGateApproval(
@@ -245,7 +245,7 @@ struct GateApprovalTests {
             GateApproval(phase: "brief"),
             origin: .embeddedRuntime(
                 chatSessionID: unrelatedChat,
-                mcpSessionID: UUID()
+                runtimeGenerationID: UUID()
             )
         )
         #expect(service.pendingGateApproval?.sessionId == unrelatedChat)
@@ -261,7 +261,7 @@ struct GateApprovalTests {
             args: ["project_dir": dataRoot.path, "phase": "project_init"],
             origin: .embeddedRuntime(
                 chatSessionID: UUID(),
-                mcpSessionID: UUID()
+                runtimeGenerationID: UUID()
             )
         )
 
@@ -571,7 +571,7 @@ struct GateApprovalTests {
         let chatID = try #require(h.editor.agentService.currentSessionId)
         let origin = ToolCallOrigin.embeddedRuntime(
             chatSessionID: chatID,
-            mcpSessionID: UUID()
+            runtimeGenerationID: UUID()
         )
 
         _ = try h.editor.agentService.requestGateApproval(
@@ -594,7 +594,7 @@ struct GateApprovalTests {
             args: [:],
             origin: .embeddedRuntime(
                 chatSessionID: chatID,
-                mcpSessionID: UUID()
+                runtimeGenerationID: UUID()
             )
         )
         #expect(!replacement.isError)

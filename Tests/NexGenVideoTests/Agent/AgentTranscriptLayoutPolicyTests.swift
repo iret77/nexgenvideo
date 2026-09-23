@@ -337,9 +337,6 @@ struct AgentTranscriptLayoutPolicyTests {
         let message = try sourceFile(
             "Sources/NexGenVideo/Agent/Panel/AgentMessageView.swift"
         )
-        let projection = try sourceFile(
-            "Sources/NexGenVideo/Agent/Panel/AgentTranscriptProjection.swift"
-        )
         let batch = try sourceFile(
             "Sources/NexGenVideo/Agent/Panel/GenerationBatchCard.swift"
         )
@@ -348,8 +345,6 @@ struct AgentTranscriptLayoutPolicyTests {
         #expect(message.contains("DisclosureGroup(isExpanded: $showsDiagnostics)"))
         #expect(message.contains("Previous fingerprint"))
         #expect(message.contains("editor.revealCockpit"))
-        #expect(projection.contains("let results = resultMessage.map"))
-        #expect(projection.contains("isDurableState"))
         #expect(batch.contains("Cost estimates are missing. Approval is unavailable"))
         #expect(!batch.contains("Waiting for cost estimates"))
         #expect(batch.contains("batch.totalEUR == nil"))

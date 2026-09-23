@@ -414,7 +414,7 @@ struct AgentServiceRuntimeContractTests {
                     args: writerArgs,
                     origin: .embeddedRuntime(
                         chatSessionID: turn.sessionID,
-                        mcpSessionID: UUID()
+                        runtimeGenerationID: session.runtimeGenerationID
                     )
                 )
             } else {
@@ -434,7 +434,7 @@ struct AgentServiceRuntimeContractTests {
                 ), for: turn)
                 await waitUntil {
                     service.messages.flatMap(\.hostStateRecords).contains {
-                        $0.toolUseID == "writer"
+                        $0.state == .persisted
                     }
                 }
             }
@@ -471,6 +471,17 @@ struct AgentServiceRuntimeContractTests {
             await waitUntil { !service.isStreaming }
 
             #expect(service.messages.flatMap(\.hostStateRecords).map(\.state) == [.persisted])
+            let hostMessage = try #require(service.messages.first {
+                !$0.hostStateRecords.isEmpty
+            })
+            if backend == .claudeCode {
+                #expect(hostMessage.role == .user)
+                #expect(hostMessage.id == service.messages.first?.id)
+                #expect(hostMessage.hostStateRecords.first?.toolUseID == nil)
+            } else {
+                #expect(hostMessage.role == .assistant)
+                #expect(hostMessage.hostStateRecords.first?.toolUseID == "writer")
+            }
             #expect(!service.messages.contains { $0.role == .user && $0.blocks.isEmpty })
             let projected = AgentTranscriptProjection.turns(
                 messages: service.messages,
@@ -566,42 +577,307 @@ struct AgentServiceRuntimeContractTests {
         }
     }
 
-    @Test("same-name host events bind one-to-one to their tool calls")
-    func sameNameHostEventsKeepDistinctToolIdentity() throws {
+    @Test("an MCP-first writer in a resumed legacy chat stays on its new turn")
+    func legacyWriterCannotCaptureAnMCPFirstHostState() async throws {
         let adapter = FakeRuntimeAdapter(backend: .claudeCode)
         let service = makeService(backend: .claudeCode, adapter: adapter)
-        let sessionID = try #require(service.currentSessionId)
-        service.messages = [AgentMessage(role: .assistant, blocks: [
-            .toolUse(id: "first", name: "write_brief", inputJSON: "{}"),
-            .toolUse(id: "second", name: "write_brief", inputJSON: "{}"),
-        ])]
-        let first = AgentHostStateRecord(
-            state: .writeRejected,
-            phase: "brief",
-            toolName: "write_brief",
-            action: .agentCorrection,
-            artifactPath: nil,
-            byteComparison: .unchanged,
-            previousSHA256: nil,
-            currentSHA256: nil
+        let legacyAssistant = AgentMessage(role: .assistant, blocks: [
+            .toolUse(id: "legacy-writer", name: "write_brief", inputJSON: "{}"),
+        ])
+        service.messages = [
+            AgentMessage(role: .user, blocks: [.text("Earlier turn")]),
+            legacyAssistant,
+            AgentMessage(role: .user, blocks: [
+                .toolResult(
+                    toolUseId: "legacy-writer",
+                    content: [.text("legacy result")],
+                    isError: false
+                ),
+            ]),
+        ]
+
+        #expect(service.send(text: "Write the new brief.", mentions: []))
+        await waitUntil { adapter.sendRequests.count == 1 }
+        let turn = try #require(adapter.sendRequests.first)
+        let runtime = try #require(adapter.resumeRequests.first)
+        let origin = ToolCallOrigin.embeddedRuntime(
+            chatSessionID: turn.sessionID,
+            runtimeGenerationID: runtime.runtimeGenerationID
         )
-        let second = AgentHostStateRecord(
-            state: .persisted,
+        let reference = try #require(service.captureHostTurnReference(origin: origin))
+        let record = hostRecord(state: .persisted, suffix: "new")
+
+        service.recordHostState(
+            record,
+            origin: origin,
+            turnReference: reference
+        )
+        adapter.emit(.toolCall(
+            messageID: "new-writer-message",
+            id: "new-writer",
+            name: "write_brief",
+            inputJSON: "{}"
+        ), for: turn)
+        await waitUntil {
+            service.messages.contains { message in
+                message.blocks.contains {
+                    if case .toolUse(let id, _, _) = $0 { return id == "new-writer" }
+                    return false
+                }
+            }
+        }
+
+        let old = try #require(service.messages.first { $0.id == legacyAssistant.id })
+        #expect(old.hostStateRecords.isEmpty)
+        let owner = try #require(service.messages.first { $0.id == reference.inputMessageID })
+        #expect(owner.role == .user)
+        #expect(owner.hostStateRecords == [record])
+        #expect(owner.hostStateRecords.first?.toolUseID == nil)
+
+        adapter.emit(.terminal(.completed(.endTurn)), for: turn)
+        adapter.finish(turn)
+        await waitUntil { !service.isStreaming }
+    }
+
+    @Test("an API host event keeps its real id inside the owning turn")
+    func apiHostStateCannotCaptureAReusedLegacyToolID() async throws {
+        let adapter = FakeRuntimeAdapter(backend: .anthropicAPI)
+        let service = makeService(backend: .anthropicAPI, adapter: adapter)
+        let legacyAssistant = AgentMessage(role: .assistant, blocks: [
+            .toolUse(id: "reused", name: "write_brief", inputJSON: "{}"),
+        ])
+        service.messages = [
+            AgentMessage(role: .user, blocks: [.text("Earlier turn")]),
+            legacyAssistant,
+            AgentMessage(role: .user, blocks: [
+                .toolResult(
+                    toolUseId: "reused",
+                    content: [.text("legacy result")],
+                    isError: false
+                ),
+            ]),
+        ]
+
+        #expect(service.send(text: "Write again.", mentions: []))
+        await waitUntil { adapter.sendRequests.count == 1 }
+        let turn = try #require(adapter.sendRequests.first)
+        let origin = ToolCallOrigin.inAppChat(sessionID: turn.sessionID)
+        let reference = try #require(service.captureHostTurnReference(origin: origin))
+        let record = hostRecord(state: .persisted, suffix: "api")
+        service.recordHostState(
+            record,
+            origin: origin,
+            toolUseID: "reused",
+            turnReference: reference
+        )
+        adapter.emit(.toolCall(
+            messageID: "current-writer",
+            id: "reused",
+            name: "write_brief",
+            inputJSON: "{}"
+        ), for: turn)
+
+        let old = try #require(service.messages.first { $0.id == legacyAssistant.id })
+        let owner = try #require(service.messages.first {
+            $0.id == reference.inputMessageID
+        })
+        #expect(old.hostStateRecords.isEmpty)
+        #expect(owner.hostStateRecords.map(\.id) == [record.id])
+        #expect(owner.hostStateRecords.first?.toolUseID == "reused")
+
+        adapter.emit(.terminal(.completed(.endTurn)), for: turn)
+        adapter.finish(turn)
+        await waitUntil { !service.isStreaming }
+    }
+
+    @Test("same-name calls keep real API ids while MCP records claim no id")
+    func reorderedSameNameHostEventsKeepProvenIdentity() async throws {
+        for backend in AgentBackend.allCases {
+            let adapter = FakeRuntimeAdapter(backend: backend)
+            let service = makeService(backend: backend, adapter: adapter)
+            #expect(service.send(text: "Write twice.", mentions: []))
+            await waitUntil { adapter.sendRequests.count == 1 }
+            let turn = try #require(adapter.sendRequests.first)
+            adapter.emit(.toolCall(
+                messageID: "writers",
+                id: "first",
+                name: "write_brief",
+                inputJSON: "{}"
+            ), for: turn)
+            adapter.emit(.toolCall(
+                messageID: "writers",
+                id: "second",
+                name: "write_brief",
+                inputJSON: "{}"
+            ), for: turn)
+            await waitUntil {
+                service.messages.flatMap(\.blocks).filter {
+                    if case .toolUse = $0 { return true }
+                    return false
+                }.count == 2
+            }
+            let first = hostRecord(state: .writeRejected, suffix: "first")
+            let second = hostRecord(state: .persisted, suffix: "second")
+
+            if backend == .anthropicAPI {
+                let origin = ToolCallOrigin.inAppChat(sessionID: turn.sessionID)
+                service.recordHostState(second, origin: origin, toolUseID: "second")
+                service.recordHostState(first, origin: origin, toolUseID: "first")
+
+                let records = service.messages
+                    .filter { $0.role == .assistant }
+                    .flatMap(\.hostStateRecords)
+                #expect(Dictionary(uniqueKeysWithValues: records.compactMap {
+                    record in record.toolUseID.map { ($0, record.id) }
+                }) == ["first": first.id, "second": second.id])
+            } else {
+                let runtime = try #require(
+                    adapter.startRequests.first ?? adapter.resumeRequests.first
+                )
+                let origin = ToolCallOrigin.embeddedRuntime(
+                    chatSessionID: turn.sessionID,
+                    runtimeGenerationID: runtime.runtimeGenerationID
+                )
+                let reference = try #require(
+                    service.captureHostTurnReference(origin: origin)
+                )
+                service.recordHostState(
+                    second,
+                    origin: origin,
+                    turnReference: reference
+                )
+                service.recordHostState(
+                    first,
+                    origin: origin,
+                    turnReference: reference
+                )
+
+                let owner = try #require(service.messages.first {
+                    $0.id == reference.inputMessageID
+                })
+                #expect(owner.hostStateRecords.map(\.id) == [second.id, first.id])
+                #expect(owner.hostStateRecords.allSatisfy { $0.toolUseID == nil })
+                #expect(service.messages.filter { $0.role == .assistant }
+                    .flatMap(\.hostStateRecords).isEmpty)
+            }
+
+            adapter.emit(.terminal(.completed(.endTurn)), for: turn)
+            adapter.finish(turn)
+            await waitUntil { !service.isStreaming }
+        }
+    }
+
+    @Test("late MCP completion after cancel remains on the cancelled turn")
+    func cancelLateCompletionAndResendStaySeparated() async throws {
+        let adapter = FakeRuntimeAdapter(backend: .claudeCode)
+        let service = makeService(backend: .claudeCode, adapter: adapter)
+        #expect(service.send(text: "Original request", mentions: []))
+        await waitUntil { adapter.sendRequests.count == 1 }
+        let originalTurn = try #require(adapter.sendRequests.first)
+        let originalRuntime = try #require(adapter.startRequests.first)
+        let originalOrigin = ToolCallOrigin.embeddedRuntime(
+            chatSessionID: originalTurn.sessionID,
+            runtimeGenerationID: originalRuntime.runtimeGenerationID
+        )
+        let originalReference = try #require(
+            service.captureHostTurnReference(origin: originalOrigin)
+        )
+
+        service.cancel()
+        let completed = hostRecord(state: .persisted, suffix: "late")
+        service.recordHostState(
+            completed,
+            origin: originalOrigin,
+            turnReference: originalReference
+        )
+
+        #expect(service.send(text: "Resend request", mentions: []))
+        await waitUntil { adapter.sendRequests.count == 2 }
+        let resendTurn = adapter.sendRequests[1]
+        let resendRuntime = try #require(adapter.resumeRequests.last)
+        let resendOrigin = ToolCallOrigin.embeddedRuntime(
+            chatSessionID: resendTurn.sessionID,
+            runtimeGenerationID: resendRuntime.runtimeGenerationID
+        )
+        let resendReference = try #require(
+            service.captureHostTurnReference(origin: resendOrigin)
+        )
+        let rejected = hostRecord(state: .writeRejected, suffix: "resend")
+        service.recordHostState(
+            rejected,
+            origin: resendOrigin,
+            turnReference: resendReference
+        )
+        adapter.emit(.toolCall(
+            messageID: "resend-writer-message",
+            id: "resend-writer",
+            name: "write_brief",
+            inputJSON: "{}"
+        ), for: resendTurn)
+
+        let originalOwner = try #require(service.messages.first {
+            $0.id == originalReference.inputMessageID
+        })
+        let resendOwner = try #require(service.messages.first {
+            $0.id == resendReference.inputMessageID
+        })
+        #expect(originalOwner.hostStateRecords.map(\.id) == [completed.id])
+        #expect(resendOwner.hostStateRecords.map(\.id) == [rejected.id])
+        #expect(originalOwner.hostStateRecords.first?.toolUseID == nil)
+        #expect(resendOwner.hostStateRecords.first?.toolUseID == nil)
+        #expect(originalReference.runtimeGenerationID != resendReference.runtimeGenerationID)
+        #expect(originalReference.logicalTurnID != resendReference.logicalTurnID)
+
+        adapter.emit(.terminal(.completed(.endTurn)), for: resendTurn)
+        adapter.finish(resendTurn)
+        await waitUntil { !service.isStreaming }
+    }
+
+    @Test("host turn references cannot cross chat or project generations")
+    func hostTurnReferenceRespectsSessionAndProjectBoundaries() async throws {
+        let adapter = FakeRuntimeAdapter(backend: .claudeCode)
+        let service = makeService(backend: .claudeCode, adapter: adapter)
+        #expect(service.send(text: "Project-scoped request", mentions: []))
+        await waitUntil { adapter.sendRequests.count == 1 }
+        let turn = try #require(adapter.sendRequests.first)
+        let runtime = try #require(adapter.startRequests.first)
+        let origin = ToolCallOrigin.embeddedRuntime(
+            chatSessionID: turn.sessionID,
+            runtimeGenerationID: runtime.runtimeGenerationID
+        )
+        let reference = try #require(service.captureHostTurnReference(origin: origin))
+        let wrongSessionOrigin = ToolCallOrigin.embeddedRuntime(
+            chatSessionID: UUID(),
+            runtimeGenerationID: runtime.runtimeGenerationID
+        )
+        #expect(service.captureHostTurnReference(origin: wrongSessionOrigin) == nil)
+
+        service.loadSessions(from: nil)
+        service.recordHostState(
+            hostRecord(state: .persisted, suffix: "stale-project"),
+            origin: origin,
+            turnReference: reference
+        )
+
+        #expect(service.messages.flatMap(\.hostStateRecords).isEmpty)
+        #expect(service.sessions.flatMap(\.messages)
+            .flatMap(\.hostStateRecords).isEmpty)
+    }
+
+    private func hostRecord(
+        state: AgentHostStateRecord.State,
+        suffix: String
+    ) -> AgentHostStateRecord {
+        AgentHostStateRecord(
+            state: state,
             phase: "brief",
             toolName: "write_brief",
-            action: .reviewForApproval,
+            action: state == .persisted ? .reviewForApproval : .agentCorrection,
             artifactPath: PipelineLayout.briefFile,
-            byteComparison: .created,
-            previousSHA256: nil,
-            currentSHA256: String(repeating: "a", count: 64)
+            byteComparison: state == .persisted ? .changed : .unchanged,
+            previousSHA256: String(repeating: "a", count: 64),
+            currentSHA256: String(repeating: suffix == "second" ? "c" : "b", count: 64)
         )
-
-        service.recordHostState(first, origin: .inAppChat(sessionID: sessionID))
-        service.recordHostState(second, origin: .inAppChat(sessionID: sessionID))
-
-        let records = service.messages.flatMap(\.hostStateRecords)
-        #expect(records.map(\.toolUseID) == ["first", "second"])
-        #expect(records.map(\.id) == [first.id, second.id])
     }
 
     private func makeService(

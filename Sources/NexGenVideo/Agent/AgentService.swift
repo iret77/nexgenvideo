@@ -225,7 +225,10 @@ final class AgentService {
     }
 
     @ObservationIgnored
-    private var pendingHostStates: [UUID: [AgentHostStateRecord]] = [:]
+    private var projectGenerationID = UUID()
+
+    @ObservationIgnored
+    private var hostTurnReferences: [UUID: AgentHostTurnReference] = [:]
     var isStreaming: Bool = false {
         didSet {
             captureDiagnosticTranscript()
@@ -1265,21 +1268,21 @@ final class AgentService {
     func recordHostState(
         _ record: AgentHostStateRecord,
         origin: ToolCallOrigin,
-        toolUseID: String? = nil
+        toolUseID: String? = nil,
+        turnReference: AgentHostTurnReference? = nil
     ) {
         guard let sessionID = origin.chatSessionID else { return }
+        let verifiedTurnReference = verifiedHostTurnReference(
+            turnReference,
+            origin: origin
+        )
         if sessionID == currentSessionId {
             guard Self.attachHostState(
                 record,
                 toolUseID: toolUseID,
+                turnReference: verifiedTurnReference,
                 to: &messages
-            ) else {
-                upsertPendingHostState(
-                    record.associated(with: toolUseID),
-                    sessionID: sessionID
-                )
-                return
-            }
+            ) else { return }
             syncMessagesIntoCurrentSession()
             onSessionsChanged?()
             return
@@ -1290,57 +1293,82 @@ final class AgentService {
         guard Self.attachHostState(
             record,
             toolUseID: toolUseID,
+            turnReference: verifiedTurnReference,
             to: &sessions[index].messages
-        ) else {
-            upsertPendingHostState(
-                record.associated(with: toolUseID),
-                sessionID: sessionID
-            )
-            return
-        }
+        ) else { return }
         sessions[index].updatedAt = Date()
         onSessionsChanged?()
     }
 
-    private func upsertPendingHostState(
-        _ record: AgentHostStateRecord,
-        sessionID: UUID
-    ) {
-        var records = pendingHostStates[sessionID] ?? []
-        if let index = records.firstIndex(where: { $0.id == record.id }) {
-            records[index] = record.associated(with: record.toolUseID, retaining: records[index].id)
-        } else {
-            records.append(record)
+    func captureHostTurnReference(
+        origin: ToolCallOrigin
+    ) -> AgentHostTurnReference? {
+        let chatSessionID: UUID
+        let generationID: UUID
+        switch origin {
+        case .embeddedRuntime(let sessionID, let runtimeGenerationID):
+            chatSessionID = sessionID
+            generationID = runtimeGenerationID
+        case .inAppChat(let sessionID):
+            guard let runtimeGenerationID else { return nil }
+            chatSessionID = sessionID
+            generationID = runtimeGenerationID
+        case .direct, .externalMCP:
+            return nil
         }
-        pendingHostStates[sessionID] = records
+        guard
+            let reference = hostTurnReferences[generationID],
+            reference.projectGenerationID == projectGenerationID,
+            reference.chatSessionID == chatSessionID,
+            reference.runtimeGenerationID == generationID,
+            sessionContainsMessage(
+                reference.inputMessageID,
+                sessionID: chatSessionID
+            ) else { return nil }
+        return reference
     }
 
-    private func attachPendingHostStates(
-        sessionID: UUID,
-        toolUseID: String,
-        toolName: String
-    ) {
-        guard var records = pendingHostStates[sessionID] else { return }
-        guard let matching = records.first(where: {
-            ($0.toolUseID == nil || $0.toolUseID == toolUseID)
-                && ToolRunPresentation.baseName(for: $0.toolName)
-                    == ToolRunPresentation.baseName(for: toolName)
-        }) else { return }
-        _ = Self.attachHostState(
-            matching,
-            toolUseID: toolUseID,
-            to: &messages
-        )
-        records.removeAll { $0.id == matching.id }
-        pendingHostStates[sessionID] = records.isEmpty ? nil : records
-        syncMessagesIntoCurrentSession()
-        onSessionsChanged?()
+    private func verifiedHostTurnReference(
+        _ reference: AgentHostTurnReference?,
+        origin: ToolCallOrigin
+    ) -> AgentHostTurnReference? {
+        guard let reference,
+              reference.projectGenerationID == projectGenerationID,
+              reference.chatSessionID == origin.chatSessionID,
+              sessionContainsMessage(
+                  reference.inputMessageID,
+                  sessionID: reference.chatSessionID
+              ) else { return nil }
+        switch origin {
+        case .embeddedRuntime(let sessionID, let runtimeGenerationID):
+            return sessionID == reference.chatSessionID
+                    && runtimeGenerationID == reference.runtimeGenerationID
+                ? reference
+                : nil
+        case .inAppChat(let sessionID):
+            return sessionID == reference.chatSessionID ? reference : nil
+        case .direct, .externalMCP:
+            return nil
+        }
+    }
+
+    private func sessionContainsMessage(
+        _ messageID: UUID,
+        sessionID: UUID
+    ) -> Bool {
+        if currentSessionId == sessionID {
+            return messages.contains { $0.id == messageID }
+        }
+        return sessions.first(where: { $0.id == sessionID })?.messages.contains {
+            $0.id == messageID
+        } == true
     }
 
     @discardableResult
     private static func attachHostState(
         _ record: AgentHostStateRecord,
         toolUseID: String?,
+        turnReference: AgentHostTurnReference?,
         to messages: inout [AgentMessage]
     ) -> Bool {
         if let messageIndex = messages.indices.reversed().first(where: { index in
@@ -1356,35 +1384,52 @@ final class AgentService {
             return true
         }
         let requestedID = toolUseID ?? record.toolUseID
-        let match: (index: Int, toolUseID: String)? = messages.indices.reversed().compactMap { index in
-            guard messages[index].role == .assistant else { return nil }
-            for block in messages[index].blocks {
-                guard case .toolUse(let id, let name, _) = block else { continue }
-                if let requestedID {
-                    if id == requestedID { return (index, id) }
-                } else if ToolRunPresentation.baseName(for: name)
-                    == ToolRunPresentation.baseName(for: record.toolName),
-                    !messages[index].hostStateRecords.contains(where: {
-                        $0.toolUseID == id
-                    }) {
-                    return (index, id)
+        let searchableIndices: [Int]
+        if let turnReference,
+           let anchor = messages.firstIndex(where: {
+               $0.id == turnReference.inputMessageID && $0.role == .user
+           }) {
+            let end = messages.indices.dropFirst(anchor + 1).first(where: {
+                messages[$0].role == .user && messages[$0].blocks.contains {
+                    if case .text = $0 { return true }
+                    return false
                 }
-            }
-            return nil
-        }.first
-        guard let match else { return false }
-        let associated = record.associated(with: match.toolUseID)
-        if let index = messages[match.index].hostStateRecords.firstIndex(where: {
-            $0.toolUseID == match.toolUseID && $0.phase == associated.phase
-        }) {
-            let priorID = messages[match.index].hostStateRecords[index].id
-            messages[match.index].hostStateRecords[index] = associated.associated(
-                with: match.toolUseID,
-                retaining: priorID
-            )
+            }) ?? messages.endIndex
+            searchableIndices = Array(anchor..<end)
         } else {
-            messages[match.index].hostStateRecords.append(associated)
+            searchableIndices = Array(messages.indices)
         }
+        if let requestedID,
+           let messageIndex = searchableIndices.first(where: { index in
+               messages[index].role == .assistant
+                   && messages[index].blocks.contains {
+                       if case .toolUse(let id, _, _) = $0 {
+                           return id == requestedID
+                       }
+                       return false
+                   }
+           }) {
+            let associated = record.associated(with: requestedID)
+            if let index = messages[messageIndex].hostStateRecords.firstIndex(where: {
+                $0.toolUseID == requestedID && $0.phase == associated.phase
+            }) {
+                let priorID = messages[messageIndex].hostStateRecords[index].id
+                messages[messageIndex].hostStateRecords[index] = associated.associated(
+                    with: requestedID,
+                    retaining: priorID
+                )
+            } else {
+                messages[messageIndex].hostStateRecords.append(associated)
+            }
+            return true
+        }
+        guard let turnReference,
+              let messageIndex = messages.firstIndex(where: {
+                  $0.id == turnReference.inputMessageID && $0.role == .user
+              }) else { return false }
+        messages[messageIndex].hostStateRecords.append(
+            record.associated(with: requestedID)
+        )
         return true
     }
 
@@ -1467,14 +1512,31 @@ final class AgentService {
 
     func presentGenerationBatch(_ batch: GenerationBatch, origin: ToolCallOrigin, editor: EditorViewModel) throws -> ToolResult {
         guard batch.totalEUR != nil else {
-            let unpricedItemIDs = batch.payload.items.compactMap {
-                $0.package.payload.estimate == nil ? $0.id : nil
+            let unpricedItems: [[String: Any]] = batch.payload.items.enumerated().compactMap {
+                index, item in
+                guard item.package.payload.estimate == nil else { return nil }
+                let target = item.package.payload.target
+                let tool = item.package.payload.modality == "image"
+                    ? ToolName.generateImage.rawValue
+                    : ToolName.generateVideo.rawValue
+                return [
+                    "index": index,
+                    "reason": "no_host_price_for_route",
+                    "tool": tool,
+                    "purpose": item.purpose,
+                    "route": [
+                        "provider": target.provider.rawValue,
+                        "transport": target.transport.rawValue,
+                        "model": target.modelId,
+                        "endpoint": target.endpoint,
+                    ],
+                ]
             }
             let payload = try NativeCockpitReader.serialize([
                 "status": "preparation_incomplete",
                 "reason": "missing_cost_estimates",
-                "unpriced_item_ids": unpricedItemIDs,
-                "message": "No approval was opened. Repair or re-prepare the listed items with host-verified prices.",
+                "unpriced_items": unpricedItems,
+                "message": "No approval was opened. Repair or re-prepare the indexed inputs with host-verified prices.",
             ])
             return .error(String(decoding: payload, as: UTF8.self))
         }
@@ -2250,7 +2312,8 @@ final class AgentService {
                             currentSHA256: nil
                         ),
                         origin: origin,
-                        toolUseID: approval.sourceToolUseID
+                        toolUseID: approval.sourceToolUseID,
+                        turnReference: approval.sourceHostTurnReference
                     )
                     enqueueGateFollowUp(
                         "The user approved \(approval.phaseLabel), and the host wrote the gate successfully: \(payload) "
@@ -2307,7 +2370,8 @@ final class AgentService {
                 currentSHA256: nil
             ),
             origin: origin,
-            toolUseID: approval.sourceToolUseID
+            toolUseID: approval.sourceToolUseID,
+            turnReference: approval.sourceHostTurnReference
         )
         enqueueGateFollowUp(
             "The user approved \(approval.phaseLabel), but the host could not write the gate: \(reason) "
@@ -2578,6 +2642,9 @@ final class AgentService {
     private var runtimeSessionID: UUID?
 
     @ObservationIgnored
+    private var runtimeGenerationID: UUID?
+
+    @ObservationIgnored
     private var pendingTurnImages: [AgentRuntimeImage] = []
 
     private(set) var lastRuntimeUsage: AgentRuntimeUsage?
@@ -2611,7 +2678,8 @@ final class AgentService {
         pendingSpendFollowUps.removeAll()
         currentTask?.cancel()
         currentTask = nil
-        pendingHostStates.removeAll()
+        projectGenerationID = UUID()
+        hostTurnReferences.removeAll()
         rotateRuntime()
         composerStates.removeAll()
         sessions = ChatSessionStore.load(from: projectURL)
@@ -2654,9 +2722,6 @@ final class AgentService {
     }
 
     func newChat() {
-        if let currentSessionId {
-            pendingHostStates.removeValue(forKey: currentSessionId)
-        }
         saveComposerState()
         currentTask?.cancel()
         abandonSessionDialog()
@@ -2808,7 +2873,9 @@ final class AgentService {
             resumeToolCalls(from: followUp.origin)
         }
         sessions.removeAll { $0.id == id }
-        pendingHostStates.removeValue(forKey: id)
+        hostTurnReferences = hostTurnReferences.filter {
+            $0.value.chatSessionID != id
+        }
         composerStates.removeValue(forKey: id)
         if deletingActive {
             currentTask?.cancel()
@@ -2920,6 +2987,7 @@ final class AgentService {
         currentTask?.cancel()
         currentTask = nil
         runtimeAdapter = nil
+        runtimeGenerationID = nil
         runtimeSessionID = nil
         runtimeContextSignature = nil
         isStreaming = false
@@ -3096,8 +3164,10 @@ final class AgentService {
             }
         }
         let providerSessionID = sessions.first { $0.id == sessionID }?.claudeSessionId
+        let generationID = UUID()
         let request = AgentRuntimeSessionRequest(
             sessionID: sessionID,
+            runtimeGenerationID: generationID,
             providerSessionID: providerSessionID,
             priorMessages: messages,
             hostContext: hostContext,
@@ -3127,6 +3197,7 @@ final class AgentService {
         }
         runtimeAdapter = adapter
         runtimeSessionID = sessionID
+        runtimeGenerationID = generationID
         runtimeContextSignature = signature
         return adapter
     }
@@ -3137,6 +3208,7 @@ final class AgentService {
         }
         runtimeAdapter = nil
         runtimeSessionID = nil
+        runtimeGenerationID = nil
         runtimeContextSignature = nil
     }
 
@@ -3165,11 +3237,6 @@ final class AgentService {
                 defaultAssistantID: &defaultAssistantID
             )
             appendToolUse(id: id, name: name, inputJSON: inputJSON, toAssistant: assistantID)
-            attachPendingHostStates(
-                sessionID: sessionID,
-                toolUseID: id,
-                toolName: name
-            )
         case .toolResult(let id, let content, let isError):
             let block = AgentContentBlock.toolResult(
                 toolUseId: id,
@@ -3258,6 +3325,8 @@ final class AgentService {
         let runtimeMessages = await runtimeMessages(transientImages: transientImages)
         guard !Task.isCancelled,
               currentSessionId == sessionID,
+              let inputMessage = messages.last,
+              inputMessage.role == .user,
               let currentMessage = runtimeMessages.last else { return }
         let adapter: any AgentRuntimeAdapter
         do {
@@ -3270,6 +3339,17 @@ final class AgentService {
             return
         }
         let turnID = UUID()
+        guard let runtimeGenerationID else {
+            streamError = .upstream("The agent runtime has no execution identity.")
+            return
+        }
+        hostTurnReferences[runtimeGenerationID] = AgentHostTurnReference(
+            projectGenerationID: projectGenerationID,
+            chatSessionID: sessionID,
+            runtimeGenerationID: runtimeGenerationID,
+            logicalTurnID: turnID,
+            inputMessageID: inputMessage.id
+        )
         var fence = AgentRuntimeEventFence()
         fence.begin(sessionID: sessionID, turnID: turnID)
         do {

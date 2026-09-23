@@ -187,20 +187,31 @@ enum AgentTranscriptProjection {
             output[$0].record.phase == state.record.phase
         }
         switch state.record.state {
-        case .approved, .checked, .persisted, .approvalFailed,
-             .persistedPhaseRecordFailed:
+        case .approved, .checked, .persisted, .persistedPhaseRecordFailed:
             for index in samePhase.reversed() {
                 output.remove(at: index)
             }
-        case .draft, .writeBlocked, .writeRejected, .writeOutcomeUnavailable:
-            let hasDurableState = samePhase.contains {
-                switch output[$0].record.state {
-                case .persisted, .checked, .approved: true
-                default: false
+        case .writeOutcomeUnavailable:
+            for index in samePhase.reversed() {
+                if output[index].record.state != .persistedPhaseRecordFailed {
+                    output.remove(at: index)
                 }
             }
+        case .draft, .writeBlocked, .writeRejected:
+            let hasProtectedState = samePhase.contains {
+                isCleanDurable(output[$0].record.state)
+                    || isRepairRequired(output[$0].record.state)
+            }
             for index in samePhase.reversed() {
-                if !hasDurableState || !isDurableState(output[index].record.state) {
+                if !hasProtectedState
+                    || (!isCleanDurable(output[index].record.state)
+                        && !isRepairRequired(output[index].record.state)) {
+                    output.remove(at: index)
+                }
+            }
+        case .approvalFailed:
+            for index in samePhase.reversed() {
+                if !isRepairRequired(output[index].record.state) {
                     output.remove(at: index)
                 }
             }
@@ -208,9 +219,16 @@ enum AgentTranscriptProjection {
         output.append(state)
     }
 
-    private static func isDurableState(_ state: AgentHostStateRecord.State) -> Bool {
+    private static func isCleanDurable(_ state: AgentHostStateRecord.State) -> Bool {
         switch state {
         case .persisted, .checked, .approved: true
+        default: false
+        }
+    }
+
+    private static func isRepairRequired(_ state: AgentHostStateRecord.State) -> Bool {
+        switch state {
+        case .persistedPhaseRecordFailed, .writeOutcomeUnavailable: true
         default: false
         }
     }

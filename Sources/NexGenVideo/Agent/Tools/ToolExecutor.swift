@@ -248,6 +248,9 @@ final class ToolExecutor {
         }
         guard let editor else { return .error("Editor not available") }
         let origin = normalizedToolCallOrigin(origin, editor: editor)
+        let hostTurnReference = editor.agentService.captureHostTurnReference(
+            origin: origin
+        )
         let before = editor.timeline
         var result: ToolResult
         var guardedPhase: String?
@@ -402,7 +405,8 @@ final class ToolExecutor {
                         currentSHA256: nil
                     ),
                     origin: origin,
-                    toolUseID: hostToolUseID
+                    toolUseID: hostToolUseID,
+                    turnReference: hostTurnReference
                 )
             }
             writerEntered = tool.isCanonicalArtifactWriter
@@ -412,7 +416,8 @@ final class ToolExecutor {
                 resolved,
                 origin: origin,
                 toolUseID: hostToolUseID,
-                hostStateID: hostStateID
+                hostStateID: hostStateID,
+                hostTurnReference: hostTurnReference
             )
             writerReturnedSuccess = tool.isCanonicalArtifactWriter
                 && !result.isError
@@ -489,7 +494,8 @@ final class ToolExecutor {
             editor.agentService.recordHostState(
                 state,
                 origin: origin,
-                toolUseID: hostToolUseID
+                toolUseID: hostToolUseID,
+                turnReference: hostTurnReference
             )
             if state.state == .persistedPhaseRecordFailed,
                !phaseRecordFailed {
@@ -761,11 +767,14 @@ final class ToolExecutor {
         _ origin: ToolCallOrigin,
         editor: EditorViewModel
     ) -> ToolCallOrigin {
-        guard case .embeddedRuntime(let chatSessionID, let mcpSessionID) = origin,
+        guard case .embeddedRuntime(
+            let chatSessionID,
+            let runtimeGenerationID
+        ) = origin,
               !editor.agentService.sessions.contains(where: { $0.id == chatSessionID }) else {
             return origin
         }
-        return .externalMCP(sessionID: mcpSessionID)
+        return .externalMCP(sessionID: runtimeGenerationID)
     }
 
     private func run(
@@ -774,7 +783,8 @@ final class ToolExecutor {
         _ args: [String: Any],
         origin: ToolCallOrigin,
         toolUseID: String?,
-        hostStateID: UUID
+        hostStateID: UUID,
+        hostTurnReference: AgentHostTurnReference?
     ) async throws -> ToolResult {
         switch tool {
         case .getProductionKnowledge: return try getProductionKnowledge(args)
@@ -856,7 +866,8 @@ final class ToolExecutor {
                 args,
                 origin: origin,
                 toolUseID: toolUseID,
-                hostStateID: hostStateID
+                hostStateID: hostStateID,
+                hostTurnReference: hostTurnReference
             )
         case .rewind:               return try rewindTool(editor, args)
         case .estimateCost:         return try estimateCostTool(editor, args)
@@ -886,7 +897,8 @@ final class ToolExecutor {
                 args,
                 origin: origin,
                 toolUseID: toolUseID,
-                hostStateID: hostStateID
+                hostStateID: hostStateID,
+                hostTurnReference: hostTurnReference
             )
         case .runProviderTool:      return try await runProviderTool(editor, args, origin: origin)
         }

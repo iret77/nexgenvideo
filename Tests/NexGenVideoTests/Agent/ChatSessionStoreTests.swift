@@ -119,6 +119,34 @@ struct ChatSessionStoreTests {
         #expect(back.messages.first?.hostStateRecords.first?.toolUseID == "storyboard-writer")
     }
 
+    @Test("ID-less embedded host state round-trips on its owning user turn")
+    func embeddedHostStateTurnOwnershipRoundTrips() throws {
+        let turn = AgentMessage(
+            role: .user,
+            blocks: [.text("Write the storyboard")],
+            hostStateRecords: [AgentHostStateRecord(
+                state: .persistedPhaseRecordFailed,
+                phase: "storyboard",
+                toolName: "write_storyboard",
+                action: .agentCorrection,
+                artifactPath: "storyboard/current.yaml",
+                byteComparison: .changed,
+                previousSHA256: String(repeating: "a", count: 64),
+                currentSHA256: String(repeating: "b", count: 64)
+            )]
+        )
+        let data = try #require(ChatSessionStore.encodeSession(
+            ChatSession(title: "t", messages: [turn])
+        ))
+        let back = try decoder.decode(ChatSession.self, from: data)
+
+        #expect(back.messages.first?.id == turn.id)
+        #expect(back.messages.first?.role == .user)
+        #expect(back.messages.first?.hostStateRecords.first?.state
+            == .persistedPhaseRecordFailed)
+        #expect(back.messages.first?.hostStateRecords.first?.toolUseID == nil)
+    }
+
     @Test("conversation titles preserve distinguishing text at both ends")
     func conversationTitleUsesMiddleCompaction() {
         let source = String(repeating: "opening detail ", count: 8)

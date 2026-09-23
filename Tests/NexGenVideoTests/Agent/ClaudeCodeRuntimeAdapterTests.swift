@@ -320,6 +320,7 @@ private func claudeSessionRequest(
 ) -> AgentRuntimeSessionRequest {
     AgentRuntimeSessionRequest(
         sessionID: sessionID,
+        runtimeGenerationID: UUID(),
         providerSessionID: providerSessionID,
         priorMessages: [AgentMessage(role: .assistant, blocks: [.text("Earlier")])],
         hostContext: AgentRuntimeHostContext(

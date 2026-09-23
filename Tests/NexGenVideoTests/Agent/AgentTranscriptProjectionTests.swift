@@ -572,6 +572,100 @@ struct AgentTranscriptProjectionTests {
         #expect(states.map(\.state) == [.persisted, .writeRejected])
     }
 
+    @Test("partial persistence and unknown writes remain visible through later failures")
+    func repairStatesSurviveLaterFailedAttempts() {
+        for initialState in [
+            AgentHostStateRecord.State.persistedPhaseRecordFailed,
+            .writeOutcomeUnavailable,
+        ] {
+            for laterState in [
+                AgentHostStateRecord.State.draft,
+                .writeBlocked,
+                .writeRejected,
+                .writeOutcomeUnavailable,
+            ] {
+                let initial = projectionRecord(
+                    state: initialState,
+                    toolUseID: "initial"
+                )
+                let later = projectionRecord(
+                    state: laterState,
+                    toolUseID: "later"
+                )
+                let states = projectedStates([initial, later])
+
+                if initialState == .writeOutcomeUnavailable,
+                   laterState == .writeOutcomeUnavailable {
+                    #expect(states.map(\.state) == [.writeOutcomeUnavailable])
+                    #expect(states.first?.id == later.id)
+                } else {
+                    #expect(states.map(\.state) == [initialState, laterState])
+                }
+            }
+        }
+    }
+
+    @Test("only a verified clean write clears repair state")
+    func cleanSuccessAloneClearsRepairState() {
+        let repair = projectionRecord(
+            state: .persistedPhaseRecordFailed,
+            toolUseID: "repair"
+        )
+        let clean = projectionRecord(state: .persisted, toolUseID: "clean")
+        #expect(projectedStates([repair, clean]).map(\.state) == [.persisted])
+
+        let priorReady = projectionRecord(state: .checked, toolUseID: "ready")
+        let uncertain = projectionRecord(
+            state: .writeOutcomeUnavailable,
+            toolUseID: "uncertain"
+        )
+        #expect(projectedStates([priorReady, uncertain]).map(\.state) == [
+            .writeOutcomeUnavailable,
+        ])
+    }
+
+    private func projectionRecord(
+        state: AgentHostStateRecord.State,
+        toolUseID: String
+    ) -> AgentHostStateRecord {
+        AgentHostStateRecord(
+            toolUseID: toolUseID,
+            state: state,
+            phase: "storyboard",
+            toolName: "write_storyboard",
+            action: state == .persisted ? .reviewForApproval : .agentCorrection,
+            artifactPath: "storyboard/current.yaml",
+            byteComparison: state == .writeOutcomeUnavailable ? .unavailable : .changed,
+            previousSHA256: String(repeating: "a", count: 64),
+            currentSHA256: state == .writeOutcomeUnavailable
+                ? nil
+                : String(repeating: "b", count: 64)
+        )
+    }
+
+    private func projectedStates(
+        _ records: [AgentHostStateRecord]
+    ) -> [AgentHostStateRecord] {
+        let messages = records.map { record in
+            AgentMessage(
+                role: .assistant,
+                blocks: [.toolUse(
+                    id: record.toolUseID ?? record.id.uuidString,
+                    name: record.toolName,
+                    inputJSON: "{}"
+                )],
+                hostStateRecords: [record]
+            )
+        }
+        return AgentTranscriptProjection.turns(
+            messages: messages,
+            isStreaming: false
+        ).flatMap(\.items).compactMap { item in
+            guard case .hostState(let state) = item else { return nil }
+            return state.record
+        }
+    }
+
     private func hostStateMessage(_ record: AgentHostStateRecord) -> AgentMessage {
         AgentMessage(
             role: .user,

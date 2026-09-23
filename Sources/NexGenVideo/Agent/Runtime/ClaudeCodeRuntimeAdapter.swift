@@ -232,6 +232,7 @@ final class ClaudeCodeRuntimeAdapter: AgentRuntimeAdapter {
             pluginDirectories: request.pluginDirectories,
             mcpPort: request.mcpPort,
             appSessionId: request.sessionID,
+            runtimeGenerationID: request.runtimeGenerationID,
             resumeSessionId: request.providerSessionID,
             seedMessages: request.priorMessages,
             resolveWorkingDirectory: { request.workingDirectory },

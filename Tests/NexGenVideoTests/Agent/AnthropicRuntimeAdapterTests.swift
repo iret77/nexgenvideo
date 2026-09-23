@@ -381,6 +381,7 @@ private func testSessionRequest(
 ) -> AgentRuntimeSessionRequest {
     AgentRuntimeSessionRequest(
         sessionID: sessionID,
+        runtimeGenerationID: UUID(),
         providerSessionID: nil,
         priorMessages: [],
         hostContext: hostContext,

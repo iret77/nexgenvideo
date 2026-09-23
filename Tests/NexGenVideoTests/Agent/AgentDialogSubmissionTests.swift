@@ -138,7 +138,7 @@ struct AgentDialogSubmissionTests {
             dialog,
             origin: .embeddedRuntime(
                 chatSessionID: owner.id,
-                mcpSessionID: mcpSessionID
+                runtimeGenerationID: mcpSessionID
             )
         )
 
@@ -160,7 +160,7 @@ struct AgentDialogSubmissionTests {
             args: [:],
             origin: .embeddedRuntime(
                 chatSessionID: owner.id,
-                mcpSessionID: mcpSessionID
+                runtimeGenerationID: mcpSessionID
             )
         )
         #expect(stale.isError)
@@ -170,7 +170,7 @@ struct AgentDialogSubmissionTests {
             args: [:],
             origin: .embeddedRuntime(
                 chatSessionID: owner.id,
-                mcpSessionID: UUID()
+                runtimeGenerationID: UUID()
             )
         )
         #expect(!replacement.isError)

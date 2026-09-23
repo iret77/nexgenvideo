@@ -843,7 +843,8 @@ extension ToolExecutor {
         _ args: [String: Any],
         origin: ToolCallOrigin,
         toolUseID: String? = nil,
-        hostStateID: UUID = UUID()
+        hostStateID: UUID = UUID(),
+        hostTurnReference: AgentHostTurnReference? = nil
     ) async throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = try args.requireString("phase")
@@ -869,7 +870,8 @@ extension ToolExecutor {
                 declaredPack: declaredPack,
                 declaredBinding: declaredBinding,
                 sourceToolUseID: toolUseID,
-                sourceHostStateID: hostStateID
+                sourceHostStateID: hostStateID,
+                sourceHostTurnReference: hostTurnReference
             ),
             origin: origin
         )
@@ -881,7 +883,8 @@ extension ToolExecutor {
         _ args: [String: Any],
         origin: ToolCallOrigin,
         toolUseID: String? = nil,
-        hostStateID: UUID = UUID()
+        hostStateID: UUID = UUID(),
+        hostTurnReference: AgentHostTurnReference? = nil
     ) async throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = try args.requireString("phase")
@@ -942,7 +945,8 @@ extension ToolExecutor {
                     declaredBinding: declaredBinding,
                     sourceToolName: ToolName.setGateState.rawValue,
                     sourceToolUseID: toolUseID,
-                    sourceHostStateID: hostStateID
+                    sourceHostStateID: hostStateID,
+                    sourceHostTurnReference: hostTurnReference
                 ),
                 origin: origin
             )
