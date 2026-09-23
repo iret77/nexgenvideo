@@ -405,8 +405,22 @@ enum WorkspaceUIAcceptance {
             ) == nil,
                   await waitUntil(timeout: .seconds(5), {
                       editor.sourcePlayheadFrame == 42 && editor.currentFrame == 75
-                  }) else {
+            }) else {
                 fail("source scrub did not restore the marked source playhead", scale: scale)
+            }
+
+            guard click(identifier: "selection.clip.selection-clip", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.selectedClipIds == ["selection-clip"]
+                          && editor.inspectedObject == .clip("selection-clip")
+                  }),
+                  click(identifier: "selection.asset.selection-source", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.activeSourceAsset?.id == "selection-source"
+                          && editor.inspectedObject == .mediaAsset("selection-source")
+                          && editor.selectedClipIds == ["selection-clip"]
+                  }) else {
+                fail("could not prepare a remembered timeline identity for source placement", scale: scale)
             }
 
             let timelineBeforePlacement = editor.timeline
@@ -431,8 +445,82 @@ enum WorkspaceUIAcceptance {
                   await waitUntil(timeout: .seconds(5), {
                       editor.timeline == timelineBeforePlacement
                           && editor.activeSourceAsset?.id == "selection-source"
-                  }) else {
+            }) else {
                 fail("undo did not restore the pre-insert timeline and source context", scale: scale)
+            }
+            guard pressKey(
+                      keyCode: 6,
+                      characters: "Z",
+                      modifiers: [.command, .shift],
+                      in: window
+                  ) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.timeline != timelineBeforePlacement
+                          && editor.activeSourceAsset?.id == "selection-source"
+                          && editor.inspectedObject == .mediaAsset("selection-source")
+                  }),
+                  click(identifier: "selection.ruler", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.isTimelinePreviewActive
+                          && editor.inspectedObject == .clip("selection-clip")
+                          && probeState(
+                              identifier: "preview.selectionContext.selection-clip",
+                              in: window
+                          ) == true
+                          && probeState(
+                              identifier: "inspector.selectionContext.selection-clip",
+                              in: window
+                          ) == true
+                  }),
+                  pressKey(
+                      keyCode: 6,
+                      characters: "z",
+                      modifiers: [.command],
+                      in: window
+                  ) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.timeline == timelineBeforePlacement
+                          && editor.isTimelinePreviewActive
+                          && editor.inspectedObject == .clip("selection-clip")
+                          && editor.timelineInspectorClipIDs == ["selection-clip"]
+                          && probeState(
+                              identifier: "preview.selectionContext.selection-clip",
+                              in: window
+                          ) == true
+                          && probeState(
+                              identifier: "inspector.selectionContext.selection-clip",
+                              in: window
+                          ) == true
+                  }),
+                  pressKey(
+                      keyCode: 6,
+                      characters: "Z",
+                      modifiers: [.command, .shift],
+                      in: window
+                  ) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.timeline != timelineBeforePlacement
+                          && editor.isTimelinePreviewActive
+                          && editor.inspectedObject == .clip("selection-clip")
+                          && editor.timelineInspectorClipIDs == ["selection-clip"]
+                  }),
+                  pressKey(
+                      keyCode: 6,
+                      characters: "z",
+                      modifiers: [.command],
+                      in: window
+                  ) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.timeline == timelineBeforePlacement
+                          && editor.isTimelinePreviewActive
+                          && editor.inspectedObject == .clip("selection-clip")
+                  }),
+                  click(identifier: "selection.asset.selection-source", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.activeSourceAsset?.id == "selection-source"
+                          && editor.inspectedObject == .mediaAsset("selection-source")
+                  }) else {
+                fail("source Insert Undo/Redo replaced the active timeline context", scale: scale)
             }
             guard click(identifier: "source.overwrite", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
@@ -561,18 +649,34 @@ enum WorkspaceUIAcceptance {
                           && probeState(identifier: "preview.selectionContext", in: window) == false
                           && probeState(identifier: "inspector.selectionContext", in: window) == false
                   }),
-                  pressKey(
-                      keyCode: 8,
-                      characters: "c",
-                      modifiers: [.command],
-                      in: window
-                  ) == nil,
-                  await waitUntil(timeout: .seconds(5), { editor.clipClipboard.count == 2 }),
+                  contextClick(identifier: "selection.clip.selection-linked-video", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.activeTimelineInspectionClipID == "selection-linked-video"
+                          && editor.timelineCommandClipIDs
+                              == ["selection-linked-video", "selection-linked-audio"]
+                  }) else {
+                fail("linked A/V context did not expose its exact command target", scale: scale)
+            }
+            scheduleKeySequence([(115, "\u{F729}"), (36, "\r")], in: window)
+            guard await waitUntil(timeout: .seconds(5), {
+                      Set(editor.clipClipboard.map(\.clip.id))
+                          == ["selection-linked-video", "selection-linked-audio"]
+                          && editor.explicitTimelineInspectionClipID == nil
+                          && editor.isTimelineBatchSelection
+                  }) else {
+                fail("linked A/V context Copy did not capture only the clicked link group", scale: scale)
+            }
+            editor.currentFrame = 210
+            guard await waitUntil(timeout: .seconds(5), {
+                      editor.focusedPanel == .timeline
+                          && validatedMainMenuItemEnabled(title: "Paste") == true
+                  }),
                   click(identifier: "selection.trackLock.selection-linked-audio-track", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
                       editor.timeline.tracks.first(where: {
                           $0.id == "selection-linked-audio-track"
                       })?.editLocked == true
+                          && editor.focusedPanel == .timeline
                           && validatedMainMenuItemEnabled(title: "Paste") == false
                   }) else {
                 fail("linked A/V selection or native disabled Paste validation failed", scale: scale)
@@ -593,6 +697,33 @@ enum WorkspaceUIAcceptance {
                       editor.timeline.tracks.first(where: {
                           $0.id == "selection-linked-audio-track"
                       })?.editLocked == false
+                          && editor.focusedPanel == .timeline
+                          && validatedMainMenuItemEnabled(title: "Paste") == true
+                  }) else {
+                fail("Paste did not re-enable with the same clipboard and timeline focus", scale: scale)
+            }
+            let timelineBeforePositivePaste = editor.timeline
+            guard pressKey(
+                      keyCode: 9,
+                      characters: "v",
+                      modifiers: [.command],
+                      in: window
+                  ) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.timeline != timelineBeforePositivePaste
+                          && editor.selectedClipIds.count == 2
+                          && editor.explicitTimelineInspectionClipID == nil
+                  }),
+                  pressKey(
+                      keyCode: 6,
+                      characters: "z",
+                      modifiers: [.command],
+                      in: window
+                  ) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.timeline == timelineBeforePositivePaste
+                          && editor.focusedPanel == .timeline
+                          && validatedMainMenuItemEnabled(title: "Paste") == true
                   }),
                   click(identifier: "selection.clip.selection-title", in: window) == nil,
                   click(
@@ -605,9 +736,8 @@ enum WorkspaceUIAcceptance {
                           && editor.isTimelineBatchSelection
                           && editor.inspectedObject == nil
                   }) else {
-                fail("disabled Paste mutated the timeline or batch selection was lost", scale: scale)
+                fail("Paste positive control, Undo, or batch selection failed", scale: scale)
             }
-            scheduleKeySequence([(115, "\u{F729}"), (36, "\r")], in: window)
             guard contextClick(identifier: "selection.clip.selection-clip", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
                       editor.selectedClipIds == ["selection-title", "selection-clip"]
@@ -629,16 +759,80 @@ enum WorkspaceUIAcceptance {
                               identifier: "inspector.clipMutation.selection-clip",
                               in: window
                           ) == true
-                  }),
-                  await waitUntil(timeout: .seconds(5), {
-                      editor.clipClipboard.count == 1
-                          && editor.clipClipboard.first?.clip.id == "selection-clip"
                   }) else {
                 fail("context click did not keep one visible and actionable clip target", scale: scale)
             }
-            guard click(identifier: "selection.clip.selection-clip", in: window) == nil,
+            scheduleKeySequence([(115, "\u{F729}"), (36, "\r")], in: window)
+            guard await waitUntil(timeout: .seconds(5), {
+                      editor.clipClipboard.count == 1
+                          && editor.clipClipboard.first?.clip.id == "selection-clip"
+                          && editor.explicitTimelineInspectionClipID == nil
+                          && editor.isTimelineBatchSelection
+                  }) else {
+                fail("context Copy did not end in the remembered batch context", scale: scale)
+            }
+            scheduleKeySequence([(53, "\u{1b}")], in: window)
+            guard contextClick(identifier: "selection.clip.selection-clip", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.activeTimelineInspectionClipID == "selection-clip"
+                          && editor.timelineCommandClipIDs == ["selection-clip"]
+                  }) else {
+                fail("could not prepare the explicit Escape target", scale: scale)
+            }
+            try? await Task.sleep(for: .milliseconds(450))
+            guard editor.selectedClipIds == ["selection-title", "selection-clip"],
+                  editor.explicitTimelineInspectionClipID == nil,
+                  editor.inspectedObject == nil,
+                  probeState(identifier: "preview.selectionContext", in: window) == false,
+                  probeState(identifier: "inspector.selectionContext", in: window) == false else {
+                fail("Escape did not end the explicit timeline context", scale: scale)
+            }
+            guard contextClick(identifier: "selection.clip.selection-clip", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.activeTimelineInspectionClipID == "selection-clip"
+                          && editor.timelineCommandClipIDs == ["selection-clip"]
+                  }) else {
+                fail("could not prepare the explicit Delete target", scale: scale)
+            }
+            scheduleKeySequence(
+                [(115, "\u{F729}"), (125, "\u{F701}"), (36, "\r")],
+                in: window
+            )
+            guard await waitUntil(timeout: .seconds(5), {
+                      editor.clipFor(id: "selection-clip") == nil
+                          && editor.clipFor(id: "selection-title") != nil
+                          && editor.selectedClipIds == ["selection-title"]
+                          && editor.explicitTimelineInspectionClipID == nil
+                          && editor.inspectedObject == .clip("selection-title")
+                  }),
+                  pressKey(
+                      keyCode: 6,
+                      characters: "z",
+                      modifiers: [.command],
+                      in: window
+                  ) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.clipFor(id: "selection-clip") != nil
+                          && editor.selectedClipIds == ["selection-title", "selection-clip"]
+                          && editor.explicitTimelineInspectionClipID == nil
+                          && editor.isTimelineBatchSelection
+                          && editor.inspectedObject == nil
+                          && probeState(identifier: "preview.selectionContext", in: window) == false
+                          && probeState(identifier: "inspector.selectionContext", in: window) == false
+                  }) else {
+                fail("explicit context Delete mutated the remembered batch", scale: scale)
+            }
+            guard click(identifier: "selection.empty", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.selectedClipIds.isEmpty
+                          && editor.explicitTimelineInspectionClipID == nil
+                          && probeState(identifier: "preview.selectionContext", in: window) == false
+                  }),
+                  click(identifier: "selection.clip.selection-clip", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
                       editor.isTimelinePreviewActive
+                          && editor.selectedClipIds == ["selection-clip"]
+                          && editor.timelineInspectorClipIDs == ["selection-clip"]
                           && editor.inspectedObject == .clip("selection-clip")
                   }),
                   pressKey(keyCode: 30, characters: "]", in: window) == nil,
@@ -728,9 +922,14 @@ enum WorkspaceUIAcceptance {
                     "nativeEmptySelection": true,
                     "nativeLinkedAVSelection": true,
                     "nativeContextTarget": true,
+                    "nativeContextEscape": true,
+                    "nativeContextDelete": true,
+                    "nativeContextCopyPaste": true,
                     "headerInspectorTargetMatched": true,
                     "nativeTimelineUndoRedoAfterSourceSwitch": true,
+                    "nativeSourceInsertUndoRedoAfterTimelineSwitch": true,
                     "nativeDisabledPaste": true,
+                    "nativePastePositiveControl": true,
                     "sourceStatePreserved": editor.sourcePreviewState(for: "selection-source")
                         == SourcePreviewState(playheadFrame: 42, inFrame: 18, outFrame: 72),
                 ]

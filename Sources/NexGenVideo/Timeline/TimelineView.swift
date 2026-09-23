@@ -889,6 +889,7 @@ final class TimelineView: NSView {
         editor.activateTimelineClipContext(clip.id)
 
         let menu = NSMenu()
+        menu.delegate = self
         menu.autoenablesItems = false
         let targetClipIds = [clip.id]
         let contextMutationIDs = editor.expandToLinkGroup([clip.id])
@@ -904,8 +905,14 @@ final class TimelineView: NSView {
         var timelineItems: [NSMenuItem] = []
         let copyItem = NSMenuItem(title: "Copy", action: #selector(performCopyClips(_:)), keyEquivalent: "")
         copyItem.target = self
-        copyItem.representedObject = targetClipIds
+        copyItem.representedObject = Array(contextMutationIDs)
         timelineItems.append(copyItem)
+        if mutationAllowed {
+            let deleteItem = NSMenuItem(title: "Delete", action: #selector(performDeleteClips(_:)), keyEquivalent: "")
+            deleteItem.target = self
+            deleteItem.representedObject = Array(contextMutationIDs)
+            timelineItems.append(deleteItem)
+        }
         if editor.canPasteClips(atTrack: hit.trackIndex, atFrame: clickFrame) {
             let pasteItem = NSMenuItem(title: "Paste", action: #selector(performPasteClips(_:)), keyEquivalent: "")
             pasteItem.target = self
@@ -1047,11 +1054,20 @@ final class TimelineView: NSView {
         editor.copyClipsToClipboard(ids: Set(clipIds))
     }
 
+    @objc private func performDeleteClips(_ sender: Any?) {
+        guard let item = sender as? NSMenuItem,
+              let clipIds = item.representedObject as? [String] else { return }
+        editor.endTimelineClipContext()
+        editor.removeClips(ids: Set(clipIds))
+        needsDisplay = true
+    }
+
     @objc private func performPasteClips(_ sender: Any?) {
         guard let item = sender as? NSMenuItem,
               let info = item.representedObject as? [String: Any],
               let trackIndex = info["trackIndex"] as? Int,
               let frame = info["frame"] as? Int else { return }
+        editor.endTimelineClipContext()
         editor.pasteClips(atTrack: trackIndex, atFrame: frame)
         needsDisplay = true
     }
@@ -1059,6 +1075,7 @@ final class TimelineView: NSView {
     @objc private func performUnlink(_ sender: Any?) {
         guard let item = sender as? NSMenuItem,
               let clipIds = item.representedObject as? [String] else { return }
+        editor.endTimelineClipContext()
         editor.unlinkClips(ids: Set(clipIds))
         needsDisplay = true
     }
@@ -1279,6 +1296,15 @@ final class TimelineView: NSView {
 
         needsDisplay = true
         return true
+    }
+}
+
+extension TimelineView: NSMenuDelegate {
+    nonisolated func menuDidClose(_ menu: NSMenu) {
+        MainActor.assumeIsolated {
+            editor.endTimelineClipContext()
+            needsDisplay = true
+        }
     }
 }
 

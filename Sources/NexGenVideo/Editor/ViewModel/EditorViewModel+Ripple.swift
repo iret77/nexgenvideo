@@ -41,7 +41,7 @@ extension EditorViewModel {
     /// Ripple delete: remove selected clips and close the gaps. Sync-locked tracks shift
     /// along to preserve cross-track alignment; refuses if any would collide.
     func rippleDeleteSelectedClips() {
-        let ids = selectedClipIds
+        let ids = timelineCommandClipIDs
         guard !ids.isEmpty, !ids.contains(where: isClipEditLocked) else { return }
 
         // Merged ranges used to shift sync-locked tracks that have no deletions of their own.
@@ -250,7 +250,8 @@ extension EditorViewModel {
         return rippleInsertShiftPlan(
             pushTrackIDs: pushTrackIDs,
             atFrame: atFrame,
-            pushAmount: pushAmount
+            pushAmount: pushAmount,
+            splittingStraddlers: true
         ) == nil
     }
 
@@ -384,14 +385,23 @@ extension EditorViewModel {
     private func rippleInsertShiftPlan(
         pushTrackIDs: [String],
         atFrame: Int,
-        pushAmount: Int
+        pushAmount: Int,
+        splittingStraddlers: Bool = false
     ) -> [ClipShift]? {
+        var planningTimeline = timeline
+        if splittingStraddlers {
+            simulateRippleInsertSplits(
+                in: &planningTimeline,
+                pushTrackIDs: pushTrackIDs,
+                atFrame: atFrame
+            )
+        }
         var newStarts: [String: Int] = [:]
         for trackID in pushTrackIDs {
-            guard let trackIndex = timeline.tracks.firstIndex(where: { $0.id == trackID }) else {
+            guard let trackIndex = planningTimeline.tracks.firstIndex(where: { $0.id == trackID }) else {
                 return nil
             }
-            let track = timeline.tracks[trackIndex]
+            let track = planningTimeline.tracks[trackIndex]
             let shifts = RippleEngine.computeRipplePush(
                 clips: track.clips,
                 insertFrame: atFrame,
@@ -405,10 +415,10 @@ extension EditorViewModel {
         var visited: Set<String> = []
         while let clipID = pending.popLast() {
             guard visited.insert(clipID).inserted else { continue }
-            for partnerID in linkedPartnerIds(of: clipID) {
-                guard let location = findClip(id: partnerID),
-                      !timeline.tracks[location.trackIndex].editLocked else { return nil }
-                let partner = timeline.tracks[location.trackIndex].clips[location.clipIndex]
+            for partnerID in linkedPartnerIDs(of: clipID, in: planningTimeline) {
+                guard let location = clipLocation(of: partnerID, in: planningTimeline),
+                      !planningTimeline.tracks[location.trackIndex].editLocked else { return nil }
+                let partner = planningTimeline.tracks[location.trackIndex].clips[location.clipIndex]
                 if newStarts[partnerID] == nil {
                     newStarts[partnerID] = partner.startFrame + pushAmount
                 }
@@ -416,19 +426,102 @@ extension EditorViewModel {
             }
         }
 
-        for trackIndex in timeline.tracks.indices {
-            let shifts = timeline.tracks[trackIndex].clips.compactMap { clip -> ClipShift? in
+        for trackIndex in planningTimeline.tracks.indices {
+            let shifts = planningTimeline.tracks[trackIndex].clips.compactMap { clip -> ClipShift? in
                 guard let start = newStarts[clip.id] else { return nil }
                 return ClipShift(clipId: clip.id, newStartFrame: start)
             }
-            if !shifts.isEmpty, validateShifts(trackIndex: trackIndex, shifts: shifts) != nil {
+            if !shifts.isEmpty,
+               !shiftsAreValid(in: planningTimeline, trackIndex: trackIndex, shifts: shifts) {
                 return nil
             }
         }
-        return timeline.tracks.flatMap { track in
+        return planningTimeline.tracks.flatMap { track in
             track.clips.compactMap { clip in
                 newStarts[clip.id].map { ClipShift(clipId: clip.id, newStartFrame: $0) }
             }
+        }
+    }
+
+    private func simulateRippleInsertSplits(
+        in planningTimeline: inout Timeline,
+        pushTrackIDs: [String],
+        atFrame: Int
+    ) {
+        var splitOrdinal = 0
+        for trackID in pushTrackIDs {
+            guard let trackIndex = planningTimeline.tracks.firstIndex(where: { $0.id == trackID }),
+                  let lead = planningTimeline.tracks[trackIndex].clips.first(where: {
+                      $0.startFrame < atFrame && atFrame < $0.endFrame
+                  }) else { continue }
+            let groupIDs: Set<String>
+            if let linkGroupID = lead.linkGroupId {
+                groupIDs = Set(planningTimeline.tracks.flatMap(\.clips).compactMap { clip in
+                    clip.linkGroupId == linkGroupID ? clip.id : nil
+                })
+            } else {
+                groupIDs = [lead.id]
+            }
+            let existingGroupIDs = Set(planningTimeline.tracks.flatMap(\.clips).compactMap(\.linkGroupId))
+            var rightGroupID = "__ripple-preflight-group-\(splitOrdinal)"
+            while existingGroupIDs.contains(rightGroupID) { rightGroupID += "-" }
+            for clipID in groupIDs {
+                guard let location = clipLocation(of: clipID, in: planningTimeline) else { continue }
+                let clip = planningTimeline.tracks[location.trackIndex].clips[location.clipIndex]
+                guard clip.startFrame < atFrame && atFrame < clip.endFrame else { continue }
+                let splitOffset = atFrame - clip.startFrame
+                var left = clip
+                left.durationFrames = splitOffset
+                var right = clip
+                var rightID = "__ripple-preflight-\(splitOrdinal)-\(clip.id)"
+                while clipLocation(of: rightID, in: planningTimeline) != nil { rightID += "-" }
+                right.id = rightID
+                right.startFrame = atFrame
+                right.durationFrames = clip.durationFrames - splitOffset
+                if groupIDs.count > 1 { right.linkGroupId = rightGroupID }
+                planningTimeline.tracks[location.trackIndex].clips[location.clipIndex] = left
+                planningTimeline.tracks[location.trackIndex].clips.append(right)
+                planningTimeline.tracks[location.trackIndex].clips.sort {
+                    $0.startFrame == $1.startFrame ? $0.id < $1.id : $0.startFrame < $1.startFrame
+                }
+            }
+            splitOrdinal += 1
+        }
+    }
+
+    private func linkedPartnerIDs(of clipID: String, in planningTimeline: Timeline) -> [String] {
+        guard let location = clipLocation(of: clipID, in: planningTimeline),
+              let groupID = planningTimeline.tracks[location.trackIndex].clips[location.clipIndex].linkGroupId else {
+            return []
+        }
+        return planningTimeline.tracks.flatMap(\.clips).compactMap { clip in
+            clip.id != clipID && clip.linkGroupId == groupID ? clip.id : nil
+        }
+    }
+
+    private func clipLocation(of clipID: String, in planningTimeline: Timeline) -> ClipLocation? {
+        for trackIndex in planningTimeline.tracks.indices {
+            if let clipIndex = planningTimeline.tracks[trackIndex].clips.firstIndex(where: { $0.id == clipID }) {
+                return ClipLocation(trackIndex: trackIndex, clipIndex: clipIndex)
+            }
+        }
+        return nil
+    }
+
+    private func shiftsAreValid(
+        in planningTimeline: Timeline,
+        trackIndex: Int,
+        shifts: [ClipShift]
+    ) -> Bool {
+        guard planningTimeline.tracks.indices.contains(trackIndex) else { return false }
+        let shiftMap = Dictionary(uniqueKeysWithValues: shifts.map { ($0.clipId, $0.newStartFrame) })
+        let intervals = planningTimeline.tracks[trackIndex].clips.map { clip in
+            let start = shiftMap[clip.id] ?? clip.startFrame
+            return FrameRange(start: start, end: start + clip.durationFrames)
+        }.sorted { $0.start < $1.start }
+        guard intervals.allSatisfy({ $0.start >= 0 }) else { return false }
+        return intervals.indices.dropFirst().allSatisfy { index in
+            intervals[index].start >= intervals[index - 1].end
         }
     }
 

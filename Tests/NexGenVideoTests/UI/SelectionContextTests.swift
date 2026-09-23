@@ -123,9 +123,63 @@ struct SelectionContextTests {
         #expect(editor.selectionInspectedObject == .clip(second.id))
         #expect(editor.selectionContextHint?.contains("second") == true)
 
-        editor.activateTimelineSelection()
+        editor.endTimelineClipContext()
         #expect(editor.isTimelineBatchSelection)
         #expect(editor.inspectedObject == nil)
+        #expect(editor.timelineCommandClipIDs == [first.id, second.id])
+    }
+
+    @Test func explicitContextUsesOneCommandTargetAndEndsWithSelectionChanges() {
+        let first = Fixtures.clip(id: "first", start: 0, duration: 30)
+        let second = Fixtures.clip(id: "second", start: 30, duration: 30)
+        var lockedTrack = Fixtures.videoTrack(clips: [first])
+        lockedTrack.editLocked = true
+        let editor = editor(
+            assets: [],
+            tracks: [lockedTrack, Fixtures.videoTrack(clips: [second])]
+        )
+        editor.selectedClipIds = [first.id, second.id]
+        editor.activateTimelineClipContext(second.id)
+
+        #expect(editor.timelineInspectorClipIDs == [second.id])
+        #expect(editor.timelineCommandClipIDs == [second.id])
+        #expect(!editor.timelineCommandClipsAreEditLocked)
+
+        editor.copySelectedClipsToClipboard()
+        #expect(editor.clipClipboard.map(\.clip.id) == [second.id])
+        editor.deleteSelectedClips()
+        #expect(editor.clipFor(id: first.id) != nil)
+        #expect(editor.clipFor(id: second.id) == nil)
+        #expect(editor.selectedClipIds == [first.id])
+        #expect(editor.explicitTimelineInspectionClipID == nil)
+        #expect(editor.inspectedObject == .clip(first.id))
+
+        editor.selectedClipIds.removeAll()
+        #expect(editor.timelineCommandClipIDs.isEmpty)
+        #expect(editor.selectionInspectedObject == nil)
+    }
+
+    @Test func contextCopyIncludesOnlyTheClickedLinkedGroup() {
+        var video = Fixtures.clip(id: "video", start: 0, duration: 30)
+        video.linkGroupId = "pair"
+        var audio = Fixtures.clip(id: "audio", mediaType: .audio, start: 0, duration: 30)
+        audio.linkGroupId = "pair"
+        let foreign = Fixtures.clip(id: "foreign", start: 60, duration: 30)
+        let editor = editor(
+            assets: [],
+            tracks: [Fixtures.videoTrack(clips: [video, foreign]), Fixtures.audioTrack(clips: [audio])]
+        )
+        editor.selectedClipIds = [video.id, audio.id, foreign.id]
+        editor.activateTimelineClipContext(video.id)
+
+        editor.copySelectedClipsToClipboard()
+
+        #expect(Set(editor.clipClipboard.map(\.clip.id)) == [video.id, audio.id])
+        #expect(editor.timelineCommandClipIDs == [video.id, audio.id])
+
+        editor.unlinkClips(ids: [video.id])
+        #expect(editor.selectedClipIds.isEmpty)
+        #expect(editor.explicitTimelineInspectionClipID == nil)
     }
 
     @Test func linkedAVSelectionRemainsAnIntentionalBatch() {
@@ -322,6 +376,34 @@ struct SelectionContextTests {
         #expect(editor.inspectedObject == .mediaAsset(source.id))
     }
 
+    @Test func sourceInsertUndoAndRedoDoNotReplaceTimelineContext() {
+        let source = asset("source", duration: 1)
+        let selected = Fixtures.clip(id: "selected", mediaRef: "other", start: 60, duration: 30)
+        let editor = editor(assets: [source], tracks: [Fixtures.videoTrack(clips: [selected])])
+        let undoManager = UndoManager()
+        editor.undoManager = undoManager
+        editor.selectedClipIds = [selected.id]
+        editor.currentFrame = 0
+        editor.selectMediaAsset(source)
+
+        let inserted = editor.insertActiveSource()
+        #expect(!inserted.isEmpty)
+        editor.activateTimelineSelection()
+        #expect(editor.inspectedObject == .clip(selected.id))
+
+        undoManager.undo()
+        #expect(editor.isTimelinePreviewActive)
+        #expect(editor.inspectedObject == .clip(selected.id))
+        #expect(editor.timelineInspectorClipIDs == [selected.id])
+        #expect(inserted.allSatisfy { editor.clipFor(id: $0) == nil })
+
+        undoManager.redo()
+        #expect(editor.isTimelinePreviewActive)
+        #expect(editor.inspectedObject == .clip(selected.id))
+        #expect(editor.timelineInspectorClipIDs == [selected.id])
+        #expect(inserted.allSatisfy { editor.clipFor(id: $0) != nil })
+    }
+
     @Test func sourceTransportCommandsNeverMoveTheRememberedTimelinePlayhead() {
         let source = asset("source")
         let editor = editor(assets: [source])
@@ -427,6 +509,58 @@ struct SelectionContextTests {
             atFrame: 0
         ).isEmpty)
         #expect(locked.timeline == before)
+    }
+
+    @Test func rippleInsertPreflightIncludesSplitLinkedPartnersOnOtherAudioTracks() {
+        let insertedSource = asset("inserted", duration: 1, hasAudio: true)
+        var video = Fixtures.clip(id: "video", start: 0, duration: 60)
+        video.linkGroupId = "pair"
+        var audio = Fixtures.clip(id: "audio", mediaType: .audio, start: 0, duration: 60)
+        audio.linkGroupId = "pair"
+        let neighbor = Fixtures.clip(id: "neighbor", mediaType: .audio, start: 60, duration: 30)
+        let makeEditor = {
+            self.editor(
+                assets: [insertedSource],
+                tracks: [
+                    Fixtures.videoTrack(clips: [video]),
+                    Fixtures.audioTrack(),
+                    Fixtures.audioTrack(clips: [audio, neighbor]),
+                ]
+            )
+        }
+
+        let sourceEditor = makeEditor()
+        sourceEditor.selectedClipIds = [video.id]
+        sourceEditor.currentFrame = 30
+        sourceEditor.selectMediaAsset(insertedSource)
+        let sourceBefore = sourceEditor.timeline
+
+        #expect(!sourceEditor.canInsertActiveSource)
+        #expect(sourceEditor.insertActiveSource().isEmpty)
+        #expect(sourceEditor.timeline == sourceBefore)
+
+        let assetEditor = makeEditor()
+        let assetBefore = assetEditor.timeline
+        #expect(assetEditor.rippleInsertClips(
+            assets: [insertedSource],
+            trackIndex: 0,
+            atFrame: 30
+        ).isEmpty)
+        #expect(assetEditor.timeline == assetBefore)
+
+        let specEditor = makeEditor()
+        let specBefore = specEditor.timeline
+        #expect(specEditor.rippleInsertClips(
+            specs: [.init(
+                asset: insertedSource,
+                durationFrames: 30,
+                trimStartFrame: 0,
+                trimEndFrame: 0
+            )],
+            trackIndex: 0,
+            atFrame: 30
+        ).isEmpty)
+        #expect(specEditor.timeline == specBefore)
     }
 
     @Test func multiClipSplitAndTrimAreSingleUndoableCommands() {

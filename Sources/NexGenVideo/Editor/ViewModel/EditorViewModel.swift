@@ -136,7 +136,13 @@ final class EditorViewModel {
     }
     var activeFrame: Int { playheadState.timelineFrame }
     var isPlaying: Bool = false
-    var selectedClipIds: Set<String> = []
+    var selectedClipIds: Set<String> = [] {
+        didSet {
+            if selectedClipIds != oldValue {
+                explicitTimelineInspectionClipID = nil
+            }
+        }
+    }
     var isMarqueeSelecting: Bool = false
     var selectedGap: GapSelection?
     var selectedTimelineRange: TimelineRangeSelection?

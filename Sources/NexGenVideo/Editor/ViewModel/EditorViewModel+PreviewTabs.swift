@@ -62,6 +62,14 @@ extension EditorViewModel {
         return selectedClipIds
     }
 
+    var timelineCommandClipIDs: Set<String> {
+        if let id = explicitTimelineInspectionClipID, isTimelinePreviewActive,
+           findClip(id: id) != nil {
+            return expandToLinkGroup([id])
+        }
+        return selectedClipIds
+    }
+
     var isTimelineBatchSelection: Bool {
         isTimelinePreviewActive
             && explicitTimelineInspectionClipID == nil
@@ -163,6 +171,17 @@ extension EditorViewModel {
         explicitTimelineInspectionClipID = clipID
         activateTimelinePreview()
         inspectedObject = .clip(clipID)
+    }
+
+    func endTimelineClipContext() {
+        guard explicitTimelineInspectionClipID != nil else { return }
+        explicitTimelineInspectionClipID = nil
+        guard isTimelinePreviewActive else { return }
+        inspectedObject = InspectedObject.fromSelection(
+            clipIDs: selectedClipIds,
+            mediaAssetIDs: [],
+            isMarquee: isMarqueeSelecting
+        )
     }
 
     private func activateTimelinePreview() {

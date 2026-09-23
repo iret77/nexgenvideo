@@ -21,7 +21,7 @@ extension EditorViewModel {
 
     /// Snapshot the current selection into `clipClipboard`
     func copySelectedClipsToClipboard() {
-        copyClipsToClipboard(ids: selectedClipIds)
+        copyClipsToClipboard(ids: timelineCommandClipIDs)
     }
 
     func copyClipsToClipboard(ids: Set<String>) {

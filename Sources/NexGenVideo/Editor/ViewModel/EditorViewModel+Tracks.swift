@@ -93,6 +93,10 @@ extension EditorViewModel {
         selectedClipIds.contains(where: isClipEditLocked)
     }
 
+    var timelineCommandClipsAreEditLocked: Bool {
+        timelineCommandClipIDs.contains(where: isClipEditLocked)
+    }
+
     var inspectedTimelineClipsAreEditLocked: Bool {
         timelineInspectorClipIDs.contains(where: isClipEditLocked)
     }

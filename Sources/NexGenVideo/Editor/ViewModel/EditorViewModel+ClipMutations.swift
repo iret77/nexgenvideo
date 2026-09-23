@@ -246,15 +246,21 @@ extension EditorViewModel {
                 timeline.tracks[i].clips.removeAll { ids.contains($0.id) }
             }
             if prune { pruneEmptyTracks() }
-            if isTimelinePreviewActive,
-               case .clip(let inspectedID) = inspectedObject,
-               ids.contains(inspectedID) {
-                explicitTimelineInspectionClipID = nil
-                inspectedObject = InspectedObject.fromSelection(
-                    clipIDs: selectedClipIds,
-                    mediaAssetIDs: [],
-                    isMarquee: false
-                )
+            if isTimelinePreviewActive {
+                if let explicitTimelineInspectionClipID,
+                   ids.contains(explicitTimelineInspectionClipID) {
+                    self.explicitTimelineInspectionClipID = nil
+                }
+                if let inspectedObject {
+                    switch inspectedObject {
+                    case .entity, .look, .shot, .shotUse:
+                        break
+                    case .clip, .mediaAsset:
+                        self.inspectedObject = selectionInspectedObject
+                    }
+                } else {
+                    inspectedObject = selectionInspectedObject
+                }
             }
         }
     }
@@ -364,14 +370,26 @@ extension EditorViewModel {
         explicitTimelineInspectionClipID = snapshot.explicitInspectionClipID.flatMap {
             findClip(id: $0) == nil ? nil : $0
         }
-        if case .clip(let id) = snapshot.inspectedObject, findClip(id: id) == nil {
+        if let snapshotObject = snapshot.inspectedObject {
+            switch snapshotObject {
+            case .entity, .look, .shot, .shotUse:
+                inspectedObject = snapshotObject
+            case .clip, .mediaAsset:
+                inspectedObject = InspectedObject.fromSelection(
+                    clipIDs: selectedClipIds,
+                    mediaAssetIDs: [],
+                    isMarquee: false
+                )
+            }
+        } else {
             inspectedObject = InspectedObject.fromSelection(
                 clipIDs: selectedClipIds,
                 mediaAssetIDs: [],
                 isMarquee: false
             )
-        } else {
-            inspectedObject = snapshot.inspectedObject
+        }
+        if let explicitTimelineInspectionClipID {
+            inspectedObject = .clip(explicitTimelineInspectionClipID)
         }
     }
 
@@ -696,7 +714,7 @@ extension EditorViewModel {
     // MARK: - Playhead-relative operations
 
     func splitAtPlayhead() {
-        let selected = selectedClipIds
+        let selected = timelineCommandClipIDs
         guard !selected.isEmpty else { return }
         var representatives: [String] = []
         var covered: Set<String> = []
@@ -713,7 +731,7 @@ extension EditorViewModel {
 
     func trimStartToPlayhead() {
         var edits: [(clipId: String, trimStartFrame: Int, trimEndFrame: Int)] = []
-        for id in selectedClipIds {
+        for id in timelineCommandClipIDs {
             guard let loc = findClip(id: id) else { continue }
             let clip = timeline.tracks[loc.trackIndex].clips[loc.clipIndex]
             guard currentFrame > clip.startFrame && currentFrame < clip.endFrame else { continue }
@@ -730,7 +748,7 @@ extension EditorViewModel {
 
     func trimEndToPlayhead() {
         var edits: [(clipId: String, trimStartFrame: Int, trimEndFrame: Int)] = []
-        for id in selectedClipIds {
+        for id in timelineCommandClipIDs {
             guard let loc = findClip(id: id) else { continue }
             let clip = timeline.tracks[loc.trackIndex].clips[loc.clipIndex]
             guard currentFrame > clip.startFrame && currentFrame < clip.endFrame else { continue }
@@ -746,7 +764,7 @@ extension EditorViewModel {
     }
 
     func deleteSelectedClips() {
-        removeClips(ids: selectedClipIds)
+        removeClips(ids: timelineCommandClipIDs)
     }
 
     func deleteSelectedMediaAssets() {
