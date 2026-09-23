@@ -864,11 +864,265 @@ struct AgentServiceRuntimeContractTests {
             .flatMap(\.hostStateRecords).isEmpty)
     }
 
+    @Test("a reloaded embedded draft rejects its old project-generation completion")
+    func reloadedEmbeddedDraftRejectsStaleCompletion() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "ngv-host-state-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let adapter = FakeRuntimeAdapter(backend: .claudeCode)
+        let service = makeService(backend: .claudeCode, adapter: adapter)
+        #expect(service.send(text: "Write the brief.", mentions: []))
+        await waitUntil { adapter.sendRequests.count == 1 }
+        let turn = try #require(adapter.sendRequests.first)
+        let runtime = try #require(adapter.startRequests.first)
+        let origin = ToolCallOrigin.embeddedRuntime(
+            chatSessionID: turn.sessionID,
+            runtimeGenerationID: runtime.runtimeGenerationID
+        )
+        let reference = try #require(service.captureHostTurnReference(origin: origin))
+        let draft = hostRecord(state: .draft, suffix: "draft")
+        service.recordHostState(draft, origin: origin, turnReference: reference)
+        let stored = try #require(service.sessions.first { $0.id == turn.sessionID })
+        try persistSession(stored, at: root)
+
+        service.loadSessions(from: root)
+        let before = try #require(service.sessions.first {
+            $0.id == turn.sessionID
+        }).messages
+        var changeNotifications = 0
+        service.onSessionsChanged = { changeNotifications += 1 }
+        service.recordHostState(
+            hostRecord(state: .persisted, suffix: "late", id: draft.id),
+            origin: origin,
+            turnReference: reference
+        )
+
+        let after = try #require(service.sessions.first {
+            $0.id == turn.sessionID
+        }).messages
+        #expect(after == before)
+        #expect(changeNotifications == 0)
+    }
+
+    @Test("a reloaded API tool use rejects its old project-generation completion")
+    func reloadedAPIToolUseRejectsStaleCompletion() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "ngv-host-state-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let adapter = FakeRuntimeAdapter(backend: .anthropicAPI)
+        let service = makeService(backend: .anthropicAPI, adapter: adapter)
+        #expect(service.send(text: "Write the brief.", mentions: []))
+        await waitUntil { adapter.sendRequests.count == 1 }
+        let turn = try #require(adapter.sendRequests.first)
+        let origin = ToolCallOrigin.inAppChat(sessionID: turn.sessionID)
+        let reference = try #require(service.captureHostTurnReference(origin: origin))
+        adapter.emit(.toolCall(
+            messageID: "writer-message",
+            id: "real-writer-id",
+            name: "write_brief",
+            inputJSON: "{}"
+        ), for: turn)
+        await waitUntil {
+            service.messages.flatMap(\.blocks).contains {
+                if case .toolUse(let id, _, _) = $0 { return id == "real-writer-id" }
+                return false
+            }
+        }
+        try persistSession(
+            ChatSession(id: turn.sessionID, messages: service.messages),
+            at: root
+        )
+
+        service.loadSessions(from: root)
+        let before = try #require(service.sessions.first {
+            $0.id == turn.sessionID
+        }).messages
+        var changeNotifications = 0
+        service.onSessionsChanged = { changeNotifications += 1 }
+        service.recordHostState(
+            hostRecord(state: .persisted, suffix: "late-api"),
+            origin: origin,
+            toolUseID: "real-writer-id",
+            turnReference: reference
+        )
+
+        let after = try #require(service.sessions.first {
+            $0.id == turn.sessionID
+        }).messages
+        #expect(after == before)
+        #expect(changeNotifications == 0)
+    }
+
+    @Test("an exact host record id remains inside its referenced turn")
+    func exactHostRecordIDIsTurnScoped() async throws {
+        let adapter = FakeRuntimeAdapter(backend: .claudeCode)
+        let service = makeService(backend: .claudeCode, adapter: adapter)
+        #expect(service.send(text: "First write.", mentions: []))
+        await waitUntil { adapter.sendRequests.count == 1 }
+        let firstTurn = try #require(adapter.sendRequests.first)
+        let firstRuntime = try #require(adapter.startRequests.first)
+        let firstOrigin = ToolCallOrigin.embeddedRuntime(
+            chatSessionID: firstTurn.sessionID,
+            runtimeGenerationID: firstRuntime.runtimeGenerationID
+        )
+        let firstReference = try #require(
+            service.captureHostTurnReference(origin: firstOrigin)
+        )
+        let first = hostRecord(state: .persisted, suffix: "first")
+        service.recordHostState(first, origin: firstOrigin, turnReference: firstReference)
+        adapter.emit(.terminal(.completed(.endTurn)), for: firstTurn)
+        adapter.finish(firstTurn)
+        await waitUntil { !service.isStreaming }
+
+        #expect(service.send(text: "Second write.", mentions: []))
+        await waitUntil { adapter.sendRequests.count == 2 }
+        let secondTurn = adapter.sendRequests[1]
+        let secondOrigin = ToolCallOrigin.embeddedRuntime(
+            chatSessionID: secondTurn.sessionID,
+            runtimeGenerationID: firstRuntime.runtimeGenerationID
+        )
+        let secondReference = try #require(
+            service.captureHostTurnReference(origin: secondOrigin)
+        )
+        let second = hostRecord(
+            state: .writeRejected,
+            suffix: "second",
+            id: first.id
+        )
+        service.recordHostState(second, origin: secondOrigin, turnReference: secondReference)
+
+        let firstOwner = try #require(service.messages.first {
+            $0.id == firstReference.inputMessageID
+        })
+        let secondOwner = try #require(service.messages.first {
+            $0.id == secondReference.inputMessageID
+        })
+        #expect(firstOwner.hostStateRecords == [first])
+        #expect(secondOwner.hostStateRecords == [second])
+
+        adapter.emit(.terminal(.completed(.endTurn)), for: secondTurn)
+        adapter.finish(secondTurn)
+        await waitUntil { !service.isStreaming }
+    }
+
+    @Test("same-project session switching preserves a late completion on its owner")
+    func sessionSwitchKeepsLateCompletionOnOwningTurn() async throws {
+        let adapter = FakeRuntimeAdapter(backend: .claudeCode)
+        let service = makeService(backend: .claudeCode, adapter: adapter)
+        #expect(service.send(text: "Write before switching.", mentions: []))
+        await waitUntil { adapter.sendRequests.count == 1 }
+        let turn = try #require(adapter.sendRequests.first)
+        let runtime = try #require(adapter.startRequests.first)
+        let origin = ToolCallOrigin.embeddedRuntime(
+            chatSessionID: turn.sessionID,
+            runtimeGenerationID: runtime.runtimeGenerationID
+        )
+        let reference = try #require(service.captureHostTurnReference(origin: origin))
+        let draft = hostRecord(state: .draft, suffix: "draft")
+        service.recordHostState(draft, origin: origin, turnReference: reference)
+
+        service.newChat()
+        let newSessionID = try #require(service.currentSessionId)
+        service.recordHostState(
+            hostRecord(state: .persisted, suffix: "late", id: draft.id),
+            origin: origin,
+            turnReference: reference
+        )
+
+        #expect(service.currentSessionId == newSessionID)
+        #expect(service.messages.isEmpty)
+        let oldSession = try #require(service.sessions.first { $0.id == turn.sessionID })
+        #expect(oldSession.messages.flatMap(\.hostStateRecords).map(\.state) == [.persisted])
+    }
+
+    @Test("fresh projection sees only the final same-record service state")
+    func projectionUsesFinalServiceRecordState() throws {
+        func projectedStates(_ service: AgentService) -> [AgentHostStateRecord.State] {
+            AgentTranscriptProjection.turns(
+                messages: service.messages,
+                isStreaming: false
+            ).flatMap(\.items).compactMap { item in
+                guard case .hostState(let state) = item else { return nil }
+                return state.record.state
+            }
+        }
+
+        let persistedService = AgentService(refreshBackendStatusOnInit: false)
+        persistedService.loadSessions(from: nil)
+        let persistedSessionID = try #require(persistedService.currentSessionId)
+        persistedService.messages = [
+            AgentMessage(role: .user, blocks: [.text("Write twice.")]),
+            AgentMessage(role: .assistant, blocks: [
+                .toolUse(id: "repair", name: "write_brief", inputJSON: "{}"),
+                .toolUse(id: "retry", name: "write_brief", inputJSON: "{}"),
+            ]),
+        ]
+        persistedService.recordHostState(
+            hostRecord(state: .persistedPhaseRecordFailed, suffix: "repair"),
+            origin: .inAppChat(sessionID: persistedSessionID),
+            toolUseID: "repair"
+        )
+        #expect(projectedStates(persistedService) == [.persistedPhaseRecordFailed])
+        let retryDraft = hostRecord(state: .draft, suffix: "retry")
+        persistedService.recordHostState(
+            retryDraft,
+            origin: .inAppChat(sessionID: persistedSessionID),
+            toolUseID: "retry"
+        )
+        #expect(projectedStates(persistedService) == [.persistedPhaseRecordFailed, .draft])
+        persistedService.recordHostState(
+            hostRecord(state: .persisted, suffix: "retry", id: retryDraft.id),
+            origin: .inAppChat(sessionID: persistedSessionID),
+            toolUseID: "retry"
+        )
+        #expect(projectedStates(persistedService) == [.persisted])
+
+        let uncertainService = AgentService(refreshBackendStatusOnInit: false)
+        uncertainService.loadSessions(from: nil)
+        let uncertainSessionID = try #require(uncertainService.currentSessionId)
+        uncertainService.messages = [
+            AgentMessage(role: .user, blocks: [.text("Check then retry.")]),
+            AgentMessage(role: .assistant, blocks: [
+                .toolUse(id: "checked", name: "write_brief", inputJSON: "{}"),
+                .toolUse(id: "uncertain", name: "write_brief", inputJSON: "{}"),
+            ]),
+        ]
+        uncertainService.recordHostState(
+            hostRecord(state: .checked, suffix: "checked"),
+            origin: .inAppChat(sessionID: uncertainSessionID),
+            toolUseID: "checked"
+        )
+        #expect(projectedStates(uncertainService) == [.checked])
+        let uncertainDraft = hostRecord(state: .draft, suffix: "uncertain")
+        uncertainService.recordHostState(
+            uncertainDraft,
+            origin: .inAppChat(sessionID: uncertainSessionID),
+            toolUseID: "uncertain"
+        )
+        #expect(projectedStates(uncertainService) == [.checked, .draft])
+        uncertainService.recordHostState(
+            hostRecord(
+                state: .writeOutcomeUnavailable,
+                suffix: "uncertain",
+                id: uncertainDraft.id
+            ),
+            origin: .inAppChat(sessionID: uncertainSessionID),
+            toolUseID: "uncertain"
+        )
+        #expect(projectedStates(uncertainService) == [.writeOutcomeUnavailable])
+    }
+
     private func hostRecord(
         state: AgentHostStateRecord.State,
-        suffix: String
+        suffix: String,
+        id: UUID = UUID()
     ) -> AgentHostStateRecord {
         AgentHostStateRecord(
+            id: id,
             state: state,
             phase: "brief",
             toolName: "write_brief",
@@ -877,6 +1131,16 @@ struct AgentServiceRuntimeContractTests {
             byteComparison: state == .persisted ? .changed : .unchanged,
             previousSHA256: String(repeating: "a", count: 64),
             currentSHA256: String(repeating: suffix == "second" ? "c" : "b", count: 64)
+        )
+    }
+
+    private func persistSession(_ session: ChatSession, at root: URL) throws {
+        let chat = root.appendingPathComponent(ChatSessionStore.dirName, isDirectory: true)
+        try FileManager.default.createDirectory(at: chat, withIntermediateDirectories: true)
+        let data = try #require(ChatSessionStore.encodeSession(session))
+        try data.write(
+            to: chat.appendingPathComponent("\(session.id.uuidString).json"),
+            options: .atomic
         )
     }
 

@@ -1276,6 +1276,12 @@ final class AgentService {
             turnReference,
             origin: origin
         )
+        if turnReference != nil, verifiedTurnReference == nil {
+            Log.agent.notice(
+                "discarded host state with a stale turn reference id=\(record.id.uuidString)"
+            )
+            return
+        }
         if sessionID == currentSessionId {
             guard Self.attachHostState(
                 record,
@@ -1371,7 +1377,22 @@ final class AgentService {
         turnReference: AgentHostTurnReference?,
         to messages: inout [AgentMessage]
     ) -> Bool {
-        if let messageIndex = messages.indices.reversed().first(where: { index in
+        let searchableIndices: [Int]
+        if let turnReference {
+            guard let anchor = messages.firstIndex(where: {
+                $0.id == turnReference.inputMessageID && $0.role == .user
+            }) else { return false }
+            let end = messages.indices.dropFirst(anchor + 1).first(where: {
+                messages[$0].role == .user && messages[$0].blocks.contains {
+                    if case .text = $0 { return true }
+                    return false
+                }
+            }) ?? messages.endIndex
+            searchableIndices = Array(anchor..<end)
+        } else {
+            searchableIndices = Array(messages.indices)
+        }
+        if let messageIndex = searchableIndices.reversed().first(where: { index in
             messages[index].hostStateRecords.contains { $0.id == record.id }
         }), let stateIndex = messages[messageIndex].hostStateRecords.firstIndex(where: {
             $0.id == record.id
@@ -1384,21 +1405,6 @@ final class AgentService {
             return true
         }
         let requestedID = toolUseID ?? record.toolUseID
-        let searchableIndices: [Int]
-        if let turnReference,
-           let anchor = messages.firstIndex(where: {
-               $0.id == turnReference.inputMessageID && $0.role == .user
-           }) {
-            let end = messages.indices.dropFirst(anchor + 1).first(where: {
-                messages[$0].role == .user && messages[$0].blocks.contains {
-                    if case .text = $0 { return true }
-                    return false
-                }
-            }) ?? messages.endIndex
-            searchableIndices = Array(anchor..<end)
-        } else {
-            searchableIndices = Array(messages.indices)
-        }
         if let requestedID,
            let messageIndex = searchableIndices.first(where: { index in
                messages[index].role == .assistant
