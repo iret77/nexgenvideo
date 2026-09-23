@@ -1,5 +1,9 @@
 import AppKit
 
+private enum RippleInsertError: Error {
+    case invalidatedPlan
+}
+
 struct RippleRangesReport: Sendable {
     let removedFrames: Int
     let clearedTracks: Int
@@ -242,7 +246,12 @@ extension EditorViewModel {
                 if affected.contains(where: isClipEditLocked) { return true }
             }
         }
-        return false
+        let pushTrackIDs = pushTracks.map { timeline.tracks[$0].id }
+        return rippleInsertShiftPlan(
+            pushTrackIDs: pushTrackIDs,
+            atFrame: atFrame,
+            pushAmount: pushAmount
+        ) == nil
     }
 
     @discardableResult
@@ -262,35 +271,41 @@ extension EditorViewModel {
             needsLinkedAudio: needsLinkedAudio
         ) else { return [] }
         var created: [String] = []
-        withTimelineSwap(actionName: "Ripple Insert Clips") {
-            let linkedAudioTrackIndex: Int? = needsLinkedAudio
-                ? (existingLinkedAudioTrackIndex ?? insertTrack(at: timeline.tracks.count, type: .audio))
-                : nil
-            let pushTracks = timeline.tracks.indices.filter {
-                $0 == trackIndex || $0 == linkedAudioTrackIndex || timeline.tracks[$0].syncLocked
-            }
-            for ti in pushTracks {
-                if let straddler = timeline.tracks[ti].clips.first(where: {
-                    $0.startFrame < atFrame && atFrame < $0.endFrame
-                }) {
-                    _ = splitClip(clipId: straddler.id, atFrame: atFrame)
+        do {
+            try withTimelineSwap(actionName: "Ripple Insert Clips") {
+                let linkedAudioTrackIndex: Int? = needsLinkedAudio
+                    ? (existingLinkedAudioTrackIndex ?? insertTrack(at: timeline.tracks.count, type: .audio))
+                    : nil
+                let pushTracks = timeline.tracks.indices.filter {
+                    $0 == trackIndex || $0 == linkedAudioTrackIndex || timeline.tracks[$0].syncLocked
                 }
-            }
-            for ti in pushTracks {
-                applyShifts(RippleEngine.computeRipplePush(
-                    clips: timeline.tracks[ti].clips,
-                    insertFrame: atFrame,
+                let pushTrackIDs = pushTracks.map { timeline.tracks[$0].id }
+                for ti in pushTracks {
+                    if let straddler = timeline.tracks[ti].clips.first(where: {
+                        $0.startFrame < atFrame && atFrame < $0.endFrame
+                    }) {
+                        _ = splitClip(clipId: straddler.id, atFrame: atFrame)
+                    }
+                }
+                guard let shifts = rippleInsertShiftPlan(
+                    pushTrackIDs: pushTrackIDs,
+                    atFrame: atFrame,
                     pushAmount: totalPush
-                ))
+                ) else { throw RippleInsertError.invalidatedPlan }
+                applyShifts(shifts)
+                for index in timeline.tracks.indices { sortClips(trackIndex: index) }
+                created = createClips(
+                    from: assets,
+                    trackIndex: trackIndex,
+                    startFrame: atFrame,
+                    linkedAudioTrackIndex: linkedAudioTrackIndex,
+                    segments: segments
+                )
+                guard !created.isEmpty else { throw RippleInsertError.invalidatedPlan }
+                sortClips(trackIndex: trackIndex)
             }
-            created = createClips(
-                from: assets,
-                trackIndex: trackIndex,
-                startFrame: atFrame,
-                linkedAudioTrackIndex: linkedAudioTrackIndex,
-                segments: segments
-            )
-            sortClips(trackIndex: trackIndex)
+        } catch {
+            return []
         }
         return created
     }
@@ -323,46 +338,98 @@ extension EditorViewModel {
             needsLinkedAudio: needsLinkedAudio
         ) else { return [] }
         var created: [String] = []
-        withTimelineSwap(actionName: specs.count == 1 ? "Ripple Insert Clip (Agent)" : "Ripple Insert Clips (Agent)") {
-            // Pin the linked-audio destination before pushing so it ripples too; otherwise the
-            // auto-created audio partner would land on an un-pushed track and overlap.
-            let linkedAudioTrackIndex: Int? = needsLinkedAudio
-                ? (existingLinkedAudioTrackIndex ?? insertTrack(at: timeline.tracks.count, type: .audio))
-                : nil
+        do {
+            try withTimelineSwap(actionName: specs.count == 1 ? "Ripple Insert Clip (Agent)" : "Ripple Insert Clips (Agent)") {
+                let linkedAudioTrackIndex: Int? = needsLinkedAudio
+                    ? (existingLinkedAudioTrackIndex ?? insertTrack(at: timeline.tracks.count, type: .audio))
+                    : nil
+                let pushTracks = timeline.tracks.indices.filter {
+                    $0 == trackIndex || $0 == linkedAudioTrackIndex || timeline.tracks[$0].syncLocked
+                }
+                let pushTrackIDs = pushTracks.map { timeline.tracks[$0].id }
+                for ti in pushTracks {
+                    if let straddler = timeline.tracks[ti].clips.first(where: {
+                        $0.startFrame < atFrame && atFrame < $0.endFrame
+                    }) {
+                        _ = splitClip(clipId: straddler.id, atFrame: atFrame)
+                    }
+                }
+                guard let shifts = rippleInsertShiftPlan(
+                    pushTrackIDs: pushTrackIDs,
+                    atFrame: atFrame,
+                    pushAmount: totalPush
+                ) else { throw RippleInsertError.invalidatedPlan }
+                applyShifts(shifts)
+                for index in timeline.tracks.indices { sortClips(trackIndex: index) }
 
-            // Tracks the gap opens on. Splitting below doesn't add tracks, so these stay valid.
-            let pushTracks = timeline.tracks.indices.filter {
-                $0 == trackIndex || $0 == linkedAudioTrackIndex || timeline.tracks[$0].syncLocked
-            }
-
-            // Insert-edit: split any clip straddling atFrame on each pushed track so its right
-            // half rides the ripple instead of being overlapped. splitClip also splits linked
-            // partners and regroups them, so a clip already cut via its partner is no longer a
-            // straddler when its own track comes up.
-            for ti in pushTracks {
-                if let straddler = timeline.tracks[ti].clips.first(where: { $0.startFrame < atFrame && atFrame < $0.endFrame }) {
-                    _ = splitClip(clipId: straddler.id, atFrame: atFrame)
+                var cursor = atFrame
+                for spec in specs {
+                    let placed = placeClip(
+                        asset: spec.asset, trackIndex: trackIndex,
+                        startFrame: cursor, durationFrames: spec.durationFrames,
+                        linkedAudioTrackIndex: linkedAudioTrackIndex,
+                        trimStartFrame: spec.trimStartFrame, trimEndFrame: spec.trimEndFrame
+                    )
+                    guard !placed.isEmpty else { throw RippleInsertError.invalidatedPlan }
+                    created.append(contentsOf: placed)
+                    cursor += spec.durationFrames
                 }
             }
-
-            for ti in pushTracks {
-                applyShifts(RippleEngine.computeRipplePush(
-                    clips: timeline.tracks[ti].clips, insertFrame: atFrame, pushAmount: totalPush
-                ))
-            }
-
-            var cursor = atFrame
-            for spec in specs {
-                created.append(contentsOf: placeClip(
-                    asset: spec.asset, trackIndex: trackIndex,
-                    startFrame: cursor, durationFrames: spec.durationFrames,
-                    linkedAudioTrackIndex: linkedAudioTrackIndex,
-                    trimStartFrame: spec.trimStartFrame, trimEndFrame: spec.trimEndFrame
-                ))
-                cursor += spec.durationFrames
-            }
+        } catch {
+            return []
         }
         return created
+    }
+
+    private func rippleInsertShiftPlan(
+        pushTrackIDs: [String],
+        atFrame: Int,
+        pushAmount: Int
+    ) -> [ClipShift]? {
+        var newStarts: [String: Int] = [:]
+        for trackID in pushTrackIDs {
+            guard let trackIndex = timeline.tracks.firstIndex(where: { $0.id == trackID }) else {
+                return nil
+            }
+            let track = timeline.tracks[trackIndex]
+            let shifts = RippleEngine.computeRipplePush(
+                clips: track.clips,
+                insertFrame: atFrame,
+                pushAmount: pushAmount
+            )
+            if track.editLocked, !shifts.isEmpty { return nil }
+            for shift in shifts { newStarts[shift.clipId] = shift.newStartFrame }
+        }
+
+        var pending = Array(newStarts.keys)
+        var visited: Set<String> = []
+        while let clipID = pending.popLast() {
+            guard visited.insert(clipID).inserted else { continue }
+            for partnerID in linkedPartnerIds(of: clipID) {
+                guard let location = findClip(id: partnerID),
+                      !timeline.tracks[location.trackIndex].editLocked else { return nil }
+                let partner = timeline.tracks[location.trackIndex].clips[location.clipIndex]
+                if newStarts[partnerID] == nil {
+                    newStarts[partnerID] = partner.startFrame + pushAmount
+                }
+                pending.append(partnerID)
+            }
+        }
+
+        for trackIndex in timeline.tracks.indices {
+            let shifts = timeline.tracks[trackIndex].clips.compactMap { clip -> ClipShift? in
+                guard let start = newStarts[clip.id] else { return nil }
+                return ClipShift(clipId: clip.id, newStartFrame: start)
+            }
+            if !shifts.isEmpty, validateShifts(trackIndex: trackIndex, shifts: shifts) != nil {
+                return nil
+            }
+        }
+        return timeline.tracks.flatMap { track in
+            track.clips.compactMap { clip in
+                newStarts[clip.id].map { ClipShift(clipId: clip.id, newStartFrame: $0) }
+            }
+        }
     }
 
     // MARK: - Internal

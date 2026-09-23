@@ -93,6 +93,10 @@ extension EditorViewModel {
         selectedClipIds.contains(where: isClipEditLocked)
     }
 
+    var inspectedTimelineClipsAreEditLocked: Bool {
+        timelineInspectorClipIDs.contains(where: isClipEditLocked)
+    }
+
     /// Flip a `Bool` on a track, register a reversing undo, and publish the change.
     /// `onName` is used when the flag transitions false → true; `offName` for true → false.
     private func toggleTrackFlag(

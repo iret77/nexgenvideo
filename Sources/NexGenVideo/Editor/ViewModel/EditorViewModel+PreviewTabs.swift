@@ -1,5 +1,13 @@
 import AppKit
 
+private struct SourceOverwritePlan {
+    let targetTrackID: String?
+    let linkedAudioTrackID: String?
+    let clearTrackIDs: [String]
+    let startFrame: Int
+    let endFrame: Int
+}
+
 /// Preview identity and activation; tabs remain internal remembered-source state.
 extension EditorViewModel {
 
@@ -35,6 +43,31 @@ extension EditorViewModel {
 
     var isTimelinePreviewActive: Bool { activePreviewTab == .timeline }
     var isSourcePreviewActive: Bool { activeSourceAsset != nil }
+
+    var activeTimelineInspectionClipID: String? {
+        guard isTimelinePreviewActive else { return nil }
+        if let id = explicitTimelineInspectionClipID, findClip(id: id) != nil {
+            return id
+        }
+        guard selectedClipIds.count == 1, let id = selectedClipIds.first,
+              findClip(id: id) != nil else { return nil }
+        return id
+    }
+
+    var timelineInspectorClipIDs: Set<String> {
+        if let id = explicitTimelineInspectionClipID, isTimelinePreviewActive,
+           findClip(id: id) != nil {
+            return [id]
+        }
+        return selectedClipIds
+    }
+
+    var isTimelineBatchSelection: Bool {
+        isTimelinePreviewActive
+            && explicitTimelineInspectionClipID == nil
+            && !isMarqueeSelecting
+            && selectedClipIds.count > 1
+    }
 
     func sourcePreviewState(for assetID: String) -> SourcePreviewState {
         let duration = mediaAssets.first { $0.id == assetID }
@@ -74,6 +107,7 @@ extension EditorViewModel {
 
     func openPreviewTab(for asset: MediaAsset, atSourceFrame frame: Int? = nil) {
         let tab = PreviewTab.mediaAsset(id: asset.id, name: asset.name, type: asset.type)
+        let wasActive = activePreviewTabId == tab.id
         if !previewTabs.contains(where: { $0.id == tab.id }) {
             previewTabs.append(tab)
         }
@@ -84,9 +118,14 @@ extension EditorViewModel {
                 to: secondsToFrame(seconds: asset.duration, fps: timeline.fps)
             )
         }
+        explicitTimelineInspectionClipID = nil
         activePreviewTabId = tab.id
         sourcePlayheadFrame = sourcePreviewState(for: asset.id).playheadFrame
-        videoEngine?.activateTab(tab)
+        if wasActive {
+            if frame != nil { videoEngine?.seek(to: sourcePlayheadFrame, mode: .exact) }
+        } else {
+            videoEngine?.activateTab(tab)
+        }
         pushPreviewHistory(tab.id)
     }
 
@@ -109,20 +148,28 @@ extension EditorViewModel {
         activateMediaAsset(asset, preservingSelection: true)
     }
 
-    func activateTimelineSelection(inspectedClipID: String? = nil) {
-        activePreviewTabId = PreviewTab.timeline.id
-        videoEngine?.activateTab(.timeline)
-        pushPreviewHistory(PreviewTab.timeline.id)
+    func activateTimelineSelection() {
+        explicitTimelineInspectionClipID = nil
+        activateTimelinePreview()
+        inspectedObject = InspectedObject.fromSelection(
+            clipIDs: selectedClipIds,
+            mediaAssetIDs: [],
+            isMarquee: isMarqueeSelecting
+        )
+    }
 
-        if let inspectedClipID, findClip(id: inspectedClipID) != nil {
-            inspectedObject = .clip(inspectedClipID)
-        } else {
-            inspectedObject = InspectedObject.fromSelection(
-                clipIDs: selectedClipIds,
-                mediaAssetIDs: [],
-                isMarquee: isMarqueeSelecting
-            )
-        }
+    func activateTimelineClipContext(_ clipID: String) {
+        guard findClip(id: clipID) != nil else { return }
+        explicitTimelineInspectionClipID = clipID
+        activateTimelinePreview()
+        inspectedObject = .clip(clipID)
+    }
+
+    private func activateTimelinePreview() {
+        let wasActive = activePreviewTabId == PreviewTab.timeline.id
+        activePreviewTabId = PreviewTab.timeline.id
+        if !wasActive { videoEngine?.activateTab(.timeline) }
+        pushPreviewHistory(PreviewTab.timeline.id)
     }
 
     func activatePreviousSource() {
@@ -192,10 +239,11 @@ extension EditorViewModel {
     func canOverwriteSourceAsset(_ asset: MediaAsset) -> Bool {
         guard asset.type.isPlaceable,
               !asset.isGenerating,
-              !isMediaOffline(asset.id) else { return false }
-        return sourcePreviewState(for: asset.id).selectedFrames(
-            durationFrames: secondsToFrame(seconds: asset.duration, fps: timeline.fps)
-        ) != nil
+              !isMediaOffline(asset.id),
+              let frames = sourcePreviewState(for: asset.id).selectedFrames(
+                  durationFrames: secondsToFrame(seconds: asset.duration, fps: timeline.fps)
+              ) else { return false }
+        return sourceOverwritePlan(asset: asset, durationFrames: frames.count) != nil
     }
 
     @discardableResult
@@ -214,17 +262,23 @@ extension EditorViewModel {
               !asset.isGenerating,
               !isMediaOffline(asset.id),
               let frames = activeSourceSelectedFrames else { return [] }
-        guard ripple ? canInsertActiveSource : canOverwriteActiveSource else { return [] }
+        let overwritePlan: SourceOverwritePlan?
+        if ripple {
+            guard canInsertSourceAsset(asset) else { return [] }
+            overwritePlan = nil
+        } else {
+            guard let plan = sourceOverwritePlan(asset: asset, durationFrames: frames.count) else {
+                return []
+            }
+            overwritePlan = plan
+        }
         let fps = Double(timeline.fps)
         let segment = (Double(frames.lowerBound) / fps)...(Double(frames.upperBound) / fps)
-        let previousIDs = Set(timeline.tracks.flatMap(\.clips).map(\.id))
         var created: [String] = []
         withTimelineSwap(actionName: ripple ? "Insert Source" : "Overwrite Source") {
-            let target = (ripple
-                ? sourceEditTrackIndex(for: asset)
-                : sourceOverwriteTrackIndex(for: asset, durationFrames: frames.count))
-                ?? insertTrack(at: timeline.tracks.count, type: asset.type == .audio ? .audio : .video)
             if ripple {
+                let target = sourceEditTrackIndex(for: asset)
+                    ?? insertTrack(at: timeline.tracks.count, type: asset.type == .audio ? .audio : .video)
                 let sourceDuration = secondsToFrame(seconds: asset.duration, fps: timeline.fps)
                 created = rippleInsertClips(
                     specs: [RippleInsertSpec(
@@ -236,15 +290,45 @@ extension EditorViewModel {
                     trackIndex: target,
                     atFrame: currentFrame
                 )
-            } else {
-                addClips(
-                    assets: [asset],
+            } else if let overwritePlan {
+                for trackID in overwritePlan.clearTrackIDs {
+                    guard let trackIndex = timeline.tracks.firstIndex(where: { $0.id == trackID }) else {
+                        continue
+                    }
+                    clearRegion(
+                        trackIndex: trackIndex,
+                        start: overwritePlan.startFrame,
+                        end: overwritePlan.endFrame,
+                        prune: false
+                    )
+                }
+                let target = overwritePlan.targetTrackID.flatMap { id in
+                    timeline.tracks.firstIndex(where: { $0.id == id })
+                } ?? insertTrack(
+                    at: timeline.tracks.count,
+                    type: asset.type == .audio ? .audio : .video
+                )
+                let needsLinkedAudio = timeline.tracks[target].type == .video
+                    && asset.type == .video
+                    && asset.hasAudio
+                let linkedAudioTrackIndex: Int?
+                if needsLinkedAudio {
+                    linkedAudioTrackIndex = overwritePlan.linkedAudioTrackID.flatMap { id in
+                        timeline.tracks.firstIndex(where: { $0.id == id })
+                    } ?? insertTrack(at: timeline.tracks.count, type: .audio)
+                } else {
+                    linkedAudioTrackIndex = nil
+                }
+                created = placeClip(
+                    asset: asset,
                     trackIndex: target,
                     startFrame: currentFrame,
-                    segments: [asset.id: segment]
+                    durationFrames: frames.count,
+                    linkedAudioTrackIndex: linkedAudioTrackIndex,
+                    sourceSegment: segment
                 )
+                pruneEmptyTracks()
             }
-            created = timeline.tracks.flatMap(\.clips).map(\.id).filter { !previousIDs.contains($0) }
         }
         return created
     }
@@ -279,27 +363,117 @@ extension EditorViewModel {
         }
     }
 
-    private func sourceOverwriteTrackIndex(for asset: MediaAsset, durationFrames: Int) -> Int? {
-        let selected = timeline.tracks.indices.first {
-            !timeline.tracks[$0].editLocked
-                && sourceTrackIsCompatible(timeline.tracks[$0], with: asset)
-                && timeline.tracks[$0].clips.contains(where: { selectedClipIds.contains($0.id) })
-                && canClearRegion(
-                    trackIndex: $0,
-                    start: currentFrame,
-                    end: currentFrame + durationFrames
-                )
+    private func sourceOverwritePlan(asset: MediaAsset, durationFrames: Int) -> SourceOverwritePlan? {
+        let start = currentFrame
+        let end = currentFrame + durationFrames
+        let selectedTracks = timeline.tracks.indices.filter { index in
+            sourceTrackIsCompatible(timeline.tracks[index], with: asset)
+                && timeline.tracks[index].clips.contains { selectedClipIds.contains($0.id) }
         }
-        if let selected { return selected }
-        return timeline.tracks.indices.first {
-            !timeline.tracks[$0].editLocked
-                && sourceTrackIsCompatible(timeline.tracks[$0], with: asset)
-                && canClearRegion(
-                    trackIndex: $0,
-                    start: currentFrame,
-                    end: currentFrame + durationFrames
-                )
+        let otherTracks = timeline.tracks.indices.filter { index in
+            sourceTrackIsCompatible(timeline.tracks[index], with: asset)
+                && !selectedTracks.contains(index)
         }
+        for targetIndex in selectedTracks + otherTracks {
+            if let plan = sourceOverwritePlan(
+                asset: asset,
+                targetTrackID: timeline.tracks[targetIndex].id,
+                startFrame: start,
+                endFrame: end
+            ) {
+                return plan
+            }
+        }
+        return sourceOverwritePlan(
+            asset: asset,
+            targetTrackID: nil,
+            startFrame: start,
+            endFrame: end
+        )
+    }
+
+    private func sourceOverwritePlan(
+        asset: MediaAsset,
+        targetTrackID: String?,
+        startFrame: Int,
+        endFrame: Int
+    ) -> SourceOverwritePlan? {
+        let needsLinkedAudio = asset.type == .video && asset.hasAudio
+        var audioCandidates: [String?] = [nil]
+        if needsLinkedAudio {
+            let linkedAudioIDs: [String] = targetTrackID.flatMap { id in
+                timeline.tracks.firstIndex(where: { $0.id == id })
+            }.map { targetIndex in
+                let overlapping = timeline.tracks[targetIndex].clips.filter {
+                    $0.startFrame < endFrame && startFrame < $0.endFrame
+                }
+                return overlapping.flatMap { clip in
+                    linkedPartnerIds(of: clip.id).compactMap { partnerID in
+                        guard let location = findClip(id: partnerID),
+                              timeline.tracks[location.trackIndex].type == .audio else { return nil }
+                        return timeline.tracks[location.trackIndex].id
+                    }
+                }
+            } ?? []
+            let availableAudioID = timeline.tracks.indices.first { index in
+                timeline.tracks[index].type == .audio
+                    && !timeline.tracks[index].editLocked
+                    && !timeline.tracks[index].clips.contains {
+                        $0.startFrame < endFrame && startFrame < $0.endFrame
+                    }
+            }.map { timeline.tracks[$0].id }
+            var uniqueLinkedAudioIDs: [String] = []
+            for id in linkedAudioIDs where !uniqueLinkedAudioIDs.contains(id) {
+                uniqueLinkedAudioIDs.append(id)
+            }
+            audioCandidates = uniqueLinkedAudioIDs.map { Optional($0) }
+            if let availableAudioID, !audioCandidates.contains(where: { $0 == availableAudioID }) {
+                audioCandidates.append(availableAudioID)
+            }
+            audioCandidates.append(nil)
+        }
+
+        for audioTrackID in audioCandidates {
+            let initial = Set([targetTrackID, audioTrackID].compactMap { $0 })
+            guard let clearTrackIDs = overwriteClearTrackIDs(
+                initialTrackIDs: initial,
+                startFrame: startFrame,
+                endFrame: endFrame
+            ) else { continue }
+            return SourceOverwritePlan(
+                targetTrackID: targetTrackID,
+                linkedAudioTrackID: audioTrackID,
+                clearTrackIDs: clearTrackIDs,
+                startFrame: startFrame,
+                endFrame: endFrame
+            )
+        }
+        return nil
+    }
+
+    private func overwriteClearTrackIDs(
+        initialTrackIDs: Set<String>,
+        startFrame: Int,
+        endFrame: Int
+    ) -> [String]? {
+        var pending = initialTrackIDs
+        var resolved: Set<String> = []
+        while let trackID = pending.popFirst() {
+            guard let index = timeline.tracks.firstIndex(where: { $0.id == trackID }),
+                  !timeline.tracks[index].editLocked,
+                  canClearRegion(trackIndex: index, start: startFrame, end: endFrame) else {
+                return nil
+            }
+            guard resolved.insert(trackID).inserted else { continue }
+            let overlapping = timeline.tracks[index].clips.filter {
+                $0.startFrame < endFrame && startFrame < $0.endFrame
+            }
+            for partnerID in overlapping.flatMap({ linkedPartnerIds(of: $0.id) }) {
+                guard let location = findClip(id: partnerID) else { continue }
+                pending.insert(timeline.tracks[location.trackIndex].id)
+            }
+        }
+        return timeline.tracks.compactMap { resolved.contains($0.id) ? $0.id : nil }
     }
 
     private func sourceTrackIsCompatible(_ track: Track, with asset: MediaAsset) -> Bool {
@@ -380,6 +554,7 @@ extension EditorViewModel {
     private func syncSelectionToActiveTab() {
         switch activePreviewTab {
         case .timeline:
+            explicitTimelineInspectionClipID = nil
             inspectedObject = InspectedObject.fromSelection(
                 clipIDs: selectedClipIds,
                 mediaAssetIDs: [],

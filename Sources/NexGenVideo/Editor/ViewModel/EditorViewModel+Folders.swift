@@ -186,6 +186,7 @@ extension EditorViewModel {
             selectedMediaAssetIds: selectedMediaAssetIds,
             selectedFolderIds: selectedFolderIds,
             inspectedObject: inspectedObject,
+            explicitTimelineInspectionClipID: explicitTimelineInspectionClipID,
             previewTabs: previewTabs,
             activePreviewTabId: activePreviewTabId,
             previewTabHistory: previewTabHistory,
@@ -216,6 +217,7 @@ extension EditorViewModel {
         selectedMediaAssetIds = snapshot.selectedMediaAssetIds
         selectedFolderIds = snapshot.selectedFolderIds
         inspectedObject = snapshot.inspectedObject
+        explicitTimelineInspectionClipID = snapshot.explicitTimelineInspectionClipID
         previewTabs = snapshot.previewTabs
         activePreviewTabId = snapshot.activePreviewTabId
         previewTabHistory = snapshot.previewTabHistory
@@ -236,6 +238,7 @@ struct MediaLibraryUndoSnapshot {
     let selectedMediaAssetIds: Set<String>
     let selectedFolderIds: Set<String>
     let inspectedObject: InspectedObject?
+    let explicitTimelineInspectionClipID: String?
     let previewTabs: [PreviewTab]
     let activePreviewTabId: String
     let previewTabHistory: [String]

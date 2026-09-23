@@ -155,6 +155,9 @@ final class EditorViewModel {
     var selectionInspectedObject: InspectedObject? {
         switch activePreviewTab {
         case .timeline:
+            if let id = activeTimelineInspectionClipID {
+                return .clip(id)
+            }
             return InspectedObject.fromSelection(
                 clipIDs: selectedClipIds,
                 mediaAssetIDs: [],
@@ -169,7 +172,7 @@ final class EditorViewModel {
     /// prose ("make this warmer") resolves against the selection instead of a guess — the Photoshop
     /// scope principle (docs/UI_UX_CONCEPT.md §4). Nil when nothing is selected.
     var selectionContextHint: String? {
-        if activePreviewTab == .timeline && selectedClipIds.count > 1 {
+        if isTimelineBatchSelection {
             return "\(selectedClipIds.count) timeline clips are selected"
         }
         guard let object = inspectedObject else { return nil }
@@ -902,6 +905,13 @@ final class EditorViewModel {
         activePreviewTabId = previewTabs.contains { $0.id == state.activePreviewTabId }
             ? state.activePreviewTabId
             : PreviewTab.timeline.id
+        if activePreviewTabId == PreviewTab.timeline.id,
+           case .clip(let id) = inspectedObject,
+           selectedClipIds.count > 1 {
+            explicitTimelineInspectionClipID = id
+        } else {
+            explicitTimelineInspectionClipID = nil
+        }
         currentFrame = max(0, min(state.timelineFrame, timeline.totalFrames))
         sourcePlayheadFrame = max(0, state.sourceFrame)
         mediaPanelTab = state.mediaPanelTab
@@ -1261,6 +1271,10 @@ final class EditorViewModel {
     // MARK: - Playback
 
     func togglePlayback() {
+        if isSourcePreviewActive {
+            toggleSourcePlayback()
+            return
+        }
         if let videoEngine {
             videoEngine.togglePlayback()
         } else {
@@ -1299,7 +1313,9 @@ final class EditorViewModel {
         } else {
             currentFrame = clamped
         }
-        videoEngine?.seek(to: clamped, mode: mode)
+        if isTimelinePreviewActive {
+            videoEngine?.seek(to: clamped, mode: mode)
+        }
     }
 
     // MARK: - Source playback (for preview tabs)
@@ -1315,13 +1331,26 @@ final class EditorViewModel {
     }
 
     func toggleSourcePlayback() {
+        guard let type = activePreviewTab.clipType,
+              type == .video || type == .audio || type == .lottie else {
+            if isPlaying { pause() }
+            return
+        }
         videoEngine?.togglePlayback()
     }
 
-    func stepForward() { seekToFrame(currentFrame + 1) }
-    func stepBackward() { seekToFrame(currentFrame - 1) }
-    func skipForward(frames: Int = 5) { seekToFrame(currentFrame + frames) }
-    func skipBackward(frames: Int = 5) { seekToFrame(currentFrame - frames) }
+    func stepForward() { seekActivePreview(by: 1) }
+    func stepBackward() { seekActivePreview(by: -1) }
+    func skipForward(frames: Int = 5) { seekActivePreview(by: frames) }
+    func skipBackward(frames: Int = 5) { seekActivePreview(by: -frames) }
+
+    private func seekActivePreview(by delta: Int) {
+        if isTimelinePreviewActive {
+            seekToFrame(currentFrame + delta)
+        } else if canEditActiveSourceRange {
+            seekSourceToFrame(sourcePlayheadFrame + delta)
+        }
+    }
 
     // MARK: - Shared infrastructure
 
@@ -1339,11 +1368,11 @@ final class EditorViewModel {
     func notifyTimelineChanged() {
         pendingRebuildTask?.cancel()
         pendingRebuildTask = nil
-        if isPlaying {
-            videoEngine?.pause()
+        if isTimelinePreviewActive {
+            if isPlaying { videoEngine?.pause() }
+            videoEngine?.syncTextLayers()
+            videoEngine?.rebuild()
         }
-        videoEngine?.syncTextLayers()
-        videoEngine?.rebuild()
     }
 
     /// Coalesce rapid rebuilds. An immediate `notifyTimelineChanged` cancels any pending debounced one.
@@ -1353,8 +1382,10 @@ final class EditorViewModel {
             try? await Task.sleep(for: debounce)
             guard !Task.isCancelled, let self else { return }
             self.pendingRebuildTask = nil
-            if self.isPlaying { self.videoEngine?.pause() }
-            self.videoEngine?.rebuild()
+            if self.isTimelinePreviewActive {
+                if self.isPlaying { self.videoEngine?.pause() }
+                self.videoEngine?.rebuild()
+            }
         }
     }
 
@@ -1534,5 +1565,6 @@ final class EditorViewModel {
     @ObservationIgnored private var isRestoringWorkspacePresentation = false
 
     var sourcePreviewStates: [String: SourcePreviewState] = [:]
+    var explicitTimelineInspectionClipID: String?
 
 }

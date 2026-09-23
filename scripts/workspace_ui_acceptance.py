@@ -95,7 +95,10 @@ def run_scale(executable, output, scale):
         and selection_source[0].get("insertUndoVerified") is True
         and selection_source[0].get("overwriteUndoVerified") is True
         and selection_source[0].get("nativeSourceCommands") is True
+        and selection_source[0].get("nativeSourceScrub") is True
+        and selection_source[0].get("nativeSourceStepAndArrow") is True
         and selection_source[0].get("nativeMultiselectDeselect") is True
+        and selection_source[0].get("sameSourceReactivationPreservedPlayback") is True
         and selection_source[0].get("nativeSearchPreservedPlayback") is True
         and selection_source[0].get("sortAndFilterPreservedPlayback") is True
         and selection_source[0].get("listModePreserved") is True
@@ -114,6 +117,11 @@ def run_scale(executable, output, scale):
         and selection_timeline[0].get("nativeTimelineTrim") is True
         and selection_timeline[0].get("nativeTitleSelection") is True
         and selection_timeline[0].get("nativeEmptySelection") is True
+        and selection_timeline[0].get("nativeLinkedAVSelection") is True
+        and selection_timeline[0].get("nativeContextTarget") is True
+        and selection_timeline[0].get("headerInspectorTargetMatched") is True
+        and selection_timeline[0].get("nativeTimelineUndoRedoAfterSourceSwitch") is True
+        and selection_timeline[0].get("nativeDisabledPaste") is True
         and selection_timeline[0].get("sourceStatePreserved") is True
         and len(invariants) == 1
         and invariants[0].get("liveStateUnchanged") is True

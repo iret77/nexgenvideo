@@ -112,7 +112,7 @@ final class TimelineInputController {
             } else if !isOption, !editor.selectedClipIds.contains(clip.id) {
                 editor.selectedClipIds = linkedOn ? editor.expandToLinkGroup([clip.id]) : [clip.id]
             }
-            editor.activateTimelineSelection(inspectedClipID: clip.id)
+            editor.activateTimelineSelection()
 
             if editor.selectedTimelineClipsAreEditLocked {
                 dragState = .idle

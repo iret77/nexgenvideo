@@ -5,6 +5,7 @@ struct TimelineInteractionSnapshot {
     let selectedGap: GapSelection?
     let selectedTimelineRange: TimelineRangeSelection?
     let inspectedObject: InspectedObject?
+    let explicitInspectionClipID: String?
 }
 
 /// Clip-level mutations: move, split, remove, speed, property edits, overwrite-style
@@ -248,6 +249,7 @@ extension EditorViewModel {
             if isTimelinePreviewActive,
                case .clip(let inspectedID) = inspectedObject,
                ids.contains(inspectedID) {
+                explicitTimelineInspectionClipID = nil
                 inspectedObject = InspectedObject.fromSelection(
                     clipIDs: selectedClipIds,
                     mediaAssetIDs: [],
@@ -349,7 +351,8 @@ extension EditorViewModel {
             selectedClipIds: selectedClipIds,
             selectedGap: selectedGap,
             selectedTimelineRange: selectedTimelineRange,
-            inspectedObject: inspectedObject
+            inspectedObject: inspectedObject,
+            explicitInspectionClipID: explicitTimelineInspectionClipID
         )
     }
 
@@ -357,7 +360,19 @@ extension EditorViewModel {
         selectedClipIds = snapshot.selectedClipIds
         selectedGap = snapshot.selectedGap
         selectedTimelineRange = snapshot.selectedTimelineRange
-        inspectedObject = snapshot.inspectedObject
+        guard isTimelinePreviewActive else { return }
+        explicitTimelineInspectionClipID = snapshot.explicitInspectionClipID.flatMap {
+            findClip(id: $0) == nil ? nil : $0
+        }
+        if case .clip(let id) = snapshot.inspectedObject, findClip(id: id) == nil {
+            inspectedObject = InspectedObject.fromSelection(
+                clipIDs: selectedClipIds,
+                mediaAssetIDs: [],
+                isMarquee: false
+            )
+        } else {
+            inspectedObject = snapshot.inspectedObject
+        }
     }
 
     fileprivate func setClipSpeed(at loc: ClipLocation, newSpeed: Double) {
@@ -681,31 +696,53 @@ extension EditorViewModel {
     // MARK: - Playhead-relative operations
 
     func splitAtPlayhead() {
-        for id in selectedClipIds {
-            splitClip(clipId: id, atFrame: currentFrame)
+        let selected = selectedClipIds
+        guard !selected.isEmpty else { return }
+        var representatives: [String] = []
+        var covered: Set<String> = []
+        for id in selected where !covered.contains(id) {
+            representatives.append(id)
+            covered.formUnion(expandToLinkGroup([id]))
+        }
+        withTimelineSwap(actionName: selected.count == 1 ? "Split Clip" : "Split Clips") {
+            for id in representatives {
+                splitClip(clipId: id, atFrame: currentFrame)
+            }
         }
     }
 
     func trimStartToPlayhead() {
+        var edits: [(clipId: String, trimStartFrame: Int, trimEndFrame: Int)] = []
         for id in selectedClipIds {
             guard let loc = findClip(id: id) else { continue }
             let clip = timeline.tracks[loc.trackIndex].clips[loc.clipIndex]
             guard currentFrame > clip.startFrame && currentFrame < clip.endFrame else { continue }
             let delta = currentFrame - clip.startFrame
             let sourceDelta = Int((Double(delta) * clip.speed).rounded())
-            trimClips([(clipId: id, trimStartFrame: clip.trimStartFrame + sourceDelta, trimEndFrame: clip.trimEndFrame)])
+            edits.append((
+                clipId: id,
+                trimStartFrame: clip.trimStartFrame + sourceDelta,
+                trimEndFrame: clip.trimEndFrame
+            ))
         }
+        trimClips(edits)
     }
 
     func trimEndToPlayhead() {
+        var edits: [(clipId: String, trimStartFrame: Int, trimEndFrame: Int)] = []
         for id in selectedClipIds {
             guard let loc = findClip(id: id) else { continue }
             let clip = timeline.tracks[loc.trackIndex].clips[loc.clipIndex]
             guard currentFrame > clip.startFrame && currentFrame < clip.endFrame else { continue }
             let delta = clip.endFrame - currentFrame
             let sourceDelta = Int((Double(delta) * clip.speed).rounded())
-            trimClips([(clipId: id, trimStartFrame: clip.trimStartFrame, trimEndFrame: clip.trimEndFrame + sourceDelta)])
+            edits.append((
+                clipId: id,
+                trimStartFrame: clip.trimStartFrame,
+                trimEndFrame: clip.trimEndFrame + sourceDelta
+            ))
         }
+        trimClips(edits)
     }
 
     func deleteSelectedClips() {

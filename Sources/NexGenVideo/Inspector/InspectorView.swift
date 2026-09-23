@@ -63,9 +63,7 @@ struct InspectorView: View {
     /// A multi-clip timeline selection — the one documented exception to the single-inspected-object
     /// rule. Batch editing across selected clips stays a first-class NLE feature.
     private var isMultiClipSelection: Bool {
-        editor.activePreviewTab == .timeline
-            && !editor.isMarqueeSelecting
-            && editor.selectedClipIds.count > 1
+        editor.isTimelineBatchSelection
     }
 
     @ViewBuilder
@@ -330,7 +328,7 @@ struct InspectorView: View {
                 Button {
                     if case .clip(let id) = item.1 {
                         editor.selectedClipIds = [id]
-                        editor.activateTimelineSelection(inspectedClipID: id)
+                        editor.activateTimelineSelection()
                     } else {
                         editor.inspectedObject = item.1
                     }
@@ -591,13 +589,21 @@ struct InspectorView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background {
                 if WorkspaceUIAcceptance.isRequested {
-                    AppRelaunchClickProbe(
-                        identifier: "inspector.selectionContext",
-                        acceptanceState: {
-                            if case .clip = editor.inspectedObject { return true }
-                            return false
-                        }()
-                    )
+                    ZStack {
+                        AppRelaunchClickProbe(
+                            identifier: "inspector.selectionContext",
+                            acceptanceState: {
+                                if case .clip = editor.inspectedObject { return true }
+                                return false
+                            }()
+                        )
+                        if case .clip(let clipID) = editor.inspectedObject {
+                            AppRelaunchClickProbe(
+                                identifier: "inspector.selectionContext.\(clipID)",
+                                acceptanceState: editor.timelineInspectorClipIDs == [clipID]
+                            )
+                        }
+                    }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .allowsHitTesting(false)
                 }
@@ -749,7 +755,7 @@ struct InspectorView: View {
     private func clipInspectorContent() -> some View {
         let tabs = availableTabs
         VStack(spacing: AppTheme.Spacing.none) {
-            if editor.selectedTimelineClipsAreEditLocked {
+            if editor.inspectedTimelineClipsAreEditLocked {
                 HStack(spacing: AppTheme.Spacing.xs) {
                     Image(systemName: "lock.fill")
                     Text("Track Locked")
@@ -787,13 +793,22 @@ struct InspectorView: View {
                     }
                 }
             }
-            .disabled(editor.selectedTimelineClipsAreEditLocked)
+            .disabled(editor.inspectedTimelineClipsAreEditLocked)
             .background {
                 if WorkspaceUIAcceptance.isRequested {
-                    AppRelaunchClickProbe(
-                        identifier: "inspector.clipMutation",
-                        acceptanceState: !editor.selectedTimelineClipsAreEditLocked
-                    )
+                    ZStack {
+                        AppRelaunchClickProbe(
+                            identifier: "inspector.clipMutation",
+                            acceptanceState: !editor.inspectedTimelineClipsAreEditLocked
+                        )
+                        if editor.timelineInspectorClipIDs.count == 1,
+                           let clipID = editor.timelineInspectorClipIDs.first {
+                            AppRelaunchClickProbe(
+                                identifier: "inspector.clipMutation.\(clipID)",
+                                acceptanceState: !editor.inspectedTimelineClipsAreEditLocked
+                            )
+                        }
+                    }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .allowsHitTesting(false)
                 }
@@ -1550,10 +1565,11 @@ struct InspectorView: View {
     // MARK: - Helpers
 
     private var selectedVisualClips: [Clip] {
-        guard !editor.selectedClipIds.isEmpty else { return [] }
+        let ids = editor.timelineInspectorClipIDs
+        guard !ids.isEmpty else { return [] }
         var out: [Clip] = []
         for track in editor.timeline.tracks {
-            for clip in track.clips where editor.selectedClipIds.contains(clip.id) && clip.mediaType.isVisual {
+            for clip in track.clips where ids.contains(clip.id) && clip.mediaType.isVisual {
                 out.append(clip)
             }
         }
@@ -1561,10 +1577,11 @@ struct InspectorView: View {
     }
 
     var selectedAudioClips: [Clip] {
-        guard !editor.selectedClipIds.isEmpty else { return [] }
+        let ids = editor.timelineInspectorClipIDs
+        guard !ids.isEmpty else { return [] }
         var out: [Clip] = []
         for track in editor.timeline.tracks {
-            for clip in track.clips where editor.selectedClipIds.contains(clip.id) && clip.mediaType == .audio {
+            for clip in track.clips where ids.contains(clip.id) && clip.mediaType == .audio {
                 out.append(clip)
             }
         }

@@ -21,7 +21,10 @@ extension EditorViewModel {
 
     /// Snapshot the current selection into `clipClipboard`
     func copySelectedClipsToClipboard() {
-        let ids = selectedClipIds
+        copyClipsToClipboard(ids: selectedClipIds)
+    }
+
+    func copyClipsToClipboard(ids: Set<String>) {
         guard !ids.isEmpty else { return }
 
         var captures: [(clip: Clip, trackIndex: Int, trackId: String, trackType: ClipType)] = []

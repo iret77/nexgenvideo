@@ -169,9 +169,12 @@ struct PreviewContainerView: View {
 
     private func transportControls(duration: Int, compact: Bool) -> some View {
         HStack(spacing: compact ? AppTheme.Spacing.sm : AppTheme.Spacing.md) {
-            transportButton("backward.end.fill") { seekTo(0) }
+            transportButton("backward.end.fill", acceptanceIdentifier: "preview.seekStart") { seekTo(0) }
             if !compact {
-                transportButton("backward.frame.fill") { seekTo(playheadFrame - 1) }
+                transportButton(
+                    "backward.frame.fill",
+                    acceptanceIdentifier: "preview.stepBackward"
+                ) { seekTo(playheadFrame - 1) }
             }
             transportButton(
                 editor.isPlaying ? "pause.fill" : "play.fill",
@@ -184,9 +187,12 @@ struct PreviewContainerView: View {
                 }
             }
             if !compact {
-                transportButton("forward.frame.fill") { seekTo(playheadFrame + 1) }
+                transportButton(
+                    "forward.frame.fill",
+                    acceptanceIdentifier: "preview.stepForward"
+                ) { seekTo(playheadFrame + 1) }
             }
-            transportButton("forward.end.fill") { seekTo(duration) }
+            transportButton("forward.end.fill", acceptanceIdentifier: "preview.seekEnd") { seekTo(duration) }
         }
     }
 
@@ -555,10 +561,18 @@ struct PreviewContainerView: View {
         .workspaceHeaderContent()
         .background {
             if WorkspaceUIAcceptance.isRequested {
-                AppRelaunchClickProbe(
-                    identifier: "preview.selectionContext",
-                    acceptanceState: isTimeline
-                )
+                ZStack {
+                    AppRelaunchClickProbe(
+                        identifier: "preview.selectionContext",
+                        acceptanceState: isTimeline && editor.activeTimelineInspectionClipID != nil
+                    )
+                    if let clipID = editor.activeTimelineInspectionClipID {
+                        AppRelaunchClickProbe(
+                            identifier: "preview.selectionContext.\(clipID)",
+                            acceptanceState: isTimeline
+                        )
+                    }
+                }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .allowsHitTesting(false)
             }
@@ -571,10 +585,10 @@ struct PreviewContainerView: View {
 
     private var activeObjectName: String {
         if let asset = activeMediaAsset { return asset.name }
-        if editor.selectedClipIds.count > 1 { return "\(editor.selectedClipIds.count) clips" }
-        if let id = editor.selectedClipIds.first, let location = editor.findClip(id: id) {
+        if let id = editor.activeTimelineInspectionClipID, let location = editor.findClip(id: id) {
             return editor.clipDisplayLabel(for: editor.timeline.tracks[location.trackIndex].clips[location.clipIndex])
         }
+        if editor.isTimelineBatchSelection { return "\(editor.selectedClipIds.count) clips" }
         return "Timeline"
     }
 
@@ -645,6 +659,13 @@ struct PreviewContainerView: View {
             )
         }
         .frame(height: AppTheme.ComponentSize.previewScrubberHeight)
+        .background {
+            if WorkspaceUIAcceptance.isRequested {
+                AppRelaunchClickProbe(identifier: "preview.scrub")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
+            }
+        }
         .animation(.easeOut(duration: AppTheme.Anim.hover), value: isScrubbing)
         .animation(.easeOut(duration: AppTheme.Anim.hover), value: isScrubHovered)
         .onDisappear {

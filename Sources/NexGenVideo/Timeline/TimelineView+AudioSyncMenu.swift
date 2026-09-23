@@ -5,6 +5,7 @@ extension TimelineView {
         guard let info = (sender as? NSMenuItem)?.representedObject as? [String: Any],
               let referenceClipId = info["referenceClipId"] as? String,
               let targetClipIds = info["targetClipIds"] as? [String], !targetClipIds.isEmpty else { return }
+        editor.activateTimelineSelection()
         Task { @MainActor [weak self] in
             guard let self else { return }
             let report = await editor.syncAudio(referenceClipId: referenceClipId, targetClipIds: targetClipIds)
