@@ -14,6 +14,9 @@ extension ToolExecutor {
                 throw ToolError("export_project: resolution only applies to video mode")
             }
         }
+        if mode != .fcpxml, input.version != nil || input.target != nil {
+            throw ToolError("export_project: version and target only apply to fcpxml mode")
+        }
 
         let format = try mode == .video ? ExportFormat.videoCodec(named: input.codec) : nil
         let resolution = try mode == .video ? ExportResolution.exportPreset(named: input.resolution) : .matchTimeline
@@ -36,7 +39,14 @@ extension ToolExecutor {
             }
             return try exportVideo(editor, format: format, resolution: resolution, outputURL: outputURL)
         case .xml:
-            return try exportXML(editor, outputURL: outputURL)
+            return try await exportXML(editor, outputURL: outputURL)
+        case .fcpxml:
+            return try await exportFCPXML(
+                editor,
+                outputURL: outputURL,
+                version: try FCPXMLVersion(named: input.version),
+                target: try FCPXMLTarget(named: input.target)
+            )
         case .nexgen:
             return try await exportProjectPackage(editor, outputURL: outputURL)
         }
@@ -94,17 +104,19 @@ extension ToolExecutor {
         ])
     }
 
-    private func exportXML(_ editor: EditorViewModel, outputURL: URL) throws -> ToolResult {
-        if FileManager.default.fileExists(atPath: outputURL.path) {
-            do {
-                try FileManager.default.removeItem(at: outputURL)
-            } catch {
-                throw ToolError("export_project: \(error.localizedDescription)")
-            }
+    private func exportXML(_ editor: EditorViewModel, outputURL: URL) async throws -> ToolResult {
+        guard ExportCoordinator.beginExportIfIdle() else {
+            throw ToolError("export_project: Another export is already in progress.")
         }
-        XMLExporter.export(timeline: editor.timeline, resolver: editor.mediaResolver, outputURL: outputURL)
-        guard FileManager.default.fileExists(atPath: outputURL.path) else {
-            throw ToolError("export_project: XML export failed")
+        defer { ExportCoordinator.endExport() }
+        do {
+            try XMLExporter.export(
+                timeline: editor.timeline,
+                resolver: editor.mediaResolver,
+                outputURL: outputURL
+            )
+        } catch {
+            throw ToolError("export_project: \(error.localizedDescription)")
         }
         return try jsonResult([
             "status": "exported",
@@ -116,6 +128,83 @@ extension ToolExecutor {
             "durationSeconds": Double(editor.timeline.totalFrames) / Double(max(1, editor.timeline.fps)),
             "fps": editor.timeline.fps,
             "warnings": [],
+        ])
+    }
+
+    private func exportFCPXML(
+        _ editor: EditorViewModel,
+        outputURL: URL,
+        version: FCPXMLVersion,
+        target: FCPXMLTarget
+    ) async throws -> ToolResult {
+        guard ExportCoordinator.beginExportIfIdle() else {
+            throw ToolError("export_project: Another export is already in progress.")
+        }
+        defer { ExportCoordinator.endExport() }
+        let report: FCPXMLExportReport
+        do {
+            report = try await FCPXMLExporter.export(
+                timeline: editor.timeline,
+                resolver: editor.mediaResolver.snapshot(),
+                projectName: editor.projectURL?.deletingPathExtension().lastPathComponent ?? "Timeline Export",
+                version: version,
+                target: target,
+                outputURL: outputURL
+            )
+        } catch {
+            throw ToolError("export_project: \(error.localizedDescription)")
+        }
+        let warnings = report.warnings.map { warning -> [String: Any] in
+            var value: [String: Any] = ["code": warning.code, "message": warning.message]
+            if let clipID = warning.clipID { value["clipId"] = clipID }
+            return value
+        }
+        let bindings = report.mediaBindings.map { binding -> [String: Any] in
+            var value: [String: Any] = [
+                "assetId": binding.assetID,
+                "mediaRef": binding.mediaRef,
+                "mediaRefs": binding.mediaRefs,
+                "filename": binding.filename,
+                "originalFilename": binding.originalFilename,
+                "sourceUrl": binding.sourceURL,
+                "mediaSha256": binding.mediaSHA256,
+                "mediaByteCount": binding.mediaByteCount,
+                "stagedProjectMedia": binding.stagedProjectMedia,
+            ]
+            if let origin = binding.sourceTimecodeOrigin { value["sourceTimecodeOrigin"] = origin.rawValue }
+            if let frame = binding.sourceTimecodeFrame { value["sourceTimecodeFrame"] = frame }
+            if let quanta = binding.sourceTimecodeQuanta { value["sourceTimecodeQuanta"] = quanta }
+            if let dropFrame = binding.sourceTimecodeDropFrame { value["sourceTimecodeDropFrame"] = dropFrame }
+            return value
+        }
+        let featureMatrix = FCPXMLFeatureMatrix.rows(for: report.version).map { row in
+            [
+                "feature": row.feature,
+                "disposition": row.disposition.rawValue,
+                "detail": row.detail,
+            ]
+        }
+        return try jsonResult([
+            "status": warnings.isEmpty ? "exported" : "exportedWithWarnings",
+            "mode": ExportProjectMode.fcpxml.rawValue,
+            "path": outputURL.path,
+            "version": report.version.rawValue,
+            "target": report.target.rawValue,
+            "width": editor.timeline.width,
+            "height": editor.timeline.height,
+            "durationFrames": editor.timeline.totalFrames,
+            "durationSeconds": Double(editor.timeline.totalFrames) / Double(max(1, editor.timeline.fps)),
+            "fps": editor.timeline.fps,
+            "schemaProfile": report.validation.schemaProfile,
+            "assetCount": report.validation.assetCount,
+            "storyElementCount": report.validation.storyElementCount,
+            "outputSha256": report.outputSHA256,
+            "outputByteCount": report.outputByteCount,
+            "mediaByteCount": report.mediaByteCount,
+            "stagedProjectMediaCount": report.stagedProjectMediaCount,
+            "mediaBindings": bindings,
+            "featureMatrix": featureMatrix,
+            "warnings": warnings,
         ])
     }
 
@@ -241,11 +330,15 @@ extension ToolExecutor {
 }
 
 private struct ExportProjectArgs: DecodableToolArgs {
-    static let allowedKeys: Set<String> = ["mode", "codec", "resolution", "outputPath", "overwrite"]
+    static let allowedKeys: Set<String> = [
+        "mode", "codec", "resolution", "version", "target", "outputPath", "overwrite",
+    ]
 
     var mode: String?
     var codec: String?
     var resolution: String?
+    var version: String?
+    var target: String?
     var outputPath: String?
     var overwrite: Bool?
 }
@@ -253,6 +346,7 @@ private struct ExportProjectArgs: DecodableToolArgs {
 private enum ExportProjectMode: String {
     case video
     case xml
+    case fcpxml
     case nexgen
 
     init(named raw: String?) throws {
@@ -262,7 +356,7 @@ private enum ExportProjectMode: String {
         }
         let normalized = raw.normalizedExportOption
         guard let mode = Self(rawValue: normalized) else {
-            throw ToolError("export_project: mode must be video, xml, or nexgen")
+            throw ToolError("export_project: mode must be video, xml, fcpxml, or nexgen")
         }
         self = mode
     }
@@ -271,6 +365,7 @@ private enum ExportProjectMode: String {
         switch self {
         case .video: format?.fileExtension ?? ExportFormat.h264.fileExtension
         case .xml: "xml"
+        case .fcpxml: "fcpxml"
         case .nexgen: Project.fileExtension
         }
     }
@@ -285,6 +380,7 @@ private enum ExportProjectMode: String {
         switch self {
         case .video: format?.displayName ?? "Video"
         case .xml: "XML"
+        case .fcpxml: "FCPXML"
         case .nexgen: "NexGenVideo Project"
         }
     }

@@ -78,7 +78,66 @@ final class MediaResolver: @unchecked Sendable {
         entry(for: assetId)?.name ?? "Offline"
     }
 
+    func interchangeFilename(for assetId: String) -> String {
+        guard let entry = entry(for: assetId),
+              let url = expectedURL(for: assetId) else {
+            return "Offline media"
+        }
+        return MediaFilename.display(
+            originalFilename: entry.originalFilename,
+            name: entry.name,
+            storageURL: url
+        )
+    }
+
+    func interchangeIdentity(for assetId: String) -> String? {
+        guard let entry = entry(for: assetId) else { return nil }
+        return interchangeIdentity(for: entry)
+    }
+
+    func interchangeMediaRefs(sharing identity: String) -> [String] {
+        manifest().entries
+            .filter { interchangeIdentity(for: $0) == identity }
+            .map(\.id)
+            .sorted()
+    }
+
+    func isProjectMedia(_ assetId: String) -> Bool {
+        guard let entry = entry(for: assetId) else { return false }
+        if case .project = entry.source { return true }
+        return false
+    }
+
+    func expectedURLMap(for assetIds: Set<String>) -> [String: URL] {
+        Dictionary(uniqueKeysWithValues: assetIds.compactMap { id in
+            expectedURL(for: id).map { (id, $0) }
+        })
+    }
+
     func entry(for assetId: String) -> MediaManifestEntry? {
         manifest().entries.first(where: { $0.id == assetId })
+    }
+
+    private func interchangeIdentity(for entry: MediaManifestEntry) -> String {
+        switch entry.source {
+        case .external(let path):
+            let resolved = URL(fileURLWithPath: path)
+                .standardizedFileURL
+                .resolvingSymlinksInPath()
+            return "external:\(resolved.path)"
+        case .project(let relativePath):
+            guard let home = projectURL()?.standardizedFileURL.resolvingSymlinksInPath() else {
+                let normalized = URL(fileURLWithPath: "/", isDirectory: true)
+                    .appendingPathComponent(relativePath)
+                    .standardizedFileURL
+                    .path
+                return "project:\(normalized)"
+            }
+            let resolved = home.appendingPathComponent(relativePath)
+                .standardizedFileURL
+                .resolvingSymlinksInPath()
+            guard resolved.path.hasPrefix(home.path + "/") else { return "project:invalid:\(entry.id)" }
+            return "project:/\(resolved.path.dropFirst(home.path.count + 1))"
+        }
     }
 }

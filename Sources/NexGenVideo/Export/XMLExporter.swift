@@ -38,9 +38,44 @@ import Foundation
 
 enum XMLExporter {
 
-    static func export(timeline: Timeline, resolver: MediaResolver, outputURL: URL) {
+    enum ExportError: LocalizedError {
+        case serializationFailed(target: URL)
+        case writeFailed(target: URL)
+
+        var errorDescription: String? {
+            switch self {
+            case .serializationFailed(let target):
+                "Couldn’t export XML to “\(target.lastPathComponent)”. Try exporting again."
+            case .writeFailed(let target):
+                "Couldn’t export XML to “\(target.lastPathComponent)”. Choose another writable location and try again."
+            }
+        }
+    }
+
+    static func export(timeline: Timeline, resolver: MediaResolver, outputURL: URL) throws {
         let xml = Builder(timeline: timeline, resolver: resolver).build()
-        try? xml.data(using: .utf8)?.write(to: outputURL)
+        let data = try serializedData(xml, target: outputURL)
+        do {
+            try data.write(to: outputURL, options: .atomic)
+            guard try Data(contentsOf: outputURL) == data else {
+                throw ExportError.writeFailed(target: outputURL)
+            }
+        } catch let error as ExportError {
+            throw error
+        } catch {
+            throw ExportError.writeFailed(target: outputURL)
+        }
+    }
+
+    static func serializedData(
+        _ xml: String,
+        target: URL,
+        encoding: String.Encoding = .utf8
+    ) throws -> Data {
+        guard let data = xml.data(using: encoding) else {
+            throw ExportError.serializationFailed(target: target)
+        }
+        return data
     }
 
     // MARK: - Source timecode
@@ -189,7 +224,7 @@ enum XMLExporter {
 
             var children: [XMLNode] = [
                 leaf("masterclipid", masterclipId(for: clip, isAudio: isAudio)),
-                leaf("name", resolver.displayName(for: clip.mediaRef)),
+                leaf("name", resolver.interchangeFilename(for: clip.mediaRef)),
                 bool("enabled", true),
                 leaf("duration", sourceDuration),
                 rate(fps),
@@ -223,7 +258,7 @@ enum XMLExporter {
             let entry = resolver.entry(for: mediaRef)
             let url = resolver.resolveURL(for: mediaRef)
             // Resolve matches media by exact filename + extension.
-            let fileName = url?.lastPathComponent ?? entry?.name ?? mediaRef
+            let fileName = resolver.interchangeFilename(for: mediaRef)
             // Resolve needs Premiere's extra-slash host form; the canonical single-slash one fails.
             let pathUrl = url
                 .map { $0.absoluteString.replacingOccurrences(of: "file://", with: "file://localhost//") }

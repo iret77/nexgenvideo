@@ -1,0 +1,17 @@
+{
+  "assertions": [
+    { "xpath": "/fcpxml/@version", "values": ["1.14"] },
+    { "xpath": "/fcpxml/resources/format[@id='sequence-format']/@frameDuration", "values": ["1/30s"] },
+    { "xpath": "/fcpxml/resources/format[starts-with(@id,'format-')]/@frameDuration", "values": ["1001/30000s"] },
+    { "xpath": "/fcpxml/resources/asset/@name", "values": ["Camera A.mov"] },
+    { "xpath": "/fcpxml/resources/asset/@start", "values": ["6006/5s"] },
+    { "xpath": "/fcpxml/library/event/project/sequence/@tcStart", "values": ["0s"] },
+    { "xpath": "/fcpxml/library/event/project/sequence/@tcFormat", "values": ["NDF"] },
+    { "xpath": "/fcpxml/library/event/project/sequence/spine/gap/asset-clip/@offset", "values": ["1s"] },
+    { "xpath": "/fcpxml/library/event/project/sequence/spine/gap/asset-clip/@start", "values": ["18023/15s"] },
+    { "xpath": "/fcpxml/library/event/project/sequence/spine/gap/asset-clip/@duration", "values": ["2s"] },
+    { "xpath": "/fcpxml/library/event/project/sequence/spine/gap/asset-clip/@tcFormat", "values": ["DF"] },
+    { "xpath": "/fcpxml/library/event/project/sequence/spine/gap/asset-clip/adjust-transform/@rotation", "values": ["-12"] },
+    { "xpath": "/fcpxml/library/event/project/sequence/spine/gap/title/text/text-style", "values": ["Picture lock"] }
+  ]
+}

@@ -169,13 +169,15 @@ enum AgentInstructions {
 
         # Export
         - When the user asks to export/render/save, call export_project. It matches the Export \
-          dialog modes: video, xml, and nexgen. Default mode is video: H.264, H.265, or ProRes; \
+          dialog modes: video, xml, fcpxml, and nexgen. Default mode is video: H.264, H.265, or ProRes; \
           720p, 1080p, 2K, 4K, or Match Timeline; defaults are H.264 at Match Timeline. Use mode=xml for \
-          timeline XML and mode=nexgen for a self-contained .nexgen package. If the user did \
+          Premiere-compatible XMEML, mode=fcpxml for Final Cut Pro or DaVinci Resolve, and mode=nexgen \
+          for a self-contained .nexgen package. For FCPXML, pass the requested version and target; \
+          report every returned warning and the output hash. If the user did \
           not name a destination, omit outputPath; the export writes a unique project-named file \
           to ~/Downloads. Provide outputPath only when the user named a destination. \
           video renders in the background, tell the user it is rendering and that they'll get \
-          a notification when it finishes. xml and nexgen finish inline, so report their result directly.
+          a notification when it finishes. xml, fcpxml, and nexgen finish inline, so report their result directly.
 
         # Generation
         - Costs real money and is not undoable. Propose the prompt, model, duration, and \

@@ -222,7 +222,9 @@ enum PipelineDeliveryStore {
         requireSequenceReview: Bool,
         extensionRefs: [String] = []
     ) throws -> DeliverySpecV1 {
-        guard format != .xml else { throw ToolError("Delivery video needs a video codec.") }
+        guard format != .xml, format != .fcpxml else {
+            throw ToolError("Delivery video needs a video codec.")
+        }
         let outputSize = resolution.renderSize(for: CGSize(
             width: timeline.width,
             height: timeline.height
@@ -679,7 +681,7 @@ enum PipelineDeliveryStore {
         case .h264: "avc1"
         case .h265: "hvc1"
         case .prores: "apcn"
-        case .xml: ""
+        case .xml, .fcpxml: ""
         }
     }
 

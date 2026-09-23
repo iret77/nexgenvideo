@@ -9,6 +9,8 @@ struct ExportView: View {
     @State private var mode: ExportMode = .video
     @State private var codec: VideoCodec = .h264
     @State private var resolution: ExportResolution = .matchTimeline
+    @State private var fcpxmlVersion: FCPXMLVersion = .default
+    @State private var fcpxmlTarget: FCPXMLTarget = .default
     @State private var deliveryTarget = DeliveryTargetKindV1.master
     @State private var requireSequenceReview = false
     @State private var preparingDelivery = false
@@ -140,15 +142,50 @@ struct ExportView: View {
 
                 case .xml:
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-                        Text("Exports your timeline as XML for use in other editors.")
+                        Text("Exports XMEML for Adobe Premiere Pro and legacy interchange workflows.")
                             .interfaceFont(size: AppTheme.Typography.ui)
                             .foregroundStyle(AppTheme.Text.secondaryColor)
 
-                        Text("Works with DaVinci Resolve, Premiere Pro, and Final Cut Pro.")
+                        Text("Use Final Cut Pro XML for Final Cut Pro or DaVinci Resolve.")
                             .interfaceFont(size: AppTheme.Typography.ui)
                             .foregroundStyle(AppTheme.Text.tertiaryColor)
 
                         Text("Text overlays, flips, adjustments, effects, and keyframe easing aren't included.")
+                            .interfaceFont(size: AppTheme.Typography.ui)
+                            .foregroundStyle(AppTheme.Text.tertiaryColor)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, AppTheme.Spacing.sm)
+
+                case .fcpxml:
+                    settingRow(label: "Version") {
+                        Picker("", selection: $fcpxmlVersion) {
+                            ForEach(FCPXMLVersion.allCases) { version in
+                                Text(version.rawValue).tag(version)
+                            }
+                        }
+                        .labelsHidden()
+                    }
+
+                    AppDivider().opacity(AppTheme.Opacity.dim)
+
+                    settingRow(label: "Target") {
+                        Picker("", selection: $fcpxmlTarget) {
+                            ForEach(FCPXMLTarget.allCases) { target in
+                                Text(target.displayName).tag(target)
+                            }
+                        }
+                        .labelsHidden()
+                    }
+
+                    AppDivider().opacity(AppTheme.Opacity.dim)
+
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                        Text(fcpxmlVersion.compatibilityNote)
+                            .interfaceFont(size: AppTheme.Typography.ui)
+                            .foregroundStyle(AppTheme.Text.secondaryColor)
+
+                        Text("Exports exact clip timing, source timecode, titles, transforms, crop, opacity, and static gain. Unsupported properties are listed after export.")
                             .interfaceFont(size: AppTheme.Typography.ui)
                             .foregroundStyle(AppTheme.Text.tertiaryColor)
                     }
@@ -199,6 +236,31 @@ struct ExportView: View {
                     .padding(.top, AppTheme.Spacing.sm)
             }
 
+            if let report = service.lastFCPXMLReport {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                    Text("Validated Apple DTD · FCPXML \(report.version.rawValue) · \(ByteCountFormatter.string(fromByteCount: report.outputByteCount, countStyle: .file))")
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                    Text("SHA-256 \(report.outputSHA256)")
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                        .textSelection(.enabled)
+                    Text(report.validation.schemaProfile)
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                        .textSelection(.enabled)
+                    Text("Media proof · \(report.mediaBindings.count) asset\(report.mediaBindings.count == 1 ? "" : "s") · \(ByteCountFormatter.string(fromByteCount: report.mediaByteCount, countStyle: .file))")
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                    ForEach(Array(report.warnings.enumerated()), id: \.offset) { _, warning in
+                        Text(warning.message)
+                            .interfaceFont(size: AppTheme.Typography.ui)
+                            .foregroundStyle(AppTheme.Status.warningColor)
+                    }
+                }
+                .padding(.top, AppTheme.Spacing.sm)
+            }
+
             Spacer()
             }
             .padding(AppTheme.Spacing.xl)
@@ -223,7 +285,7 @@ struct ExportView: View {
                     }
                     let out = resolution.renderSize(for: CGSize(width: editor.timeline.width, height: editor.timeline.height))
                     Text("\(Int(out.width))×\(Int(out.height))")
-                case .xml:
+                case .xml, .fcpxml:
                     Text("\(editor.timeline.width)×\(editor.timeline.height)")
                 case .ngvProject:
                     HStack(spacing: AppTheme.Spacing.xs) {
@@ -285,6 +347,7 @@ struct ExportView: View {
     private var exportFormat: ExportFormat {
         switch mode {
         case .xml, .ngvProject: .xml   // ngvProject has its own path; never rendered
+        case .fcpxml: .fcpxml
         case .video: codec.exportFormat
         }
     }
@@ -334,22 +397,27 @@ struct ExportView: View {
         panel.allowedContentTypes = [
             format == .xml
                 ? .xml
-                : (format == .prores ? .movie : .mpeg4Movie)
+                : (format == .fcpxml
+                    ? (UTType(filenameExtension: "fcpxml") ?? .xml)
+                    : (format == .prores ? .movie : .mpeg4Movie))
         ]
         panel.nameFieldStringValue = "export.\(format.fileExtension)"
 
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
             Task {
-                if mode == .xml {
+                if mode == .xml || mode == .fcpxml {
                     await service.export(
                         timeline: editor.timeline,
                         resolver: editor.mediaResolver,
                         format: format,
                         resolution: resolution,
-                        outputURL: url
+                        outputURL: url,
+                        projectName: editor.projectURL?.deletingPathExtension().lastPathComponent ?? "Timeline Export",
+                        fcpxmlVersion: fcpxmlVersion,
+                        fcpxmlTarget: fcpxmlTarget
                     )
-                    if service.error == nil { editor.showExportDialog = false }
+                    if mode == .xml, service.error == nil { editor.showExportDialog = false }
                     return
                 }
                 preparingDelivery = true
