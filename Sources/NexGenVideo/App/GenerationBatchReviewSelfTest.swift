@@ -102,7 +102,7 @@ enum GenerationBatchReviewSelfTest {
         }
         let firstID = original.payload.items[0].id
         try await reveal(
-            identifier: "generation-batch.remove.\(firstID)",
+            identifier: "generation-batch.details.\(firstID)",
             in: window,
             context: "13-item narrow large-text review"
         )
@@ -390,10 +390,18 @@ enum GenerationBatchReviewSelfTest {
                 return false
             }
             root.layoutSubtreeIfNeeded()
-            probe.scrollToVisible(probe.bounds)
-            return isClickProbeReady(probe, root: root, window: window)
+            if isConcreteControlReady(
+                probe,
+                identifier: identifier,
+                root: root,
+                window: window
+            ) {
+                return true
+            }
+            postScrollWheel(toward: probe)
+            return false
         }) else {
-            throw Failure(message: "\(context) could not scroll \(identifier) into the batch body viewport")
+            throw Failure(message: "\(context) could not scroll the concrete \(identifier) control into the batch body viewport")
         }
     }
 
@@ -414,9 +422,14 @@ enum GenerationBatchReviewSelfTest {
     private static func postMouseClick(identifier: String, in window: NSWindow) -> String? {
         guard let root = window.contentView,
               let probe = findClickProbes(in: root, identifier: identifier).first(where: {
-                  isClickProbeReady($0, root: root, window: window)
+                  isConcreteControlReady(
+                      $0,
+                      identifier: identifier,
+                      root: root,
+                      window: window
+                  )
               }) else {
-            return "the visible \(identifier) control could not receive pointer input"
+            return "the visible \(identifier) probe did not hit its concrete control"
         }
         let frame = probe.bounds
         guard frame.width.isFinite, frame.height.isFinite,
@@ -452,6 +465,34 @@ enum GenerationBatchReviewSelfTest {
         NSApp.postEvent(down, atStart: false)
         NSApp.postEvent(up, atStart: false)
         return nil
+    }
+
+    private static func postScrollWheel(toward probe: NSView) {
+        guard let scrollView = probe.enclosingScrollView,
+              let event = CGEvent(
+                  scrollWheelEvent2Source: nil,
+                  units: .pixel,
+                  wheelCount: 1,
+                  wheel1: scrollDirection(toward: probe, in: scrollView),
+                  wheel2: 0,
+                  wheel3: 0
+              ) else { return }
+        for phase in [NSEvent.Phase.began, .changed, .ended] {
+            event.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+            event.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(phase.rawValue))
+            if let wheel = NSEvent(cgEvent: event) {
+                scrollView.scrollWheel(with: wheel)
+            }
+        }
+    }
+
+    private static func scrollDirection(toward probe: NSView, in scrollView: NSScrollView) -> Int32 {
+        let target = probe.convert(probe.bounds, to: scrollView.contentView)
+        let visible = scrollView.contentView.bounds
+        let distance = Int32(AppTheme.Control.regularHeight * AppTheme.Typography.largestScale)
+        if target.maxY > visible.maxY { return -distance }
+        if target.minY < visible.minY { return distance }
+        return -distance
     }
 
     private static func postRemoveKeyboardActivation(in window: NSWindow) {
@@ -508,6 +549,24 @@ enum GenerationBatchReviewSelfTest {
             ancestor = current.superview
         }
         return true
+    }
+
+    private static func isConcreteControlReady(
+        _ probe: NSView,
+        identifier: String,
+        root: NSView,
+        window: NSWindow
+    ) -> Bool {
+        guard isClickProbeReady(probe, root: root, window: window) else { return false }
+        let frame = probe.bounds
+        let windowPoint = probe.convert(NSPoint(x: frame.midX, y: frame.midY), to: nil)
+        let screenPoint = window.convertPoint(toScreen: windowPoint)
+        var candidate = window.accessibilityHitTest(screenPoint)
+        while let element = candidate as? NSAccessibilityProtocol {
+            if element.accessibilityIdentifier() == identifier { return true }
+            candidate = element.accessibilityParent()
+        }
+        return false
     }
 
     private static func hasProbe(identifier: String, in window: NSWindow) -> Bool {

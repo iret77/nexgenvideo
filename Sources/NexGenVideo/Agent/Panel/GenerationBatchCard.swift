@@ -255,6 +255,7 @@ struct GenerationBatchCard: View {
         }
         .buttonStyle(.capsule(.secondary, size: .regular))
         .disabled(!controls.canRetryPricing)
+        .accessibilityIdentifier("generation-batch.retry-pricing")
         .modifier(GenerationBatchRuntimeProbe(
             identifier: "generation-batch.retry-pricing",
             enabled: runtimeEvidenceEnabled
@@ -266,6 +267,7 @@ struct GenerationBatchCard: View {
             .buttonStyle(.capsule(.secondary, size: .regular))
             .keyboardShortcut(.cancelAction)
             .disabled(!controls.canEdit)
+            .accessibilityIdentifier("generation-batch.decline")
             .modifier(GenerationBatchRuntimeProbe(
                 identifier: "generation-batch.decline",
                 enabled: runtimeEvidenceEnabled
@@ -285,6 +287,7 @@ struct GenerationBatchCard: View {
         }
         .buttonStyle(.capsule(.prominent, size: .regular))
         .disabled(!controls.canApprove)
+        .accessibilityIdentifier("generation-batch.approve")
         .modifier(GenerationBatchRuntimeProbe(
             identifier: "generation-batch.approve",
             enabled: runtimeEvidenceEnabled
@@ -378,6 +381,7 @@ private struct GenerationBatchItemRow: View {
             WrapLayout(spacing: AppTheme.Spacing.xs) {
                 Button(isExpanded ? "Hide details" : "Details", action: onToggleDetails)
                     .buttonStyle(InlineActionButtonStyle())
+                    .accessibilityIdentifier("generation-batch.details.\(item.id)")
                     .modifier(GenerationBatchRuntimeProbe(
                         identifier: "generation-batch.details.\(item.id)",
                         enabled: runtimeEvidenceEnabled
@@ -478,6 +482,7 @@ private struct GenerationBatchItemRow: View {
             .buttonStyle(InlineActionButtonStyle())
             .disabled(!canEdit)
             .accessibilityLabel("Remove generation \(item.manifestIndex + 1), \(item.purpose)")
+            .accessibilityIdentifier("generation-batch.remove.\(item.id)")
             .modifier(GenerationBatchRuntimeProbe(
                 identifier: "generation-batch.remove.\(item.id)",
                 enabled: runtimeEvidenceEnabled
