@@ -73,6 +73,7 @@ final class MediaAsset: Identifiable {
     var cachedRemoteURL: String?
     var cachedRemoteURLExpiresAt: Date?
     var originalFilename: String?
+    var mireloResumeAvailable = false
 
     /// Returns the cached URL if it's set AND not expired; else nil.
     var freshRemoteURL: String? {

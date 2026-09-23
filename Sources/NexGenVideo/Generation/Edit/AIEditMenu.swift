@@ -27,7 +27,7 @@ struct AIEditMenu: View {
                     Button("\(VideoToAudioEditKind.sfx.title)…") { videoAudio(kind: .sfx) }
                 }
                 if availableActions.contains(.rerun) {
-                    Button("Rerun") { rerun() }
+                    Button(isMireloGeneration ? "New Variation…" : "Rerun") { rerun() }
                 }
                 if availableActions.contains(.createVideo) {
                     Menu("Create Video") {
@@ -41,6 +41,14 @@ struct AIEditMenu: View {
 
     private var availableActions: [EditAction] {
         EditAction.available(for: asset)
+    }
+
+    private var isMireloGeneration: Bool {
+        if asset.generationInput?.model.hasPrefix("mirelo/") == true { return true }
+        guard let transactionID = asset.generationInput?.spendTransactionId else { return false }
+        return editor.generationLog.spendEvents.contains {
+            $0.transactionId == transactionID && $0.provider == .mirelo
+        }
     }
 
     private func runUpscale(_ model: UpscaleModelConfig) {

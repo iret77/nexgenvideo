@@ -419,7 +419,35 @@ struct PreviewContainerView: View {
                 }
                 .frame(maxWidth: AppTheme.ComponentSize.previewErrorMaxWidth, maxHeight: AppTheme.ComponentSize.previewErrorMaxHeight)
                 .fixedSize(horizontal: false, vertical: true)
-                if let asset = activeMediaAsset, asset.pendingDownloadURL != nil {
+                if let asset = activeMediaAsset, asset.mireloResumeAvailable {
+                    Button {
+                        editor.generationService.resumeMireloGeneration(
+                            asset: asset,
+                            editor: editor
+                        )
+                    } label: {
+                        HStack(spacing: AppTheme.Spacing.xs) {
+                            Image(systemName: "play.fill")
+                            Text("Resume Mirelo Job")
+                        }
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
+                        .foregroundStyle(AppTheme.Text.primaryColor)
+                        .padding(.horizontal, AppTheme.Spacing.md)
+                        .padding(.vertical, AppTheme.Spacing.sm)
+                    }
+                    .buttonStyle(.plain)
+                    .background(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.soft), in: .capsule)
+                    .overlay(
+                        Capsule().strokeBorder(
+                            AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.muted),
+                            lineWidth: AppTheme.BorderWidth.hairline
+                        )
+                    )
+                    Text("Continues the saved paid job without creating a variation.")
+                        .interfaceFont(size: AppTheme.Typography.metadata)
+                        .foregroundStyle(AppTheme.Text.mutedColor)
+                        .multilineTextAlignment(.center)
+                } else if let asset = activeMediaAsset, asset.pendingDownloadURL != nil {
                     Button {
                         editor.generationService.retryDownload(asset: asset, editor: editor)
                     } label: {

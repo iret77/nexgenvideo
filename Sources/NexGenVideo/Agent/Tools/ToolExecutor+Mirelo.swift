@@ -7,6 +7,97 @@ typealias MireloResultDownload = @Sendable (
     _ timeout: TimeInterval
 ) async throws -> RemoteMediaDownloader.Download
 
+private actor MireloToolExecutionCoalescer {
+    static let shared = MireloToolExecutionCoalescer()
+
+    private struct Flight {
+        let id: UUID
+        let task: Task<Void, Never>
+        var waiters: [UUID: CheckedContinuation<ToolResult, Error>]
+    }
+
+    private struct RetiringFlight {
+        let id: UUID
+        let task: Task<Void, Never>
+    }
+
+    private var flights: [String: Flight] = [:]
+    private var retiring: [String: RetiringFlight] = [:]
+
+    func run(
+        authorityID: String,
+        operation: @escaping @MainActor @Sendable () async throws -> ToolResult
+    ) async throws -> ToolResult {
+        try Task.checkCancellation()
+        if let retiring = retiring[authorityID] {
+            await retiring.task.value
+            try Task.checkCancellation()
+        }
+        let waiterID = UUID()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                if var flight = flights[authorityID] {
+                    flight.waiters[waiterID] = continuation
+                    flights[authorityID] = flight
+                    return
+                }
+                let flightID = UUID()
+                let task = Task {
+                    let result: Result<ToolResult, Error>
+                    do {
+                        result = .success(try await operation())
+                    } catch {
+                        result = .failure(error)
+                    }
+                    self.finish(authorityID: authorityID, flightID: flightID, result: result)
+                }
+                flights[authorityID] = Flight(
+                    id: flightID,
+                    task: task,
+                    waiters: [waiterID: continuation]
+                )
+            }
+        } onCancel: {
+            Task { await self.cancel(waiterID: waiterID, authorityID: authorityID) }
+        }
+    }
+
+    private func cancel(waiterID: UUID, authorityID: String) {
+        guard var flight = flights[authorityID],
+              let waiter = flight.waiters.removeValue(forKey: waiterID) else { return }
+        waiter.resume(throwing: CancellationError())
+        if flight.waiters.isEmpty {
+            flights.removeValue(forKey: authorityID)
+            retiring[authorityID] = RetiringFlight(
+                id: flight.id,
+                task: flight.task
+            )
+            flight.task.cancel()
+        } else {
+            flights[authorityID] = flight
+        }
+    }
+
+    private func finish(
+        authorityID: String,
+        flightID: UUID,
+        result: Result<ToolResult, Error>
+    ) {
+        if retiring[authorityID]?.id == flightID {
+            retiring.removeValue(forKey: authorityID)
+        }
+        guard let flight = flights[authorityID], flight.id == flightID else { return }
+        flights.removeValue(forKey: authorityID)
+        for waiter in flight.waiters.values {
+            waiter.resume(with: result)
+        }
+    }
+}
+
 extension ToolExecutor {
     func runMireloAudio(
         _ editor: EditorViewModel,
@@ -79,6 +170,21 @@ extension ToolExecutor {
                 modelID: try mireloModelID(existing),
                 endpoint: existing.operation.createPath
             )
+            if existing.state == .prepared, existing.providerJobID == nil {
+                return try await resumePreparedMireloRecord(
+                    existing,
+                    store: store,
+                    client: client,
+                    transactionID: transactionID,
+                    target: target,
+                    origin: origin,
+                    editor: editor,
+                    folderID: try resolveFolderId(args, editor: editor),
+                    workingRoot: workingRoot,
+                    workingCopyKey: workingCopyKey,
+                    mutationScope: mutationScope
+                )
+            }
             let authorization = try mireloExistingAuthorization(
                 transactionID: transactionID,
                 target: target,
@@ -436,6 +542,158 @@ extension ToolExecutor {
         )
     }
 
+    private func resumePreparedMireloRecord(
+        _ record: MireloExecutionRecord,
+        store: MireloExecutionStore,
+        client: MireloClient,
+        transactionID: String,
+        target: ResolvedGenerationTarget,
+        origin: ToolCallOrigin,
+        editor: EditorViewModel,
+        folderID: String?,
+        workingRoot: URL,
+        workingCopyKey: String,
+        mutationScope: GenerationProjectMutationScope
+    ) async throws -> ToolResult {
+        let durationMS = try await mireloStoredPreflightDuration(
+            record,
+            workingRoot: workingRoot
+        )
+        try mutationScope.requireCurrent(editor: editor)
+        let currentPreflight: MireloPreflight
+        let currentAccount: MireloAccount
+        do {
+            async let quoted = client.preflight(
+                operation: record.operation,
+                body: record.requestBody,
+                durationMS: durationMS
+            )
+            async let account = client.account()
+            (currentPreflight, currentAccount) = try await (quoted, account)
+        } catch let error as MireloHTTPError {
+            throw ToolError(mireloActionableError(error))
+        }
+        try mutationScope.requireCurrent(editor: editor)
+        try requireMireloFunding(currentPreflight, account: currentAccount)
+
+        if currentPreflight.credits == record.preflight.credits {
+            let refreshed = try store.refreshApprovedPreflight(
+                record,
+                with: currentPreflight,
+                creditChangeApproved: false
+            )
+            let authorization = try mireloExistingAuthorization(
+                transactionID: transactionID,
+                target: target,
+                record: refreshed,
+                editor: editor,
+                mutationScope: mutationScope
+            )
+            return try await executeMireloRecord(
+                refreshed,
+                store: store,
+                client: client,
+                authorization: authorization,
+                editor: editor,
+                folderID: folderID,
+                workingRoot: workingRoot,
+                workingCopyKey: workingCopyKey
+            )
+        }
+
+        let modelID = try mireloModelID(record)
+        let option = SpendOption(
+            modelId: modelID,
+            modelName: record.operation == .audioToMIDI
+                ? "Mirelo Audio-to-MIDI Pro"
+                : "Mirelo \(modelID.replacingOccurrences(of: "mirelo/", with: ""))",
+            target: target,
+            credits: currentPreflight.credits,
+            requiresCatalogAvailability: false
+        )
+        return try await withSpendApproval(
+            editor,
+            currentModelId: modelID,
+            currentModelName: option.modelName,
+            credits: currentPreflight.credits,
+            actionLabel: "Approve changed Mirelo cost",
+            selectionScope: .audio,
+            pipelineTool: .runMireloAudio,
+            origin: origin,
+            forceApproval: true,
+            alternatives: { [] },
+            exactOptions: { [option] },
+            recommendedTarget: target,
+            execute: { editor, reviewed in
+                try mutationScope.requireCurrent(editor: editor)
+                let verifiedPreflight: MireloPreflight
+                let verifiedAccount: MireloAccount
+                do {
+                    async let quoted = client.preflight(
+                        operation: record.operation,
+                        body: record.requestBody,
+                        durationMS: durationMS
+                    )
+                    async let account = client.account()
+                    (verifiedPreflight, verifiedAccount) = try await (quoted, account)
+                } catch let error as MireloHTTPError {
+                    throw ToolError(self.mireloActionableError(error))
+                }
+                try mutationScope.requireCurrent(editor: editor)
+                try self.requireMireloFunding(
+                    verifiedPreflight,
+                    account: verifiedAccount
+                )
+                guard verifiedPreflight.credits == reviewed.credits else {
+                    throw ToolError(
+                        "Mirelo's current preflight changed again to \(verifiedPreflight.credits) credits. Review the updated cost; no provider request was submitted."
+                    )
+                }
+                let refreshed = try store.refreshApprovedPreflight(
+                    record,
+                    with: verifiedPreflight,
+                    creditChangeApproved: true
+                )
+                let authorization = try self.mireloExistingAuthorization(
+                    transactionID: transactionID,
+                    target: target,
+                    record: refreshed,
+                    editor: editor,
+                    mutationScope: mutationScope
+                )
+                return try await self.executeMireloRecord(
+                    refreshed,
+                    store: store,
+                    client: client,
+                    authorization: authorization,
+                    editor: editor,
+                    folderID: folderID,
+                    workingRoot: workingRoot,
+                    workingCopyKey: workingCopyKey
+                )
+            }
+        )
+    }
+
+    private func mireloStoredPreflightDuration(
+        _ record: MireloExecutionRecord,
+        workingRoot: URL
+    ) async throws -> Int? {
+        guard record.operation == .audioToMIDI else { return nil }
+        guard let source = record.sources.first else {
+            throw ToolError("The saved Mirelo Audio-to-MIDI request has no source receipt.")
+        }
+        let url = workingRoot.appendingPathComponent(source.projectPath)
+        guard try mireloProjectPath(url, root: workingRoot) == source.projectPath,
+              FileManager.default.fileExists(atPath: url.path),
+              try FileDigest.sha256(of: url) == source.sha256 else {
+            throw ToolError(
+                "Restore the exact saved audio source before checking the first Audio-to-MIDI submission."
+            )
+        }
+        return try await mireloDurationMS(frozenURL: url)
+    }
+
     private struct MireloSource {
         let role: String
         let asset: MediaAsset
@@ -757,10 +1015,9 @@ extension ToolExecutor {
         workingRoot: URL,
         workingCopyKey: String
     ) async throws -> ToolResult {
-        if let task = Self.mireloExecutionTasks[record.authorityID] {
-            return try await task.value
-        }
-        let task = Task { @MainActor in
+        try await MireloToolExecutionCoalescer.shared.run(
+            authorityID: record.authorityID
+        ) { @MainActor in
             try await self.executeMireloRecordOwned(
                 record,
                 store: store,
@@ -772,9 +1029,6 @@ extension ToolExecutor {
                 workingCopyKey: workingCopyKey
             )
         }
-        Self.mireloExecutionTasks[record.authorityID] = task
-        defer { Self.mireloExecutionTasks.removeValue(forKey: record.authorityID) }
-        return try await task.value
     }
 
     private func executeMireloRecordOwned(
@@ -793,7 +1047,15 @@ extension ToolExecutor {
                 store: store,
                 projectKey: record.projectKey,
                 logicalJobID: record.logicalJobID,
-                client: client
+                client: client,
+                onAccepted: { accepted in
+                    try authorization.projectMutationScope?.requireCurrent(editor: editor)
+                    try self.mireloRecordSubmittedIfNeeded(
+                        accepted,
+                        authorization: authorization,
+                        editor: editor
+                    )
+                }
             )
             try mireloRecordSubmittedIfNeeded(
                 outcome.record,
@@ -842,6 +1104,7 @@ extension ToolExecutor {
                 record: outcome.record,
                 artifacts: artifacts
             )
+            try authorization.projectMutationScope?.requireCurrent(editor: editor)
             return try mireloCompletedResult(completed, editor: editor)
         } catch {
             if let current = try? store.load(
@@ -898,6 +1161,7 @@ extension ToolExecutor {
         var stagedResults: [(MireloResultDescriptor, URL, String)] = []
         do {
             for descriptor in descriptors {
+                try Task.checkCancellation()
                 let staged: URL
                 if let embedded = descriptor.embeddedData {
                     staged = stagingRoot.appendingPathComponent(descriptor.filename)
@@ -918,6 +1182,7 @@ extension ToolExecutor {
                                 timeout: Self.importDownloadTimeout
                             )
                         }
+                        try Task.checkCancellation()
                         staged = stagingRoot.appendingPathComponent(descriptor.filename)
                         try FileManager.default.moveItem(
                             at: result.temporaryURL,
@@ -937,6 +1202,7 @@ extension ToolExecutor {
                     throw ToolError("Mirelo result descriptor has no payload.")
                 }
                 try await validateMireloArtifact(staged, kind: descriptor.kind)
+                try Task.checkCancellation()
                 let digest: String
                 do {
                     digest = try FileDigest.sha256(of: staged)
@@ -957,6 +1223,7 @@ extension ToolExecutor {
             throw error
         }
 
+        try Task.checkCancellation()
         try mutationScope?.requireCurrent(editor: editor)
         let artifactFolderPath = "\(Project.mediaDirectoryName)/Mirelo/\(logicalJobID)"
         let artifactFolder = workingRoot.appendingPathComponent(
@@ -984,6 +1251,7 @@ extension ToolExecutor {
         )
 
         for (descriptor, staged, digest) in stagedResults {
+            try Task.checkCancellation()
             try mutationScope?.requireCurrent(editor: editor)
             let destination = artifactFolder.appendingPathComponent(
                 descriptor.filename,
@@ -1004,6 +1272,7 @@ extension ToolExecutor {
                 try FileManager.default.copyItem(at: staged, to: partial)
                 try FileManager.default.moveItem(at: partial, to: destination)
             }
+            try Task.checkCancellation()
             if descriptor.kind == .audio {
                 try mutationScope?.requireCurrent(editor: editor)
                 let asset: MediaAsset
@@ -1167,10 +1436,18 @@ extension ToolExecutor {
         editor: EditorViewModel
     ) throws {
         guard let requestID = record.providerJobID,
-              let transactionID = authorization.transactionId,
-              !editor.generationLog.spendEvents.contains(where: {
-                  $0.transactionId == transactionID && $0.kind == .submitted
-              }) else { return }
+              let transactionID = authorization.transactionId else { return }
+        if let submitted = editor.generationLog.spendEvents.first(where: {
+            $0.transactionId == transactionID && $0.kind == .submitted
+        }) {
+            guard submitted.providerRequestId == requestID else {
+                throw ToolError(
+                    "The Mirelo provider job does not match the project spend record."
+                )
+            }
+            return
+        }
+        try authorization.projectMutationScope?.requireCurrent(editor: editor)
         try editor.recordSpendEvent(
             authorization: authorization,
             kind: .submitted,

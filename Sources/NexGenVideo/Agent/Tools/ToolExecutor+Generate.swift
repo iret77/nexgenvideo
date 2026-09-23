@@ -783,6 +783,7 @@ extension ToolExecutor {
         selectionScope: SpendSelectionScope,
         pipelineTool: ToolName,
         origin: ToolCallOrigin,
+        forceApproval: Bool = false,
         currentIsCompatible: Bool = true,
         noCompatibleModelReason: String? = nil,
         alternatives: @escaping @MainActor () -> [SpendModelCandidate],
@@ -864,7 +865,7 @@ extension ToolExecutor {
             batch.packages.append(value.package)
             return .ok("Prepared generation package: \(value.package.id). No generation was submitted.")
         }
-        guard CostGuard.needsApproval(credits: recommended.credits) else {
+        guard forceApproval || CostGuard.needsApproval(credits: recommended.credits) else {
             do {
                 var selected = recommended
                 if prepare != nil { selected.generationPackage = try await prepareSelected(editor, selected) }

@@ -735,15 +735,17 @@ final class VideoProject: NSDocument {
 
         AppState.shared.showEditor(for: self)
 
+        let loadedPersistedGenerationLog = loadedGenerationLog != nil
+        if let log = loadedGenerationLog {
+            editorViewModel.generationLog = log
+            loadedGenerationLog = nil
+        }
         if let manifest = loadedManifest {
             editorViewModel.mediaManifest = manifest
             loadedManifest = nil
             restoreAssetsFromManifest()
         }
-        if let log = loadedGenerationLog {
-            editorViewModel.generationLog = log
-            loadedGenerationLog = nil
-        } else {
+        if !loadedPersistedGenerationLog {
             editorViewModel.seedGenerationLogFromAssets()
         }
         editorViewModel.searchIndex.projectOpened()
@@ -872,6 +874,10 @@ final class VideoProject: NSDocument {
             }
             let asset = MediaAsset(entry: entry, resolvedURL: url)
             editorViewModel.mediaAssets.append(asset)
+            editorViewModel.generationService.restoreMireloRecoveryState(
+                asset: asset,
+                editor: editorViewModel
+            )
             guard FileManager.default.fileExists(atPath: url.path) else {
                 Log.project.warning("restore: media file missing id=\(entry.id) name=\(entry.name) path=\(url.path)")
                 missing += 1

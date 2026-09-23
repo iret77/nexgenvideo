@@ -33,6 +33,18 @@ struct MireloProviderTests {
         }
     }
 
+    private actor AcceptanceProbe {
+        private(set) var records: [MireloExecutionRecord] = []
+
+        func record(_ value: MireloExecutionRecord) {
+            records.append(value)
+        }
+
+        func snapshot() -> [MireloExecutionRecord] {
+            records
+        }
+    }
+
     private final class FixtureURLProtocol: URLProtocol, @unchecked Sendable {
         struct Fixture: Sendable {
             let status: Int
@@ -176,12 +188,12 @@ struct MireloProviderTests {
         return (MireloExecutionStore(authority: authority), root)
     }
 
-    private func affordablePreflight() -> MireloPreflight {
+    private func affordablePreflight(credits: Int = 50) -> MireloPreflight {
         MireloPreflight(
-            credits: 50,
+            credits: credits,
             estimatedMs: 9_000,
             creditRecovery: MireloCreditRecovery(
-                creditsRequired: 50,
+                creditsRequired: credits,
                 creditsAvailable: 1_100,
                 creditShortfall: 0,
                 recoveryAction: nil,
@@ -190,6 +202,133 @@ struct MireloProviderTests {
                 provisioningDeadline: nil
             )
         )
+    }
+
+    @MainActor
+    private struct NativeContext {
+        let editor: EditorViewModel
+        let asset: MediaAsset
+        let store: MireloExecutionStore
+        let storeRoot: URL
+        let project: URL
+        let workingRoot: URL
+        let workingCopyKey: String
+        let projectKey: String
+        let logicalID: String
+    }
+
+    @MainActor
+    private func nativeContext(
+        logicalID: String,
+        preflight: MireloPreflight
+    ) async throws -> NativeContext {
+        let project = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mirelo-native-\(UUID().uuidString).ngv", isDirectory: true)
+        try Fixtures.prepareProjectPackage(at: project)
+        let editor = EditorViewModel()
+        editor.projectURL = project
+        let workingRoot = try #require(editor.workingRoot)
+        let workingCopyKey = try #require(editor.openWorkingCopyKey)
+        let projectKey = try #require(editor.projectId)
+        let media = workingRoot.appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
+        try FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
+        var input = GenerationInput(
+            prompt: "A dry camera shutter",
+            model: "mirelo/sfx-1.6",
+            duration: 5,
+            aspectRatio: ""
+        )
+        input.spendTransactionId = logicalID
+        let asset = MediaAsset(
+            id: "native-sfx-\(logicalID.prefix(8))",
+            url: media.appendingPathComponent("native-sfx.wav"),
+            type: .audio,
+            name: "Native SFX",
+            duration: 5,
+            generationInput: input
+        )
+        editor.mediaAssets.append(asset)
+        editor.persistMediaAsset(asset)
+        editor.generationLog.spendEvents = [GenerationSpendEvent(
+            transactionId: logicalID,
+            kind: .reserved,
+            model: input.model,
+            provider: .mirelo,
+            transport: .api,
+            endpoint: "sfx-1.6",
+            note: "Mirelo credits"
+        )]
+        try editor.persistGenerationLog()
+
+        let body = try MireloRequestBuilder.textToSFX(
+            model: "sfx-1.6",
+            prompt: input.prompt,
+            durationMS: 5_000,
+            numVariants: 1,
+            loop: false,
+            outputFormat: "wav"
+        )
+        let (executionStore, storeRoot) = try store()
+        let prepared = try await MireloExecutionCoordinator.shared.prepare(
+            store: executionStore,
+            projectKey: projectKey,
+            logicalJobID: logicalID,
+            operation: .textToSFX,
+            intentBody: body,
+            requestBody: body,
+            sources: [],
+            preflight: preflight
+        )
+        _ = try await MireloExecutionCoordinator.shared.approve(
+            store: executionStore,
+            record: prepared,
+            spendTransactionID: logicalID
+        )
+        return NativeContext(
+            editor: editor,
+            asset: asset,
+            store: executionStore,
+            storeRoot: storeRoot,
+            project: project,
+            workingRoot: workingRoot,
+            workingCopyKey: workingCopyKey,
+            projectKey: projectKey,
+            logicalID: logicalID
+        )
+    }
+
+    private func wavFixture() -> Data {
+        Data([
+            0x52, 0x49, 0x46, 0x46, 0x34, 0x00, 0x00, 0x00,
+            0x57, 0x41, 0x56, 0x45, 0x66, 0x6D, 0x74, 0x20,
+            0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
+            0x40, 0x1F, 0x00, 0x00, 0x80, 0x3E, 0x00, 0x00,
+            0x02, 0x00, 0x10, 0x00, 0x64, 0x61, 0x74, 0x61,
+            0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
+            0x20, 0x00, 0x10, 0x00, 0x00, 0x00, 0xF0, 0xFF,
+            0xE0, 0xFF, 0xF0, 0xFF,
+        ])
+    }
+
+    private func waitForState(
+        _ state: MireloExecutionRecord.State,
+        store: MireloExecutionStore,
+        projectKey: String,
+        logicalID: String
+    ) async throws -> MireloExecutionRecord {
+        for _ in 0..<500 {
+            if let record = try store.load(
+                projectKey: projectKey,
+                logicalJobID: logicalID
+            ), record.state == state {
+                return record
+            }
+            await Task.yield()
+        }
+        return try #require(store.load(
+            projectKey: projectKey,
+            logicalJobID: logicalID
+        ))
     }
 
     @Test("authenticated account and model discovery decode the current v3 contract")
@@ -540,6 +679,146 @@ struct MireloProviderTests {
         #expect(FixtureURLProtocol.requests().filter { $0.url == pollURL }.count == 2)
     }
 
+    @Test("unknown v3 acceptance survives later account and rate-limit responses")
+    func unknownAcceptanceReplayPreservesReservation() async throws {
+        let createURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations")
+        let cases = [
+            (401, "12121212-1212-4212-8212-121212121212"),
+            (402, "13131313-1313-4313-8313-131313131313"),
+            (429, "14141414-1414-4414-8414-141414141414"),
+        ]
+        for (status, logicalID) in cases {
+            FixtureURLProtocol.install([
+                createURL: [
+                    .init(error: .timedOut),
+                    .init(
+                        status: status,
+                        data: Data(#"{"error":{"code":"current_account_state","message":"Current account cannot submit","retryable":false}}"#.utf8)
+                    ),
+                ],
+            ])
+            let testSession = session()
+            let client = MireloClient(
+                apiKey: "fixture-key",
+                baseURL: baseURL,
+                session: testSession
+            )
+            let (executionStore, root) = try store()
+            let coordinator = MireloExecutionCoordinator()
+            let body = try MireloRequestBuilder.textToSFX(
+                model: "sfx-1.6",
+                prompt: "One durable request",
+                durationMS: 5_000,
+                numVariants: 1,
+                loop: false,
+                outputFormat: "wav"
+            )
+            let prepared = try await coordinator.prepare(
+                store: executionStore,
+                projectKey: "project-fixture",
+                logicalJobID: logicalID,
+                operation: .textToSFX,
+                requestBody: body,
+                sources: [],
+                preflight: affordablePreflight()
+            )
+            _ = try await coordinator.approve(
+                store: executionStore,
+                record: prepared,
+                spendTransactionID: "reserved-\(status)"
+            )
+
+            for _ in 0..<2 {
+                await #expect(throws: (any Error).self) {
+                    _ = try await coordinator.execute(
+                        store: executionStore,
+                        projectKey: "project-fixture",
+                        logicalJobID: logicalID,
+                        client: client
+                    )
+                }
+            }
+            let record = try #require(executionStore.load(
+                projectKey: "project-fixture",
+                logicalJobID: logicalID
+            ))
+            #expect(record.state == .acceptanceUnknown)
+            #expect(record.providerJobID == nil)
+            #expect(record.spendTransactionID == "reserved-\(status)")
+            let creates = FixtureURLProtocol.requests().filter { $0.url == createURL }
+            #expect(creates.count == 2)
+            #expect(creates[0].idempotencyKey == creates[1].idempotencyKey)
+            testSession.invalidateAndCancel()
+            try? FileManager.default.removeItem(at: root)
+        }
+    }
+
+    @Test("acceptance is observable before a gated terminal poll")
+    @MainActor
+    func acceptanceCallbackPrecedesPolling() async throws {
+        let createURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations")
+        let pollURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations/job-accepted")
+        let pollGate = FixtureGate()
+        FixtureURLProtocol.install([
+            createURL: [.init(
+                status: 202,
+                data: Data(#"{"id":"job-accepted","status":"queued"}"#.utf8)
+            )],
+            pollURL: [.init(data: try fixture("v3-succeeded"), gate: pollGate)],
+        ])
+        let testSession = session()
+        defer { testSession.invalidateAndCancel() }
+        let client = MireloClient(apiKey: "fixture-key", baseURL: baseURL, session: testSession)
+        let (executionStore, root) = try store()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let coordinator = MireloExecutionCoordinator()
+        let logicalID = "15151515-1515-4515-8515-151515151515"
+        let body = try MireloRequestBuilder.textToSFX(
+            model: "sfx-1.6", prompt: "One request", durationMS: 5_000,
+            numVariants: 1, loop: false, outputFormat: "wav"
+        )
+        let prepared = try await coordinator.prepare(
+            store: executionStore, projectKey: "project-fixture",
+            logicalJobID: logicalID, operation: .textToSFX,
+            requestBody: body, sources: [], preflight: affordablePreflight()
+        )
+        _ = try await coordinator.approve(
+            store: executionStore, record: prepared, spendTransactionID: "spend-fixture"
+        )
+        let probe = AcceptanceProbe()
+        let execution = Task {
+            try await coordinator.execute(
+                store: executionStore,
+                projectKey: "project-fixture",
+                logicalJobID: logicalID,
+                client: client,
+                onAccepted: { record in await probe.record(record) }
+            )
+        }
+        await pollGate.waitUntilStarted()
+        let accepted = await probe.snapshot()
+        #expect(accepted.count == 1)
+        #expect(accepted.first?.providerJobID == "job-accepted")
+        #expect(try executionStore.load(
+            projectKey: "project-fixture",
+            logicalJobID: logicalID
+        )?.state == .accepted)
+        execution.cancel()
+        do {
+            _ = try await execution.value
+            Issue.record("Expected the only waiter to cancel")
+        } catch {
+            #expect(error is CancellationError)
+        }
+        await pollGate.open()
+        _ = try await waitForState(
+            .pollingInterrupted,
+            store: executionStore,
+            projectKey: "project-fixture",
+            logicalID: logicalID
+        )
+    }
+
     @Test("interrupted polling resumes the accepted job without another create")
     func interruptedPollingResume() async throws {
         let createURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations")
@@ -730,6 +1009,184 @@ struct MireloProviderTests {
         #expect(a == b)
         #expect(FixtureURLProtocol.requests().filter { $0.url == createURL }.count == 1)
         #expect(FixtureURLProtocol.requests().filter { $0.url == pollURL }.count == 1)
+    }
+
+    @Test("canceling one coalesced waiter leaves the other waiter running")
+    func oneCanceledWaiterDoesNotCancelSharedJob() async throws {
+        let createURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations")
+        let pollURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations/job-v3")
+        let pollGate = FixtureGate()
+        FixtureURLProtocol.install([
+            createURL: [.init(
+                status: 202,
+                data: Data(#"{"id":"job-v3","status":"queued"}"#.utf8)
+            )],
+            pollURL: [.init(data: try fixture("v3-succeeded"), gate: pollGate)],
+        ])
+        let testSession = session()
+        defer { testSession.invalidateAndCancel() }
+        let client = MireloClient(apiKey: "fixture-key", baseURL: baseURL, session: testSession)
+        let (executionStore, root) = try store()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let coordinator = MireloExecutionCoordinator()
+        let logicalID = "16161616-1616-4616-8616-161616161616"
+        let body = try MireloRequestBuilder.textToSFX(
+            model: "sfx-1.6", prompt: "One request", durationMS: 5_000,
+            numVariants: 1, loop: false, outputFormat: "wav"
+        )
+        let prepared = try await coordinator.prepare(
+            store: executionStore, projectKey: "project-fixture",
+            logicalJobID: logicalID, operation: .textToSFX,
+            requestBody: body, sources: [], preflight: affordablePreflight()
+        )
+        _ = try await coordinator.approve(
+            store: executionStore, record: prepared, spendTransactionID: "spend-fixture"
+        )
+        let first = Task {
+            try await coordinator.execute(
+                store: executionStore, projectKey: "project-fixture",
+                logicalJobID: logicalID, client: client
+            )
+        }
+        await pollGate.waitUntilStarted()
+        let second = Task {
+            try await coordinator.execute(
+                store: executionStore, projectKey: "project-fixture",
+                logicalJobID: logicalID, client: client
+            )
+        }
+        for _ in 0..<20 { await Task.yield() }
+        first.cancel()
+        do {
+            _ = try await first.value
+            Issue.record("Expected the first waiter to cancel")
+        } catch {
+            #expect(error is CancellationError)
+        }
+        await pollGate.open()
+        let outcome = try await second.value
+
+        #expect(outcome.record.state == .providerSucceeded)
+        #expect(FixtureURLProtocol.requests().filter { $0.url == createURL }.count == 1)
+        #expect(FixtureURLProtocol.requests().filter { $0.url == pollURL }.count == 1)
+    }
+
+    @Test("canceling the final polling waiter persists an interrupted job that resumes")
+    func finalCanceledWaiterResumesWithoutCreate() async throws {
+        let createURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations")
+        let pollURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations/job-v3")
+        let pollGate = FixtureGate()
+        FixtureURLProtocol.install([
+            createURL: [.init(
+                status: 202,
+                data: Data(#"{"id":"job-v3","status":"queued"}"#.utf8)
+            )],
+            pollURL: [
+                .init(data: try fixture("v3-succeeded"), gate: pollGate),
+                .init(data: try fixture("v3-succeeded")),
+            ],
+        ])
+        let testSession = session()
+        defer { testSession.invalidateAndCancel() }
+        let client = MireloClient(apiKey: "fixture-key", baseURL: baseURL, session: testSession)
+        let (executionStore, root) = try store()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let coordinator = MireloExecutionCoordinator()
+        let logicalID = "17171717-1717-4717-8717-171717171717"
+        let body = try MireloRequestBuilder.textToSFX(
+            model: "sfx-1.6", prompt: "One request", durationMS: 5_000,
+            numVariants: 1, loop: false, outputFormat: "wav"
+        )
+        let prepared = try await coordinator.prepare(
+            store: executionStore, projectKey: "project-fixture",
+            logicalJobID: logicalID, operation: .textToSFX,
+            requestBody: body, sources: [], preflight: affordablePreflight()
+        )
+        _ = try await coordinator.approve(
+            store: executionStore, record: prepared, spendTransactionID: "spend-fixture"
+        )
+        let execution = Task {
+            try await coordinator.execute(
+                store: executionStore, projectKey: "project-fixture",
+                logicalJobID: logicalID, client: client
+            )
+        }
+        await pollGate.waitUntilStarted()
+        execution.cancel()
+        do {
+            _ = try await execution.value
+            Issue.record("Expected the final waiter to cancel")
+        } catch {
+            #expect(error is CancellationError)
+        }
+        await pollGate.open()
+        let interrupted = try await waitForState(
+            .pollingInterrupted,
+            store: executionStore,
+            projectKey: "project-fixture",
+            logicalID: logicalID
+        )
+        #expect(interrupted.state == .pollingInterrupted)
+        #expect(interrupted.providerJobID == "job-v3")
+
+        let resumed = try await coordinator.execute(
+            store: executionStore, projectKey: "project-fixture",
+            logicalJobID: logicalID, client: client
+        )
+        #expect(resumed.record.state == .providerSucceeded)
+        #expect(FixtureURLProtocol.requests().filter { $0.url == createURL }.count == 1)
+        #expect(FixtureURLProtocol.requests().filter { $0.url == pollURL }.count == 2)
+    }
+
+    @Test("cancellation before coordinator entry sends no paid request")
+    func cancelBeforeSubmissionSendsNothing() async throws {
+        let createURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations")
+        FixtureURLProtocol.install([
+            createURL: [.init(
+                status: 202,
+                data: Data(#"{"id":"job-v3","status":"queued"}"#.utf8)
+            )],
+        ])
+        let testSession = session()
+        defer { testSession.invalidateAndCancel() }
+        let client = MireloClient(apiKey: "fixture-key", baseURL: baseURL, session: testSession)
+        let (executionStore, root) = try store()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let coordinator = MireloExecutionCoordinator()
+        let logicalID = "18181818-1818-4818-8818-181818181818"
+        let body = try MireloRequestBuilder.textToSFX(
+            model: "sfx-1.6", prompt: "One request", durationMS: 5_000,
+            numVariants: 1, loop: false, outputFormat: "wav"
+        )
+        let prepared = try await coordinator.prepare(
+            store: executionStore, projectKey: "project-fixture",
+            logicalJobID: logicalID, operation: .textToSFX,
+            requestBody: body, sources: [], preflight: affordablePreflight()
+        )
+        _ = try await coordinator.approve(
+            store: executionStore, record: prepared, spendTransactionID: "spend-fixture"
+        )
+        let startGate = FixtureGate()
+        let execution = Task {
+            await startGate.wait()
+            return try await coordinator.execute(
+                store: executionStore, projectKey: "project-fixture",
+                logicalJobID: logicalID, client: client
+            )
+        }
+        await startGate.waitUntilStarted()
+        execution.cancel()
+        await startGate.open()
+        do {
+            _ = try await execution.value
+            Issue.record("Expected cancellation before submission")
+        } catch {
+            #expect(error is CancellationError)
+        }
+        #expect(FixtureURLProtocol.requests().isEmpty)
+        #expect(try executionStore.load(
+            projectKey: "project-fixture", logicalJobID: logicalID
+        )?.state == .prepared)
     }
 
     @Test("concurrent MIDI execute callers preserve one accepted provider job")
@@ -1040,6 +1497,209 @@ struct MireloProviderTests {
 
         #expect(first == second)
         #expect(Set(first.map(\.kind)) == [.midi, .noteJSON, .scoreManifest])
+    }
+
+    @Test("approved native job requotes before its first provider submission")
+    @MainActor
+    func preparedNativeResumeRequiresFreshQuote() async throws {
+        let preflightURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations/preflight")
+        let accountURL = baseURL.appendingPathComponent("v3/me")
+        let createURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations")
+        FixtureURLProtocol.install([
+            preflightURL: [.init(data: try fixture("preflight-v3"))],
+            accountURL: [.init(data: try fixture("account"))],
+        ])
+        let context = try await nativeContext(
+            logicalID: "19191919-1919-4919-8919-191919191919",
+            preflight: affordablePreflight(credits: 40)
+        )
+        defer {
+            context.editor.releaseWorkingCopy()
+            ProjectWorkingCopy.discard(key: context.workingCopyKey)
+            try? FileManager.default.removeItem(at: context.project)
+            try? FileManager.default.removeItem(at: context.storeRoot)
+        }
+        let testSession = session()
+        defer { testSession.invalidateAndCancel() }
+        let client = MireloClient(apiKey: "fixture-key", baseURL: baseURL, session: testSession)
+        let service = GenerationService()
+        var reviewedChange: (Int, Int)?
+
+        await #expect(throws: (any Error).self) {
+            try await service.performNativeMireloResume(
+                asset: context.asset,
+                editor: context.editor,
+                store: context.store,
+                client: client,
+                approveCreditChange: { previous, current in
+                    reviewedChange = (previous, current)
+                    return false
+                }
+            )
+        }
+        #expect(reviewedChange?.0 == 40)
+        #expect(reviewedChange?.1 == 50)
+        #expect(FixtureURLProtocol.requests().contains { $0.url == preflightURL })
+        #expect(FixtureURLProtocol.requests().contains { $0.url == accountURL })
+        #expect(FixtureURLProtocol.requests().allSatisfy { $0.url != createURL })
+        let saved = try #require(context.store.load(
+            projectKey: context.projectKey,
+            logicalJobID: context.logicalID
+        ))
+        #expect(saved.state == .prepared)
+        #expect(saved.preflight.credits == 40)
+    }
+
+    @Test("native SFX restoration resumes one accepted job and installs after URL expiry")
+    @MainActor
+    func nativeSFXRestoresAndResumesWithoutSecondCreate() async throws {
+        let preflightURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations/preflight")
+        let accountURL = baseURL.appendingPathComponent("v3/me")
+        let createURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations")
+        let pollURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations/job-v3")
+        FixtureURLProtocol.install([
+            preflightURL: [.init(data: try fixture("preflight-v3"))],
+            accountURL: [.init(data: try fixture("account"))],
+            createURL: [.init(
+                status: 202,
+                data: Data(#"{"id":"job-v3","status":"queued"}"#.utf8)
+            )],
+            pollURL: [
+                .init(
+                    status: 503,
+                    data: Data(#"{"error":{"code":"temporarily_unavailable","message":"Retry later","retryable":false}}"#.utf8)
+                ),
+                .init(data: try fixture("v3-succeeded")),
+                .init(data: try fixture("v3-succeeded")),
+            ],
+        ])
+        let context = try await nativeContext(
+            logicalID: "20202020-2020-4020-8020-202020202020",
+            preflight: affordablePreflight()
+        )
+        defer {
+            context.editor.releaseWorkingCopy()
+            ProjectWorkingCopy.discard(key: context.workingCopyKey)
+            try? FileManager.default.removeItem(at: context.project)
+            try? FileManager.default.removeItem(at: context.storeRoot)
+        }
+        let testSession = session()
+        defer { testSession.invalidateAndCancel() }
+        let client = MireloClient(apiKey: "fixture-key", baseURL: baseURL, session: testSession)
+        let service = GenerationService()
+
+        await #expect(throws: (any Error).self) {
+            try await service.performNativeMireloResume(
+                asset: context.asset,
+                editor: context.editor,
+                store: context.store,
+                client: client,
+                approveCreditChange: { _, _ in
+                    Issue.record("The unchanged fresh quote must not ask again")
+                    return false
+                }
+            )
+        }
+        let interrupted = try #require(context.store.load(
+            projectKey: context.projectKey,
+            logicalJobID: context.logicalID
+        ))
+        #expect(interrupted.state == .pollingInterrupted)
+        #expect(interrupted.providerJobID == "job-v3")
+        #expect(context.editor.generationLog.spendEvents.filter {
+            $0.transactionId == context.logicalID && $0.kind == .submitted
+        }.count == 1)
+
+        let manifestBytes = try JSONEncoder().encode(context.editor.mediaManifest)
+        try manifestBytes.write(
+            to: context.workingRoot.appendingPathComponent(Project.manifestFilename),
+            options: .atomic
+        )
+        let restoredManifest = try JSONDecoder().decode(
+            MediaManifest.self,
+            from: Data(contentsOf: context.workingRoot.appendingPathComponent(Project.manifestFilename))
+        )
+        let restoredLog = try JSONDecoder().decode(
+            GenerationLog.self,
+            from: Data(contentsOf: context.workingRoot.appendingPathComponent(Project.generationLogFilename))
+        )
+        let restoredEntry = try #require(restoredManifest.entries.first(where: {
+            $0.id == context.asset.id
+        }))
+        let restoredAsset = MediaAsset(entry: restoredEntry, resolvedURL: context.asset.url)
+        context.editor.mediaManifest = restoredManifest
+        context.editor.generationLog = restoredLog
+        context.editor.mediaAssets = [restoredAsset]
+        #expect(!FileManager.default.fileExists(atPath: restoredAsset.url.path))
+        service.restoreMireloRecoveryState(
+            asset: restoredAsset,
+            editor: context.editor,
+            store: context.store
+        )
+        #expect(restoredAsset.mireloResumeAvailable)
+        guard case .failed = restoredAsset.generationStatus else {
+            Issue.record("Expected the restored placeholder to expose resume")
+            return
+        }
+
+        await #expect(throws: (any Error).self) {
+            try await service.performNativeMireloResume(
+                asset: restoredAsset,
+                editor: context.editor,
+                store: context.store,
+                client: client,
+                approveCreditChange: { _, _ in false },
+                download: { _ in
+                    throw RemoteMediaPolicy.PolicyError.httpStatus(403)
+                }
+            )
+        }
+        let succeeded = try #require(context.store.load(
+            projectKey: context.projectKey,
+            logicalJobID: context.logicalID
+        ))
+        #expect(succeeded.state == .providerSucceeded)
+        service.restoreMireloRecoveryState(
+            asset: restoredAsset,
+            editor: context.editor,
+            store: context.store
+        )
+        #expect(restoredAsset.mireloResumeAvailable)
+
+        let wav = wavFixture()
+        try await service.performNativeMireloResume(
+            asset: restoredAsset,
+            editor: context.editor,
+            store: context.store,
+            client: client,
+            approveCreditChange: { _, _ in false },
+            download: { _ in
+                let file = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("native-mirelo-\(UUID().uuidString).wav")
+                try wav.write(to: file, options: .atomic)
+                return file
+            }
+        )
+
+        let completed = try #require(context.store.load(
+            projectKey: context.projectKey,
+            logicalJobID: context.logicalID
+        ))
+        #expect(completed.state == .completed)
+        #expect(completed.providerJobID == "job-v3")
+        #expect(FileManager.default.fileExists(atPath: restoredAsset.url.path))
+        #expect(!restoredAsset.mireloResumeAvailable)
+        #expect(context.editor.mediaManifest.entries.filter {
+            $0.id == restoredAsset.id
+        }.count == 1)
+        #expect(FixtureURLProtocol.requests().filter { $0.url == createURL }.count == 1)
+        #expect(FixtureURLProtocol.requests().filter { $0.url == pollURL }.count == 3)
+        let events = context.editor.generationLog.spendEvents.filter {
+            $0.transactionId == context.logicalID
+        }
+        #expect(events.filter { $0.kind == .reserved }.count == 1)
+        #expect(events.filter { $0.kind == .submitted }.count == 1)
+        #expect(Set(events.map(\.transactionId)) == Set([context.logicalID]))
     }
 
     @Test("project switch during a suspended result download performs no project write")

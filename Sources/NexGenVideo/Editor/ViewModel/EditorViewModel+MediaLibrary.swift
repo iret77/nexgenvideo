@@ -508,6 +508,16 @@ extension EditorViewModel {
         onPipelineChanged?()
     }
 
+    func persistMediaAsset(_ asset: MediaAsset) {
+        let entry = asset.toManifestEntry(projectURL: workingRoot)
+        if let index = mediaManifest.entries.firstIndex(where: { $0.id == asset.id }) {
+            mediaManifest.entries[index] = entry
+        } else {
+            mediaManifest.entries.append(entry)
+        }
+        onPipelineChanged?()
+    }
+
     /// Resolve a drag pasteboard payload (one `nexgen-asset://<id>` per line).
     func assetsFromDragPayload(_ payload: String) -> [MediaAsset] {
         payload.split(separator: "\n").compactMap { line in

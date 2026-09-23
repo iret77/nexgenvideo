@@ -194,8 +194,8 @@ struct MireloExecutionStore: Sendable {
                 || (allowPreflightRefresh
                     && expected.state == .prepared
                     && current.state == .prepared
-                    && expected.approvedAt == nil
-                    && current.approvedAt == nil)),
+                    && expected.providerJobID == nil
+                    && current.providerJobID == nil)),
               current.createdAt == expected.createdAt,
               (expected.approvedAt == nil || current.approvedAt == expected.approvedAt),
               (expected.spendTransactionID == nil
@@ -220,6 +220,29 @@ struct MireloExecutionStore: Sendable {
               expected.providerJobID == nil else {
             throw GenerationRequestError.gate(
                 "Only an unapproved Mirelo request can refresh its preflight."
+            )
+        }
+        return try update(expected, allowPreflightRefresh: true) {
+            $0.preflight = preflight
+        }
+    }
+
+    func refreshApprovedPreflight(
+        _ expected: MireloExecutionRecord,
+        with preflight: MireloPreflight,
+        creditChangeApproved: Bool
+    ) throws -> MireloExecutionRecord {
+        guard expected.state == .prepared,
+              expected.approvedAt != nil,
+              expected.spendTransactionID != nil,
+              expected.providerJobID == nil else {
+            throw GenerationRequestError.gate(
+                "Only an approved Mirelo request that has never been submitted can refresh its preflight."
+            )
+        }
+        guard preflight.credits == expected.preflight.credits || creditChangeApproved else {
+            throw GenerationRequestError.gate(
+                "Mirelo's current preflight is \(preflight.credits) credits, not the approved \(expected.preflight.credits). Review the changed price before submitting this saved request."
             )
         }
         return try update(expected, allowPreflightRefresh: true) {
@@ -293,10 +316,12 @@ struct MireloExecutionStore: Sendable {
         switch (from, to) {
         case (.prepared, .prepared),
              (.prepared, .submitting),
+             (.prepared, .failed),
              (.submitting, .accepted),
              (.submitting, .acceptanceUnknown),
              (.submitting, .failed),
              (.acceptanceUnknown, .accepted),
+             (.acceptanceUnknown, .acceptanceUnknown),
              (.acceptanceUnknown, .submitting),
              (.accepted, .accepted),
              (.accepted, .pollingInterrupted),

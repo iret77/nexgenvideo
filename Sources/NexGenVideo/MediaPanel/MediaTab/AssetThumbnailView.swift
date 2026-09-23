@@ -81,6 +81,15 @@ struct AssetThumbnailView: View {
             Divider() // app-theme: native-menu-divider
         }
         if ids.count == 1, ids.first == asset.id {
+            if asset.mireloResumeAvailable {
+                Button("Resume Mirelo Job") {
+                    editor.generationService.resumeMireloGeneration(
+                        asset: asset,
+                        editor: editor
+                    )
+                }
+                Divider() // app-theme: native-menu-divider
+            }
             if isMissing {
                 Button("Relink…") { relinkFile() }
                 Divider() // app-theme: native-menu-divider

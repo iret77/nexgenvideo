@@ -39,7 +39,19 @@ extension TimelineView {
                 item.isEnabled = aiAllowed
                 submenu.addItem(item)
             case .rerun:
-                let item = NSMenuItem(title: "Rerun", action: #selector(performAIEditRerun(_:)), keyEquivalent: "")
+                let asset = editor.clipFor(id: clipId).flatMap { clip in
+                    editor.mediaAssets.first(where: { $0.id == clip.mediaRef })
+                }
+                let transactionID = asset?.generationInput?.spendTransactionId
+                let ledgerMirelo = transactionID.map { transactionID in
+                    editor.generationLog.spendEvents.contains {
+                        $0.transactionId == transactionID && $0.provider == .mirelo
+                    }
+                } ?? false
+                let isMirelo = asset?.generationInput?.model.hasPrefix("mirelo/") == true
+                    || ledgerMirelo
+                let title = isMirelo ? "New Variation…" : "Rerun"
+                let item = NSMenuItem(title: title, action: #selector(performAIEditRerun(_:)), keyEquivalent: "")
                 item.target = self
                 item.representedObject = clipId
                 item.isEnabled = aiAllowed

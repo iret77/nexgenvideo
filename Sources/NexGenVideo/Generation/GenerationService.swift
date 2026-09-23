@@ -1,3 +1,4 @@
+import AppKit
 import AVFoundation
 import Foundation
 import ImageIO
@@ -2143,90 +2144,35 @@ final class GenerationService {
             )
             executionWasApproved = true
             try mutationScope.requireCurrent(editor: editor)
+            placeholder.mireloResumeAvailable = true
+            editor.persistMediaAsset(placeholder)
             var outcome = try await MireloExecutionCoordinator.shared.execute(
                 store: store,
                 projectKey: projectKey,
                 logicalJobID: transactionID,
-                client: client
-            )
-            try mutationScope.requireCurrent(editor: editor)
-            guard let providerJobID = outcome.record.providerJobID else {
-                throw GenerationRequestError.storage(
-                    "Mirelo accepted the request without a durable job identifier."
-                )
-            }
-            markSubmitted(
-                authorization: authorization,
-                providerRequestId: providerJobID,
-                resumable: true,
-                editor: editor
-            )
-
-            var descriptor = try Self.singleMireloAudioDescriptor(outcome)
-            let staged: URL
-            do {
-                staged = try await Self.downloadMireloAudio(descriptor)
-            } catch RemoteMediaPolicy.PolicyError.httpStatus(let status)
-                where [403, 404, 410].contains(status) {
-                outcome = try await MireloExecutionCoordinator.shared.refreshResult(
-                    store: store,
-                    record: outcome.record,
-                    client: client
-                )
-                descriptor = try Self.singleMireloAudioDescriptor(outcome)
-                do {
-                    staged = try await Self.downloadMireloAudio(descriptor)
-                } catch RemoteMediaPolicy.PolicyError.httpStatus(let refreshedStatus)
-                    where [403, 404, 410].contains(refreshedStatus) {
-                    throw GenerationRequestError.gate(
-                        "Mirelo refreshed the result link, but it is already unavailable. Retry this same generation later; it was not resubmitted."
+                client: client,
+                onAccepted: { accepted in
+                    try mutationScope.requireCurrent(editor: editor)
+                    try self.recordMireloSubmittedIfNeeded(
+                        accepted,
+                        authorization: authorization,
+                        editor: editor
                     )
                 }
-            }
-            defer { try? FileManager.default.removeItem(at: staged) }
-            try await RemoteMediaPayloadValidator.validate(staged, expectedType: .audio)
+            )
             try mutationScope.requireCurrent(editor: editor)
-            let returnedExtension = URL(fileURLWithPath: descriptor.filename).pathExtension
-            let extensionValue = returnedExtension.isEmpty ? "wav" : returnedExtension
-            let destination = placeholder.url.deletingPathExtension()
-                .appendingPathExtension(extensionValue)
-            let digest = try FileDigest.sha256(of: staged)
-            if FileManager.default.fileExists(atPath: destination.path) {
-                guard try FileDigest.sha256(of: destination) == digest else {
-                    throw GenerationRequestError.storage(
-                        "The Mirelo destination already contains different bytes. Restore or reconcile this generation before retrying."
-                    )
-                }
-            } else {
-                try ProjectWorkingCopy.markDirty(key: workingCopyKey)
-                let partial = destination.deletingLastPathComponent()
-                    .appendingPathComponent(".mirelo-\(UUID().uuidString).partial")
-                defer { try? FileManager.default.removeItem(at: partial) }
-                try FileManager.default.copyItem(at: staged, to: partial)
-                try FileManager.default.moveItem(at: partial, to: destination)
-            }
-            try mutationScope.requireCurrent(editor: editor)
-            placeholder.url = destination
-            placeholder.pendingDownloadURL = nil
-            placeholder.generationStatus = .none
-            editor.importMediaAsset(placeholder, skipAppend: true)
-            editor.appendGenerationLog(for: placeholder)
-            try await editor.finalizeImportedAsset(
-                placeholder,
+            _ = try await finalizeNativeMireloOutcome(
+                &outcome,
+                store: store,
+                client: client,
+                asset: placeholder,
+                editor: editor,
+                workingRoot: workingRoot,
+                workingCopyKey: workingCopyKey,
                 mutationScope: mutationScope
             )
-            let artifact = MireloArtifact(
-                kind: .audio,
-                projectPath: try Self.mireloProjectPath(destination, root: workingRoot),
-                sha256: digest,
-                mediaAssetID: placeholder.id,
-                sourceURLExpiresAt: descriptor.sourceURLExpiresAt
-            )
-            _ = try await MireloExecutionCoordinator.shared.complete(
-                store: store,
-                record: outcome.record,
-                artifacts: [artifact]
-            )
+            try mutationScope.requireCurrent(editor: editor)
+            placeholder.mireloResumeAvailable = false
             onComplete?(placeholder)
             AppNotifications.generationComplete(
                 assetId: placeholder.id,
@@ -2237,20 +2183,25 @@ final class GenerationService {
             )
             markCharged(authorization: authorization, editor: editor)
         } catch {
+            do {
+                try mutationScope.requireCurrent(editor: editor)
+            } catch {
+                return
+            }
             let current = try? store.load(
                 projectKey: projectKey,
                 logicalJobID: transactionID
             )
-            if let providerJobID = current?.providerJobID {
-                markSubmitted(
+            if let current, current.providerJobID != nil {
+                try? recordMireloSubmittedIfNeeded(
+                    current,
                     authorization: authorization,
-                    providerRequestId: providerJobID,
-                    resumable: true,
                     editor: editor
                 )
             }
             if !executionWasApproved
                 || (current?.state == .failed && current?.providerJobID == nil) {
+                placeholder.mireloResumeAvailable = false
                 failBeforeSubmission(
                     placeholders,
                     error.localizedDescription,
@@ -2259,9 +2210,546 @@ final class GenerationService {
                     onFailure: onFailure
                 )
             } else {
+                placeholder.mireloResumeAvailable = current.map(Self.mireloCanResume) ?? false
                 failJob(placeholders, error.localizedDescription, onFailure)
             }
         }
+    }
+
+    typealias NativeMireloDownload = @Sendable (MireloResultDescriptor) async throws -> URL
+
+    func resumeMireloGeneration(asset: MediaAsset, editor: EditorViewModel) {
+        guard asset.mireloResumeAvailable,
+              generationTasks[asset.id] == nil,
+              let workingRoot = editor.workingRoot,
+              let resumeScope = try? GenerationProjectMutationScope(
+                projectHome: workingRoot,
+                editor: editor
+              ) else { return }
+        asset.generationStatus = .generating
+        let task = Task { @MainActor [weak self, weak editor, weak asset] in
+            guard let self, let editor, let asset else { return }
+            defer { self.generationTasks.removeValue(forKey: asset.id) }
+            do {
+                guard let apiKey = ProviderKeychain.load(.mirelo), !apiKey.isEmpty else {
+                    throw GenerationRequestError.gate(
+                        "Add a Mirelo API key in Settings → Providers and wait for connection verification."
+                    )
+                }
+                try await self.performNativeMireloResume(
+                    asset: asset,
+                    editor: editor,
+                    store: try MireloExecutionStore.live(),
+                    client: MireloClient(apiKey: apiKey),
+                    approveCreditChange: { previous, current in
+                        Self.confirmMireloCreditChange(previous: previous, current: current)
+                    }
+                )
+                AppNotifications.generationComplete(
+                    assetId: asset.id,
+                    projectURL: editor.projectURL,
+                    assetName: asset.name,
+                    assetType: asset.type,
+                    count: 1
+                )
+            } catch {
+                do {
+                    try resumeScope.requireCurrent(editor: editor)
+                } catch {
+                    return
+                }
+                guard editor.mediaAssets.contains(where: { $0 === asset }) else { return }
+                asset.generationStatus = .failed(error.localizedDescription)
+                if let projectKey = editor.projectId,
+                   let transactionID = asset.generationInput?.spendTransactionId,
+                   let store = try? MireloExecutionStore.live() {
+                    let record = try? store.load(
+                        projectKey: projectKey,
+                        logicalJobID: transactionID
+                    )
+                    if let record {
+                        try? self.releaseNativeMireloReservationIfRejected(
+                            record,
+                            asset: asset,
+                            editor: editor
+                        )
+                    }
+                    asset.mireloResumeAvailable = record.map(Self.mireloCanResume) ?? false
+                }
+            }
+        }
+        generationTasks[asset.id] = task
+    }
+
+    func performNativeMireloResume(
+        asset: MediaAsset,
+        editor: EditorViewModel,
+        store: MireloExecutionStore,
+        client: MireloClient,
+        approveCreditChange: @MainActor (Int, Int) -> Bool,
+        download: NativeMireloDownload? = nil
+    ) async throws {
+        guard let projectKey = editor.projectId,
+              let workingRoot = editor.workingRoot,
+              let workingCopyKey = editor.openWorkingCopyKey,
+              let transactionID = asset.generationInput?.spendTransactionId else {
+            throw GenerationRequestError.storage(
+                "This media item has no saved Mirelo recovery identity."
+            )
+        }
+        let mutationScope = try GenerationProjectMutationScope(
+            projectHome: workingRoot,
+            editor: editor
+        )
+        guard var record = try store.load(
+            projectKey: projectKey,
+            logicalJobID: transactionID
+        ), record.spendTransactionID == transactionID,
+           Self.mireloCanResume(record),
+           record.operation == .textToSFX || record.operation == .videoToSFX else {
+            throw GenerationRequestError.gate(
+                "This Mirelo generation has no resumable native job. Start a new variation only if you intend a new paid request."
+            )
+        }
+        let authorization = try nativeMireloAuthorization(
+            record: record,
+            asset: asset,
+            editor: editor,
+            mutationScope: mutationScope
+        )
+
+        if record.state == .prepared, record.providerJobID == nil {
+            let currentPreflight: MireloPreflight
+            let currentAccount: MireloAccount
+            async let quoted = client.preflight(
+                operation: record.operation,
+                body: record.requestBody
+            )
+            async let account = client.account()
+            (currentPreflight, currentAccount) = try await (quoted, account)
+            try mutationScope.requireCurrent(editor: editor)
+            try Self.validateMireloFunding(currentPreflight, account: currentAccount)
+            let changed = currentPreflight.credits != record.preflight.credits
+            if changed {
+                guard approveCreditChange(
+                    record.preflight.credits,
+                    currentPreflight.credits
+                ) else {
+                    throw GenerationRequestError.gate(
+                        "The changed Mirelo cost was not approved. No provider request was submitted."
+                    )
+                }
+            }
+            try mutationScope.requireCurrent(editor: editor)
+            record = try store.refreshApprovedPreflight(
+                record,
+                with: currentPreflight,
+                creditChangeApproved: changed
+            )
+        }
+
+        try mutationScope.requireCurrent(editor: editor)
+        asset.mireloResumeAvailable = true
+        asset.generationStatus = .generating
+        editor.persistMediaAsset(asset)
+        var outcome = try await MireloExecutionCoordinator.shared.execute(
+            store: store,
+            projectKey: projectKey,
+            logicalJobID: transactionID,
+            client: client,
+            onAccepted: { accepted in
+                try mutationScope.requireCurrent(editor: editor)
+                try self.recordMireloSubmittedIfNeeded(
+                    accepted,
+                    authorization: authorization,
+                    editor: editor
+                )
+            }
+        )
+        try mutationScope.requireCurrent(editor: editor)
+        _ = try await finalizeNativeMireloOutcome(
+            &outcome,
+            store: store,
+            client: client,
+            asset: asset,
+            editor: editor,
+            workingRoot: workingRoot,
+            workingCopyKey: workingCopyKey,
+            mutationScope: mutationScope,
+            download: download
+        )
+        try mutationScope.requireCurrent(editor: editor)
+        asset.mireloResumeAvailable = false
+        markCharged(authorization: authorization, editor: editor)
+    }
+
+    func restoreMireloRecoveryState(
+        asset: MediaAsset,
+        editor: EditorViewModel,
+        store suppliedStore: MireloExecutionStore? = nil
+    ) {
+        guard let transactionID = asset.generationInput?.spendTransactionId,
+              let projectKey = editor.projectId,
+              let workingRoot = editor.workingRoot else { return }
+        do {
+            let store: MireloExecutionStore
+            if let suppliedStore {
+                store = suppliedStore
+            } else {
+                store = try MireloExecutionStore.live()
+            }
+            guard let record = try store.load(
+                projectKey: projectKey,
+                logicalJobID: transactionID
+            ), record.spendTransactionID == transactionID,
+               record.operation == .textToSFX || record.operation == .videoToSFX else { return }
+            let scope = try GenerationProjectMutationScope(
+                projectHome: workingRoot,
+                editor: editor
+            )
+            let authorization = try nativeMireloAuthorization(
+                record: record,
+                asset: asset,
+                editor: editor,
+                mutationScope: scope
+            )
+            if record.providerJobID != nil {
+                try recordMireloSubmittedIfNeeded(
+                    record,
+                    authorization: authorization,
+                    editor: editor
+                )
+            }
+            if record.state == .failed, record.providerJobID == nil {
+                try releaseNativeMireloReservationIfRejected(
+                    record,
+                    asset: asset,
+                    editor: editor
+                )
+                asset.mireloResumeAvailable = false
+                asset.generationStatus = .failed(
+                    record.lastError ?? "Mirelo rejected this request before creating a job."
+                )
+                return
+            }
+            if record.state == .completed,
+               try nativeMireloArtifactIsInstalled(
+                record,
+                asset: asset,
+                workingRoot: workingRoot
+               ) {
+                asset.mireloResumeAvailable = false
+                asset.generationStatus = .none
+                return
+            }
+            guard Self.mireloCanResume(record) else { return }
+            asset.mireloResumeAvailable = true
+            asset.generationStatus = .failed(
+                record.lastError ?? Self.mireloResumeMessage(record)
+            )
+        } catch {
+            asset.mireloResumeAvailable = false
+            asset.generationStatus = .failed(
+                "Mirelo recovery data could not be reconciled: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func finalizeNativeMireloOutcome(
+        _ outcome: inout MireloExecutionOutcome,
+        store: MireloExecutionStore,
+        client: MireloClient,
+        asset: MediaAsset,
+        editor: EditorViewModel,
+        workingRoot: URL,
+        workingCopyKey: String,
+        mutationScope: GenerationProjectMutationScope,
+        download: NativeMireloDownload? = nil
+    ) async throws -> MireloExecutionRecord {
+        let persistedArtifact = outcome.record.state == .completed
+            ? outcome.record.artifacts.first(where: {
+                $0.kind == .audio && $0.mediaAssetID == asset.id
+            })
+            : nil
+        if outcome.record.state == .completed,
+           try nativeMireloArtifactIsInstalled(
+            outcome.record,
+            asset: asset,
+            workingRoot: workingRoot
+           ), let artifact = persistedArtifact {
+            try mutationScope.requireCurrent(editor: editor)
+            asset.url = workingRoot.appendingPathComponent(artifact.projectPath)
+            asset.pendingDownloadURL = nil
+            asset.generationStatus = .none
+            editor.persistMediaAsset(asset)
+            return outcome.record
+        }
+
+        var descriptor = try Self.singleMireloAudioDescriptor(outcome)
+        let staged: URL
+        do {
+            if let download {
+                staged = try await download(descriptor)
+            } else {
+                staged = try await Self.downloadMireloAudio(descriptor)
+            }
+        } catch RemoteMediaPolicy.PolicyError.httpStatus(let status)
+            where [403, 404, 410].contains(status) {
+            outcome = try await MireloExecutionCoordinator.shared.refreshResult(
+                store: store,
+                record: outcome.record,
+                client: client
+            )
+            try mutationScope.requireCurrent(editor: editor)
+            descriptor = try Self.singleMireloAudioDescriptor(outcome)
+            do {
+                if let download {
+                    staged = try await download(descriptor)
+                } else {
+                    staged = try await Self.downloadMireloAudio(descriptor)
+                }
+            } catch RemoteMediaPolicy.PolicyError.httpStatus(let refreshedStatus)
+                where [403, 404, 410].contains(refreshedStatus) {
+                throw GenerationRequestError.gate(
+                    "Mirelo refreshed the result link, but it is already unavailable. Use Resume Mirelo Job later; no new request was submitted."
+                )
+            }
+        }
+        defer { try? FileManager.default.removeItem(at: staged) }
+        try Task.checkCancellation()
+        try await RemoteMediaPayloadValidator.validate(staged, expectedType: .audio)
+        try Task.checkCancellation()
+        try mutationScope.requireCurrent(editor: editor)
+        let returnedExtension = URL(fileURLWithPath: descriptor.filename).pathExtension
+        let extensionValue = returnedExtension.isEmpty ? "wav" : returnedExtension
+        let destination = persistedArtifact.map {
+            workingRoot.appendingPathComponent($0.projectPath)
+        } ?? asset.url.deletingPathExtension().appendingPathExtension(extensionValue)
+        let digest = try FileDigest.sha256(of: staged)
+        if let persistedArtifact {
+            guard persistedArtifact.sha256 == digest,
+                  try Self.mireloProjectPath(destination, root: workingRoot)
+                    == persistedArtifact.projectPath else {
+                throw GenerationRequestError.storage(
+                    "The restored Mirelo result does not match its completed project artifact."
+                )
+            }
+        }
+        if FileManager.default.fileExists(atPath: destination.path) {
+            guard try FileDigest.sha256(of: destination) == digest else {
+                throw GenerationRequestError.storage(
+                    "The Mirelo destination already contains different bytes. Restore or reconcile this generation before resuming."
+                )
+            }
+        } else {
+            try ProjectWorkingCopy.markDirty(key: workingCopyKey)
+            let partial = destination.deletingLastPathComponent()
+                .appendingPathComponent(".mirelo-\(UUID().uuidString).partial")
+            defer { try? FileManager.default.removeItem(at: partial) }
+            try FileManager.default.copyItem(at: staged, to: partial)
+            try FileManager.default.moveItem(at: partial, to: destination)
+        }
+        try Task.checkCancellation()
+        try mutationScope.requireCurrent(editor: editor)
+        asset.url = destination
+        asset.pendingDownloadURL = nil
+        asset.generationStatus = .none
+        editor.persistMediaAsset(asset)
+        if !editor.generationLog.entries.contains(where: {
+            $0.spendTransactionId == asset.generationInput?.spendTransactionId
+        }) {
+            editor.appendGenerationLog(for: asset)
+        }
+        try await editor.finalizeImportedAsset(asset, mutationScope: mutationScope)
+        let artifact = MireloArtifact(
+            kind: .audio,
+            projectPath: try Self.mireloProjectPath(destination, root: workingRoot),
+            sha256: digest,
+            mediaAssetID: asset.id,
+            sourceURLExpiresAt: descriptor.sourceURLExpiresAt
+        )
+        if let persistedArtifact {
+            guard artifact.kind == persistedArtifact.kind,
+                  artifact.projectPath == persistedArtifact.projectPath,
+                  artifact.sha256 == persistedArtifact.sha256,
+                  artifact.mediaAssetID == persistedArtifact.mediaAssetID else {
+                throw GenerationRequestError.storage(
+                    "The restored Mirelo artifact does not match its execution record."
+                )
+            }
+            return outcome.record
+        }
+        return try await MireloExecutionCoordinator.shared.complete(
+            store: store,
+            record: outcome.record,
+            artifacts: [artifact]
+        )
+    }
+
+    private func nativeMireloAuthorization(
+        record: MireloExecutionRecord,
+        asset: MediaAsset,
+        editor: EditorViewModel,
+        mutationScope: GenerationProjectMutationScope
+    ) throws -> GenerationAuthorization {
+        guard let transactionID = asset.generationInput?.spendTransactionId,
+              transactionID == record.spendTransactionID else {
+            throw GenerationRequestError.storage(
+                "The media item does not match its Mirelo spend transaction."
+            )
+        }
+        _ = try GenerationBudgetGuard.verifiedSpend(
+            log: editor.generationLog,
+            generatedAssets: editor.mediaAssets,
+            requireCompleteMoney: false
+        )
+        let events = editor.generationLog.spendEvents.filter {
+            $0.transactionId == transactionID
+        }
+        guard let first = events.first,
+              let last = events.last,
+              first.kind == .reserved,
+              first.model == asset.generationInput?.model,
+              first.provider == .mirelo,
+              first.transport == .api,
+              last.kind != .released,
+              events.allSatisfy({
+                  $0.model == first.model
+                      && $0.provider == first.provider
+                      && $0.transport == first.transport
+                      && $0.endpoint == first.endpoint
+              }),
+              last.kind != .submitted
+                || (record.providerJobID != nil
+                    && last.providerRequestId == record.providerJobID) else {
+            throw GenerationRequestError.gate(
+                "The saved Mirelo job has no matching active project spend record. Reconcile the project copy before resuming it."
+            )
+        }
+        try mutationScope.requireCurrent(editor: editor)
+        return GenerationAuthorization(
+            transactionId: transactionID,
+            target: ResolvedGenerationTarget(
+                modelId: first.model,
+                provider: .mirelo,
+                endpoint: first.endpoint,
+                binding: ProviderBinding(
+                    provider: .mirelo,
+                    transport: .api,
+                    kind: .generation,
+                    providerRef: first.endpoint,
+                    billing: .perCall
+                )
+            ),
+            estimate: first.money,
+            projectMutationScope: mutationScope
+        )
+    }
+
+    private func recordMireloSubmittedIfNeeded(
+        _ record: MireloExecutionRecord,
+        authorization: GenerationAuthorization,
+        editor: EditorViewModel
+    ) throws {
+        guard let providerJobID = record.providerJobID,
+              let transactionID = authorization.transactionId else { return }
+        if let submitted = editor.generationLog.spendEvents.first(where: {
+            $0.transactionId == transactionID && $0.kind == .submitted
+        }) {
+            guard submitted.providerRequestId == providerJobID else {
+                throw GenerationRequestError.storage(
+                    "The Mirelo provider job does not match the project spend record."
+                )
+            }
+            return
+        }
+        try authorization.projectMutationScope?.requireCurrent(editor: editor)
+        try editor.recordSpendEvent(
+            authorization: authorization,
+            kind: .submitted,
+            providerRequestId: providerJobID,
+            providerRequestResumable: true,
+            money: authorization.estimate,
+            note: "Mirelo preflight: \(record.preflight.credits) credits. Monetary conversion is not published."
+        )
+    }
+
+    private func releaseNativeMireloReservationIfRejected(
+        _ record: MireloExecutionRecord,
+        asset: MediaAsset,
+        editor: EditorViewModel
+    ) throws {
+        guard record.state == .failed,
+              record.providerJobID == nil,
+              let workingRoot = editor.workingRoot else { return }
+        let transactionID = record.spendTransactionID ?? ""
+        guard editor.generationLog.spendEvents.last(where: {
+            $0.transactionId == transactionID
+        })?.kind == .reserved else { return }
+        let scope = try GenerationProjectMutationScope(
+            projectHome: workingRoot,
+            editor: editor
+        )
+        let authorization = try nativeMireloAuthorization(
+            record: record,
+            asset: asset,
+            editor: editor,
+            mutationScope: scope
+        )
+        try editor.recordSpendEvent(
+            authorization: authorization,
+            kind: .released,
+            note: record.lastError
+        )
+    }
+
+    private func nativeMireloArtifactIsInstalled(
+        _ record: MireloExecutionRecord,
+        asset: MediaAsset,
+        workingRoot: URL
+    ) throws -> Bool {
+        guard let artifact = record.artifacts.first(where: {
+            $0.kind == .audio && $0.mediaAssetID == asset.id
+        }) else { return false }
+        let url = workingRoot.appendingPathComponent(artifact.projectPath)
+        return FileManager.default.fileExists(atPath: url.path)
+            && (try FileDigest.sha256(of: url)) == artifact.sha256
+    }
+
+    private static func mireloCanResume(_ record: MireloExecutionRecord) -> Bool {
+        guard record.approvedAt != nil, record.spendTransactionID != nil else { return false }
+        switch record.state {
+        case .prepared, .submitting, .accepted, .acceptanceUnknown,
+             .pollingInterrupted, .providerSucceeded, .completed:
+            true
+        case .failed:
+            false
+        }
+    }
+
+    private static func mireloResumeMessage(_ record: MireloExecutionRecord) -> String {
+        switch record.state {
+        case .prepared:
+            "Mirelo has not received this approved request. Resume checks current cost and funding before the first submission."
+        case .submitting, .acceptanceUnknown:
+            "Mirelo acceptance is unresolved. Resume reuses the saved idempotency key; it does not create a variation."
+        case .accepted, .pollingInterrupted:
+            "Mirelo accepted this job. Resume continues polling the same provider job."
+        case .providerSucceeded, .completed:
+            "Mirelo completed this job. Resume restores its project-local result."
+        case .failed:
+            record.lastError ?? "Mirelo reported a terminal failure."
+        }
+    }
+
+    private static func confirmMireloCreditChange(previous: Int, current: Int) -> Bool {
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = "Approve updated Mirelo cost?"
+        alert.informativeText = "The saved request changed from \(previous) to \(current) credits. It has not been submitted to Mirelo."
+        alert.addButton(withTitle: "Approve \(current) Credits")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     private static func singleMireloAudioDescriptor(

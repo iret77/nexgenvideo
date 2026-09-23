@@ -7,7 +7,25 @@ struct MireloExecutionOutcome: Sendable, Equatable {
 
 actor MireloExecutionCoordinator {
     static let shared = MireloExecutionCoordinator()
-    private var inFlight: [String: Task<MireloExecutionOutcome, Error>] = [:]
+    typealias AcceptanceHandler = @MainActor @Sendable (MireloExecutionRecord) async throws -> Void
+
+    private struct Waiter {
+        let continuation: CheckedContinuation<MireloExecutionOutcome, Error>
+    }
+
+    private struct Flight {
+        let id: UUID
+        let task: Task<Void, Never>
+        var waiters: [UUID: Waiter]
+    }
+
+    private struct RetiringFlight {
+        let id: UUID
+        let task: Task<Void, Never>
+    }
+
+    private var inFlight: [String: Flight] = [:]
+    private var retiring: [String: RetiringFlight] = [:]
 
     func prepare(
         store: MireloExecutionStore,
@@ -87,33 +105,120 @@ actor MireloExecutionCoordinator {
         store: MireloExecutionStore,
         projectKey: String,
         logicalJobID: String,
-        client: MireloClient
+        client: MireloClient,
+        onAccepted: AcceptanceHandler? = nil
     ) async throws -> MireloExecutionOutcome {
+        try Task.checkCancellation()
         let authorityID = try store.authorityID(
             projectKey: projectKey,
             logicalJobID: logicalJobID
         )
-        if let task = inFlight[authorityID] {
-            return try await task.value
+        if let retiring = retiring[authorityID] {
+            await retiring.task.value
+            try Task.checkCancellation()
         }
+        let waiterID = UUID()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                register(
+                    waiterID: waiterID,
+                    authorityID: authorityID,
+                    store: store,
+                    projectKey: projectKey,
+                    logicalJobID: logicalJobID,
+                    client: client,
+                    onAccepted: onAccepted,
+                    continuation: continuation
+                )
+            }
+        } onCancel: {
+            Task { await self.cancelWaiter(waiterID, authorityID: authorityID) }
+        }
+    }
+
+    private func register(
+        waiterID: UUID,
+        authorityID: String,
+        store: MireloExecutionStore,
+        projectKey: String,
+        logicalJobID: String,
+        client: MireloClient,
+        onAccepted: AcceptanceHandler?,
+        continuation: CheckedContinuation<MireloExecutionOutcome, Error>
+    ) {
+        if var flight = inFlight[authorityID] {
+            flight.waiters[waiterID] = Waiter(continuation: continuation)
+            inFlight[authorityID] = flight
+            return
+        }
+        let flightID = UUID()
         let task = Task {
-            try await self.executeOwned(
-                store: store,
-                projectKey: projectKey,
-                logicalJobID: logicalJobID,
-                client: client
+            let result: Result<MireloExecutionOutcome, Error>
+            do {
+                result = .success(try await self.executeOwned(
+                    store: store,
+                    projectKey: projectKey,
+                    logicalJobID: logicalJobID,
+                    client: client,
+                    onAccepted: onAccepted
+                ))
+            } catch {
+                result = .failure(error)
+            }
+            self.finishFlight(
+                authorityID: authorityID,
+                flightID: flightID,
+                result: result
             )
         }
-        inFlight[authorityID] = task
-        defer { inFlight.removeValue(forKey: authorityID) }
-        return try await task.value
+        inFlight[authorityID] = Flight(
+            id: flightID,
+            task: task,
+            waiters: [waiterID: Waiter(continuation: continuation)]
+        )
+    }
+
+    private func cancelWaiter(_ waiterID: UUID, authorityID: String) {
+        guard var flight = inFlight[authorityID],
+              let waiter = flight.waiters.removeValue(forKey: waiterID) else { return }
+        waiter.continuation.resume(throwing: CancellationError())
+        if flight.waiters.isEmpty {
+            inFlight.removeValue(forKey: authorityID)
+            retiring[authorityID] = RetiringFlight(
+                id: flight.id,
+                task: flight.task
+            )
+            flight.task.cancel()
+        } else {
+            inFlight[authorityID] = flight
+        }
+    }
+
+    private func finishFlight(
+        authorityID: String,
+        flightID: UUID,
+        result: Result<MireloExecutionOutcome, Error>
+    ) {
+        if retiring[authorityID]?.id == flightID {
+            retiring.removeValue(forKey: authorityID)
+        }
+        guard let flight = inFlight[authorityID], flight.id == flightID else { return }
+        inFlight.removeValue(forKey: authorityID)
+        for waiter in flight.waiters.values {
+            waiter.continuation.resume(with: result)
+        }
     }
 
     private func executeOwned(
         store: MireloExecutionStore,
         projectKey: String,
         logicalJobID: String,
-        client: MireloClient
+        client: MireloClient,
+        onAccepted: AcceptanceHandler?
     ) async throws -> MireloExecutionOutcome {
         guard var record = try store.load(
             projectKey: projectKey,
@@ -135,6 +240,9 @@ actor MireloExecutionCoordinator {
                 throw GenerationRequestError.storage(
                     "The completed Mirelo job has no terminal response."
                 )
+            }
+            if record.providerJobID != nil, let onAccepted {
+                try await onAccepted(record)
             }
             return MireloExecutionOutcome(record: record, terminalResponse: terminal)
         case .failed:
@@ -162,6 +270,9 @@ actor MireloExecutionCoordinator {
             throw GenerationRequestError.storage(
                 "Mirelo accepted the request without a durable job identifier."
             )
+        }
+        if let onAccepted {
+            try await onAccepted(record)
         }
         return try await poll(record, store: store, client: client)
     }
@@ -196,7 +307,7 @@ actor MireloExecutionCoordinator {
         record: MireloExecutionRecord,
         client: MireloClient
     ) async throws -> MireloExecutionOutcome {
-        guard record.state == .providerSucceeded,
+        guard record.state == .providerSucceeded || record.state == .completed,
               let jobID = record.providerJobID else {
             throw GenerationRequestError.storage(
                 "Only a succeeded Mirelo job can refresh temporary result URLs."
@@ -223,6 +334,20 @@ actor MireloExecutionCoordinator {
         store: MireloExecutionStore,
         client: MireloClient
     ) async throws -> MireloExecutionRecord {
+        let replaysUnknownAcceptance = expected.state == .submitting
+            || expected.state == .acceptanceUnknown
+        do {
+            try Task.checkCancellation()
+        } catch {
+            let message = replaysUnknownAcceptance
+                ? "Recovery stopped locally before replaying the persisted Mirelo idempotency key. The earlier submission may still have been accepted."
+                : "Mirelo submission was cancelled before any provider request was sent."
+            _ = try? store.update(expected) {
+                $0.state = replaysUnknownAcceptance ? .acceptanceUnknown : .failed
+                $0.lastError = message
+            }
+            throw CancellationError()
+        }
         var submitting = expected
         if submitting.state != .submitting {
             submitting = try store.update(submitting) {
@@ -230,7 +355,21 @@ actor MireloExecutionCoordinator {
                 $0.lastError = nil
             }
         }
+        var createStarted = false
         do {
+            do {
+                try Task.checkCancellation()
+            } catch {
+                let message = replaysUnknownAcceptance
+                    ? "Recovery stopped locally before replaying the persisted Mirelo idempotency key. The earlier submission may still have been accepted."
+                    : "Mirelo submission was cancelled before any provider request was sent."
+                _ = try? store.update(submitting) {
+                    $0.state = replaysUnknownAcceptance ? .acceptanceUnknown : .failed
+                    $0.lastError = message
+                }
+                throw CancellationError()
+            }
+            createStarted = true
             let receipt = try await client.create(
                 operation: submitting.operation,
                 body: submitting.requestBody,
@@ -266,6 +405,9 @@ actor MireloExecutionCoordinator {
                 }
             }
         } catch is CancellationError {
+            if !createStarted {
+                throw CancellationError()
+            }
             let message = submitting.operation.usesIdempotencyKey
                 ? "Submission was interrupted. NexGenVideo will recover the same Mirelo v3 job with its persisted idempotency key; cancellation does not claim the server stopped."
                 : Self.unknownAcceptanceMessage
@@ -275,7 +417,7 @@ actor MireloExecutionCoordinator {
             }
             throw GenerationRequestError.gate(message)
         } catch let error as MireloHTTPError {
-            if Self.definitivelyRejected(error) {
+            if !replaysUnknownAcceptance && Self.definitivelyRejected(error) {
                 let failed = try store.update(submitting) {
                     $0.state = .failed
                     $0.lastError = error.localizedDescription
@@ -323,6 +465,7 @@ actor MireloExecutionCoordinator {
             do {
                 try Task.checkCancellation()
                 let response = try await client.job(operation: record.operation, id: jobID)
+                try Task.checkCancellation()
                 let snapshot = try Self.status(
                     from: response.data,
                     operation: record.operation

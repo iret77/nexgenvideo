@@ -43,7 +43,7 @@ struct AIEditTab: View {
                     actionRow(
                         action: .rerun,
                         icon: "arrow.clockwise",
-                        title: "Rerun",
+                        title: isMireloGeneration ? "New Variation" : "Rerun",
                         description: rerunDescription
                     )
                     if asset.type == .image {
@@ -70,7 +70,7 @@ struct AIEditTab: View {
             .padding(.vertical, AppTheme.Spacing.md)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .alert("Rerun failed", isPresented: Binding(
+        .alert(isMireloGeneration ? "New variation failed" : "Rerun failed", isPresented: Binding(
             get: { rerunError != nil },
             set: { if !$0 { rerunError = nil } }
         )) {
@@ -89,11 +89,22 @@ struct AIEditTab: View {
     }
 
     private var rerunDescription: String {
+        if isMireloGeneration {
+            return "Start a new paid Mirelo request"
+        }
         guard let gen = asset.generationInput,
               let cost = CostEstimator.cost(for: gen) else {
             return "Regenerate with the same parameters"
         }
         return "Regenerate · \(CostEstimator.format(cost))"
+    }
+
+    private var isMireloGeneration: Bool {
+        if asset.generationInput?.model.hasPrefix("mirelo/") == true { return true }
+        guard let transactionID = asset.generationInput?.spendTransactionId else { return false }
+        return editor.generationLog.spendEvents.contains {
+            $0.transactionId == transactionID && $0.provider == .mirelo
+        }
     }
 
     private func aiSection<Content: View>(

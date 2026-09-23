@@ -546,8 +546,12 @@ final class MireloClient: Sendable {
                 throw Self.httpError(data: data, response: http)
             }
             return (data, http)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch let error as MireloHTTPError {
             throw error
+        } catch let error as URLError where error.code == .cancelled && Task.isCancelled {
+            throw CancellationError()
         } catch {
             throw MireloHTTPError(status: nil, code: "transport_interrupted", message: error.localizedDescription, retryAfterSeconds: nil, requestID: nil, retryable: true, creditRecovery: nil)
         }

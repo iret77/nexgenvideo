@@ -57,7 +57,6 @@ final class ToolExecutor {
     private var agentUndoStack: [String] = []
     var feedbackState = FeedbackState()
     let imageObservations = ImageObservationCache()
-    static var mireloExecutionTasks: [String: Task<ToolResult, Error>] = [:]
 
     func requirePhaseIdle(
         _ editor: EditorViewModel,
