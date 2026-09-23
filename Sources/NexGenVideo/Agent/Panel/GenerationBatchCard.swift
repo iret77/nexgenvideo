@@ -1,5 +1,30 @@
 import SwiftUI
 
+@MainActor
+final class GenerationBatchReviewRuntimeEvidence {
+    struct DetailsActionReceipt {
+        let sequence: Int
+        let itemID: String
+        let expandedItemIDsBefore: Set<String>
+        let expandedItemIDsAfter: Set<String>
+    }
+
+    private(set) var detailsActionReceipts: [DetailsActionReceipt] = []
+
+    func recordDetailsAction(
+        itemID: String,
+        expandedItemIDsBefore: Set<String>,
+        expandedItemIDsAfter: Set<String>
+    ) {
+        detailsActionReceipts.append(DetailsActionReceipt(
+            sequence: detailsActionReceipts.count + 1,
+            itemID: itemID,
+            expandedItemIDsBefore: expandedItemIDsBefore,
+            expandedItemIDsAfter: expandedItemIDsAfter
+        ))
+    }
+}
+
 struct GenerationBatchReviewControls: Equatable {
     let canEdit: Bool
     let canRetryPricing: Bool
@@ -22,6 +47,7 @@ struct GenerationBatchCard: View {
 
     let editor: EditorViewModel
     var runtimeEvidenceEnabled = false
+    var runtimeEvidence: GenerationBatchReviewRuntimeEvidence? = nil
 
     @State private var expandedItemIDs: Set<String> = []
     @FocusState private var focusedRemoveItemID: String?
@@ -322,8 +348,18 @@ struct GenerationBatchCard: View {
     }
 
     private func toggleDetails(_ itemID: String) {
-        if expandedItemIDs.contains(itemID) { expandedItemIDs.remove(itemID) }
-        else { expandedItemIDs.insert(itemID) }
+        let before = expandedItemIDs
+        var after = before
+        if after.contains(itemID) { after.remove(itemID) }
+        else { after.insert(itemID) }
+        expandedItemIDs = after
+        if runtimeEvidenceEnabled {
+            runtimeEvidence?.recordDetailsAction(
+                itemID: itemID,
+                expandedItemIDsBefore: before,
+                expandedItemIDsAfter: after
+            )
+        }
     }
 }
 
