@@ -1307,7 +1307,7 @@ enum FCPXMLExporter {
                     guard values.isRegularFile == true, values.fileSize != nil else {
                         throw ExportError.xmlMediaReadFailed(source: mediaURL, reason: "The media is not a regular file.")
                     }
-                    mediaDigest = mediaSHA256[identity] ?? (try FileDigest.sha256(of: mediaURL))
+                    mediaDigest = try mediaSHA256[identity] ?? FileDigest.sha256(of: mediaURL)
                 } catch let error as ExportError {
                     throw error
                 } catch {
