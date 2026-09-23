@@ -79,6 +79,7 @@ enum ToolName: String, CaseIterable, Sendable {
     case getUIContract = "get_ui_contract"
     case setGateState = "set_gate_state"
     case runProviderTool = "run_provider_tool"
+    case runMireloAudio = "run_mirelo_audio"
     case listProjectFiles = "list_project_files"
     case copyProjectFile = "copy_project_file"
     case writeAnalysisInterpretation = "write_analysis_interpretation"
@@ -95,6 +96,7 @@ enum ToolName: String, CaseIterable, Sendable {
         switch self {
         // Approving gate tools defer their write to the user's later click.
         case .generateVideo, .generateImage, .prepareGenerationBatch, .generateAudio, .upscaleMedia, .importMedia,
+             .runMireloAudio,
              .initProject, .rewind, .runPhase, .recordRender, .recordAffect, .saveFrameAudit,
              .setLedgerAttribute, .lockLedgerAttribute, .removeLedgerAttribute,
              .attachSong, .copyProjectFile, .extractScene3dPovs, .writeBrief,
@@ -140,7 +142,7 @@ enum ToolName: String, CaseIterable, Sendable {
     var usesCurrentPipelinePhase: Bool {
         switch self {
         case .compilePrompt, .generateVideo, .generateImage, .prepareGenerationBatch, .generateAudio,
-             .upscaleMedia, .importMedia, .runProviderTool, .copyProjectFile,
+             .runMireloAudio, .upscaleMedia, .importMedia, .runProviderTool, .copyProjectFile,
              .cropToAspect, .setLedgerAttribute, .lockLedgerAttribute,
              .removeLedgerAttribute:
             return true
@@ -791,7 +793,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .generateAudio,
-            description: "Generates AI audio and returns only after the provider result is imported and usable, or returns the provider failure. Supports text-to-speech, text-to-music, and video-to-music. TTS models (elevenlabs-tts-v3, gemini-3.1-flash-tts) convert the prompt into speech and accept a 'voice'. Music models (lyria3-pro, minimax-music-v2.6, elevenlabs-music, sonilo-v1.1-video-to-music) generate tracks from a prompt; include lyrics/tempo/vocal style in the prompt for Lyria 3 Pro, pass 'lyrics' for MiniMax vocals, or set 'instrumental' true when the selected model supports it. Video-to-audio models (inputs include 'video' — see list_models, e.g. sonilo-v1.1-video-to-music, mirelo-sfx-v1.5-video-to-audio) generate audio that matches a VIDEO: provide a timeline span via videoSourceStartFrame+videoSourceEndFrame, or a video asset via videoSourceMediaRef; the prompt is then an optional style guide. PLACEMENT: a timeline span is placed automatically; media-source and plain text results land in the library for add_clips. Use list_models with type='audio' to see each model's inputs, category, and voices. Costs real money and is not undoable.",
+            description: "Generates AI audio and returns only after the provider result is imported and usable, or returns the provider failure. Supports text-to-speech, text-to-music, text-to-SFX, and video-to-audio. TTS models convert the prompt into speech and accept a voice. Music models generate tracks from a prompt. Mirelo models are discovered live; use the returned inputs and operations rather than assuming a release id. Video-to-audio models require a video asset or supported timeline span. PLACEMENT: a timeline span is placed automatically; media-source and plain text results land in the library for add_clips. Use list_models with type='audio' first. Costs real money and is not undoable.",
             inputSchema: objectSchema(
                 properties: [
                     "compileToken": ["type": "string", "description": "Token from compile_prompt proving 'prompt' is the compiled prompt. Required unless rawPrompt=true."],
@@ -808,6 +810,7 @@ enum ToolDefinitions {
                     "videoSourceStartFrame": ["type": "integer", "description": "Video-to-audio models only. Start frame (timeline) of a span to render and score — pair with videoSourceEndFrame. Use get_timeline for frame numbers; for the whole timeline use 0 to the timeline's end frame."],
                     "videoSourceEndFrame": ["type": "integer", "description": "Video-to-audio models only. End frame (exclusive) of the span to score. Must be > videoSourceStartFrame."],
                     "videoSourceMediaRef": ["type": "string", "description": "Video-to-audio models only. Score this existing video asset instead of a timeline span. Mutually exclusive with the videoSource frames."],
+                    "logicalJobId": ["type": "string", "description": "Required for a Mirelo model: caller-owned UUID for this exact request. Reuse it to resume; never generate a new value after an uncertain result."],
                     "folderId": ["type": "string", "description": "Optional. Folder id (from list_folders or create_folder) to place the result in. Omit for the project root."],
                 ],
                 required: ["shotId"]
@@ -1600,6 +1603,69 @@ enum ToolDefinitions {
                     ],
                 ],
                 required: ["tool"]
+            )
+        ),
+        AgentTool(
+            name: .runMireloAudio,
+            description: "Runs a Mirelo audio operation through NexGenVideo's host provider layer. Use text-to-sfx or video-to-sfx to generate project-local audio, extend or inpaint to edit project audio, and audio-to-midi to create project-local MIDI, note JSON, and MusicXML. Prompt-bearing requests require a current compile_prompt token; Audio-to-MIDI is prompt-free and performs no musical interpretation. The exact request is privately uploaded, preflighted, shown for spend approval, persisted under logicalJobId, and never blindly resubmitted after uncertain Audio-to-MIDI acceptance. Reuse the same logicalJobId only for the exact same request.",
+            inputSchema: objectSchema(
+                properties: [
+                    "operation": [
+                        "type": "string",
+                        "enum": ["text-to-sfx", "video-to-sfx", "extend", "inpaint", "audio-to-midi"],
+                    ],
+                    "logicalJobId": ["type": "string", "description": "Caller-owned UUID for this exact logical request. Reuse only to resume the same request."],
+                    "model": ["type": "string", "description": "Mirelo model id from list_models. Required for v3 operations; omitted for Audio-to-MIDI."],
+                    "sourceMediaRef": ["type": "string", "description": "Video source for video-to-sfx; audio source for extend, inpaint, or Audio-to-MIDI."],
+                    "videoSourceMediaRef": ["type": "string", "description": "Optional conditioning video for extend or inpaint."],
+                    "prompt": ["type": "string", "description": "Compiled provider prompt. Required for text-to-sfx; optional for video-to-sfx, extend, and inpaint; forbidden for Audio-to-MIDI."],
+                    "compileToken": ["type": "string", "description": "Token returned by compile_prompt for this exact prompt and model."],
+                    "shotId": ["type": "string", "description": "Shot id used by compile_prompt, or 'none' for free intent."],
+                    "rawPrompt": ["type": "boolean", "description": "Pro escape hatch, only when raw prompts are enabled and shotId is 'none'."],
+                    "durationMs": ["type": "integer", "minimum": 1],
+                    "startOffsetMs": ["type": "integer", "minimum": 0],
+                    "appendDurationMs": ["type": "integer", "minimum": 1],
+                    "regionStartMs": ["type": "integer", "minimum": 0],
+                    "regionEndMs": ["type": "integer", "minimum": 1],
+                    "numVariants": ["type": "integer", "minimum": 1],
+                    "loop": ["type": "boolean"],
+                    "preserveSpeech": ["type": "boolean"],
+                    "outputFormat": [
+                        "type": "string",
+                        "enum": ["wav", "flac", "mp3_128", "mp3_192", "mp3_256", "mp3_320", "m4a_128", "m4a_192", "m4a_256"],
+                    ],
+                    "timing": ["type": "string", "enum": ["performance", "quantized"]],
+                    "subdivision": [
+                        "type": "string",
+                        "enum": ["automatic", "straight_sixteenths", "eighth_triplets", "sixteenth_triplets", "swing_eighths"],
+                    ],
+                    "timeSignatureNumerator": ["type": "integer", "enum": [2, 3, 4, 5, 6, 7, 9, 12]],
+                    "timeSignatureDenominator": ["type": "integer", "enum": [4, 8]],
+                    "fixedTempoBpm": ["type": "number", "minimum": 30, "maximum": 300],
+                    "fixedTempo": ["type": "boolean", "description": "Audio-to-MIDI only. Write one constant tempo; omit fixedTempoBpm to use Mirelo's detected BPM."],
+                    "optimizeMusicXML": ["type": "boolean"],
+                    "scorePDFs": ["type": "boolean"],
+                    "pageSize": ["type": "string", "enum": ["a4", "letter"]],
+                    "instruments": [
+                        "type": "array",
+                        "maxItems": 35,
+                        "description": "Audio-to-MIDI only. The complete instrumentation of the recording. Omit when uncertain; a partial list suppresses missing instruments and is worse than no list.",
+                        "items": [
+                            "type": "string",
+                            "enum": [
+                                "acoustic_piano", "electric_piano", "chromatic_percussion", "organ",
+                                "acoustic_guitar", "clean_electric_guitar", "distorted_electric_guitar",
+                                "acoustic_bass", "electric_bass", "violin", "viola", "cello", "contrabass",
+                                "orchestral_harp", "timpani", "string_ensemble", "synth_strings", "voice",
+                                "orchestra_hit", "trumpet", "trombone", "tuba", "french_horn", "brass_section",
+                                "soprano_and_alto_sax", "tenor_sax", "baritone_sax", "oboe", "english_horn",
+                                "bassoon", "clarinet", "flutes", "synth_lead", "synth_pad", "drums",
+                            ],
+                        ],
+                    ],
+                    "folderId": ["type": "string", "description": "Optional media-library folder for generated or edited audio."],
+                ],
+                required: ["operation", "logicalJobId"]
             )
         ),
     ]

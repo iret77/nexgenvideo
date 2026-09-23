@@ -81,6 +81,7 @@ enum ProviderManifest {
         // Models that SHARE a fal id (Imagen) are deliberately absent — falling back to fal is right
         // for them.
         if id.hasPrefix(GoogleModelRegistry.idPrefix) { return .google }
+        if id.hasPrefix("mirelo/") { return .mirelo }
         // Higgsfield models arrive via runtime MCP discovery (raw ids, always carrying `.mcp` offers),
         // so they never fall through to this bootstrap default — no `higgsfield/` prefix branch needed.
         return .fal

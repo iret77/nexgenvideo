@@ -54,6 +54,7 @@ struct GenerationRouteReceipt: Codable, Sendable, Equatable {
                 case .fal: source = "https://api.fal.ai/v1/models"
                 case .google: source = "https://generativelanguage.googleapis.com/v1beta/models"
                 case .runway: source = "https://api.dev.runwayml.com/v1/organization"
+                case .mirelo: source = "https://api.mirelo.ai/v3/models"
                 default: return nil
                 }
                 return Check(modelID: entry.id, provider: provider, transport: .api, endpoint: endpoint,

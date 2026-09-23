@@ -14,6 +14,7 @@ enum GenerationProvider: String, CaseIterable, Identifiable, Codable, Sendable {
     case marble
     case openart
     case ace
+    case mirelo
 
     var id: String { rawValue }
 
@@ -27,6 +28,7 @@ enum GenerationProvider: String, CaseIterable, Identifiable, Codable, Sendable {
         case .marble: return "Marble"
         case .openart: return "OpenArt"
         case .ace: return "ACE Studio"
+        case .mirelo: return "Mirelo"
         }
     }
 
@@ -40,6 +42,7 @@ enum GenerationProvider: String, CaseIterable, Identifiable, Codable, Sendable {
         case .marble: return "3D World · Panorama"
         case .openart: return "Image · Video"
         case .ace: return "Voice · Singing"
+        case .mirelo: return "SFX · Audio-to-MIDI"
         }
     }
 
@@ -47,7 +50,7 @@ enum GenerationProvider: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .fal, .runway, .google, .higgsfield, .openart:
             return true
-        case .elevenlabs, .marble, .ace:
+        case .elevenlabs, .marble, .ace, .mirelo:
             return false
         }
     }
@@ -56,7 +59,7 @@ enum GenerationProvider: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .fal, .runway, .google:
             return true
-        case .higgsfield, .elevenlabs, .marble, .openart, .ace:
+        case .higgsfield, .elevenlabs, .marble, .openart, .ace, .mirelo:
             return false
         }
     }
@@ -71,6 +74,7 @@ enum GenerationProvider: String, CaseIterable, Identifiable, Codable, Sendable {
         case .marble: return URL(string: "https://platform.worldlabs.ai/")!
         case .openart: return URL(string: "https://openart.ai")!
         case .ace: return URL(string: "https://acestudio.ai")!
+        case .mirelo: return URL(string: "https://mirelo.ai")!
         }
     }
 
@@ -79,7 +83,7 @@ enum GenerationProvider: String, CaseIterable, Identifiable, Codable, Sendable {
     /// ACE route through NGV as an MCP client, on the user's subscription.
     var supportsDirectAPI: Bool {
         switch self {
-        case .fal, .runway, .google, .elevenlabs, .marble: return true
+        case .fal, .runway, .google, .elevenlabs, .marble, .mirelo: return true
         // Higgsfield issues no API keys ("No API keys to manage or configure" — higgsfield.ai/mcp);
         // it, OpenArt and ACE are reached ONLY over MCP. No API-key field (that would be dead).
         case .higgsfield, .openart, .ace: return false

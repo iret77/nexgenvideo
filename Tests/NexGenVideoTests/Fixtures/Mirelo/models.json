@@ -1,0 +1,38 @@
+{
+  "data": [
+    {
+      "id": "sfx-1.6",
+      "release_date": "2026-08-28",
+      "status": "general_availability",
+      "audio": { "sample_rate": 48000, "channels": 2 },
+      "max_prompt_chars": 1000,
+      "stems": [],
+      "controls": ["loop", "preserve_speech"],
+      "formats": ["wav", "flac", "mp3_320"],
+      "operations": {
+        "text-to-sfx": {
+          "duration_ms": { "min": 100, "max": 60000, "min_with_loop": 1000, "max_with_loop": 30000 },
+          "num_variants": { "min": 1, "max": 4 },
+          "controls": ["loop"]
+        },
+        "video-to-sfx": {
+          "duration_ms": { "min": 1000, "max": 60000, "max_with_preserve_speech": 30000 },
+          "num_variants": { "min": 1, "max": 4 },
+          "controls": ["preserve_speech"]
+        },
+        "extend": {
+          "append_duration_ms": { "min": 1000, "min_with_loop": 3000, "max": 30000 },
+          "num_variants": { "min": 1, "max": 4 },
+          "controls": ["loop"]
+        },
+        "inpaint": {
+          "region_start_ms": { "min": 1000 },
+          "region_width_ms": { "min": 1000, "max": 30000 },
+          "num_variants": { "min": 1, "max": 4 },
+          "controls": []
+        }
+      },
+      "credits_per_second": 10
+    }
+  ]
+}

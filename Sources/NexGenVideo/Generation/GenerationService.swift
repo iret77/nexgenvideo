@@ -920,6 +920,11 @@ final class GenerationService {
                 placeholders,
                 "\(provider.displayName) runs over MCP — sign in under Settings \u{2192} Providers.",
                 authorization: authorization, editor: editor, onFailure: onFailure)
+        case .mirelo:
+            return failBeforeSubmission(
+                placeholders,
+                "Mirelo audio runs through the host Mirelo operation path.",
+                authorization: authorization, editor: editor, onFailure: onFailure)
         case .google:
             guard case .image(let p) = params,
                   let model = GoogleModelRegistry.model(for: endpoint) else {
@@ -1487,7 +1492,7 @@ final class GenerationService {
         // Marble takes a local path and base64s the file itself, so its reference was never hosted —
         // it only reached the fal branch because the submission hands the path in pre-uploaded, which
         // then got persisted as if it were a hosted URL.
-        case .google, .marble: return .inline
+        case .google, .marble, .mirelo: return .inline
         case .runway: return .runway
         default: return .fal
         }

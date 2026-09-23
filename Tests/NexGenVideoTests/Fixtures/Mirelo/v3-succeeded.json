@@ -1,0 +1,39 @@
+{
+  "id": "job-v3",
+  "status": "succeeded",
+  "model": "sfx-1.6",
+  "created_at": "2026-09-23T10:00:00Z",
+  "completed_at": "2026-09-23T10:00:09Z",
+  "expires_at": "2026-09-24T10:00:00Z",
+  "credits": 50,
+  "errors": [],
+  "urls": { "self": "/v3/text-to-sfx/generations/job-v3" },
+  "object": "text_to_sfx.generation",
+  "result": {
+    "output": {
+      "index": 0,
+      "type": "sfx",
+      "label": null,
+      "start_ms": null,
+      "end_ms": null,
+      "credits": 50,
+      "variants_requested": 1,
+      "status": "succeeded",
+      "gain_db": null,
+      "generation_id": "generation-fixture",
+      "variants": [
+        {
+          "index": 0,
+          "status": "succeeded",
+          "files": {
+            "audio": {
+              "url": "https://results.example/output.wav",
+              "url_expires_at": "2026-09-24T10:00:00Z",
+              "format": "wav"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

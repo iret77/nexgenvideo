@@ -1,0 +1,12 @@
+{
+  "account_type": "user",
+  "id": "acct_fixture",
+  "email": "editor@example.com",
+  "credits_available": 1200,
+  "spend_capacity": 1100,
+  "recovery_action": null,
+  "recovery_url": null,
+  "billing_mode": "metered",
+  "provisioning_state": "ready",
+  "provisioning_deadline": null
+}

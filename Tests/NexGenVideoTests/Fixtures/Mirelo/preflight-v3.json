@@ -1,0 +1,13 @@
+{
+  "credits": 50,
+  "estimated_ms": 9000,
+  "credit_recovery": {
+    "credits_required": 50,
+    "credits_available": 1100,
+    "credit_shortfall": 0,
+    "recovery_action": null,
+    "recovery_url": null,
+    "provisioning_state": "ready",
+    "provisioning_deadline": null
+  }
+}

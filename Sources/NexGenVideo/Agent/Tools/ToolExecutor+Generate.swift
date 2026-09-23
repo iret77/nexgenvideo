@@ -723,7 +723,7 @@ extension ToolExecutor {
     }
 
     /// The agent's precompiled prompt (from compile_prompt) + token, or nil for the raw-prompt escape.
-    private static func agentPrompt(
+    static func agentPrompt(
         _ args: [String: Any],
         prompt: String,
         modality: PromptComposer.Modality,
@@ -2392,6 +2392,52 @@ extension ToolExecutor {
             throw ToolError("Unknown model '\(modelId)'. Available: \(AudioModelConfig.allModels.map(\.id).joined(separator: ", "))")
         }
 
+        if ProviderManifest.bindings(forModelId: model.id).contains(where: {
+            $0.provider == .mirelo && $0.transport == .api
+        }) {
+            guard args.int("videoSourceStartFrame") == nil,
+                  args.int("videoSourceEndFrame") == nil else {
+                throw ToolError(
+                    "Mirelo requires a project-local video asset. Render or import the timeline span, then pass videoSourceMediaRef."
+                )
+            }
+            guard let duration = args.int("duration"), duration > 0 else {
+                throw ToolError("Mirelo audio generation requires duration in seconds.")
+            }
+            guard duration <= Int.max / 1_000,
+                  duration >= model.minSeconds,
+                  duration <= model.maxSeconds else {
+                throw ToolError(
+                    "Mirelo model '\(model.id)' accepts \(model.minSeconds)–\(model.maxSeconds) seconds through generate_audio."
+                )
+            }
+            guard let logicalJobID = args.string("logicalJobId"),
+                  UUID(uuidString: logicalJobID) != nil else {
+                throw ToolError(
+                    "Mirelo generation requires logicalJobId as a caller-owned UUID. Reuse it to resume this exact request."
+                )
+            }
+            var mireloArgs = args
+            let mireloOperation: MireloOperation = args.string("videoSourceMediaRef") == nil
+                ? .textToSFX
+                : .videoToSFX
+            guard model.entry.allowedEndpoints.contains(mireloOperation.rawValue) else {
+                throw ToolError(
+                    "Mirelo model '\(model.id)' does not offer \(mireloOperation.rawValue). Use the operations returned by list_models."
+                )
+            }
+            mireloArgs["operation"] = mireloOperation.rawValue
+            mireloArgs["logicalJobId"] = logicalJobID
+            mireloArgs["model"] = ModelCatalog.deriveLogicalId(model.id)
+            mireloArgs["durationMs"] = duration * 1_000
+            mireloArgs["numVariants"] = 1
+            mireloArgs["outputFormat"] = "wav"
+            if let source = args.string("videoSourceMediaRef") {
+                mireloArgs["sourceMediaRef"] = source
+            }
+            return try await runMireloAudio(editor, mireloArgs, origin: origin)
+        }
+
         let prompt = (args.string("prompt") ?? "").trimmingCharacters(in: .whitespaces)
         let acceptsVideo = model.inputs.contains(.video)
         var videoReference: MediaAsset?
@@ -2846,6 +2892,9 @@ extension ToolExecutor {
             "supportsLyrics": m.supportsLyrics,
             "supportsInstrumental": m.supportsInstrumental,
             "supportsStyleInstructions": m.supportsStyleInstructions,
+            "operations": m.entry.allowedEndpoints,
+            "minSeconds": m.minSeconds,
+            "maxSeconds": m.maxSeconds,
         ]
         if let voices = m.voices {
             info["voicesSample"] = Array(voices.prefix(3))

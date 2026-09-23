@@ -249,7 +249,7 @@ final class ModelCatalog {
     /// The provider-neutral LOGICAL id the LLM sees — a known provider prefix stripped off.
     /// (Internal ids stay as-is for registry lookup + dispatch; this is only the consumer surface.)
     nonisolated static func deriveLogicalId(_ internalId: String) -> String {
-        for prefix in ["fal-ai/", "runway/", "higgsfield/", "marble/", "google/"]
+        for prefix in ["fal-ai/", "runway/", "higgsfield/", "marble/", "google/", "mirelo/"]
         where internalId.hasPrefix(prefix) {
             return String(internalId.dropFirst(prefix.count))
         }
@@ -811,7 +811,7 @@ final class ModelCatalog {
             return GoogleModelRegistry.model(for: binding.providerRef) != nil
         case .marble:
             return MarbleModelRegistry.model(for: binding.providerRef) != nil
-        case .higgsfield, .openart, .ace, .elevenlabs:
+        case .higgsfield, .openart, .ace, .elevenlabs, .mirelo:
             return false
         }
     }

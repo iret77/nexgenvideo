@@ -1,0 +1,12 @@
+{
+  "id": "5f99d26e-0fbb-46d4-b6e0-51dbf221c7b2",
+  "upload_url": "https://uploads.example/mirelo-assets",
+  "upload_expires_at": "2026-09-23T10:15:00Z",
+  "max_bytes": 67108864,
+  "fields": {
+    "Content-Type": "audio/wav",
+    "key": "private/mirelo/asset.wav",
+    "policy": "fixture-policy",
+    "x-amz-signature": "fixture-signature"
+  }
+}

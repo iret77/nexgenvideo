@@ -484,6 +484,9 @@ final class ToolExecutor {
         case .getUIContract:        return try getUIContractTool(editor)
         case .setGateState:         return try await setGateStateTool(editor, args, origin: origin)
         case .runProviderTool:      return try await runProviderTool(editor, args, origin: origin)
+        case .runMireloAudio:
+            await CatalogDiscovery.ensureCurrent()
+            return try await runMireloAudio(editor, args, origin: origin)
         }
     }
 

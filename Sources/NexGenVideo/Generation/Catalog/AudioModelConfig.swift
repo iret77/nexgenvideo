@@ -44,6 +44,7 @@ struct AudioModelConfig: Identifiable, Sendable {
     enum Input: String, Sendable, Hashable {
         case text
         case video
+        case audio
     }
 
     enum Pricing: Sendable {

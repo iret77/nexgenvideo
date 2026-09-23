@@ -11,6 +11,7 @@ struct ProvidersPane: View {
     @State private var errorText: [String: String] = [:]
     @FocusState private var focusedProvider: String?
     private var catalog = ModelCatalog.shared
+    private var mireloCatalog = MireloCapabilityCatalog.shared
 
     @AppStorage(PromptCompiler.rawPromptsDefaultsKey) private var allowRawPrompts = false
 
@@ -145,6 +146,12 @@ struct ProvidersPane: View {
                 (label, tone) = ("Key rejected", .error)
             case .stale where connectionState(provider).hasKey:
                 (label, tone) = ("Refresh pending", .warning)
+            case .ready where provider == .mirelo
+                && (mireloCatalog.account?.provisioningState != "ready"
+                    || mireloCatalog.account?.recoveryAction != nil):
+                (label, tone) = ("Account action required", .warning)
+            case .ready where provider == .mirelo:
+                (label, tone) = ("Connected", .success)
             default:
                 (label, tone) = ready ? ("Key saved", .success) : ("Not configured", .neutral)
             }
@@ -221,6 +228,16 @@ struct ProvidersPane: View {
                 Text(message)
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Status.errorColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if provider == .mirelo, let account = mireloCatalog.account {
+                Text(mireloAccountStatus(account))
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .foregroundStyle(
+                        account.provisioningState == "ready"
+                            ? AppTheme.Text.secondaryColor
+                            : AppTheme.Status.warningColor
+                    )
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -311,6 +328,24 @@ struct ProvidersPane: View {
 
     private func connectionState(_ provider: GenerationProvider) -> ProviderConnectionSnapshot {
         connection[provider.id] ?? .empty
+    }
+
+    private func mireloAccountStatus(_ account: MireloAccount) -> String {
+        let identity = account.email.map { "Connected as \($0)." } ?? "Mirelo account connected."
+        if account.provisioningState != "ready" {
+            return identity + " Account provisioning is \(account.provisioningState)."
+        }
+        if let action = account.recoveryAction {
+            return identity + " Required action: "
+                + action.replacingOccurrences(of: "_", with: " ") + "."
+        }
+        if account.billingMode == "unmetered" {
+            return identity + " Unmetered billing."
+        }
+        if let capacity = account.spendCapacity {
+            return identity + " \(capacity) credits currently spendable."
+        }
+        return identity
     }
 }
 

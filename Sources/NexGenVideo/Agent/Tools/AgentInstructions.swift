@@ -251,6 +251,11 @@ enum AgentInstructions {
             only when the selected model supports it.
         - Generated audio lands on an audio track. add_clips with trackIndex omitted \
           auto-creates one when none exists yet.
+        - Mirelo's host operations use run_mirelo_audio. Supply one caller-owned logicalJobId UUID \
+          per exact request and reuse it to resume. Use audio-to-midi for prompt-free transcription; \
+          its instruments list is exhaustive, so omit it unless every sounding instrument is known. \
+          Use text-to-sfx, video-to-sfx, extend, or inpaint for the discovered general audio routes; \
+          compile every non-empty prompt first.
 
         # Prompt craft
         - Images: 15–30 words. Formula: subject + setting + shot type + lighting/mood. \

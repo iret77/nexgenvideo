@@ -68,6 +68,7 @@ enum ToolRunPresentation {
         "generate_video": "Generating video",
         "generate_image": "Generating an image",
         "generate_audio": "Generating audio",
+        "run_mirelo_audio": "Running Mirelo audio",
         "upscale_media": "Upscaling media",
         "list_models": "Listing generation models",
         "get_production_knowledge": "Reading production guidance",

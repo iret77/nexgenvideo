@@ -1578,7 +1578,7 @@ enum PipelineProductionRouting {
             return true
         case .higgsfield, .openart, .ace:
             return false
-        case .google, .marble, .elevenlabs:
+        case .google, .marble, .elevenlabs, .mirelo:
             return false
         }
     }

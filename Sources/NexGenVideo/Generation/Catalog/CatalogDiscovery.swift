@@ -92,6 +92,7 @@ enum CatalogDiscovery {
         let oauthConnected: Bool
         let entries: [CatalogEntry]
         let directResult: DirectImageDiscovery.Result
+        let mireloResult: MireloCatalogDiscovery.Result
         let mcpModelListingIsComplete: Bool
         let mcpDetailEnrichmentIsComplete: Bool
         let mcpSchemaChecks: [ProviderToolSchemaCheck]
@@ -103,6 +104,7 @@ enum CatalogDiscovery {
             oauthConnected: Bool,
             entries: [CatalogEntry],
             directResult: DirectImageDiscovery.Result = .inactive,
+            mireloResult: MireloCatalogDiscovery.Result = .inactive,
             mcpModelListingIsComplete: Bool = true,
             mcpDetailEnrichmentIsComplete: Bool = true,
             mcpSchemaChecks: [ProviderToolSchemaCheck] = [],
@@ -113,6 +115,7 @@ enum CatalogDiscovery {
             self.oauthConnected = oauthConnected
             self.entries = entries
             self.directResult = directResult
+            self.mireloResult = mireloResult
             self.mcpModelListingIsComplete = mcpModelListingIsComplete
             self.mcpDetailEnrichmentIsComplete = mcpDetailEnrichmentIsComplete
             self.mcpSchemaChecks = mcpSchemaChecks
@@ -231,6 +234,13 @@ enum CatalogDiscovery {
                 for: provider
             )
         }
+        if ProviderKeychain.load(.mirelo) != nil {
+            ModelCatalog.shared.beginDirectDiscovery(for: .mirelo)
+        }
+        ModelCatalog.shared.setProviderDiscoveryState(
+            ProviderKeychain.load(.mirelo) == nil ? .inactive : .checking,
+            for: .mirelo
+        )
         var modelCount = 0
         var providerCount = 0
         await forEachProviderResult(
@@ -247,15 +257,22 @@ enum CatalogDiscovery {
                     mcpResult = await discoverResult(provider)
                 }
                 let directResult = await DirectImageDiscovery.discover(provider)
+                let mireloResult = await MireloCatalogDiscovery.discover(provider)
                 let directObservedAt: String?
-                if case .success = directResult { directObservedAt = ISO8601DateFormatter().string(from: Date()) }
-                else { directObservedAt = nil }
+                if case .success = directResult {
+                    directObservedAt = ISO8601DateFormatter().string(from: Date())
+                } else if case .success = mireloResult {
+                    directObservedAt = ISO8601DateFormatter().string(from: Date())
+                } else {
+                    directObservedAt = nil
+                }
                 return ProviderResult(
                     provider: provider,
                     mcpConfigured: mcpConfigured,
                     oauthConnected: ProviderOAuthStore.isConnected(provider),
                     entries: mcpResult.entries,
                     directResult: directResult,
+                    mireloResult: mireloResult,
                     mcpModelListingIsComplete: mcpResult.modelListingIsComplete,
                     mcpDetailEnrichmentIsComplete: mcpResult.detailEnrichmentIsComplete,
                     mcpSchemaChecks: mcpResult.schemaChecks,
@@ -266,6 +283,7 @@ enum CatalogDiscovery {
                 let provider = result.provider
                 var publishedEntries = result.entries
                 var directState: ProviderDiscoveryState?
+                var preserveMireloCatalog = false
                 let retainedCount = ModelCatalog.shared.discoveredModelCount(for: provider)
                 switch result.directResult {
                 case .inactive:
@@ -284,6 +302,31 @@ enum CatalogDiscovery {
                         directState = .unavailable(message)
                     }
                 }
+                switch result.mireloResult {
+                case .inactive:
+                    if provider == .mirelo {
+                        MireloCapabilityCatalog.shared.clear()
+                    }
+                case .success(let account, let models, let entries):
+                    publishedEntries += entries
+                    MireloCapabilityCatalog.shared.publish(
+                        account: account,
+                        models: models,
+                        observedAt: Date()
+                    )
+                    directState = .ready(modelCount: models.count)
+                case .authenticationFailure(let message):
+                    MireloCapabilityCatalog.shared.clear()
+                    directState = .actionRequired(message)
+                case .unavailableFailure(let message):
+                    MireloCapabilityCatalog.shared.clear()
+                    directState = .unavailable(message)
+                case .transientFailure(let message):
+                    preserveMireloCatalog = retainedCount > 0
+                    directState = preserveMireloCatalog
+                        ? .stale(modelCount: retainedCount, message: message)
+                        : .unavailable(message)
+                }
                 let preserveDirectCatalog = DirectImageDiscovery.preservesLastKnownGood(
                     after: result.directResult,
                     currentModelCount: retainedCount
@@ -299,7 +342,7 @@ enum CatalogDiscovery {
                    !result.oauthConnected {
                     publishedEntries = []
                 }
-                if preserveDirectCatalog || mcpPublicationDecision != .publish {
+                if preserveDirectCatalog || preserveMireloCatalog || mcpPublicationDecision != .publish {
                     publishedEntries = []
                 } else {
                     ModelCatalog.shared.applyDiscovered(publishedEntries, for: provider)
@@ -341,11 +384,11 @@ enum CatalogDiscovery {
                         state = .ready(modelCount: publishedEntries.count)
                     }
                     ModelCatalog.shared.setProviderDiscoveryState(state, for: provider)
-                } else if DirectImageDiscovery.providers.contains(provider) {
+                } else if DirectImageDiscovery.providers.contains(provider) || provider == .mirelo {
                     let state = ProviderKeychain.load(provider) == nil
                         ? ProviderDiscoveryState.inactive
                         : directState ?? .unavailable(
-                            "The saved key could not load an active image-model catalog. Check the key and connection."
+                            "The saved key could not load an executable model catalog. Check the key and connection."
                         )
                     ModelCatalog.shared.setProviderDiscoveryState(state, for: provider)
                 }

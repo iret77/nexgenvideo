@@ -38,7 +38,7 @@ extension GenerationProvider {
             return MCPCapability(defaultURL: URL(string: "http://localhost:21572/mcp")!,
                                  auth: .localApp,
                                  note: "Singing-voice synthesis — requires the ACE Studio app running on this Mac.")
-        case .fal, .runway, .google, .elevenlabs, .marble:
+        case .fal, .runway, .google, .elevenlabs, .marble, .mirelo:
             // API only for our purposes — verified against the live endpoints. fal has a hosted MCP
             // (mcp.fal.ai/mcp, 200 with `Authorization: Key`) but it adds nothing over the REST key and
             // is pay-per-call; Runway's MCP (mcp.runwayml.com/mcp) rejected the REST key (401) so it is
@@ -67,7 +67,7 @@ extension GenerationProvider {
         // catalog tool is confirmed — no guessing a shape we can't test.
         // Google has no MCP at all — its image catalog is resolved over REST by
         // `DirectImageDiscovery`, not by an MCP catalog tool.
-        case .openart, .ace, .fal, .runway, .google, .elevenlabs, .marble:
+        case .openart, .ace, .fal, .runway, .google, .elevenlabs, .marble, .mirelo:
             return nil
         }
     }

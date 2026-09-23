@@ -1,0 +1,42 @@
+{
+  "job_id": "4d8b7360-2b42-4f25-a3fa-c9bcc7daf322",
+  "status": "succeeded",
+  "created_at": "2026-09-23T10:00:00Z",
+  "completed_at": "2026-09-23T10:00:24Z",
+  "result": {
+    "model": "audio-to-midi-pro",
+    "midi_url": "https://results.example/transcription.mid",
+    "musicxml_url": "https://results.example/score.musicxml",
+    "musicxml_optimized": true,
+    "score_bundle_url": "https://results.example/scores.zip",
+    "score_manifest_url": "https://results.example/score-manifest.json",
+    "score_pdfs": [
+      {
+        "kind": "full_score",
+        "filename": "Full Score.pdf",
+        "url": "https://results.example/full-score.pdf",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 42000
+      }
+    ],
+    "notes": [
+      { "pitch": 60, "start": 0.125, "end": 0.75, "instrument": "acoustic_piano", "velocity": 96 },
+      { "pitch": 64, "start": 0.75, "end": 1.5, "instrument": "acoustic_piano", "velocity": 88 }
+    ],
+    "duration_seconds": 120,
+    "note_count": 2,
+    "tempo_bpm": 120,
+    "timing": {
+      "requested": "performance",
+      "applied": "performance",
+      "subdivision": {
+        "version": 1,
+        "requested": "automatic",
+        "applied": "straight_sixteenths",
+        "confidence": 0.9,
+        "regions": []
+      }
+    }
+  },
+  "request": { "timing": "performance" }
+}
