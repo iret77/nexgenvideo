@@ -233,6 +233,10 @@ final class EditorViewModel {
             let nextProjectId = projectURL.flatMap {
                 ProjectIdentity.existingUUID(for: $0)
             }
+            if nextProjectId != projectId {
+                mireloSpendRecoveryMessage = nil
+                mireloSpendRecoveryNoticeFingerprint = nil
+            }
             let keepsLiveDeclaration = projectURL != nil
                 && nextProjectId != nil
                 && nextProjectId == projectId
@@ -1327,5 +1331,7 @@ final class EditorViewModel {
     }
 
     var availableCockpitPackSurfaces: [CockpitSurfaceData] = []
+    var mireloSpendRecoveryMessage: String?
+    @ObservationIgnored var mireloSpendRecoveryNoticeFingerprint: String?
 
 }

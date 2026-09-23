@@ -513,19 +513,35 @@ extension ToolExecutor {
                         spendTransactionID: transactionID
                     )
                 } catch {
-                    if let current = try? store.load(
-                        projectKey: projectKey,
-                        logicalJobID: logicalJobID
-                    ), current.spendTransactionID == transactionID,
+                    let approvalError = error
+                    let current: MireloExecutionRecord?
+                    do {
+                        current = try store.load(
+                            projectKey: projectKey,
+                            logicalJobID: logicalJobID
+                        )
+                    } catch {
+                        throw ToolError(
+                            "\(approvalError.localizedDescription) Mirelo approval could not be verified, so the spend reservation remains active: \(error.localizedDescription)"
+                        )
+                    }
+                    if let current,
+                       current.spendTransactionID == transactionID,
                        current.approvedAt != nil {
                         approvedRecord = current
                     } else {
-                        try? editor.recordSpendEvent(
-                            authorization: authorization,
-                            kind: .released,
-                            note: "Mirelo execution approval could not be persisted."
-                        )
-                        throw error
+                        do {
+                            try editor.releaseUnsubmittedSpendReservation(
+                                authorization: authorization,
+                                placeholders: [],
+                                note: "Mirelo execution approval could not be persisted."
+                            )
+                        } catch {
+                            throw ToolError(
+                                "\(approvalError.localizedDescription) The unused spend reservation could not be released: \(error.localizedDescription)"
+                            )
+                        }
+                        throw approvalError
                     }
                 }
                 return try await self.executeMireloRecord(
@@ -1107,25 +1123,35 @@ extension ToolExecutor {
             try authorization.projectMutationScope?.requireCurrent(editor: editor)
             return try mireloCompletedResult(completed, editor: editor)
         } catch {
-            if let current = try? store.load(
-                projectKey: record.projectKey,
-                logicalJobID: record.logicalJobID
-            ) {
-                try? mireloRecordSubmittedIfNeeded(
+            let executionError = error
+            do {
+                guard let current = try store.load(
+                    projectKey: record.projectKey,
+                    logicalJobID: record.logicalJobID
+                ) else {
+                    throw GenerationRequestError.storage(
+                        "The Mirelo execution authority disappeared before spend could be reconciled."
+                    )
+                }
+                try mireloRecordSubmittedIfNeeded(
                     current,
                     authorization: authorization,
                     editor: editor
                 )
                 if current.providerJobID == nil,
                    current.state == .failed {
-                    try? editor.recordSpendEvent(
+                    try editor.releaseUnsubmittedSpendReservation(
                         authorization: authorization,
-                        kind: .released,
+                        preserveMireloExecutionIdentity: true,
                         note: current.lastError
                     )
                 }
+            } catch {
+                throw ToolError(
+                    "\(executionError.localizedDescription) Mirelo spend reconciliation remains unresolved: \(error.localizedDescription)"
+                )
             }
-            throw ToolError(error.localizedDescription)
+            throw ToolError(executionError.localizedDescription)
         }
     }
 

@@ -164,66 +164,88 @@ extension EditorViewModel {
         }
     }
 
-    func releaseRejectedSpendReservation(
+    func releaseUnsubmittedSpendReservation(
         authorization: GenerationAuthorization,
-        asset: MediaAsset,
-        executionTransactionID: String,
+        placeholders: [MediaAsset],
+        preserveMireloExecutionIdentity: Bool = false,
+        allowDetachedManifest: Bool = false,
         note: String?
     ) throws {
-        guard let transactionID = authorization.transactionId,
-              transactionID == executionTransactionID,
-              let workingRoot,
+        guard let transactionID = authorization.transactionId else { return }
+        guard
+              workingRoot != nil,
               let workingCopyKey = openWorkingCopyKey else {
             throw GenerationRequestError.storage(
-                "The rejected generation has no live project spend identity."
+                "The unsubmitted generation has no live project spend identity."
             )
         }
         try authorization.projectMutationScope?.requireCurrent(editor: self)
-        guard mediaAssets.contains(where: { $0 === asset }),
-              !FileManager.default.fileExists(atPath: asset.url.path),
-              asset.generationInput?.spendTransactionId == transactionID else {
-            throw GenerationRequestError.storage(
-                "Only the missing rejected placeholder can be detached from its reservation."
-            )
-        }
         let matchingAssets = mediaAssets.filter {
             $0.generationInput?.spendTransactionId == transactionID
         }
-        guard matchingAssets.count == 1, matchingAssets[0] === asset else {
+        var expectedAssets: [ObjectIdentifier: MediaAsset] = [:]
+        for placeholder in placeholders {
+            guard expectedAssets.updateValue(
+                placeholder,
+                forKey: ObjectIdentifier(placeholder)
+            ) == nil else {
+                throw GenerationRequestError.storage(
+                    "The unsubmitted reservation contains a duplicate placeholder."
+                )
+            }
+        }
+        guard placeholders.allSatisfy({ expected in
+                  expected.generationInput?.spendTransactionId == transactionID
+                      && !FileManager.default.fileExists(atPath: expected.url.path)
+              }),
+              matchingAssets.allSatisfy({ current in
+                  expectedAssets[ObjectIdentifier(current)] != nil
+                      && !FileManager.default.fileExists(atPath: current.url.path)
+              }) else {
             throw GenerationRequestError.storage(
-                "The rejected reservation is attached to conflicting project media."
+                "The unsubmitted reservation is attached to conflicting or existing project media."
             )
         }
         let matchingManifestIndices = mediaManifest.entries.indices.filter {
             mediaManifest.entries[$0].generationInput?.spendTransactionId == transactionID
         }
-        guard matchingManifestIndices.count == 1,
-              mediaManifest.entries[matchingManifestIndices[0]].id == asset.id else {
+        let placeholderIDs = Set(placeholders.map(\.id))
+        guard matchingManifestIndices.allSatisfy({ index in
+            let entry = mediaManifest.entries[index]
+            guard (placeholderIDs.contains(entry.id) || allowDetachedManifest),
+                  let url = mediaResolver.expectedURL(for: entry.id) else { return false }
+            return !FileManager.default.fileExists(atPath: url.path)
+        }) else {
             throw GenerationRequestError.storage(
-                "The rejected placeholder does not match the project manifest."
+                "The unsubmitted reservation conflicts with existing project media."
             )
         }
         let transactionEvents = generationLog.spendEvents.filter {
             $0.transactionId == transactionID
         }
-        guard let first = transactionEvents.first,
+        guard transactionEvents.count == 1,
+              let first = transactionEvents.first,
               transactionEvents.last?.kind == .reserved,
               first.model == authorization.target.modelId,
               first.provider == authorization.target.provider,
               first.transport == authorization.target.transport,
               first.endpoint == authorization.target.endpoint else {
             throw GenerationRequestError.storage(
-                "The rejected placeholder does not match its active spend reservation."
+                "The unsubmitted generation does not match its active spend reservation."
             )
         }
 
         var nextManifest = mediaManifest
-        nextManifest.entries[matchingManifestIndices[0]].generationInput = nil
-        nextManifest.entries[matchingManifestIndices[0]].mireloExecutionTransactionId = transactionID
+        for index in matchingManifestIndices {
+            nextManifest.entries[index].generationInput = nil
+            if preserveMireloExecutionIdentity {
+                nextManifest.entries[index].mireloExecutionTransactionId = transactionID
+            }
+        }
         var nextLog = generationLog
         nextLog.version = 2
         nextLog.entries.removeAll { $0.spendTransactionId == transactionID }
-        nextLog.spendEvents.append(GenerationSpendEvent(
+        let releaseEvent = GenerationSpendEvent(
             transactionId: transactionID,
             kind: .released,
             model: authorization.target.modelId,
@@ -232,14 +254,24 @@ extension EditorViewModel {
             endpoint: authorization.target.endpoint,
             money: authorization.estimate,
             note: note
-        ))
-        let projectedInputs = mediaAssets.compactMap { current in
-            current === asset ? nil : current.generationInput
+        )
+        nextLog.spendEvents.append(releaseEvent)
+        let projectedInputs = mediaAssets.compactMap { current -> GenerationInput? in
+            current.generationInput?.spendTransactionId == transactionID
+                ? nil
+                : current.generationInput
         }
         _ = try GenerationBudgetGuard.spendSnapshot(
             log: nextLog,
             generatedInputs: projectedInputs
         )
+        if let batch = authorization.batchItem {
+            try GenerationBatchStore.recordSpendEvent(
+                releaseEvent,
+                authorization: batch,
+                editor: self
+            )
+        }
         let manifestData = try JSONEncoder().encode(nextManifest)
         let logData = try JSONEncoder().encode(nextLog)
         try ProjectWorkingCopy.transact(key: workingCopyKey) { staging in
@@ -252,18 +284,52 @@ extension EditorViewModel {
                 options: .atomic
             )
         }
-        try authorization.projectMutationScope?.requireCurrent(editor: self)
-        guard self.workingRoot?.standardizedFileURL == workingRoot.standardizedFileURL,
-              mediaAssets.contains(where: { $0 === asset }) else {
-            throw GenerationRequestError.storage(
-                "The project changed while the rejected reservation was released."
-            )
+        for asset in expectedAssets.values {
+            asset.generationInput = nil
+            if preserveMireloExecutionIdentity {
+                asset.mireloExecutionTransactionId = transactionID
+            }
         }
-        asset.generationInput = nil
-        asset.mireloExecutionTransactionId = transactionID
         mediaManifest = nextManifest
         generationLog = nextLog
         onPipelineChanged?()
+    }
+
+    func releaseUnsubmittedSpendReservation(
+        authorization: GenerationAuthorization,
+        preserveMireloExecutionIdentity: Bool,
+        note: String?
+    ) throws {
+        guard let transactionID = authorization.transactionId else { return }
+        let placeholders = mediaAssets.filter {
+            $0.generationInput?.spendTransactionId == transactionID
+        }
+        try releaseUnsubmittedSpendReservation(
+            authorization: authorization,
+            placeholders: placeholders,
+            preserveMireloExecutionIdentity: preserveMireloExecutionIdentity,
+            allowDetachedManifest: true,
+            note: note
+        )
+    }
+
+    func releaseRejectedSpendReservation(
+        authorization: GenerationAuthorization,
+        asset: MediaAsset,
+        executionTransactionID: String,
+        note: String?
+    ) throws {
+        guard authorization.transactionId == executionTransactionID else {
+            throw GenerationRequestError.storage(
+                "The rejected generation has no matching project spend identity."
+            )
+        }
+        try releaseUnsubmittedSpendReservation(
+            authorization: authorization,
+            placeholders: [asset],
+            preserveMireloExecutionIdentity: true,
+            note: note
+        )
     }
 
     func persistGenerationLog() throws {

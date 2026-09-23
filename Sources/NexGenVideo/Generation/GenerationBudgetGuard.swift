@@ -60,6 +60,9 @@ enum GenerationBudgetGuard {
             projectHome: workingRoot,
             editor: editor
         )
+        if let recoveryMessage = editor.mireloSpendRecoveryMessage {
+            throw GenerationBudgetError.blocked(recoveryMessage)
+        }
 
         let estimate: GenerationMoney?
         let pricingFailure: String?
@@ -160,6 +163,9 @@ enum GenerationBudgetGuard {
             projectHome: workingRoot,
             editor: editor
         )
+        if let recoveryMessage = editor.mireloSpendRecoveryMessage {
+            throw GenerationBudgetError.blocked(recoveryMessage)
+        }
 
         let stop = try budgetStop(in: workingRoot)
         var log = try loadGenerationLog(from: workingRoot) ?? editor.generationLog

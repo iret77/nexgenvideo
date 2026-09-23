@@ -486,10 +486,24 @@ enum GenerationController {
                     compileRecipe: generation.recipe, referenceSnapshot: referenceSnapshot, generationPackage: package,
                     batchItem: generation.batchItem)
             } catch {
-                try? editor.recordSpendEvent(authorization: priced, kind: .released, note: error.localizedDescription)
+                do {
+                    try editor.releaseUnsubmittedSpendReservation(
+                        authorization: priced,
+                        placeholders: [],
+                        note: error.localizedDescription
+                    )
+                } catch let releaseError {
+                    throw GenerationRequestError.storage(
+                        "\(error.localizedDescription) The unused spend reservation could not be released: \(releaseError.localizedDescription)"
+                    )
+                }
                 throw error
             }
-        } catch { return .failure(.budget(error.localizedDescription)) }
+        } catch let error as GenerationRequestError {
+            return .failure(error)
+        } catch {
+            return .failure(.budget(error.localizedDescription))
+        }
         do {
             try await referenceSnapshot?.requireUnchanged()
             guard editor.workingRoot == requestHome else { throw GenerationRequestError.gate("The active project changed during reference validation.") }
@@ -497,7 +511,17 @@ enum GenerationController {
             try generation.destination.requireCurrent(editor: editor)
         }
         catch {
-            try? editor.recordSpendEvent(authorization: authorization, kind: .released, note: error.localizedDescription)
+            do {
+                try editor.releaseUnsubmittedSpendReservation(
+                    authorization: authorization,
+                    placeholders: [],
+                    note: error.localizedDescription
+                )
+            } catch let releaseError {
+                return .failure(.storage(
+                    "\(error.localizedDescription) The unused spend reservation could not be released: \(releaseError.localizedDescription)"
+                ))
+            }
             return .failure(.optionsInvalid(error.localizedDescription))
         }
 
@@ -505,11 +529,17 @@ enum GenerationController {
             do {
                 _ = try editor.prepareWorkingMediaDirectory()
             } catch {
-                try? editor.recordSpendEvent(
-                    authorization: authorization,
-                    kind: .released,
-                    note: error.localizedDescription
-                )
+                do {
+                    try editor.releaseUnsubmittedSpendReservation(
+                        authorization: authorization,
+                        placeholders: [],
+                        note: error.localizedDescription
+                    )
+                } catch let releaseError {
+                    return .failure(.storage(
+                        "\(error.localizedDescription) The unused spend reservation could not be released: \(releaseError.localizedDescription)"
+                    ))
+                }
                 return .failure(.storage(error.localizedDescription))
             }
         }
@@ -804,11 +834,20 @@ enum GenerationController {
                     onFinished: { progress?.onFinished?() },
                     onSucceeded: { onSuccess?(nil) })
             } catch {
-                try? editor.recordSpendEvent(
-                    authorization: authorization,
-                    kind: .released,
-                    note: error.localizedDescription
-                )
+                do {
+                    try editor.releaseUnsubmittedSpendReservation(
+                        authorization: authorization,
+                        placeholders: [],
+                        note: error.localizedDescription
+                    )
+                } catch let releaseError {
+                    Log.generation.error(
+                        "music preparation failed and spend release could not persist: \(releaseError.localizedDescription)"
+                    )
+                    editor.mediaPanelToast = MediaPanelToast(
+                        message: "\(error.localizedDescription) The unused spend reservation could not be released: \(releaseError.localizedDescription)"
+                    )
+                }
                 progress?.onFinished?()
                 onFailure?()
             }
