@@ -83,7 +83,7 @@ struct InspectorFormLayoutTests {
         }
     }
 
-    @Test func everyCropAspectLabelFitsAtMinimumWidthAndLargestScale() throws {
+    @Test func everyFixedSizeCropAspectMenuFitsAtMinimumWidthAndLargestScale() throws {
         for aspect in CropAspectLock.allCases {
             let totalWidth = AppTheme.Layout.inspectorMin
             let fixture = InspectorAxisFixture(
@@ -99,61 +99,108 @@ struct InspectorFormLayoutTests {
             _ = host.fittingSize
             host.layoutSubtreeIfNeeded()
 
-            let label = try frame("crop-menu-label", in: host)
             let menu = try frame("crop-menu", in: host)
             let control = try frame("crop-control", in: host)
             let row = try frame("crop-row", in: host)
-            #expect(label.width > 0)
-            #expect(label.height > 0)
-            #expect(isContained(label, in: menu))
+            #expect(menu.width > 0)
+            #expect(menu.height > 0)
             #expect(isContained(menu, in: control))
             #expect(isContained(control, in: row))
         }
     }
 
-    @Test func realAudioAndVideoPanelsExposeVisibleNamedAlignedLanes() throws {
-        let video = Fixtures.clip(id: "video", mediaType: .video, start: 0, duration: 90)
-        let audio = Fixtures.clip(id: "audio", mediaType: .audio, start: 0, duration: 90)
-        for (clip, properties) in [
-            (video, [AnimatableProperty.position, .scale, .rotation, .opacity, .crop]),
-            (audio, [AnimatableProperty.volume]),
-        ] {
-            let editor = EditorViewModel()
-            let track = clip.mediaType == .audio
-                ? Fixtures.audioTrack(clips: [clip])
-                : Fixtures.videoTrack(clips: [clip])
-            editor.timeline = Fixtures.timeline(tracks: [track])
-            let panelWidth = AppTheme.Layout.inspectorDefault - AppTheme.Spacing.lg * 2
-            let fixture = KeyframesPanel(clip: clip)
-                .environment(editor)
+    @Test func cropAspectLabelsHaveIntrinsicSizeAtLargestScale() throws {
+        for aspect in CropAspectLock.allCases {
+            let fixture = InspectorCropAspectLabel(label: aspect.label)
                 .environment(\.interfaceScale, 1.5)
-                .frame(width: panelWidth)
-                .background(InspectorGeometryProbe(name: "keyframes-panel"))
+                .fixedSize()
+                .background(InspectorGeometryProbe(name: "crop-aspect-label"))
             let host = NSHostingView(rootView: fixture)
-            host.setFrameSize(.init(width: panelWidth, height: AppTheme.Window.projectMin.height))
+            host.setFrameSize(.init(width: AppTheme.Layout.inspectorMin, height: AppTheme.Control.regularHeight))
             host.layoutSubtreeIfNeeded()
             _ = host.fittingSize
             host.layoutSubtreeIfNeeded()
 
-            let panel = try frame("keyframes-panel", in: host)
-            let ruler = try frame("inspector.keyframes.ruler", in: host)
-            #expect(isContained(ruler, in: panel))
-            for property in properties {
-                let label = try frame(
-                    "inspector.keyframes.lane.\(property.rawValue).label",
-                    in: host
-                )
-                let track = try frame(
-                    "inspector.keyframes.lane.\(property.rawValue).track",
-                    in: host
-                )
-                #expect(label.width > 0)
-                #expect(label.height > 0)
-                #expect(isContained(label, in: panel))
-                #expect(isContained(track, in: panel))
-                #expect(label.maxX + AppTheme.Spacing.sm <= track.minX + 1)
-                #expect(abs(track.minX - ruler.minX) < 1)
-                #expect(abs(track.maxX - ruler.maxX) < 1)
+            let label = try frame("crop-aspect-label", in: host)
+            #expect(label.width > 0)
+            #expect(label.height > 0)
+        }
+    }
+
+    @Test func realAudioAndVideoPanelsAdaptNamedLanesAcrossWidthsAndScales() throws {
+        let video = Fixtures.clip(id: "video", mediaType: .video, start: 0, duration: 90)
+        let audio = Fixtures.clip(id: "audio", mediaType: .audio, start: 0, duration: 90)
+        let panelWidths = [
+            AppTheme.Layout.inspectorMin - AppTheme.Spacing.lg * 2,
+            AppTheme.Layout.inspectorDefault - AppTheme.Spacing.lg * 2,
+            AppTheme.Layout.inspectorDefault * 2 - AppTheme.Spacing.lg * 2,
+        ]
+        let wideLayoutMinimumWidth = AppTheme.Timeline.keyframeLaneLabelWidth
+            + AppTheme.Spacing.sm
+            + AppTheme.Timeline.keyframeLaneMinimumTrackWidth
+
+        for panelWidth in panelWidths {
+            for scale in [1.0, 1.3, 1.5] {
+                for (clip, properties) in [
+                    (video, [AnimatableProperty.position, .scale, .rotation, .opacity, .crop]),
+                    (audio, [AnimatableProperty.volume]),
+                ] {
+                    let editor = EditorViewModel()
+                    let timelineTrack = clip.mediaType == .audio
+                        ? Fixtures.audioTrack(clips: [clip])
+                        : Fixtures.videoTrack(clips: [clip])
+                    editor.timeline = Fixtures.timeline(tracks: [timelineTrack])
+                    let fixture = KeyframesPanel(clip: clip)
+                        .environment(editor)
+                        .environment(\.interfaceScale, scale)
+                        .frame(width: panelWidth)
+                        .background(InspectorGeometryProbe(name: "keyframes-panel"))
+                    let host = NSHostingView(rootView: fixture)
+                    host.setFrameSize(.init(width: panelWidth, height: AppTheme.Window.projectMin.height))
+                    host.layoutSubtreeIfNeeded()
+                    _ = host.fittingSize
+                    host.layoutSubtreeIfNeeded()
+
+                    let panel = try frame("keyframes-panel", in: host)
+                    let ruler = try frame("inspector.keyframes.ruler", in: host)
+                    let timelineAxis = try frame("inspector.keyframes.timeline-axis", in: host)
+                    #expect(isContained(ruler, in: panel))
+                    #expect(isContained(timelineAxis, in: panel))
+                    #expect(abs(timelineAxis.minX - ruler.minX) < 1)
+                    #expect(abs(timelineAxis.maxX - ruler.maxX) < 1)
+                    let usesLabelsAboveTracks = panelWidth < wideLayoutMinimumWidth
+                    if usesLabelsAboveTracks {
+                        #expect(abs(ruler.minX - panel.minX) < 1)
+                        #expect(abs(ruler.maxX - panel.maxX) < 1)
+                    } else {
+                        #expect(abs(ruler.width - (panel.width
+                            - AppTheme.Timeline.keyframeLaneLabelWidth
+                            - AppTheme.Spacing.sm)) < 1)
+                    }
+
+                    for property in properties {
+                        let label = try frame(
+                            "inspector.keyframes.lane.\(property.rawValue).label",
+                            in: host
+                        )
+                        let track = try frame(
+                            "inspector.keyframes.lane.\(property.rawValue).track",
+                            in: host
+                        )
+                        #expect(label.width > 0)
+                        #expect(label.height > 0)
+                        #expect(track.width >= AppTheme.Timeline.keyframeLaneMinimumTrackWidth)
+                        #expect(isContained(label, in: panel))
+                        #expect(isContained(track, in: panel))
+                        #expect(abs(track.minX - ruler.minX) < 1)
+                        #expect(abs(track.maxX - ruler.maxX) < 1)
+                        if usesLabelsAboveTracks {
+                            #expect(label.maxY + AppTheme.Spacing.xs <= track.minY + 1)
+                        } else {
+                            #expect(label.maxX + AppTheme.Spacing.sm <= track.minX + 1)
+                        }
+                    }
+                }
             }
         }
     }
@@ -263,7 +310,6 @@ private struct InspectorAxisFixture: View {
                         Button("Custom") {}
                     } label: {
                         InspectorCropAspectLabel(label: cropAspect.label)
-                            .background(InspectorGeometryProbe(name: "crop-menu-label"))
                     }
                     .menuStyle(.borderlessButton)
                     .menuIndicator(.hidden)

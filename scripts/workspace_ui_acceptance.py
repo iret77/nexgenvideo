@@ -20,7 +20,41 @@ EXPECTED_INSPECTOR_CASES = {
     ("asset", None),
     ("caption", None),
 }
+EXPECTED_KEYFRAME_LANES = {
+    "audio": ["volume"],
+    "video": ["position", "scale", "rotation", "opacity", "crop"],
+}
 SCALES = (1.0, 1.25, 1.5)
+
+
+def valid_frame(frame):
+    return (
+        isinstance(frame, dict)
+        and set(frame) == {"height", "width", "x", "y"}
+        and frame["height"] > 0
+        and frame["width"] > 0
+    )
+
+
+def valid_keyframe_lane_evidence(row):
+    expected = EXPECTED_KEYFRAME_LANES.get(row.get("family"))
+    evidence = row.get("laneLabelEvidence")
+    if (
+        expected is None
+        or row.get("laneLabelVisibility") != "sequential-in-scroll-clip"
+        or row.get("reachableLaneLabels") != expected
+        or row.get("visibleLaneLabel") != expected[-1]
+        or not isinstance(evidence, list)
+        or [item.get("property") for item in evidence] != expected
+    ):
+        return False
+    return all(
+        item.get("visible") is True
+        and valid_frame(item.get("clipFrame"))
+        and valid_frame(item.get("panelFrame"))
+        and valid_frame(item.get("probeFrame"))
+        for item in evidence
+    )
 
 
 def run_scale(executable, output, scale):
@@ -74,6 +108,7 @@ def run_scale(executable, output, scale):
     pinned = [row for row in rows if row.get("event") == "narrow-production-pinned"]
     invariants = [row for row in rows if row.get("event") == "invariants"]
     inspector = [row for row in rows if row.get("event") == "inspector"]
+    open_keyframes = [row for row in inspector if row.get("keyframes") == "open"]
     screenshots = [
         row.get("screenshot")
         for row in workspace_rows + hidden + narrow + pinned + inspector
@@ -97,6 +132,8 @@ def run_scale(executable, output, scale):
         and {(row.get("family"), row.get("keyframes")) for row in inspector}
         == EXPECTED_INSPECTOR_CASES
         and len(inspector) == len(EXPECTED_INSPECTOR_CASES)
+        and len(open_keyframes) == len(EXPECTED_KEYFRAME_LANES)
+        and all(valid_keyframe_lane_evidence(row) for row in open_keyframes)
         and invariants[0].get("liveStateUnchanged") is True
         and invariants[0].get("projectBytesUnchanged") is True
         and invariants[0].get("undoUnchanged") is True

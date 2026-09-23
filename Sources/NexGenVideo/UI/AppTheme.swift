@@ -501,6 +501,7 @@ enum AppTheme {
         static let keyframeHeaderHeight: CGFloat = keyframeRulerHeight + keyframeStripHeight
         static let keyframeRowHeight: CGFloat = 22
         static let keyframeLaneLabelWidth: CGFloat = 72
+        static let keyframeLaneMinimumTrackWidth: CGFloat = 96
         static let keyframeStampButtonWidth: CGFloat = 22
         static let keyframeNavigationButtonWidth: CGFloat = 6
         static let keyframeControlsColumnWidth: CGFloat =

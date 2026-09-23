@@ -279,61 +279,125 @@ struct KeyframesPanel: View {
     private var timelineLeadingInset: CGFloat {
         AppTheme.Timeline.keyframeLaneLabelWidth + AppTheme.Spacing.sm
     }
+    private var wideLayoutMinimumWidth: CGFloat {
+        timelineLeadingInset + AppTheme.Timeline.keyframeLaneMinimumTrackWidth
+    }
 
     var body: some View {
+        ViewThatFits(in: .horizontal) {
+            panel(labelsAboveTracks: false)
+                .frame(minWidth: wideLayoutMinimumWidth)
+            panel(labelsAboveTracks: true)
+        }
+        .background {
+            AppRelaunchClickProbe(identifier: "inspector.keyframes.panel")
+        }
+    }
+
+    private func panel(labelsAboveTracks: Bool) -> some View {
         ZStack(alignment: .topLeading) {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-                HStack(spacing: AppTheme.Spacing.sm) {
-                    AppTheme.Background.clearColor
-                        .frame(width: AppTheme.Timeline.keyframeLaneLabelWidth)
-                    ClipRulerBlock(clip: clip, tint: tint, onSeek: { editor.seekToFrame($0) })
-                        .background {
-                            AppRelaunchClickProbe(identifier: "inspector.keyframes.ruler")
-                        }
-                }
+                rulerRow(labelsAboveTracks: labelsAboveTracks)
                 ForEach(rows, id: \.self) { property in
-                    HStack(spacing: AppTheme.Spacing.sm) {
-                        Text(property.displayName)
-                            .interfaceFont(
-                                size: AppTheme.Typography.metadata,
-                                weight: AppTheme.FontWeight.medium
-                            )
-                            .foregroundStyle(AppTheme.Text.secondaryColor)
-                            .lineLimit(1)
-                            .minimumScaleFactor(CGFloat(1 / max(1, interfaceScale)))
-                            .allowsTightening(true)
-                            .frame(
-                                width: AppTheme.Timeline.keyframeLaneLabelWidth,
-                                alignment: .trailing
-                            )
-                            .accessibilityHidden(true)
-                            .background {
-                                AppRelaunchClickProbe(
-                                    identifier: "inspector.keyframes.lane.\(property.rawValue).label"
-                                )
-                            }
-                        KeyframesLaneRow(
-                            clip: clip,
-                            property: property,
-                            accessibilityName: property.displayName,
-                            frames: editor.keyframeFrames(clipId: clip.id, property: property),
-                            tint: tint,
-                            snapX: $snapX
-                        )
-                        .frame(height: AppTheme.Timeline.keyframeRowHeight)
-                        .background {
-                            AppRelaunchClickProbe(
-                                identifier: "inspector.keyframes.lane.\(property.rawValue).track"
-                            )
-                        }
-                    }
+                    laneRow(property, labelsAboveTracks: labelsAboveTracks)
                 }
             }
-            playheadOverlay
-                .padding(.leading, timelineLeadingInset)
-            snapOverlay
-                .padding(.leading, timelineLeadingInset)
+            timelineOverlays
+                .padding(.leading, labelsAboveTracks ? AppTheme.Spacing.none : timelineLeadingInset)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func rulerRow(labelsAboveTracks: Bool) -> some View {
+        if labelsAboveTracks {
+            ruler
+        } else {
+            HStack(spacing: AppTheme.Spacing.sm) {
+                AppTheme.Background.clearColor
+                    .frame(width: AppTheme.Timeline.keyframeLaneLabelWidth)
+                ruler
+            }
+        }
+    }
+
+    private var ruler: some View {
+        ClipRulerBlock(clip: clip, tint: tint, onSeek: { editor.seekToFrame($0) })
+            .frame(maxWidth: .infinity)
+            .background {
+                AppRelaunchClickProbe(identifier: "inspector.keyframes.ruler")
+            }
+    }
+
+    @ViewBuilder
+    private func laneRow(_ property: AnimatableProperty, labelsAboveTracks: Bool) -> some View {
+        if labelsAboveTracks {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                laneLabel(property, alignment: .leading, fixedWidth: false)
+                laneTrack(property)
+            }
+        } else {
+            HStack(spacing: AppTheme.Spacing.sm) {
+                laneLabel(property, alignment: .trailing, fixedWidth: true)
+                laneTrack(property)
+            }
+        }
+    }
+
+    private func laneLabel(
+        _ property: AnimatableProperty,
+        alignment: Alignment,
+        fixedWidth: Bool
+    ) -> some View {
+        Text(property.displayName)
+            .interfaceFont(
+                size: AppTheme.Typography.metadata,
+                weight: AppTheme.FontWeight.medium
+            )
+            .foregroundStyle(AppTheme.Text.secondaryColor)
+            .lineLimit(1)
+            .minimumScaleFactor(CGFloat(1 / max(1, interfaceScale)))
+            .allowsTightening(true)
+            .frame(
+                width: fixedWidth ? AppTheme.Timeline.keyframeLaneLabelWidth : nil,
+                alignment: alignment
+            )
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+            .background {
+                AppRelaunchClickProbe(
+                    identifier: "inspector.keyframes.lane.\(property.rawValue).label"
+                )
+            }
+    }
+
+    private func laneTrack(_ property: AnimatableProperty) -> some View {
+        KeyframesLaneRow(
+            clip: clip,
+            property: property,
+            accessibilityName: property.displayName,
+            frames: editor.keyframeFrames(clipId: clip.id, property: property),
+            tint: tint,
+            snapX: $snapX
+        )
+        .frame(maxWidth: .infinity)
+        .frame(height: AppTheme.Timeline.keyframeRowHeight)
+        .background {
+            AppRelaunchClickProbe(
+                identifier: "inspector.keyframes.lane.\(property.rawValue).track"
+            )
+        }
+    }
+
+    private var timelineOverlays: some View {
+        ZStack(alignment: .topLeading) {
+            playheadOverlay
+            snapOverlay
+        }
+        .background {
+            AppRelaunchClickProbe(identifier: "inspector.keyframes.timeline-axis")
+        }
+        .allowsHitTesting(false)
     }
 
     /// Dashed yellow vertical line at the active snap x

@@ -485,30 +485,127 @@ enum WorkspaceUIAcceptance {
                 let expectedLaneProperties: [AnimatableProperty] = item.family == "audio"
                     ? [.volume]
                     : [.position, .scale, .rotation, .opacity, .crop]
-                guard let inspectorFrame = visiblePanelFrames(in: host)["inspectorPanel"],
-                      expectedLaneProperties.allSatisfy({ property in
-                          visibleProbe(
-                              identifier: "inspector.keyframes.lane.\(property.rawValue).label",
-                              in: window,
-                              containedBy: inspectorFrame
-                          )
-                      }) else {
-                    fail("inspector \(item.family) keyframe lane labels were not visible", scale: scale)
+                guard let root = window.contentView else {
+                    fail("inspector \(item.family) window content was unavailable", scale: scale)
                 }
-                try? await Task.sleep(for: .milliseconds(300))
+                let inspectorFrame = visiblePanelFrames(in: host)["inspectorPanel"]
+                let panelProbe = findProbe(in: root, identifier: "inspector.keyframes.panel")
+                let firstProperty = expectedLaneProperties.first
+                let firstLabel = firstProperty.flatMap {
+                    findProbe(
+                        in: root,
+                        identifier: "inspector.keyframes.lane.\($0.rawValue).label"
+                    )
+                }
+                let inspectorScrollView = firstLabel.flatMap { enclosingScrollView(for: $0) }
+                guard let inspectorFrame,
+                      let panelProbe,
+                      let inspectorScrollView else {
+                    var diagnostic = keyframeGeometryDiagnostics(
+                        root: root,
+                        panelProbe: panelProbe,
+                        scrollView: inspectorScrollView,
+                        probe: firstLabel
+                    )
+                    diagnostic["family"] = item.family
+                    diagnostic["reason"] = "panel, first label, or enclosing scroll view unavailable"
+                    emit(
+                        "inspector-keyframe-diagnostic",
+                        scale: scale,
+                        fields: diagnostic
+                    )
+                    fail("inspector \(item.family) keyframe scroll geometry was unavailable", scale: scale)
+                }
+                let originalScrollOrigin = inspectorScrollView.contentView.bounds.origin
+                var laneEvidence: [[String: Any]] = []
+                for property in expectedLaneProperties {
+                    let identifier = "inspector.keyframes.lane.\(property.rawValue).label"
+                    let probe = findProbe(in: root, identifier: identifier)
+                    guard let probe,
+                          enclosingScrollView(for: probe) === inspectorScrollView,
+                          let documentView = inspectorScrollView.documentView else {
+                        var diagnostic = keyframeGeometryDiagnostics(
+                            root: root,
+                            panelProbe: panelProbe,
+                            scrollView: inspectorScrollView,
+                            probe: probe
+                        )
+                        diagnostic["family"] = item.family
+                        diagnostic["property"] = property.rawValue
+                        diagnostic["reason"] = "lane label did not share the inspector scroll view"
+                        emit(
+                            "inspector-keyframe-diagnostic",
+                            scale: scale,
+                            fields: diagnostic
+                        )
+                        fail("inspector \(item.family) keyframe lane was unreachable", scale: scale)
+                    }
+                    let target = probe.convert(probe.bounds, to: documentView)
+                    documentView.scrollToVisible(target)
+                    inspectorScrollView.reflectScrolledClipView(inspectorScrollView.contentView)
+                    try? await Task.sleep(for: .milliseconds(100))
+                    host.layoutSubtreeIfNeeded()
+
+                    let clipFrame = inspectorScrollView.contentView.convert(
+                        inspectorScrollView.contentView.bounds,
+                        to: root
+                    )
+                    let probeFrame = probe.convert(probe.bounds, to: root)
+                    let isVisible = probe.window === window
+                        && !probe.isHiddenOrHasHiddenAncestor
+                        && probeFrame.width > 0
+                        && probeFrame.height > 0
+                        && clipFrame.insetBy(
+                            dx: -AppTheme.BorderWidth.thin,
+                            dy: -AppTheme.BorderWidth.thin
+                        ).contains(probeFrame)
+                        && inspectorFrame.insetBy(
+                            dx: -AppTheme.BorderWidth.thin,
+                            dy: -AppTheme.BorderWidth.thin
+                        ).contains(probeFrame)
+                    var geometry = keyframeGeometryDiagnostics(
+                        root: root,
+                        panelProbe: panelProbe,
+                        scrollView: inspectorScrollView,
+                        probe: probe
+                    )
+                    geometry["property"] = property.rawValue
+                    geometry["visible"] = isVisible
+                    laneEvidence.append(geometry)
+                    guard isVisible else {
+                        geometry["family"] = item.family
+                        geometry["reason"] = "lane label was outside the scroll clip"
+                        emit(
+                            "inspector-keyframe-diagnostic",
+                            scale: scale,
+                            fields: geometry
+                        )
+                        fail(
+                            "inspector \(item.family) keyframe lane was outside the scroll clip",
+                            scale: scale
+                        )
+                    }
+                }
+                try? await Task.sleep(for: .milliseconds(200))
                 host.layoutSubtreeIfNeeded()
                 let openName = "scale-\(scaleLabel(scale))-inspector-\(item.family)-keyframes-open.png"
                 guard snapshot(host, at: evidenceURL.appendingPathComponent(openName)) else {
                     fail("could not capture inspector \(item.family) open keyframes", scale: scale)
                 }
+                inspectorScrollView.contentView.scroll(to: originalScrollOrigin)
+                inspectorScrollView.reflectScrolledClipView(inspectorScrollView.contentView)
+                host.layoutSubtreeIfNeeded()
                 emit(
                     "inspector",
                     scale: scale,
                     fields: [
                         "family": item.family,
                         "keyframes": "open",
-                        "laneLabels": expectedLaneProperties.map(\.rawValue),
+                        "laneLabelEvidence": laneEvidence,
+                        "laneLabelVisibility": "sequential-in-scroll-clip",
+                        "reachableLaneLabels": expectedLaneProperties.map(\.rawValue),
                         "screenshot": openName,
+                        "visibleLaneLabel": expectedLaneProperties.last?.rawValue ?? "",
                     ]
                 )
                 guard click(identifier: "inspector.keyframes", in: window) == nil,
@@ -825,6 +922,34 @@ enum WorkspaceUIAcceptance {
             result.append(contentsOf: probes(in: child, identifier: identifier))
         }
         return result
+    }
+
+    private static func enclosingScrollView(for view: NSView) -> NSScrollView? {
+        var ancestor = view.superview
+        while let current = ancestor {
+            if let scrollView = current as? NSScrollView { return scrollView }
+            ancestor = current.superview
+        }
+        return nil
+    }
+
+    private static func keyframeGeometryDiagnostics(
+        root: NSView,
+        panelProbe: NSView?,
+        scrollView: NSScrollView?,
+        probe: NSView?
+    ) -> [String: Any] {
+        [
+            "clipFrame": scrollView.map {
+                frameDescription($0.contentView.convert($0.contentView.bounds, to: root))
+            } ?? "unavailable",
+            "panelFrame": panelProbe.map {
+                frameDescription($0.convert($0.bounds, to: root))
+            } ?? "unavailable",
+            "probeFrame": probe.map {
+                frameDescription($0.convert($0.bounds, to: root))
+            } ?? "unavailable",
+        ]
     }
 
     private static func panelDiagnostics(in root: NSView) -> [[String: Any]] {
