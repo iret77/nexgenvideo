@@ -755,11 +755,11 @@ enum GenerationBatchReviewSelfTest {
         return "target=\(rectDescription(target)) visible=\(rectDescription(visible))"
     }
 
-    private static func pointDescription(_ point: NSPoint) -> String {
+    nonisolated private static func pointDescription(_ point: NSPoint) -> String {
         "(\(String(format: "%.2f", point.x)),\(String(format: "%.2f", point.y)))"
     }
 
-    private static func rectDescription(_ rect: NSRect) -> String {
+    nonisolated private static func rectDescription(_ rect: NSRect) -> String {
         "(x:\(String(format: "%.2f", rect.origin.x)),y:\(String(format: "%.2f", rect.origin.y)),"
             + "w:\(String(format: "%.2f", rect.width)),h:\(String(format: "%.2f", rect.height)))"
     }
@@ -805,7 +805,7 @@ enum GenerationBatchReviewSelfTest {
         var description: String {
             "pointer-dispatch identifier=\(identifier) "
                 + "windowPoint=\(GenerationBatchReviewSelfTest.pointDescription(windowPoint)) "
-                + "events=queued-not-received appKitHit=[\(appKitHitChain)] "
+                + "dispatch=queued appKitHit=[\(appKitHitChain)] "
                 + "accessibilityHit=[\(accessibilityHitChain)]"
         }
     }
