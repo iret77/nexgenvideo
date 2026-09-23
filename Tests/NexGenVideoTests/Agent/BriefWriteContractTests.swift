@@ -130,21 +130,80 @@ struct BriefWriteContractTests {
         defer { try? FileManager.default.removeItem(at: cleanup) }
         h.editor.agentService.newChat()
         let sessionID = try #require(h.editor.agentService.currentSessionId)
+        h.editor.agentService.messages = [AgentMessage(
+            role: .assistant,
+            blocks: [.toolUse(id: "writer", name: "write_brief", inputJSON: "{}")]
+        )]
 
         let result = await h.executor.execute(
             name: "write_brief",
             args: validArgs(dataRoot: dataRoot),
-            origin: .inAppChat(sessionID: sessionID)
+            origin: .inAppChat(sessionID: sessionID),
+            toolUseID: "writer"
         )
 
         #expect(!result.isError)
-        let states = h.editor.agentService.messages.compactMap {
-            $0.userPresentation?.hostStateRecord
-        }
-        #expect(states.map(\.state) == [.draft, .persisted])
+        let states = h.editor.agentService.messages.flatMap(\.hostStateRecords)
+        #expect(states.map(\.state) == [.persisted])
         #expect(states.last?.artifactPath == PipelineLayout.briefFile)
         #expect(states.last?.byteComparison == .created)
         #expect(states.last?.currentSHA256?.count == 64)
+        #expect(!h.editor.agentService.messages.contains {
+            $0.role == .user && $0.blocks.isEmpty
+        })
+    }
+
+    @Test("a writer validation failure keeps the stored-byte result separate")
+    func writerValidationFailureRecordsUnchangedAttempt() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        h.editor.agentService.newChat()
+        let sessionID = try #require(h.editor.agentService.currentSessionId)
+        h.editor.agentService.messages = [AgentMessage(
+            role: .assistant,
+            blocks: [.toolUse(id: "writer", name: "write_brief", inputJSON: "{}")]
+        )]
+        var args = validArgs(dataRoot: dataRoot)
+        args["visual_medium"] = "2d_animation"
+
+        let result = await h.executor.execute(
+            name: "write_brief",
+            args: args,
+            origin: .inAppChat(sessionID: sessionID),
+            toolUseID: "writer"
+        )
+
+        #expect(result.isError)
+        let state = try #require(
+            h.editor.agentService.messages.flatMap(\.hostStateRecords).last
+        )
+        #expect(state.state == .writeRejected)
+        #expect(state.byteComparison == .unchanged)
+        #expect(state.action == .agentCorrection)
+    }
+
+    @Test("artifact snapshots reject project-local symlink escapes")
+    func artifactSnapshotRejectsSymlinkEscape() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let outside = cleanup.appendingPathComponent("outside-brief.yaml")
+        try Data("outside".utf8).write(to: outside)
+        let artifact = PipelineLayout.url(PipelineLayout.briefFile, in: dataRoot)
+        try FileManager.default.createDirectory(
+            at: artifact.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createSymbolicLink(
+            at: artifact,
+            withDestinationURL: outside
+        )
+
+        let snapshot = await h.executor.hostArtifactSnapshot(
+            phase: "brief",
+            dataRoot: dataRoot
+        )
+
+        #expect(snapshot?.path == nil)
     }
 
     @Test("an invalid enum value is rejected and names the field")

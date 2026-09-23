@@ -227,7 +227,7 @@ struct GenerationBatchTests {
     }
 
     @Test func unknownPricingCannotCreateAnUnattendedAuthorization() async throws {
-        let (root, _, batch) = try await fixture()
+        let (root, editor, batch) = try await fixture()
         defer { cleanup(root) }
         let original = batch.payload.items[0].package
         var payloadJSON = try #require(JSONSerialization.jsonObject(with: GenerationPackageV1.canonicalData(original.payload)) as? [String: Any])
@@ -238,6 +238,19 @@ struct GenerationBatchTests {
             items: [.init(id: UUID().uuidString, purpose: "Unpriced generation", package: unpriced)]))
         #expect(manifest.totalEUR == nil)
         #expect(throws: (any Error).self) { try GenerationBatchJournal(approving: manifest, authorityID: "test-authority") }
+        let result = try editor.agentService.presentGenerationBatch(
+            manifest,
+            origin: .direct,
+            editor: editor
+        )
+        #expect(result.isError)
+        #expect(result.turnDisposition == .continueTurn)
+        #expect(editor.generationBatchCoordinator.pending == nil)
+        let payload = try #require(JSONSerialization.jsonObject(
+            with: Data(ToolHarness.textOf(result).utf8)
+        ) as? [String: Any])
+        #expect(payload["status"] as? String == "preparation_incomplete")
+        #expect(payload["unpriced_item_ids"] as? [String] == manifest.payload.items.map(\.id))
     }
 
     @Test func changedArchivedInputsCannotResumeUnderTheOriginalPackage() async throws {

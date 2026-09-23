@@ -298,18 +298,21 @@ struct GateApprovalTests {
         defer { try? FileManager.default.removeItem(at: cleanup) }
         h.editor.agentService.newChat()
         let sessionID = try #require(h.editor.agentService.currentSessionId)
+        h.editor.agentService.messages = [AgentMessage(
+            role: .assistant,
+            blocks: [.toolUse(id: "gate", name: "approve_gate", inputJSON: "{}")]
+        )]
 
         let result = await h.executor.execute(
             name: "approve_gate",
             args: ["project_dir": dataRoot.path, "phase": "project_init"],
-            origin: .inAppChat(sessionID: sessionID)
+            origin: .inAppChat(sessionID: sessionID),
+            toolUseID: "gate"
         )
 
         #expect(!result.isError)
         #expect(result.turnDisposition == .suspendTurn)
-        let state = h.editor.agentService.messages.compactMap {
-            $0.userPresentation?.hostStateRecord
-        }.last
+        let state = h.editor.agentService.messages.flatMap(\.hostStateRecords).last
         #expect(state?.state == .checked)
         #expect(state?.state != .approved)
         #expect(h.editor.agentService.pendingGateApproval?.phase == "project_init")
@@ -367,8 +370,8 @@ struct GateApprovalTests {
         #expect(ToolHarness.textOf(result).contains("future phase"))
     }
 
-    @Test("A failed host write leaves the card open with the real reason")
-    func failedWriteKeepsCard() async throws {
+    @Test("a missing project keeps approval open for reopen recovery")
+    func missingProjectKeepsApprovalOpen() async throws {
         let editor = EditorViewModel()
         let service = editor.agentService
         let missingRoot = FileManager.default.temporaryDirectory
@@ -383,6 +386,67 @@ struct GateApprovalTests {
         #expect(result?.isError == true)
         #expect(service.pendingGateApproval?.phase == "project_init")
         #expect(service.gateApprovalError?.isEmpty == false)
+    }
+
+    @Test("a competing approval never records checked for the requested phase")
+    func competingApprovalDoesNotRecordChecked() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let service = h.editor.agentService
+        service.newChat()
+        let sessionID = try #require(service.currentSessionId)
+        let origin = ToolCallOrigin.inAppChat(sessionID: sessionID)
+        service.messages = [AgentMessage(
+            role: .assistant,
+            blocks: [.toolUse(id: "competing", name: "approve_gate", inputJSON: "{}")]
+        )]
+        _ = try service.requestGateApproval(
+            GateApproval(phase: "brief"),
+            origin: origin
+        )
+
+        let result = await h.executor.execute(
+            name: "approve_gate",
+            args: ["project_dir": dataRoot.path, "phase": "project_init"],
+            origin: origin,
+            toolUseID: "competing"
+        )
+
+        #expect(!result.isError)
+        #expect(result.turnDisposition == .suspendTurn)
+        #expect(service.pendingGateApproval?.phase == "brief")
+        #expect(service.messages.flatMap(\.hostStateRecords).isEmpty)
+    }
+
+    @Test("gate structure failure is agent correction, not wait-and-retry")
+    func gateStructureFailureIsAgentCorrection() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let service = h.editor.agentService
+        service.newChat()
+        let sessionID = try #require(service.currentSessionId)
+        service.messages = [AgentMessage(
+            role: .assistant,
+            blocks: [.toolUse(id: "gate", name: "approve_gate", inputJSON: "{}")]
+        )]
+        let pending = await h.executor.execute(
+            name: "approve_gate",
+            args: ["project_dir": dataRoot.path, "phase": "project_init"],
+            origin: .inAppChat(sessionID: sessionID),
+            toolUseID: "gate"
+        )
+        #expect(!pending.isError)
+        try FileManager.default.removeItem(
+            at: PipelineLayout.url(PipelineLayout.gatesFile, in: dataRoot)
+        )
+
+        let result = await service.resolveGate(.approved)
+
+        #expect(result?.isError == true)
+        #expect(service.pendingGateApproval == nil)
+        let state = try #require(service.messages.flatMap(\.hostStateRecords).last)
+        #expect(state.state == .approvalFailed)
+        #expect(state.action == .agentCorrection)
     }
 
     @Test("An approved gate cannot resume the agent across a host-owned intake card")

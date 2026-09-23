@@ -1,4 +1,5 @@
 import Foundation
+import NexGenEngine
 import Testing
 @testable import NexGenVideo
 
@@ -340,6 +341,267 @@ struct AgentServiceRuntimeContractTests {
         #expect(service.runtimeDescriptor == adapter.descriptor)
         #expect(!service.isStreaming)
         #expect(service.streamError == nil)
+    }
+
+    @Test("writer host state preserves one tool result and rich follow-up on both backends")
+    func writerHostStateKeepsCanonicalHistory() async throws {
+        for backend in AgentBackend.allCases {
+            let cleanup = FileManager.default.temporaryDirectory
+                .appendingPathComponent("runtime-host-state-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: cleanup) }
+            let dataRoot = try ProjectScaffold.initProject(
+                home: cleanup.appendingPathComponent("project"),
+                name: "runtime",
+                mode: .beat
+            )
+            let store = YAMLArtifactStore(dataRoot: dataRoot)
+            var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+            GatesOperations.approve(&gates, phase: "project_init")
+            try store.save(gates, to: PipelineLayout.gatesFile)
+
+            let adapter = FakeRuntimeAdapter(
+                backend: backend,
+                toolNames: Set(ToolDefinitions.all.map { $0.name.rawValue })
+            )
+            let service = makeService(
+                backend: backend,
+                adapter: adapter,
+                context: .hostOwned(tools: ToolDefinitions.all)
+            )
+            let editor = EditorViewModel(agentService: service)
+            let writerArgs: [String: Any] = [
+                "project_dir": dataRoot.path,
+                "mission": "single_release",
+                "target_platform": "YouTube",
+                "aspect_ratio": "16:9",
+                "project_mode": "section",
+                "concept_type": "narrative",
+                "visual_medium": "live_action_realistic",
+                "figures": "artist_only",
+                "lyrics_integration": "literal",
+            ]
+            let writerJSON = String(decoding: try JSONSerialization.data(
+                withJSONObject: writerArgs,
+                options: [.sortedKeys]
+            ), as: UTF8.self)
+
+            #expect(service.send(text: "Write the brief.", mentions: []))
+            await waitUntil { adapter.sendRequests.count == 1 }
+            let turn = try #require(adapter.sendRequests.first)
+            if backend == .anthropicAPI {
+                adapter.emit(.toolCall(
+                    messageID: "writer-message",
+                    id: "writer",
+                    name: "write_brief",
+                    inputJSON: writerJSON
+                ), for: turn)
+                await waitUntil {
+                    service.messages.contains { message in
+                        message.blocks.contains {
+                            if case .toolUse(let id, _, _) = $0 { return id == "writer" }
+                            return false
+                        }
+                    }
+                }
+            }
+            let session = try #require(
+                adapter.startRequests.first ?? adapter.resumeRequests.first
+            )
+            let writerResult: ToolResult
+            if backend == .claudeCode {
+                writerResult = await ToolExecutor(editor: editor).execute(
+                    name: "write_brief",
+                    args: writerArgs,
+                    origin: .embeddedRuntime(
+                        chatSessionID: turn.sessionID,
+                        mcpSessionID: UUID()
+                    )
+                )
+            } else {
+                writerResult = await session.executeTool(
+                    "writer",
+                    "write_brief",
+                    writerJSON
+                )
+            }
+            #expect(!writerResult.isError)
+            if backend == .claudeCode {
+                adapter.emit(.toolCall(
+                    messageID: "writer-message",
+                    id: "writer",
+                    name: "write_brief",
+                    inputJSON: writerJSON
+                ), for: turn)
+                await waitUntil {
+                    service.messages.flatMap(\.hostStateRecords).contains {
+                        $0.toolUseID == "writer"
+                    }
+                }
+            }
+            adapter.emit(.toolResult(
+                id: "writer",
+                content: writerResult.content,
+                isError: writerResult.isError
+            ), for: turn)
+            adapter.emit(.text(
+                messageID: "final-message",
+                value: "The brief keeps the performance central.",
+                isDelta: false
+            ), for: turn)
+            let richJSON = #"{"blocks":[{"type":"text","body":"Review the performance direction."}]}"#
+            adapter.emit(.toolCall(
+                messageID: "final-message",
+                id: "rich",
+                name: ToolName.showBlocks.rawValue,
+                inputJSON: richJSON
+            ), for: turn)
+            let richResult = await session.executeTool(
+                "rich",
+                ToolName.showBlocks.rawValue,
+                richJSON
+            )
+            #expect(!richResult.isError)
+            adapter.emit(.toolResult(
+                id: "rich",
+                content: richResult.content,
+                isError: richResult.isError
+            ), for: turn)
+            adapter.emit(.terminal(.completed(.endTurn)), for: turn)
+            adapter.finish(turn)
+            await waitUntil { !service.isStreaming }
+
+            #expect(service.messages.flatMap(\.hostStateRecords).map(\.state) == [.persisted])
+            #expect(!service.messages.contains { $0.role == .user && $0.blocks.isEmpty })
+            let projected = AgentTranscriptProjection.turns(
+                messages: service.messages,
+                isStreaming: false
+            ).flatMap(\.items)
+            let assistant = try #require(projected.compactMap { item -> AgentMessage? in
+                guard case .assistantResult(let message) = item else { return nil }
+                return message
+            }.first)
+            #expect(assistant.blocks.contains(.text("The brief keeps the performance central.")))
+            #expect(assistant.blocks.contains {
+                if case .toolUse(let id, let name, _) = $0 {
+                    return id == "rich" && name == ToolName.showBlocks.rawValue
+                }
+                return false
+            })
+
+            #expect(service.send(text: "Continue.", mentions: []))
+            await waitUntil { adapter.sendRequests.count == 2 }
+            let followUp = adapter.sendRequests[1]
+            let writerResults = followUp.messages.flatMap(\.content).compactMap {
+                content -> AgentRuntimeContent? in
+                guard case .toolResult(let id, _, _) = content, id == "writer" else {
+                    return nil
+                }
+                return content
+            }
+            #expect(writerResults.count == 1)
+            #expect(!followUp.messages.flatMap(\.content).contains { content in
+                guard case .toolResult(_, let blocks, _) = content else { return false }
+                return blocks.contains(.text("Cancelled"))
+            })
+            adapter.emit(.terminal(.completed(.endTurn)), for: followUp)
+            adapter.finish(followUp)
+            await waitUntil { !service.isStreaming }
+            withExtendedLifetime(editor) {}
+        }
+    }
+
+    @Test("legacy empty host records do not orphan completed tool calls")
+    func legacyHostRecordDoesNotCreateCancelledResult() async throws {
+        for backend in AgentBackend.allCases {
+            let adapter = FakeRuntimeAdapter(backend: backend)
+            let service = makeService(backend: backend, adapter: adapter)
+            let legacyState = AgentHostStateRecord(
+                state: .persisted,
+                phase: "brief",
+                toolName: "write_brief",
+                action: .reviewForApproval,
+                artifactPath: PipelineLayout.briefFile,
+                byteComparison: .changed,
+                previousSHA256: nil,
+                currentSHA256: String(repeating: "a", count: 64)
+            )
+            service.messages = [
+                AgentMessage(role: .user, blocks: [.text("Earlier")]),
+                AgentMessage(role: .assistant, blocks: [
+                    .toolUse(id: "legacy-writer", name: "write_brief", inputJSON: "{}"),
+                ]),
+                AgentMessage(
+                    role: .user,
+                    blocks: [],
+                    userPresentation: .init(
+                        choiceRecord: nil,
+                        typedText: nil,
+                        hostStateRecord: legacyState
+                    )
+                ),
+                AgentMessage(role: .user, blocks: [
+                    .toolResult(
+                        toolUseId: "legacy-writer",
+                        content: [.text("written")],
+                        isError: false
+                    ),
+                ]),
+            ]
+
+            #expect(service.send(text: "Resume.", mentions: []))
+            await waitUntil { adapter.sendRequests.count == 1 }
+            let request = try #require(adapter.sendRequests.first)
+            let results = request.messages.flatMap(\.content).filter {
+                if case .toolResult(let id, _, _) = $0 { return id == "legacy-writer" }
+                return false
+            }
+            #expect(results.count == 1)
+            #expect(!results.contains { content in
+                guard case .toolResult(_, let blocks, _) = content else { return false }
+                return blocks.contains(.text("Cancelled"))
+            })
+            adapter.emit(.terminal(.completed(.endTurn)), for: request)
+            adapter.finish(request)
+            await waitUntil { !service.isStreaming }
+        }
+    }
+
+    @Test("same-name host events bind one-to-one to their tool calls")
+    func sameNameHostEventsKeepDistinctToolIdentity() throws {
+        let adapter = FakeRuntimeAdapter(backend: .claudeCode)
+        let service = makeService(backend: .claudeCode, adapter: adapter)
+        let sessionID = try #require(service.currentSessionId)
+        service.messages = [AgentMessage(role: .assistant, blocks: [
+            .toolUse(id: "first", name: "write_brief", inputJSON: "{}"),
+            .toolUse(id: "second", name: "write_brief", inputJSON: "{}"),
+        ])]
+        let first = AgentHostStateRecord(
+            state: .writeRejected,
+            phase: "brief",
+            toolName: "write_brief",
+            action: .agentCorrection,
+            artifactPath: nil,
+            byteComparison: .unchanged,
+            previousSHA256: nil,
+            currentSHA256: nil
+        )
+        let second = AgentHostStateRecord(
+            state: .persisted,
+            phase: "brief",
+            toolName: "write_brief",
+            action: .reviewForApproval,
+            artifactPath: PipelineLayout.briefFile,
+            byteComparison: .created,
+            previousSHA256: nil,
+            currentSHA256: String(repeating: "a", count: 64)
+        )
+
+        service.recordHostState(first, origin: .inAppChat(sessionID: sessionID))
+        service.recordHostState(second, origin: .inAppChat(sessionID: sessionID))
+
+        let records = service.messages.flatMap(\.hostStateRecords)
+        #expect(records.map(\.toolUseID) == ["first", "second"])
+        #expect(records.map(\.id) == [first.id, second.id])
     }
 
     private func makeService(

@@ -223,6 +223,9 @@ final class AgentService {
     var messages: [AgentMessage] = [] {
         didSet { captureDiagnosticTranscript() }
     }
+
+    @ObservationIgnored
+    private var pendingHostStates: [UUID: [AgentHostStateRecord]] = [:]
     var isStreaming: Bool = false {
         didSet {
             captureDiagnosticTranscript()
@@ -1261,20 +1264,22 @@ final class AgentService {
 
     func recordHostState(
         _ record: AgentHostStateRecord,
-        origin: ToolCallOrigin
+        origin: ToolCallOrigin,
+        toolUseID: String? = nil
     ) {
         guard let sessionID = origin.chatSessionID else { return }
-        let message = AgentMessage(
-            role: .user,
-            blocks: [],
-            userPresentation: AgentUserPresentation(
-                choiceRecord: nil,
-                typedText: nil,
-                hostStateRecord: record
-            )
-        )
         if sessionID == currentSessionId {
-            messages.append(message)
+            guard Self.attachHostState(
+                record,
+                toolUseID: toolUseID,
+                to: &messages
+            ) else {
+                upsertPendingHostState(
+                    record.associated(with: toolUseID),
+                    sessionID: sessionID
+                )
+                return
+            }
             syncMessagesIntoCurrentSession()
             onSessionsChanged?()
             return
@@ -1282,9 +1287,105 @@ final class AgentService {
         guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else {
             return
         }
-        sessions[index].messages.append(message)
+        guard Self.attachHostState(
+            record,
+            toolUseID: toolUseID,
+            to: &sessions[index].messages
+        ) else {
+            upsertPendingHostState(
+                record.associated(with: toolUseID),
+                sessionID: sessionID
+            )
+            return
+        }
         sessions[index].updatedAt = Date()
         onSessionsChanged?()
+    }
+
+    private func upsertPendingHostState(
+        _ record: AgentHostStateRecord,
+        sessionID: UUID
+    ) {
+        var records = pendingHostStates[sessionID] ?? []
+        if let index = records.firstIndex(where: { $0.id == record.id }) {
+            records[index] = record.associated(with: record.toolUseID, retaining: records[index].id)
+        } else {
+            records.append(record)
+        }
+        pendingHostStates[sessionID] = records
+    }
+
+    private func attachPendingHostStates(
+        sessionID: UUID,
+        toolUseID: String,
+        toolName: String
+    ) {
+        guard var records = pendingHostStates[sessionID] else { return }
+        guard let matching = records.first(where: {
+            ($0.toolUseID == nil || $0.toolUseID == toolUseID)
+                && ToolRunPresentation.baseName(for: $0.toolName)
+                    == ToolRunPresentation.baseName(for: toolName)
+        }) else { return }
+        _ = Self.attachHostState(
+            matching,
+            toolUseID: toolUseID,
+            to: &messages
+        )
+        records.removeAll { $0.id == matching.id }
+        pendingHostStates[sessionID] = records.isEmpty ? nil : records
+        syncMessagesIntoCurrentSession()
+        onSessionsChanged?()
+    }
+
+    @discardableResult
+    private static func attachHostState(
+        _ record: AgentHostStateRecord,
+        toolUseID: String?,
+        to messages: inout [AgentMessage]
+    ) -> Bool {
+        if let messageIndex = messages.indices.reversed().first(where: { index in
+            messages[index].hostStateRecords.contains { $0.id == record.id }
+        }), let stateIndex = messages[messageIndex].hostStateRecords.firstIndex(where: {
+            $0.id == record.id
+        }) {
+            let prior = messages[messageIndex].hostStateRecords[stateIndex]
+            messages[messageIndex].hostStateRecords[stateIndex] = record.associated(
+                with: toolUseID ?? prior.toolUseID,
+                retaining: prior.id
+            )
+            return true
+        }
+        let requestedID = toolUseID ?? record.toolUseID
+        let match: (index: Int, toolUseID: String)? = messages.indices.reversed().compactMap { index in
+            guard messages[index].role == .assistant else { return nil }
+            for block in messages[index].blocks {
+                guard case .toolUse(let id, let name, _) = block else { continue }
+                if let requestedID {
+                    if id == requestedID { return (index, id) }
+                } else if ToolRunPresentation.baseName(for: name)
+                    == ToolRunPresentation.baseName(for: record.toolName),
+                    !messages[index].hostStateRecords.contains(where: {
+                        $0.toolUseID == id
+                    }) {
+                    return (index, id)
+                }
+            }
+            return nil
+        }.first
+        guard let match else { return false }
+        let associated = record.associated(with: match.toolUseID)
+        if let index = messages[match.index].hostStateRecords.firstIndex(where: {
+            $0.toolUseID == match.toolUseID && $0.phase == associated.phase
+        }) {
+            let priorID = messages[match.index].hostStateRecords[index].id
+            messages[match.index].hostStateRecords[index] = associated.associated(
+                with: match.toolUseID,
+                retaining: priorID
+            )
+        } else {
+            messages[match.index].hostStateRecords.append(associated)
+        }
+        return true
     }
 
     /// The compact intent line for a generation dialog — picked chip labels then the free-text
@@ -1365,12 +1466,25 @@ final class AgentService {
     private var generationBatchOrigins: [String: (origin: ToolCallOrigin, marker: String)] = [:]
 
     func presentGenerationBatch(_ batch: GenerationBatch, origin: ToolCallOrigin, editor: EditorViewModel) throws -> ToolResult {
+        guard batch.totalEUR != nil else {
+            let unpricedItemIDs = batch.payload.items.compactMap {
+                $0.package.payload.estimate == nil ? $0.id : nil
+            }
+            let payload = try NativeCockpitReader.serialize([
+                "status": "preparation_incomplete",
+                "reason": "missing_cost_estimates",
+                "unpriced_item_ids": unpricedItemIDs,
+                "message": "No approval was opened. Repair or re-prepare the listed items with host-verified prices.",
+            ])
+            return .error(String(decoding: payload, as: UTF8.self))
+        }
         if case .externalMCP = origin { throw ToolError("Start batch approval from an in-app chat.") }
         guard !isComposerBlocked, editor.generationBatchCoordinator.pending == nil else {
             throw ToolError("Finish the current native decision before reviewing a generation batch.")
         }
         let marker = "Generation batch \(batch.id) is waiting for native approval and completion."
         generationBatchOrigins[batch.id] = (origin, marker)
+        editor.agentPanelVisible = true
         editor.generationBatchCoordinator.pending = batch
         suspendToolCalls(from: origin)
         return .suspended(marker)
@@ -2110,6 +2224,7 @@ final class AgentService {
             guard let toolExecutor else {
                 return recordGateApprovalFailure(
                     "The gate writer is unavailable. The approval request remains open.",
+                    kind: .hostBusy,
                     approval: approval
                 )
             }
@@ -2123,6 +2238,8 @@ final class AgentService {
                 if approval.sessionId != nil {
                     recordHostState(
                         AgentHostStateRecord(
+                            id: approval.sourceHostStateID,
+                            toolUseID: approval.sourceToolUseID,
                             state: .approved,
                             phase: approval.phase,
                             toolName: approval.sourceToolName,
@@ -2132,7 +2249,8 @@ final class AgentService {
                             previousSHA256: nil,
                             currentSHA256: nil
                         ),
-                        origin: origin
+                        origin: origin,
+                        toolUseID: approval.sourceToolUseID
                     )
                     enqueueGateFollowUp(
                         "The user approved \(approval.phaseLabel), and the host wrote the gate successfully: \(payload) "
@@ -2145,40 +2263,59 @@ final class AgentService {
                 }
                 return .ok(payload)
             } catch let error as ToolError {
-                return recordGateApprovalFailure(error.message, approval: approval)
+                return recordGateApprovalFailure(
+                    error.message,
+                    kind: error.kind,
+                    approval: approval
+                )
             } catch {
-                return recordGateApprovalFailure(error.localizedDescription, approval: approval)
+                return recordGateApprovalFailure(
+                    error.localizedDescription,
+                    kind: .agentCorrection,
+                    approval: approval
+                )
             }
         }
     }
 
-    private func recordGateApprovalFailure(_ reason: String, approval: GateApproval) -> ToolResult {
+    private func recordGateApprovalFailure(
+        _ reason: String,
+        kind: ToolFailureKind,
+        approval: GateApproval
+    ) -> ToolResult {
         let message = "Couldn't approve \(approval.phaseLabel): \(reason)"
         gateApprovalError = message
-        let normalizedReason = reason.lowercased()
-        let action: AgentHostStateRecord.Action = [
-            "reopen the project", "working copy is unavailable", "trusted format-pack declaration",
-        ].contains(where: { normalizedReason.contains($0) })
-            ? .reopenProject
-            : .retryAfterHostRecovery
+        let origin = pendingGateOrigin ?? .direct
+        if kind == .approvalStructure
+            || kind == .reviewChangedSource
+            || kind == .agentCorrection
+            || kind == .phaseRecordRepair {
+            pendingGateApproval = nil
+            pendingGateOrigin = nil
+        }
         recordHostState(
             AgentHostStateRecord(
+                id: approval.sourceHostStateID,
+                toolUseID: approval.sourceToolUseID,
                 state: .approvalFailed,
                 phase: approval.phase,
                 toolName: approval.sourceToolName,
-                action: action,
+                action: kind.hostAction,
                 artifactPath: nil,
                 byteComparison: nil,
                 previousSHA256: nil,
                 currentSHA256: nil
             ),
-            origin: pendingGateOrigin ?? .direct
+            origin: origin,
+            toolUseID: approval.sourceToolUseID
         )
         enqueueGateFollowUp(
             "The user approved \(approval.phaseLabel), but the host could not write the gate: \(reason) "
-                + "The approval card remains open. Address the stated cause without claiming approval, "
-                + "inventing a support team, or asking the user to restart the app.",
-            origin: pendingGateOrigin ?? .direct
+                + (pendingGateApproval == nil
+                    ? "Correct the stated cause before requesting approval again. "
+                    : "The approval card remains open. Address the stated cause before retrying. ")
+                + "Do not claim approval, invent a support team, or ask the user to restart the app.",
+            origin: origin
         )
         return .error(message)
     }
@@ -2474,6 +2611,7 @@ final class AgentService {
         pendingSpendFollowUps.removeAll()
         currentTask?.cancel()
         currentTask = nil
+        pendingHostStates.removeAll()
         rotateRuntime()
         composerStates.removeAll()
         sessions = ChatSessionStore.load(from: projectURL)
@@ -2516,6 +2654,9 @@ final class AgentService {
     }
 
     func newChat() {
+        if let currentSessionId {
+            pendingHostStates.removeValue(forKey: currentSessionId)
+        }
         saveComposerState()
         currentTask?.cancel()
         abandonSessionDialog()
@@ -2667,6 +2808,7 @@ final class AgentService {
             resumeToolCalls(from: followUp.origin)
         }
         sessions.removeAll { $0.id == id }
+        pendingHostStates.removeValue(forKey: id)
         composerStates.removeValue(forKey: id)
         if deletingActive {
             currentTask?.cancel()
@@ -2973,7 +3115,8 @@ final class AgentService {
                 return await executor.execute(
                     name: name,
                     args: Self.parseJSONObject(inputJSON),
-                    origin: .inAppChat(sessionID: sessionID)
+                    origin: .inAppChat(sessionID: sessionID),
+                    toolUseID: id
                 )
             }
         )
@@ -3022,6 +3165,11 @@ final class AgentService {
                 defaultAssistantID: &defaultAssistantID
             )
             appendToolUse(id: id, name: name, inputJSON: inputJSON, toAssistant: assistantID)
+            attachPendingHostStates(
+                sessionID: sessionID,
+                toolUseID: id,
+                toolName: name
+            )
         case .toolResult(let id, let content, let isError):
             let block = AgentContentBlock.toolResult(
                 toolUseId: id,
@@ -3029,6 +3177,8 @@ final class AgentService {
                 isError: isError
             )
             if messages.last?.role == .user,
+               messages.last?.userPresentation == nil,
+               messages.last?.blocks.isEmpty == false,
                messages.last?.blocks.allSatisfy({
                    if case .toolResult = $0 { return true }
                    return false
@@ -3222,7 +3372,8 @@ final class AgentService {
             let result = await executor.execute(
                 name: use.name,
                 args: Self.parseJSONObject(use.input),
-                origin: origin
+                origin: origin,
+                toolUseID: use.id
             )
             resultBlocks.append(.toolResult(toolUseId: use.id, content: result.content, isError: result.isError))
             turnSuspended = result.turnDisposition == .suspendTurn
@@ -3234,12 +3385,33 @@ final class AgentService {
     }
 
     private func resolvedToolUseIds(afterAssistantAt index: Int) -> Set<String> {
-        let next = index + 1
-        guard next < messages.count, messages[next].role == .user else { return [] }
-        return Set(messages[next].blocks.compactMap {
-            if case let .toolResult(id, _, _) = $0 { return id }
-            return nil
-        })
+        Self.resolvedToolUseIds(afterAssistantAt: index, in: messages)
+    }
+
+    private static func resolvedToolUseIds(
+        afterAssistantAt index: Int,
+        in messages: [AgentMessage]
+    ) -> Set<String> {
+        var resolved: Set<String> = []
+        var cursor = index + 1
+        while cursor < messages.count, messages[cursor].role == .user {
+            let message = messages[cursor]
+            if message.blocks.isEmpty {
+                guard message.userPresentation?.hostStateRecord != nil else { break }
+            } else {
+                guard message.blocks.allSatisfy({
+                    if case .toolResult = $0 { return true }
+                    return false
+                }) else { break }
+                for block in message.blocks {
+                    if case let .toolResult(id, _, _) = block {
+                        resolved.insert(id)
+                    }
+                }
+            }
+            cursor += 1
+        }
+        return resolved
     }
 
     private func resolveOrphanToolUses(reason: String = "Cancelled") {
@@ -3254,18 +3426,10 @@ final class AgentService {
             guard !toolUseIds.isEmpty else { continue }
 
             let next = i + 1
-            let nextIsToolResult = next < messages.count
-                && messages[next].role == .user
-                && messages[next].blocks.contains(where: {
-                    if case .toolResult = $0 { return true }
-                    return false
-                })
-            let resolved: Set<String> = nextIsToolResult
-                ? Set(messages[next].blocks.compactMap {
-                    if case let .toolResult(id, _, _) = $0 { return id }
-                    return nil
-                })
-                : []
+            let resolved = Self.resolvedToolUseIds(
+                afterAssistantAt: i,
+                in: messages
+            )
 
             let orphans = toolUseIds.filter { !resolved.contains($0) }
             guard !orphans.isEmpty else { continue }
@@ -3273,12 +3437,37 @@ final class AgentService {
             let synthetic: [AgentContentBlock] = orphans.map {
                 .toolResult(toolUseId: $0, content: [.text(reason)], isError: true)
             }
-            if nextIsToolResult {
-                messages[next].blocks.insert(contentsOf: synthetic, at: 0)
+            if let resultIndex = Self.firstToolResultMessageIndex(
+                afterAssistantAt: i,
+                in: messages
+            ) {
+                messages[resultIndex].blocks.insert(contentsOf: synthetic, at: 0)
             } else {
                 messages.insert(AgentMessage(role: .user, blocks: synthetic), at: next)
             }
         }
+    }
+
+    private static func firstToolResultMessageIndex(
+        afterAssistantAt index: Int,
+        in messages: [AgentMessage]
+    ) -> Int? {
+        var cursor = index + 1
+        while cursor < messages.count, messages[cursor].role == .user {
+            let message = messages[cursor]
+            if message.blocks.isEmpty {
+                guard message.userPresentation?.hostStateRecord != nil else { return nil }
+            } else if message.blocks.allSatisfy({
+                if case .toolResult = $0 { return true }
+                return false
+            }) {
+                return cursor
+            } else {
+                return nil
+            }
+            cursor += 1
+        }
+        return nil
     }
 
     private static func parseJSONObject(_ json: String) -> [String: Any] {
@@ -3471,6 +3660,8 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
     var hidden: Bool = false
     /// Optional rendering for a structured user action whose blocks remain model-facing.
     var userPresentation: AgentUserPresentation?
+    /// Host-authored tool-call metadata that never becomes provider-facing user content.
+    var hostStateRecords: [AgentHostStateRecord]
 
     init(
         id: UUID = UUID(),
@@ -3479,7 +3670,8 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
         mentions: [AgentMention] = [],
         contextHint: String? = nil,
         hidden: Bool = false,
-        userPresentation: AgentUserPresentation? = nil
+        userPresentation: AgentUserPresentation? = nil,
+        hostStateRecords: [AgentHostStateRecord] = []
     ) {
         self.id = id
         self.role = role
@@ -3488,10 +3680,11 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
         self.contextHint = contextHint
         self.hidden = hidden
         self.userPresentation = userPresentation
+        self.hostStateRecords = hostStateRecords
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, role, blocks, mentions, contextHint, hidden, userPresentation
+        case id, role, blocks, mentions, contextHint, hidden, userPresentation, hostStateRecords
     }
 
     // Custom decode so `hidden` (added later) is optional: synthesized Codable would REQUIRE the key
@@ -3505,6 +3698,10 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
         contextHint = try c.decodeIfPresent(String.self, forKey: .contextHint)
         hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
         userPresentation = try c.decodeIfPresent(AgentUserPresentation.self, forKey: .userPresentation)
+        hostStateRecords = try c.decodeIfPresent(
+            [AgentHostStateRecord].self,
+            forKey: .hostStateRecords
+        ) ?? []
     }
 }
 

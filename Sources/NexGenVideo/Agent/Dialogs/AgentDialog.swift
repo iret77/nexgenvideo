@@ -84,8 +84,11 @@ struct AgentWorkflowRecord: Codable, Equatable, Sendable {
 struct AgentHostStateRecord: Codable, Equatable, Sendable {
     enum State: String, Codable, Equatable, Sendable {
         case draft
+        case writeBlocked
         case writeRejected
+        case writeOutcomeUnavailable
         case persisted
+        case persistedPhaseRecordFailed
         case checked
         case approved
         case approvalFailed
@@ -107,6 +110,8 @@ struct AgentHostStateRecord: Codable, Equatable, Sendable {
         case unavailable
     }
 
+    let id: UUID
+    let toolUseID: String?
     let state: State
     let phase: String
     let toolName: String
@@ -115,6 +120,64 @@ struct AgentHostStateRecord: Codable, Equatable, Sendable {
     let byteComparison: ByteComparison?
     let previousSHA256: String?
     let currentSHA256: String?
+
+    init(
+        id: UUID = UUID(),
+        toolUseID: String? = nil,
+        state: State,
+        phase: String,
+        toolName: String,
+        action: Action,
+        artifactPath: String?,
+        byteComparison: ByteComparison?,
+        previousSHA256: String?,
+        currentSHA256: String?
+    ) {
+        self.id = id
+        self.toolUseID = toolUseID
+        self.state = state
+        self.phase = phase
+        self.toolName = toolName
+        self.action = action
+        self.artifactPath = artifactPath
+        self.byteComparison = byteComparison
+        self.previousSHA256 = previousSHA256
+        self.currentSHA256 = currentSHA256
+    }
+
+    func associated(with toolUseID: String?, retaining id: UUID? = nil) -> Self {
+        Self(
+            id: id ?? self.id,
+            toolUseID: toolUseID ?? self.toolUseID,
+            state: state,
+            phase: phase,
+            toolName: toolName,
+            action: action,
+            artifactPath: artifactPath,
+            byteComparison: byteComparison,
+            previousSHA256: previousSHA256,
+            currentSHA256: currentSHA256
+        )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, toolUseID, state, phase, toolName, action, artifactPath
+        case byteComparison, previousSHA256, currentSHA256
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        toolUseID = try container.decodeIfPresent(String.self, forKey: .toolUseID)
+        state = try container.decode(State.self, forKey: .state)
+        phase = try container.decode(String.self, forKey: .phase)
+        toolName = try container.decode(String.self, forKey: .toolName)
+        action = try container.decode(Action.self, forKey: .action)
+        artifactPath = try container.decodeIfPresent(String.self, forKey: .artifactPath)
+        byteComparison = try container.decodeIfPresent(ByteComparison.self, forKey: .byteComparison)
+        previousSHA256 = try container.decodeIfPresent(String.self, forKey: .previousSHA256)
+        currentSHA256 = try container.decodeIfPresent(String.self, forKey: .currentSHA256)
+    }
 }
 
 struct AgentUserPresentation: Codable, Equatable, Sendable {

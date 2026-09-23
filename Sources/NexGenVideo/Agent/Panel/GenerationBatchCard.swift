@@ -34,15 +34,18 @@ struct GenerationBatchCard: View {
                 }
                 if let error = coordinator.error { Text(error).foregroundStyle(AppTheme.Status.warningColor) }
                 HStack {
-                    Button("Decline") { coordinator.decline(editor: editor) }
+                    Button(batch.totalEUR == nil ? "Dismiss" : "Decline") {
+                        coordinator.decline(editor: editor)
+                    }
                         .buttonStyle(.capsule(.secondary, size: .regular)).disabled(coordinator.approving)
-                    Spacer()
-                    Button(batch.totalEUR == nil
-                        ? String(localized: "Waiting for cost estimates")
-                        : String(localized: "Approve \(batch.payload.items.count) generations")) {
-                        Task { await coordinator.approve(editor: editor) }
-                    }.buttonStyle(.capsule(.prominent, size: .regular))
-                        .disabled(coordinator.approving || batch.totalEUR == nil)
+                    if batch.totalEUR != nil {
+                        Spacer()
+                        Button("Approve \(batch.payload.items.count) generations") {
+                            Task { await coordinator.approve(editor: editor) }
+                        }
+                        .buttonStyle(.capsule(.prominent, size: .regular))
+                        .disabled(coordinator.approving)
+                    }
                 }
             }
             .padding(AppTheme.Spacing.md)

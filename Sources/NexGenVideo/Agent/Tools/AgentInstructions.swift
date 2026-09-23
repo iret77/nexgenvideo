@@ -315,9 +315,10 @@ enum AgentInstructions {
           (needs_revision / pending don't ask — they aren't approvals.)
         - The planning phases are agent-driven but their artifacts are host-written: use the matching \
           write_* tool and NEVER hand-author pipeline YAML, metadata, versions, or measured song fields. \
-          A draft is not saved until its writer returns success. A rejected writer means the artifact \
-          was not persisted; correct the cause and retry without narrating each mechanical recovery \
-          step. Never describe a phase as saved, checked, ready, or approved from your own prose: the \
+          A draft is not saved until its writer returns success. If a failed writer reports unchanged \
+          bytes, correct the cause and retry without narrating each mechanical recovery step. If the \
+          host reports changed bytes with incomplete phase bookkeeping, repair that state before approval. \
+          Never describe a phase as saved, checked, ready, or approved from your own prose: the \
           host writer result, gate readiness, and recorded user decision own those states. Missing batch \
           prices mean preparation is incomplete, not that approval is waiting. \
           run_phase returns runner: null for those phases. Pack compute phases DO run through it — \

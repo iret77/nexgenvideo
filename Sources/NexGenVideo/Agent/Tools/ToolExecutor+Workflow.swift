@@ -554,7 +554,7 @@ extension ToolExecutor {
                 declaredBinding: declaration.binding
             )
         } catch {
-            throw ToolError(error.localizedDescription)
+            throw ToolError(error.localizedDescription, kind: .reopenProject)
         }
         let extraDirs = PackCatalog.projectDirs(activePack: editor.activePluginName)
         do {
@@ -841,7 +841,9 @@ extension ToolExecutor {
     func approveGateTool(
         _ editor: EditorViewModel,
         _ args: [String: Any],
-        origin: ToolCallOrigin
+        origin: ToolCallOrigin,
+        toolUseID: String? = nil,
+        hostStateID: UUID = UUID()
     ) async throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = try args.requireString("phase")
@@ -865,7 +867,9 @@ extension ToolExecutor {
                 dataRoot: root,
                 action: .approve,
                 declaredPack: declaredPack,
-                declaredBinding: declaredBinding
+                declaredBinding: declaredBinding,
+                sourceToolUseID: toolUseID,
+                sourceHostStateID: hostStateID
             ),
             origin: origin
         )
@@ -875,7 +879,9 @@ extension ToolExecutor {
     func setGateStateTool(
         _ editor: EditorViewModel,
         _ args: [String: Any],
-        origin: ToolCallOrigin
+        origin: ToolCallOrigin,
+        toolUseID: String? = nil,
+        hostStateID: UUID = UUID()
     ) async throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = try args.requireString("phase")
@@ -914,7 +920,7 @@ extension ToolExecutor {
                 declaredBinding: declaredBinding
             )
         } catch {
-            throw ToolError(error.localizedDescription)
+            throw ToolError(error.localizedDescription, kind: .reopenProject)
         }
         let resolvedPack = declaredPack
         // Approving states defer their write to the durable user card.
@@ -934,7 +940,9 @@ extension ToolExecutor {
                     action: .setState(state),
                     declaredPack: declaredPack,
                     declaredBinding: declaredBinding,
-                    sourceToolName: ToolName.setGateState.rawValue
+                    sourceToolName: ToolName.setGateState.rawValue,
+                    sourceToolUseID: toolUseID,
+                    sourceHostStateID: hostStateID
                 ),
                 origin: origin
             )
@@ -952,7 +960,11 @@ extension ToolExecutor {
             )
         }
         if let key = editor.openWorkingCopyKey {
-            try ProjectWorkingCopy.markDirty(key: key)
+            do {
+                try ProjectWorkingCopy.markDirty(key: key)
+            } catch {
+                throw ToolError(error.localizedDescription, kind: .reopenProject)
+            }
         }
         let gates = try mutateGates(
             dataRoot: root,
@@ -1004,9 +1016,14 @@ extension ToolExecutor {
 
     /// Revalidates and commits a durable approval after the user acts.
     func commitGateApproval(_ approval: GateApproval) async throws -> String {
-        guard let editor else { throw ToolError("Editor not available") }
+        guard let editor else {
+            throw ToolError("Editor not available", kind: .hostBusy)
+        }
         guard let root = approval.dataRoot else {
-            throw ToolError("The approval request no longer identifies its project data root.")
+            throw ToolError(
+                "The approval request no longer identifies its project data root.",
+                kind: .reopenProject
+            )
         }
         let mutationID = try reservePipelineMutation(
             label: "Approve \(approval.phase)",
@@ -1026,7 +1043,8 @@ extension ToolExecutor {
         guard currentDeclaration.packName == approval.declaredPack,
               currentDeclaration.binding == approval.declaredBinding else {
             throw ToolError(
-                "The project format changed while this approval was open. Review it again."
+                "The project format changed while this approval was open. Review it again.",
+                kind: .reviewChangedSource
             )
         }
         do {
@@ -1038,7 +1056,8 @@ extension ToolExecutor {
         } catch {
             throw ToolError(
                 "The project format changed while this approval was open: "
-                    + error.localizedDescription
+                    + error.localizedDescription,
+                kind: .reopenProject
             )
         }
         try await enforceGateRequirement(
@@ -1047,27 +1066,39 @@ extension ToolExecutor {
             declaredPack: approval.declaredPack,
             declaredBinding: approval.declaredBinding,
             editor: editor,
-            mutationID: mutationID
+            mutationID: mutationID,
+            failureKind: .approvalStructure
         )
         if let key = editor.openWorkingCopyKey {
-            try ProjectWorkingCopy.markDirty(key: key)
-        }
-        let gates = try mutateGates(
-            dataRoot: root,
-            declaredPack: approval.declaredPack,
-            declaredBinding: approval.declaredBinding
-        ) { gates in
-            switch approval.action {
-            case .approve:
-                GatesOperations.approve(&gates, phase: approval.phase, notes: approval.notes)
-            case .setState(let state):
-                GatesOperations.setState(
-                    &gates,
-                    phase: approval.phase,
-                    state: state,
-                    notes: approval.notes
-                )
+            do {
+                try ProjectWorkingCopy.markDirty(key: key)
+            } catch {
+                throw ToolError(error.localizedDescription, kind: .reopenProject)
             }
+        }
+        let gates: Gates
+        do {
+            gates = try mutateGates(
+                dataRoot: root,
+                declaredPack: approval.declaredPack,
+                declaredBinding: approval.declaredBinding
+            ) { gates in
+                switch approval.action {
+                case .approve:
+                    GatesOperations.approve(&gates, phase: approval.phase, notes: approval.notes)
+                case .setState(let state):
+                    GatesOperations.setState(
+                        &gates,
+                        phase: approval.phase,
+                        state: state,
+                        notes: approval.notes
+                    )
+                }
+            }
+        } catch let error as ToolError {
+            throw ToolError(error.message, kind: .approvalStructure)
+        } catch {
+            throw ToolError(error.localizedDescription, kind: .approvalStructure)
         }
         editor.onPipelineChanged?()
         let gate = gates.get(approval.phase)
@@ -1081,7 +1112,10 @@ extension ToolExecutor {
             "approved_by": gate.approvedBy.map { $0 as Any } ?? NSNull(),
             "notes": gate.notes.map { $0 as Any } ?? NSNull(),
         ]) else {
-            throw ToolError("The updated gate could not be encoded.")
+            throw ToolError(
+                "The updated gate could not be encoded.",
+                kind: .approvalStructure
+            )
         }
         return payload
     }
@@ -1093,7 +1127,8 @@ extension ToolExecutor {
         declaredPack: String?,
         declaredBinding: ProjectPackBinding?,
         editor: EditorViewModel,
-        mutationID: UUID? = nil
+        mutationID: UUID? = nil,
+        failureKind: ToolFailureKind = .agentCorrection
     ) async throws {
         do {
             try await NativeGateWriter.requireApprovalReady(
@@ -1105,7 +1140,7 @@ extension ToolExecutor {
                 mutationID: mutationID
             )
         } catch {
-            throw ToolError(error.localizedDescription)
+            throw ToolError(error.localizedDescription, kind: failureKind)
         }
     }
 

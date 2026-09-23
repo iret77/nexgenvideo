@@ -56,8 +56,7 @@ private struct AgentHostStateView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            if state.record.action == .reviewChangedSource
-                || state.record.action == .reviewForApproval {
+            if showsReviewAction {
                 Button("Review \(PhaseDisplay.label(state.record.phase))") {
                     editor.revealCockpit(cockpitTab(for: state.record.phase))
                 }
@@ -72,7 +71,7 @@ private struct AgentHostStateView: View {
                             diagnosticRow("Artifact", path)
                         }
                         if let comparison = state.record.byteComparison {
-                            diagnosticRow("Byte comparison", comparison.rawValue)
+                            diagnosticRow("Byte comparison", byteComparisonLabel(comparison))
                         }
                         if let previous = state.record.previousSHA256 {
                             diagnosticRow("Previous fingerprint", previous)
@@ -106,8 +105,11 @@ private struct AgentHostStateView: View {
         let phase = PhaseDisplay.label(state.record.phase)
         return switch state.record.state {
         case .draft: String(localized: "\(phase) draft")
+        case .writeBlocked: String(localized: "\(phase) write blocked")
         case .writeRejected: String(localized: "\(phase) not saved")
+        case .writeOutcomeUnavailable: String(localized: "\(phase) write unverified")
         case .persisted: String(localized: "\(phase) saved")
+        case .persistedPhaseRecordFailed: String(localized: "\(phase) saved; repair required")
         case .checked: String(localized: "\(phase) saved and checked")
         case .approved: String(localized: "\(phase) approved")
         case .approvalFailed: String(localized: "\(phase) not approved")
@@ -118,16 +120,38 @@ private struct AgentHostStateView: View {
         switch state.record.state {
         case .draft:
             String(localized: "The draft has not been written to the project.")
+        case .writeBlocked:
+            switch state.record.action {
+            case .reviewChangedSource:
+                String(localized: "Review the changed project source before writing again.")
+            case .reopenProject:
+                String(localized: "Reopen the project before writing again.")
+            case .retryAfterHostRecovery:
+                String(localized: "The write did not start. Wait for the current project operation to finish.")
+            default:
+                String(localized: "The write did not start. The agent can correct the request.")
+            }
         case .writeRejected:
             switch state.record.action {
             case .reviewChangedSource:
-                String(localized: "Review the changed project source before continuing.")
+                String(localized: "The new draft was not saved. Review the changed project source before continuing.")
             case .reopenProject:
-                String(localized: "Reopen the project, then try again.")
+                String(localized: "The new draft was not saved. Reopen the project before trying again.")
             case .retryAfterHostRecovery:
-                String(localized: "Wait for the current project operation to finish, then try again.")
+                String(localized: "The new draft was not saved. Wait for the current project operation to finish.")
             default:
-                String(localized: "The draft needs correction. The agent can submit it again.")
+                String(localized: "The new draft was not saved. The stored artifact is unchanged.")
+            }
+        case .writeOutcomeUnavailable:
+            switch state.record.action {
+            case .reviewChangedSource:
+                String(localized: "The writer failed, and the host could not verify the artifact bytes. Review the changed source before approval.")
+            case .reopenProject:
+                String(localized: "The writer failed, and the host could not verify the artifact bytes. Reopen the project before approval.")
+            case .retryAfterHostRecovery:
+                String(localized: "The writer failed, and the host could not verify the artifact bytes. Wait for the current project operation to finish.")
+            default:
+                String(localized: "The writer failed, and the host could not verify the artifact bytes. The agent must inspect and repair the project state before approval.")
             }
         case .persisted:
             switch state.record.byteComparison {
@@ -138,23 +162,33 @@ private struct AgentHostStateView: View {
             default:
                 String(localized: "The artifact is stored. Host checks are still pending.")
             }
+        case .persistedPhaseRecordFailed:
+            String(localized: "The artifact bytes changed, but phase bookkeeping failed. The agent must repair it before approval.")
         case .checked:
-            String(localized: "Host checks passed. Review the artifact before approval.")
+            hasLiveGateDecision
+                ? String(localized: "Host checks passed. The approval decision is open below.")
+                : String(localized: "Host checks passed. Review the artifact before approval.")
         case .approved:
             String(localized: "The host recorded the user approval.")
         case .approvalFailed:
             switch state.record.action {
             case .reopenProject:
                 String(localized: "The host could not record approval. Reopen the project, then try again.")
+            case .retryAfterHostRecovery:
+                String(localized: "The host could not record approval. Wait for the current project operation to finish, then try again.")
+            case .reviewChangedSource:
+                String(localized: "The reviewed source changed. Review it again after host checks pass.")
             default:
-                String(localized: "The host could not record approval. Wait, then try again.")
+                String(localized: "The artifact no longer passes host checks. The agent must correct it before approval.")
             }
         }
     }
 
     private var symbol: String {
         switch state.record.state {
-        case .writeRejected, .approvalFailed: "exclamationmark.triangle.fill"
+        case .writeBlocked, .writeRejected, .writeOutcomeUnavailable,
+             .persistedPhaseRecordFailed, .approvalFailed:
+            "exclamationmark.triangle.fill"
         case .approved: "checkmark.seal.fill"
         case .checked: "checkmark.circle.fill"
         case .draft, .persisted: "doc.badge.clock"
@@ -163,7 +197,9 @@ private struct AgentHostStateView: View {
 
     private var color: Color {
         switch state.record.state {
-        case .writeRejected, .approvalFailed: AppTheme.Status.warningColor
+        case .writeBlocked, .writeRejected, .writeOutcomeUnavailable,
+             .persistedPhaseRecordFailed, .approvalFailed:
+            AppTheme.Status.warningColor
         case .approved, .checked: AppTheme.Status.successColor
         case .draft, .persisted: AppTheme.Text.tertiaryColor
         }
@@ -177,6 +213,16 @@ private struct AgentHostStateView: View {
             || state.record.currentSHA256 != nil
     }
 
+    private var hasLiveGateDecision: Bool {
+        editor.agentService.pendingGateApproval?.phase == state.record.phase
+    }
+
+    private var showsReviewAction: Bool {
+        guard state.record.action == .reviewChangedSource
+            || state.record.action == .reviewForApproval else { return false }
+        return !hasLiveGateDecision
+    }
+
     private func cockpitTab(for phase: String) -> CockpitTab {
         switch phase {
         case "brief", "production_design", "treatment", "storyboard": .story
@@ -187,7 +233,7 @@ private struct AgentHostStateView: View {
         }
     }
 
-    private func diagnosticRow(_ label: String, _ value: String) -> some View {
+    private func diagnosticRow(_ label: LocalizedStringKey, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
             Text(label)
                 .interfaceFont(size: AppTheme.Typography.metadata)
@@ -196,6 +242,17 @@ private struct AgentHostStateView: View {
                 .interfaceFont(size: AppTheme.Typography.metadata, design: .monospaced)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .textSelection(.enabled)
+        }
+    }
+
+    private func byteComparisonLabel(
+        _ comparison: AgentHostStateRecord.ByteComparison
+    ) -> String {
+        switch comparison {
+        case .created: String(localized: "Created")
+        case .unchanged: String(localized: "Unchanged")
+        case .changed: String(localized: "Changed")
+        case .unavailable: String(localized: "Unavailable")
         }
     }
 }

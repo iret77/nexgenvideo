@@ -31,6 +31,8 @@ struct GateApproval: Identifiable, Equatable, Sendable {
     let declaredPack: String?
     let declaredBinding: ProjectPackBinding?
     let sourceToolName: String
+    let sourceToolUseID: String?
+    let sourceHostStateID: UUID
     /// Set only for an in-app turn that can be resumed automatically.
     let sessionId: UUID?
 
@@ -42,6 +44,8 @@ struct GateApproval: Identifiable, Equatable, Sendable {
         declaredPack: String? = nil,
         declaredBinding: ProjectPackBinding? = nil,
         sourceToolName: String = ToolName.approveGate.rawValue,
+        sourceToolUseID: String? = nil,
+        sourceHostStateID: UUID = UUID(),
         sessionId: UUID? = nil,
         id: String = UUID().uuidString
     ) {
@@ -54,6 +58,8 @@ struct GateApproval: Identifiable, Equatable, Sendable {
         self.declaredPack = declaredPack
         self.declaredBinding = declaredBinding
         self.sourceToolName = sourceToolName
+        self.sourceToolUseID = sourceToolUseID
+        self.sourceHostStateID = sourceHostStateID
         self.sessionId = sessionId
     }
 
@@ -66,6 +72,8 @@ struct GateApproval: Identifiable, Equatable, Sendable {
             declaredPack: declaredPack,
             declaredBinding: declaredBinding,
             sourceToolName: sourceToolName,
+            sourceToolUseID: sourceToolUseID,
+            sourceHostStateID: sourceHostStateID,
             sessionId: sessionId,
             id: id
         )

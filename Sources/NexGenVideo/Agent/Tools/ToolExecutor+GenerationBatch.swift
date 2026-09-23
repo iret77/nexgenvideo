@@ -98,7 +98,6 @@ extension ToolExecutor {
         }
         let batch = try GenerationBatch(payload: .init(nonce: nonce, projectKey: projectKey, phase: phase,
             items: items, requestSHA256: requestHash))
-        editor.agentPanelVisible = true
         return try editor.agentService.presentGenerationBatch(batch, origin: origin, editor: editor)
     }
 }

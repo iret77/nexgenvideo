@@ -46,8 +46,8 @@ struct AgentNoticeReceipt: Identifiable {
 }
 
 struct AgentHostState: Identifiable {
-    let id: UUID
     let record: AgentHostStateRecord
+    var id: UUID { record.id }
 }
 
 enum AgentTranscriptItem: Identifiable {
@@ -114,6 +114,9 @@ enum AgentTranscriptProjection {
         var notices: [AgentTranscriptItem] = []
 
         for message in messages {
+            for hostState in message.hostStateRecords {
+                appendHostState(.init(record: hostState), to: &hostStates)
+            }
             switch message.role {
             case .user:
                 if !message.hidden, let text = authoredText(message) {
@@ -122,7 +125,7 @@ enum AgentTranscriptProjection {
                 if let presentation = message.userPresentation {
                     if let hostState = presentation.hostStateRecord {
                         appendHostState(
-                            .init(id: message.id, record: hostState),
+                            .init(record: hostState),
                             to: &hostStates
                         )
                     }
@@ -165,9 +168,7 @@ enum AgentTranscriptProjection {
         }
 
         let activityItems = activity.map { [AgentTranscriptItem.activity($0)] } ?? []
-        let results = hostStates.isEmpty
-            ? resultMessage.map { [AgentTranscriptItem.assistantResult($0)] } ?? []
-            : []
+        let results = resultMessage.map { [AgentTranscriptItem.assistantResult($0)] } ?? []
         let stateItems = hostStates.map(AgentTranscriptItem.hostState)
         let output = intents + stateItems + results + activityItems + receipts + notices
         guard !output.isEmpty else { return nil }
@@ -178,12 +179,39 @@ enum AgentTranscriptProjection {
         _ state: AgentHostState,
         to output: inout [AgentHostState]
     ) {
-        if let index = output.firstIndex(where: {
-            $0.record.phase == state.record.phase
-        }) {
-            output[index] = state
-        } else {
-            output.append(state)
+        if let exact = output.firstIndex(where: { $0.id == state.id }) {
+            output[exact] = state
+            return
+        }
+        let samePhase = output.indices.filter {
+            output[$0].record.phase == state.record.phase
+        }
+        switch state.record.state {
+        case .approved, .checked, .persisted, .approvalFailed,
+             .persistedPhaseRecordFailed:
+            for index in samePhase.reversed() {
+                output.remove(at: index)
+            }
+        case .draft, .writeBlocked, .writeRejected, .writeOutcomeUnavailable:
+            let hasDurableState = samePhase.contains {
+                switch output[$0].record.state {
+                case .persisted, .checked, .approved: true
+                default: false
+                }
+            }
+            for index in samePhase.reversed() {
+                if !hasDurableState || !isDurableState(output[index].record.state) {
+                    output.remove(at: index)
+                }
+            }
+        }
+        output.append(state)
+    }
+
+    private static func isDurableState(_ state: AgentHostStateRecord.State) -> Bool {
+        switch state {
+        case .persisted, .checked, .approved: true
+        default: false
         }
     }
 

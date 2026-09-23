@@ -101,21 +101,22 @@ struct ChatSessionStoreTests {
         let session = ChatSession(
             title: "t",
             messages: [AgentMessage(
-                role: .user,
-                blocks: [],
-                userPresentation: .init(
-                    choiceRecord: nil,
-                    typedText: nil,
-                    hostStateRecord: record
-                )
+                role: .assistant,
+                blocks: [.toolUse(
+                    id: "storyboard-writer",
+                    name: "write_storyboard",
+                    inputJSON: "{}"
+                )],
+                hostStateRecords: [record.associated(with: "storyboard-writer")]
             )]
         )
 
         let data = try #require(ChatSessionStore.encodeSession(session))
         let back = try decoder.decode(ChatSession.self, from: data)
 
-        #expect(back.messages.first?.blocks.isEmpty == true)
-        #expect(back.messages.first?.userPresentation?.hostStateRecord == record)
+        #expect(back.messages.first?.role == .assistant)
+        #expect(back.messages.first?.hostStateRecords.first?.state == .persisted)
+        #expect(back.messages.first?.hostStateRecords.first?.toolUseID == "storyboard-writer")
     }
 
     @Test("conversation titles preserve distinguishing text at both ends")
