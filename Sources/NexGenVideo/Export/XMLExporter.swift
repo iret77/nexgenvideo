@@ -258,7 +258,7 @@ enum XMLExporter {
             let entry = resolver.entry(for: mediaRef)
             let url = resolver.resolveURL(for: mediaRef)
             // Resolve matches media by exact filename + extension.
-            let fileName = resolver.interchangeFilename(for: mediaRef)
+            let fileName = url?.lastPathComponent ?? entry?.name ?? mediaRef
             // Resolve needs Premiere's extra-slash host form; the canonical single-slash one fails.
             let pathUrl = url
                 .map { $0.absoluteString.replacingOccurrences(of: "file://", with: "file://localhost//") }

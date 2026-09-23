@@ -372,6 +372,116 @@ struct FCPXMLInteropContractTests {
         #expect(try values("//asset-clip[@name='Retime.mov']/timeMap/timept[2]/@value", in: xml) == ["1101/10s"])
     }
 
+    @Test func keyframesUseEachOwningClipsLocalTimeline() throws {
+        let fixture = try makeFixture([
+            .init(id: "direct", storageName: "Direct.mov", originalFilename: "Direct.mov"),
+            .init(id: "still", storageName: "Still.png", originalFilename: "Still.png", type: .image),
+            .init(id: "compound", storageName: "Compound.mov", originalFilename: "Compound.mov", hasAudio: true),
+            .init(id: "retimed", storageName: "Retimed.mov", originalFilename: "Retimed.mov"),
+        ])
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        var direct = Fixtures.clip(
+            id: "direct-clip", mediaRef: "direct", start: 30, duration: 60, trimStart: 10
+        )
+        direct.positionTrack = KeyframeTrack(keyframes: [
+            .init(frame: 0, value: .init(a: 0, b: 0)),
+            .init(frame: 15, value: .init(a: 0.1, b: 0.1)),
+        ])
+        var still = Fixtures.clip(
+            id: "still-clip", mediaRef: "still", mediaType: .image,
+            start: 120, duration: 60, trimStart: 5
+        )
+        still.positionTrack = KeyframeTrack(keyframes: [
+            .init(frame: 0, value: .init(a: 0, b: 0)),
+            .init(frame: 15, value: .init(a: 0.1, b: 0.1)),
+        ])
+        var compound = Fixtures.clip(
+            id: "compound-clip", mediaRef: "compound", start: 210, duration: 60, trimStart: 12
+        )
+        compound.positionTrack = KeyframeTrack(keyframes: [
+            .init(frame: 0, value: .init(a: 0, b: 0)),
+            .init(frame: 15, value: .init(a: 0.1, b: 0.1)),
+        ])
+        var retimed = Fixtures.clip(
+            id: "retimed-clip", mediaRef: "retimed",
+            start: 300, duration: 60, trimStart: 20, speed: 2
+        )
+        retimed.positionTrack = KeyframeTrack(keyframes: [
+            .init(frame: 0, value: .init(a: 0, b: 0)),
+            .init(frame: 15, value: .init(a: 0.1, b: 0.1)),
+        ])
+        var title = Fixtures.clip(
+            id: "title-clip", mediaRef: "", mediaType: .text,
+            start: 390, duration: 60, trimStart: 17, speed: 2
+        )
+        title.textContent = "Local title"
+        title.opacityTrack = KeyframeTrack(keyframes: [
+            .init(frame: 0, value: 1),
+            .init(frame: 15, value: 0.5),
+        ])
+
+        let rendered = try FCPXMLExporter.render(
+            timeline: Fixtures.timeline(fps: 30, tracks: [
+                Fixtures.videoTrack(clips: [direct, still, compound, retimed, title]),
+            ]),
+            resolver: fixture.resolver,
+            sourceTimecodes: [
+                "direct": .init(
+                    frame: 36_000,
+                    quanta: 30,
+                    dropFrame: true,
+                    tick: .init(numerator: 1_001, denominator: 30_000)
+                ),
+                "still": .init(
+                    frame: 300,
+                    quanta: 30,
+                    dropFrame: false,
+                    tick: .init(numerator: 1, denominator: 30)
+                ),
+                "compound": .init(
+                    frame: 36_000,
+                    quanta: 30,
+                    dropFrame: true,
+                    tick: .init(numerator: 1_001, denominator: 30_000)
+                ),
+                "retimed": .init(
+                    frame: 2_400,
+                    quanta: 24,
+                    dropFrame: false,
+                    tick: .init(numerator: 1_001, denominator: 24_000)
+                ),
+            ]
+        )
+        let xml = try document(rendered.data)
+
+        #expect(try values("//asset-clip[@name='Direct.mov']/@start", in: xml) == ["18023/15s"])
+        #expect(try values(
+            "//asset-clip[@name='Direct.mov']/adjust-transform/param[@name='position']//keyframe/@time",
+            in: xml
+        ) == ["18023/15s", "36061/30s"])
+        #expect(try values("//video[@name='Still.png']/@start", in: xml) == ["61/6s"])
+        #expect(try values(
+            "//video[@name='Still.png']/adjust-transform/param[@name='position']//keyframe/@time",
+            in: xml
+        ) == ["61/6s", "32/3s"])
+        #expect(try values("//ref-clip[@name='Compound.mov']/@start", in: xml) == ["2/5s"])
+        #expect(try values(
+            "//ref-clip[@name='Compound.mov']/adjust-transform/param[@name='position']//keyframe/@time",
+            in: xml
+        ) == ["2/5s", "9/10s"])
+        #expect(try values("//asset-clip[@name='Retimed.mov']/@start", in: xml) == ["1/3s"])
+        #expect(try values(
+            "//asset-clip[@name='Retimed.mov']/adjust-transform/param[@name='position']//keyframe/@time",
+            in: xml
+        ) == ["1/3s", "5/6s"])
+        #expect(try values("//title[@name='Local title']/@start", in: xml) == ["0s"])
+        #expect(try values(
+            "//title[@name='Local title']/adjust-blend/param[@name='amount']//keyframe/@time",
+            in: xml
+        ) == ["0s", "1/2s"])
+    }
+
     @Test func projectAliasesRelinkOnceWithStableReadableIdentity() async throws {
         let fixture = try makeFixture([
             .init(id: "canonical", storageName: "Camera.mov", originalFilename: "Camera Original.mov"),
@@ -495,6 +605,124 @@ struct FCPXMLInteropContractTests {
         #expect(warning.message.contains("full source URLs remain distinct"))
         #expect(!warning.message.contains("deterministic suffixes"))
         #expect(rendered.mediaBindings.map(\.filename) == ["Camera.mov", "Camera.mov"])
+    }
+
+    @Test func stagingAndEvidenceContainExactlyEmittedMedia() async throws {
+        let fixture = try makeFixture([
+            .init(id: "valid", storageName: "valid-storage.mov", originalFilename: "Valid.mov"),
+            .init(id: "lottie", storageName: "lottie-storage.json", type: .lottie),
+            .init(id: "document", storageName: "document-storage.md", type: .document),
+            .init(id: "zero", storageName: "zero-storage.mov"),
+            .init(id: "unsupported-track", storageName: "unsupported-track.mov"),
+            .init(id: "offline", storageName: "offline-storage.mov"),
+        ], projectOwned: true)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let project = try #require(fixture.project)
+        let mediaDirectory = project.appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
+        for name in [
+            "lottie-storage.json", "document-storage.md", "zero-storage.mov", "unsupported-track.mov",
+        ] {
+            let url = mediaDirectory.appendingPathComponent(name)
+            try FileManager.default.removeItem(at: url)
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+        try FileManager.default.removeItem(at: mediaDirectory.appendingPathComponent("offline-storage.mov"))
+
+        let timeline = Fixtures.timeline(tracks: [
+            Fixtures.videoTrack(clips: [
+                Fixtures.clip(id: "valid-clip", mediaRef: "valid", start: 0, duration: 30),
+                Fixtures.clip(
+                    id: "lottie-clip", mediaRef: "lottie", mediaType: .lottie,
+                    start: 30, duration: 30
+                ),
+                Fixtures.clip(
+                    id: "document-clip", mediaRef: "document", mediaType: .document,
+                    start: 60, duration: 30
+                ),
+                Fixtures.clip(id: "zero-clip", mediaRef: "zero", start: 90, duration: 0),
+                Fixtures.clip(id: "offline-clip", mediaRef: "offline", start: 90, duration: 30),
+            ]),
+            Track(type: .document, clips: [
+                Fixtures.clip(
+                    id: "unsupported-track-clip", mediaRef: "unsupported-track",
+                    start: 0, duration: 30
+                ),
+            ]),
+        ])
+        let output = fixture.root.appendingPathComponent("Selection.fcpxml")
+        let report = try await FCPXMLExporter.export(
+            timeline: timeline,
+            resolver: fixture.resolver,
+            projectName: "Selection",
+            outputURL: output
+        )
+        let sidecar = fixture.root.appendingPathComponent("Selection Media", isDirectory: true)
+        let sidecarFiles = try FileManager.default.contentsOfDirectory(
+            at: sidecar,
+            includingPropertiesForKeys: [.isRegularFileKey]
+        ).filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
+        let binding = try #require(report.mediaBindings.first)
+        let bindingURL = try #require(URL(string: binding.sourceURL))
+
+        #expect(Set(report.warnings.map(\.code)) == [
+            "color_metadata_not_exported",
+            "document_not_timeline_media",
+            "lottie_requires_render",
+            "offline_media",
+        ])
+        #expect(report.warnings.first(where: {
+            $0.code == "lottie_requires_render"
+        })?.clipID == "lottie-clip")
+        #expect(report.warnings.first(where: {
+            $0.code == "document_not_timeline_media"
+        })?.clipID == "document-clip")
+        #expect(report.warnings.first(where: {
+            $0.code == "offline_media"
+        })?.clipID == "offline-clip")
+        #expect(report.validation.assetCount == 1)
+        #expect(report.mediaBindings.count == 1)
+        #expect(binding.mediaRefs == ["valid"])
+        #expect(report.stagedProjectMediaCount == 1)
+        #expect(sidecarFiles == [bindingURL])
+        #expect(binding.mediaSHA256 == (try FileDigest.sha256(of: bindingURL)))
+        #expect(binding.mediaByteCount == Int64((try Data(contentsOf: bindingURL)).count))
+        #expect(report.mediaByteCount == binding.mediaByteCount)
+    }
+
+    @Test func emittedMediaStillFailsOnARealReadError() async throws {
+        let fixture = try makeFixture([
+            .init(id: "invalid", storageName: "invalid-storage.mov", originalFilename: "Invalid.mov"),
+        ], projectOwned: true)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let project = try #require(fixture.project)
+        let invalidSource = project
+            .appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
+            .appendingPathComponent("invalid-storage.mov")
+        try FileManager.default.removeItem(at: invalidSource)
+        try FileManager.default.createDirectory(at: invalidSource, withIntermediateDirectories: true)
+        let output = fixture.root.appendingPathComponent("Invalid.fcpxml")
+
+        do {
+            _ = try await FCPXMLExporter.export(
+                timeline: Fixtures.timeline(tracks: [Fixtures.videoTrack(clips: [
+                    Fixtures.clip(id: "invalid-clip", mediaRef: "invalid", start: 0, duration: 30),
+                ])]),
+                resolver: fixture.resolver,
+                projectName: "Invalid",
+                outputURL: output
+            )
+            Issue.record("Non-regular emitted media unexpectedly exported")
+        } catch ExportError.xmlMediaReadFailed(let source, let reason) {
+            #expect(source == invalidSource.resolvingSymlinksInPath())
+            #expect(reason.contains("regular file"))
+        } catch {
+            Issue.record("Unexpected emitted-media error: \(error)")
+        }
+
+        #expect(!FileManager.default.fileExists(atPath: output.path))
+        #expect(!FileManager.default.fileExists(
+            atPath: fixture.root.appendingPathComponent("Invalid Media", isDirectory: true).path
+        ))
     }
 
     @Test func videoAudioCaptionsTransformsAndEffectsExportOrWarn() throws {
@@ -633,7 +861,7 @@ struct FCPXMLInteropContractTests {
         try FileManager.default.createDirectory(at: directoryDestination, withIntermediateDirectories: true)
         do {
             _ = try await FCPXMLExporter.export(
-                timeline: Fixtures.timeline(),
+                timeline: timeline,
                 resolver: fixture.resolver,
                 projectName: "Failure",
                 outputURL: directoryDestination

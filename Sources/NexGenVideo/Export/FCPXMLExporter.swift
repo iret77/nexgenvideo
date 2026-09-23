@@ -46,6 +46,37 @@ enum FCPXMLExporter {
         let createdDirectory: URL?
     }
 
+    private enum EmissionSelection {
+        static func supports(_ track: Track) -> Bool {
+            track.type.isVisual || track.type == .audio
+        }
+
+        static func includes(_ clip: Clip, on track: Track, resolver: MediaResolver) -> Bool {
+            guard supports(track), clip.durationFrames > 0 else { return false }
+            switch clip.mediaType {
+            case .text:
+                return clip.textContent?.isEmpty == false
+            case .audio, .video, .image:
+                return resolver.resolveURL(for: clip.mediaRef) != nil
+            case .lottie, .document:
+                return false
+            }
+        }
+
+        static func mediaRefs(
+            in timeline: Timeline,
+            resolver: MediaResolver
+        ) -> Set<String> {
+            Set(timeline.tracks.flatMap { track in
+                track.clips.compactMap { clip in
+                    guard clip.mediaType != .text,
+                          includes(clip, on: track, resolver: resolver) else { return nil }
+                    return clip.mediaRef
+                }
+            })
+        }
+    }
+
     struct RenderedDocument: Sendable, Equatable {
         let data: Data
         let validation: FCPXMLValidationReport
@@ -65,11 +96,7 @@ enum FCPXMLExporter {
     ) async throws -> FCPXMLExportReport {
         try validateOutputDestination(outputURL)
         await progress(0)
-        let mediaRefs = Set(timeline.tracks.flatMap { track in
-            track.clips.compactMap { clip in
-                clip.sourceClipType == .text ? nil : clip.mediaRef
-            }
-        })
+        let mediaRefs = EmissionSelection.mediaRefs(in: timeline, resolver: resolver)
         try await checkCancellation(isCancelled)
         let timing = await SourceTimingReader.cache(
             mediaRefs: mediaRefs,
@@ -585,6 +612,11 @@ enum FCPXMLExporter {
             let enabled: Bool
         }
 
+        private enum KeyframeLocalTimeline {
+            case media(origin: (numerator: Int64, denominator: Int64)?)
+            case title
+        }
+
         private struct MediaResource {
             let mediaRefs: [String]
             let assetID: String
@@ -881,8 +913,8 @@ enum FCPXMLExporter {
                     ? [timeMapNode(for: clip, mediaDuration: resource.duration),
                        cropNode(for: clip),
                        FCPXMLNode(name: "adjust-conform", attributes: [("type", "fit")]),
-                       transformNode(for: clip),
-                       blendNode(for: clip)]
+                       transformNode(for: clip, localTimeline: .media(origin: nil)),
+                       blendNode(for: clip, localTimeline: .media(origin: nil))]
                     : [timeMapNode(for: clip, mediaDuration: resource.duration), volumeNode(for: clip)]
                 return FCPXMLNode(name: "ref-clip", attributes: attrs, children: children.compactMap { $0 })
             }
@@ -905,8 +937,14 @@ enum FCPXMLExporter {
                 ),
                 visual ? cropNode(for: clip) : nil,
                 visual ? FCPXMLNode(name: "adjust-conform", attributes: [("type", "fit")]) : nil,
-                visual ? transformNode(for: clip) : nil,
-                visual ? blendNode(for: clip) : nil,
+                visual ? transformNode(
+                    for: clip,
+                    localTimeline: .media(origin: resource.timecode?.rationalSeconds)
+                ) : nil,
+                visual ? blendNode(
+                    for: clip,
+                    localTimeline: .media(origin: resource.timecode?.rationalSeconds)
+                ) : nil,
                 resource.hasAudio ? volumeNode(for: linkedAudio ?? clip) : nil,
             ]
             let name = clip.mediaType == .image ? "video" : "asset-clip"
@@ -939,7 +977,7 @@ enum FCPXMLExporter {
             ]
             let concreteChildren = children.compactMap { $0 }
             var finalChildren = concreteChildren
-            if let blend = blendNode(for: clip) { finalChildren.append(blend) }
+            if let blend = blendNode(for: clip, localTimeline: .title) { finalChildren.append(blend) }
             return FCPXMLNode(name: "title", attributes: [
                 ("ref", titleEffectID),
                 ("name", content),
@@ -951,11 +989,21 @@ enum FCPXMLExporter {
             ], children: finalChildren)
         }
 
-        private func blendNode(for clip: Clip) -> FCPXMLNode? {
+        private func blendNode(
+            for clip: Clip,
+            localTimeline: KeyframeLocalTimeline
+        ) -> FCPXMLNode? {
             let frames = clip.keyframeFrames(for: .opacity)
             guard clip.opacity < 0.999_5 || !frames.isEmpty else { return nil }
             let children = frames.isEmpty ? [] : [
-                keyframeParam(name: "amount", base: formatNumber(clip.opacity), clip: clip, property: .opacity, frames: frames) {
+                keyframeParam(
+                    name: "amount",
+                    base: formatNumber(clip.opacity),
+                    clip: clip,
+                    property: .opacity,
+                    frames: frames,
+                    localTimeline: localTimeline
+                ) {
                     self.formatNumber(clip.rawOpacityAt(frame: $0))
                 },
             ]
@@ -966,7 +1014,10 @@ enum FCPXMLExporter {
             )
         }
 
-        private func transformNode(for clip: Clip) -> FCPXMLNode? {
+        private func transformNode(
+            for clip: Clip,
+            localTimeline: KeyframeLocalTimeline
+        ) -> FCPXMLNode? {
             let transform = clip.transform
             let positionFrames = clip.keyframeFrames(for: .position)
             let rotationFrames = clip.keyframeFrames(for: .rotation)
@@ -988,7 +1039,8 @@ enum FCPXMLExporter {
             var parameters: [FCPXMLNode] = []
             if !scaleFrames.isEmpty {
                 parameters.append(keyframeParam(
-                    name: "scale", base: scale, clip: clip, property: .scale, frames: scaleFrames
+                    name: "scale", base: scale, clip: clip, property: .scale,
+                    frames: scaleFrames, localTimeline: localTimeline
                 ) { frame in
                     let size = clip.sizeAt(frame: frame)
                     return self.scaleValue(width: size.width, height: size.height, for: clip)
@@ -1000,7 +1052,8 @@ enum FCPXMLExporter {
                     base: positionValue(for: transform, fit: fit),
                     clip: clip,
                     property: .position,
-                    frames: positionFrames
+                    frames: positionFrames,
+                    localTimeline: localTimeline
                 ) { self.positionValue(for: clip.transformAt(frame: $0), fit: fit) })
             }
             if !rotationFrames.isEmpty {
@@ -1009,7 +1062,8 @@ enum FCPXMLExporter {
                     base: formatNumber(-transform.rotation),
                     clip: clip,
                     property: .rotation,
-                    frames: rotationFrames
+                    frames: rotationFrames,
+                    localTimeline: localTimeline
                 ) { self.formatNumber(-clip.rotationAt(frame: $0)) })
             }
             return FCPXMLNode(name: "adjust-transform", attributes: attributes, children: parameters)
@@ -1030,10 +1084,14 @@ enum FCPXMLExporter {
             clip: Clip,
             property: AnimatableProperty,
             frames: [Int],
+            localTimeline: KeyframeLocalTimeline,
             value: (Int) -> String
         ) -> FCPXMLNode {
             let keyframes = frames.sorted().map { frame -> FCPXMLNode in
-                var attributes: [(String, String)] = [("time", keyframeTime(frame, clip: clip))]
+                var attributes: [(String, String)] = [(
+                    "time",
+                    keyframeTime(frame, clip: clip, localTimeline: localTimeline)
+                )]
                 if clip.interpolation(for: property, atFrame: frame) == .linear {
                     attributes.append(("curve", "linear"))
                 }
@@ -1045,14 +1103,28 @@ enum FCPXMLExporter {
             ])
         }
 
-        private func keyframeTime(_ frame: Int, clip: Clip) -> String {
+        private func keyframeTime(
+            _ frame: Int,
+            clip: Clip,
+            localTimeline: KeyframeLocalTimeline
+        ) -> String {
+            let elapsed = frame - clip.startFrame
+            if case .title = localTimeline {
+                return time(frames: elapsed)
+            }
             guard abs(clip.speed - 1) > 0.001 else {
-                return time(frames: frame - clip.startFrame)
+                let (localFrame, overflow) = clip.trimStartFrame.addingReportingOverflow(elapsed)
+                guard !overflow else {
+                    recordTimingFailure("A keyframe time overflowed integer frame arithmetic.")
+                    return "0s"
+                }
+                guard case .media(let origin) = localTimeline else { return "0s" }
+                return time(frames: localFrame, from: origin)
             }
             let speed = rationalSpeed(clip.speed)
             guard let trim = checkedMultiply(Int64(clip.trimStartFrame), speed.denominator),
-                  let elapsed = checkedMultiply(Int64(frame - clip.startFrame), speed.numerator),
-                  let numerator = checkedAdd(trim, elapsed),
+                  let scaledElapsed = checkedMultiply(Int64(elapsed), speed.numerator),
+                  let numerator = checkedAdd(trim, scaledElapsed),
                   let denominator = checkedMultiply(Int64(fps), speed.numerator) else {
                 recordTimingFailure("A keyframe time overflowed 64-bit rational arithmetic.")
                 return "0s"
@@ -1355,6 +1427,7 @@ enum FCPXMLExporter {
             var audioOrdinal = 0
             var result: [EmittableClip] = []
             for track in timeline.tracks {
+                guard EmissionSelection.supports(track) else { continue }
                 let lane: Int
                 let enabled: Bool
                 if track.type.isVisual {
@@ -1365,11 +1438,9 @@ enum FCPXMLExporter {
                     lane = -(audioOrdinal + 1)
                     enabled = !track.muted
                     audioOrdinal += 1
-                } else {
-                    continue
-                }
+                } else { continue }
                 result += track.clips
-                    .filter(isEmittable)
+                    .filter { EmissionSelection.includes($0, on: track, resolver: resolver) }
                     .sorted {
                         if $0.startFrame != $1.startFrame { return $0.startFrame < $1.startFrame }
                         return $0.id < $1.id
@@ -1377,18 +1448,6 @@ enum FCPXMLExporter {
                     .map { .init(clip: $0, lane: lane, enabled: enabled) }
             }
             return result
-        }
-
-        private func isEmittable(_ clip: Clip) -> Bool {
-            guard clip.durationFrames > 0 else { return false }
-            switch clip.mediaType {
-            case .text:
-                return clip.textContent?.isEmpty == false
-            case .audio, .video, .image:
-                return resolver.resolveURL(for: clip.mediaRef) != nil
-            case .lottie, .document:
-                return false
-            }
         }
 
         private func indexLinkedPairs(_ clips: [EmittableClip]) {

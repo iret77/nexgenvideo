@@ -33,7 +33,10 @@ No unsupported timeline feature is silently represented as if it survived the ha
 
 All FCPXML times and container durations are reduced rational seconds. NTSC source rates use exact `1001/24000`,
 `1001/30000`, or `1001/60000` frame durations, never rounded decimal rates. Source in/out includes
-the exact source origin and trim; retimes keep an exact rational time map. Drop-frame changes the
+the exact source origin and trim; retimes keep an exact rational time map. Apple defines
+[`start` as the beginning of an element's local timeline](https://developer.apple.com/documentation/professional-video-applications/timing-attributes),
+so keyframes include that local start for direct and compound media while title keyframes remain
+zero-based. Drop-frame changes the
 timecode numbering convention, not elapsed time. Other fractional rates remain exact (for example,
 29.5 fps is `2/59s`); their FCP format name stays undefined and the export reports a
 `nonstandard_source_rate` warning instead of coercing them to a nearby NTSC rate.

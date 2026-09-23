@@ -166,6 +166,50 @@ struct XMLExporterTests {
         #expect(xml.contains("<end>90</end>")) // 30 + 60
     }
 
+    @Test func readableClipNameKeepsXMEMLFileNameAlignedWithPathBasename() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("XMLExporterIdentity-\(UUID().uuidString)", isDirectory: true)
+        let project = root.appendingPathComponent("Source.ngv", isDirectory: true)
+        let mediaDirectory = project.appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
+        try FileManager.default.createDirectory(at: mediaDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let storageName = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.mov"
+        try Data("media".utf8).write(to: mediaDirectory.appendingPathComponent(storageName))
+        var entry = MediaManifestEntry(
+            id: "camera", name: "Camera", type: .video,
+            source: .project(relativePath: "\(Project.mediaDirectoryName)/\(storageName)"),
+            duration: 1
+        )
+        entry.originalFilename = "Camera Original.mov"
+        var manifest = MediaManifest()
+        manifest.entries = [entry]
+        let resolver = MediaResolver(manifest: { manifest }, projectURL: { project })
+        let output = root.appendingPathComponent("Readable.xml")
+
+        try XMLExporter.export(
+            timeline: Fixtures.timeline(tracks: [Fixtures.videoTrack(clips: [
+                Fixtures.clip(id: "readable", mediaRef: "camera", start: 0, duration: 30),
+            ])]),
+            resolver: resolver,
+            outputURL: output
+        )
+        let document = try XMLDocument(data: Data(contentsOf: output), options: [.nodePreserveAll])
+        let clipName = try #require(
+            document.nodes(forXPath: "//clipitem[@id='clipitem-readable']/name").first?.stringValue
+        )
+        let fileName = try #require(
+            document.nodes(forXPath: "//clipitem[@id='clipitem-readable']/file/name").first?.stringValue
+        )
+        let pathURL = try #require(
+            document.nodes(forXPath: "//clipitem[@id='clipitem-readable']/file/pathurl").first?.stringValue
+        )
+
+        #expect(clipName == "Camera Original.mov")
+        #expect(fileName == storageName)
+        #expect(URL(string: pathURL)?.lastPathComponent == fileName)
+        #expect(clipName != fileName)
+    }
+
     @Test func clipsReferencingUnresolvableMediaAreSkipped() throws {
         // No manifest entry for the clip's mediaRef → resolveURL returns nil → sortEmittable
         // drops the clip → no clipitem element in the output. Pins this fail-soft behavior
