@@ -797,27 +797,24 @@ struct InspectorView: View {
         let single = clips.count == 1 ? clips.first : nil
         let kfVisible = single != nil && editor.keyframesPanelVisible
 
-        Group {
-            if let clip = single, kfVisible {
-                HStack(alignment: .top, spacing: AppTheme.Spacing.none) {
-                    VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-                        transformSection(clips: clips)
-                        speedSection(clips: clips + selectedAudioClips)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.trailing, AppTheme.Spacing.sm)
-                    AppDivider()
-                    KeyframesPanel(clip: clip)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.leading, AppTheme.Spacing.sm)
+        InspectorKeyframesContent(isPresented: kfVisible) {
+            if kfVisible {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+                    transformSection(clips: clips)
+                    speedSection(clips: clips + selectedAudioClips)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 transformSection(clips: clips)
                 speedSection(clips: clips + selectedAudioClips)
             }
+        } keyframes: {
+            if let clip = single {
+                KeyframesPanel(clip: clip)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .inspectorKeyframeAccessoryColumn(single != nil)
-
     }
 
     func keyframesToggleBar(enabled: Bool) -> some View {
@@ -1179,8 +1176,8 @@ struct InspectorView: View {
     private func cropRow(single: Clip?) -> some View {
         let editing = editor.cropEditingActive && single != nil
         let disabled = single == nil
-        propertyRow(label: "Crop") {
-            HStack(spacing: AppTheme.Spacing.sm) {
+        InspectorAnimatableFormRow(label: "Crop", showsAccessory: single != nil) {
+            InspectorAdaptiveControlPair(spacing: AppTheme.Spacing.sm) {
                 iconToggleButton(
                     systemName: "crop",
                     isOn: editing,
@@ -1191,13 +1188,14 @@ struct InspectorView: View {
                     editor.cropEditingActive.toggle()
                 }
                 .disabled(disabled)
+            } second: {
                 cropMenu(single: single)
-                if let cid = single?.id {
-                    keyframeControls(clipId: cid, property: .crop)
-                }
+            }
+        } accessory: {
+            if let cid = single?.id {
+                keyframeControls(clipId: cid, property: .crop)
             }
         }
-        .frame(minHeight: AppTheme.Timeline.keyframeRowHeight)
         .opacity(disabled ? AppTheme.Opacity.settingsWindow : AppTheme.Opacity.opaque)
     }
 

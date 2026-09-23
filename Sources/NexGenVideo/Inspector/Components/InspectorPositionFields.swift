@@ -11,17 +11,10 @@ struct InspectorPositionFields: View {
         let xShared = sharedClipValue(clips) { $0.topLeftAt(frame: frame).x }
         let yShared = sharedClipValue(clips) { $0.topLeftAt(frame: frame).y }
 
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: AppTheme.Spacing.xs) {
-                positionField(axis: .x, value: xShared, displayMultiplier: canvasW)
-                positionField(axis: .y, value: yShared, displayMultiplier: canvasH)
-            }
-            .fixedSize()
-            VStack(alignment: .trailing, spacing: AppTheme.Spacing.xs) {
-                positionField(axis: .x, value: xShared, displayMultiplier: canvasW)
-                positionField(axis: .y, value: yShared, displayMultiplier: canvasH)
-            }
-            .fixedSize()
+        InspectorPositionFieldsLayout {
+            positionField(axis: .x, value: xShared, displayMultiplier: canvasW)
+        } yField: {
+            positionField(axis: .y, value: yShared, displayMultiplier: canvasH)
         }
     }
 
@@ -62,5 +55,26 @@ struct InspectorPositionFields: View {
         for c in clips { editor.commitPosition(clipId: c.id, setX: setX, setY: setY) }
         editor.undoManager?.endUndoGrouping()
         editor.undoManager?.setActionName("Change Position")
+    }
+}
+
+struct InspectorPositionFieldsLayout<XField: View, YField: View>: View {
+    @ViewBuilder let xField: () -> XField
+    @ViewBuilder let yField: () -> YField
+
+    init(
+        @ViewBuilder xField: @escaping () -> XField,
+        @ViewBuilder yField: @escaping () -> YField
+    ) {
+        self.xField = xField
+        self.yField = yField
+    }
+
+    var body: some View {
+        InspectorAdaptiveControlPair(spacing: AppTheme.Spacing.xs) {
+            xField()
+        } second: {
+            yField()
+        }
     }
 }

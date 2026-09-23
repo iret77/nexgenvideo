@@ -8,28 +8,20 @@ extension InspectorView {
         let single = audios.count == 1 ? audios.first : nil
         let kfVisible = single != nil && editor.keyframesPanelVisible
 
-        Group {
-            if let clip = single, kfVisible {
-                HStack(alignment: .top, spacing: AppTheme.Spacing.none) {
-                    VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
-                        // Match the kf panel's ruler+strip header height so Volume aligns with its lane.
-                        sectionTitleLabel(title: "Levels")
-                            .frame(height: AppTheme.Timeline.keyframeHeaderHeight, alignment: .bottomLeading)
-                        volumeRow(audios: audios)
-                        fadeRow(label: "Fade In", clips: audios, edge: .left)
-                        fadeRow(label: "Fade Out", clips: audios, edge: .right)
-                        if nonTextVisualClips.isEmpty {
-                            speedSection(clips: audios)
-                                .padding(.top, AppTheme.Spacing.md)
-                        }
+        InspectorKeyframesContent(isPresented: kfVisible) {
+            if kfVisible {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
+                    sectionTitleLabel(title: "Levels")
+                        .frame(height: AppTheme.Timeline.keyframeHeaderHeight, alignment: .bottomLeading)
+                    volumeRow(audios: audios)
+                    fadeRow(label: "Fade In", clips: audios, edge: .left)
+                    fadeRow(label: "Fade Out", clips: audios, edge: .right)
+                    if nonTextVisualClips.isEmpty {
+                        speedSection(clips: audios)
+                            .padding(.top, AppTheme.Spacing.md)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.trailing, AppTheme.Spacing.sm)
-                    AppDivider()
-                    KeyframesPanel(clip: clip)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.leading, AppTheme.Spacing.sm)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
@@ -43,9 +35,13 @@ extension InspectorView {
                     }
                 }
             }
+        } keyframes: {
+            if let clip = single {
+                KeyframesPanel(clip: clip)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .inspectorKeyframeAccessoryColumn(single != nil)
-
     }
 
     @ViewBuilder
