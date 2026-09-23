@@ -339,6 +339,177 @@ struct AgentTranscriptProjectionTests {
         #expect(result.id == rich.id)
         #expect(result.blocks.count == 2)
     }
+
+    @Test("resume recovery projects only the latest host artifact state")
+    func resumeRecoveryUsesLatestHostState() throws {
+        let resume = AgentMessage(
+            role: .user,
+            blocks: [.text("Resume the storyboard phase.")],
+            hidden: true
+        )
+        let copiedReference = AgentMessage(role: .assistant, blocks: [
+            .text("Checking the resumed reference."),
+            .toolUse(id: "copy", name: "copy_project_file", inputJSON: "{}"),
+        ])
+        let copiedReferenceResult = AgentMessage(role: .user, blocks: [
+            .toolResult(
+                toolUseId: "copy",
+                content: [.text("reference copied")],
+                isError: false
+            ),
+        ])
+        let rejectedWrite = AgentMessage(role: .assistant, blocks: [
+            .text("The storyboard is written and ready."),
+            .toolUse(id: "rejected", name: "write_storyboard", inputJSON: "{}"),
+        ])
+        let draftState = hostStateMessage(.init(
+            state: .draft,
+            phase: "storyboard",
+            toolName: "write_storyboard",
+            action: .none,
+            artifactPath: "storyboard/current.yaml",
+            byteComparison: nil,
+            previousSHA256: String(repeating: "a", count: 64),
+            currentSHA256: nil
+        ))
+        let rejectedState = hostStateMessage(.init(
+            state: .writeRejected,
+            phase: "storyboard",
+            toolName: "write_storyboard",
+            action: .reviewChangedSource,
+            artifactPath: "storyboard/current.yaml",
+            byteComparison: nil,
+            previousSHA256: String(repeating: "a", count: 64),
+            currentSHA256: nil
+        ))
+        let rejectedResult = AgentMessage(role: .user, blocks: [
+            .toolResult(
+                toolUseId: "rejected",
+                content: [.text("Approved source lineage changed.")],
+                isError: true
+            ),
+        ])
+        let zoneRepair = AgentMessage(role: .assistant, blocks: [
+            .text("Repairing visible zones."),
+            .toolUse(id: "zone", name: "write_storyboard", inputJSON: "{}"),
+        ])
+        let zoneState = hostStateMessage(.init(
+            state: .writeRejected,
+            phase: "storyboard",
+            toolName: "write_storyboard",
+            action: .agentCorrection,
+            artifactPath: "storyboard/current.yaml",
+            byteComparison: nil,
+            previousSHA256: nil,
+            currentSHA256: nil
+        ))
+        let zoneResult = AgentMessage(role: .user, blocks: [
+            .toolResult(
+                toolUseId: "zone",
+                content: [.text("visible_zones needs a blocking anchor.")],
+                isError: true
+            ),
+        ])
+        let successfulWrite = AgentMessage(role: .assistant, blocks: [
+            .text("The recovery is complete."),
+            .toolUse(id: "written", name: "write_storyboard", inputJSON: "{}"),
+            .toolUse(id: "checked", name: "approve_gate", inputJSON: #"{"phase":"storyboard"}"#),
+        ])
+        let persistedState = hostStateMessage(.init(
+            state: .persisted,
+            phase: "storyboard",
+            toolName: "write_storyboard",
+            action: .reviewForApproval,
+            artifactPath: "storyboard/current.yaml",
+            byteComparison: .changed,
+            previousSHA256: String(repeating: "a", count: 64),
+            currentSHA256: String(repeating: "b", count: 64)
+        ))
+        let checkedState = hostStateMessage(.init(
+            state: .checked,
+            phase: "storyboard",
+            toolName: "approve_gate",
+            action: .reviewForApproval,
+            artifactPath: nil,
+            byteComparison: nil,
+            previousSHA256: nil,
+            currentSHA256: nil
+        ))
+        let unpricedBatch = AgentMessage(role: .assistant, blocks: [
+            .text("Preparing the next generation batch."),
+            .toolUse(id: "batch", name: "prepare_generation_batch", inputJSON: "{}"),
+        ])
+        let unpricedBatchResult = AgentMessage(role: .user, blocks: [
+            .toolResult(
+                toolUseId: "batch",
+                content: [.text("Generation batch review is open.")],
+                isError: false
+            ),
+        ])
+
+        let turns = AgentTranscriptProjection.turns(
+            messages: [
+                resume, copiedReference, copiedReferenceResult,
+                rejectedWrite, draftState, rejectedState, rejectedResult,
+                zoneRepair, zoneState, zoneResult, successfulWrite,
+                persistedState, checkedState, unpricedBatch, unpricedBatchResult,
+            ],
+            isStreaming: false
+        )
+
+        #expect(turns.count == 1)
+        let items = turns[0].items
+        let states = items.compactMap { item -> AgentHostStateRecord? in
+            guard case .hostState(let state) = item else { return nil }
+            return state.record
+        }
+        #expect(states.count == 1)
+        #expect(states.first?.state == .checked)
+        #expect(!items.contains {
+            if case .assistantResult = $0 { return true }
+            return false
+        })
+        let activity = try #require(items.compactMap(\.activity).first)
+        #expect(activity.steps.map(\.id) == [
+            "copy", "rejected", "zone", "written", "checked", "batch",
+        ])
+    }
+
+    @Test("host state records never become authored user turns")
+    func hostStateIsNotAUserIntent() {
+        let message = hostStateMessage(.init(
+            state: .persisted,
+            phase: "brief",
+            toolName: "write_brief",
+            action: .reviewForApproval,
+            artifactPath: "brief.yaml",
+            byteComparison: .unchanged,
+            previousSHA256: String(repeating: "a", count: 64),
+            currentSHA256: String(repeating: "a", count: 64)
+        ))
+
+        let turns = AgentTranscriptProjection.turns(messages: [message], isStreaming: false)
+
+        #expect(turns.count == 1)
+        #expect(turns[0].items.count == 1)
+        guard case .hostState(let state) = turns[0].items[0] else {
+            Issue.record("host state must use its own projection")
+            return
+        }
+        #expect(state.record.byteComparison == .unchanged)
+    }
+
+    private func hostStateMessage(_ record: AgentHostStateRecord) -> AgentMessage {
+        AgentMessage(
+            role: .user,
+            blocks: [],
+            userPresentation: .init(
+                choiceRecord: nil,
+                typedText: nil,
+                hostStateRecord: record
+            )
+        )
+    }
 }
 
 private extension AgentTranscriptItem {

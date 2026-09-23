@@ -16,6 +16,8 @@ struct AgentTranscriptTurnView: View {
                     AgentMessageView(message: message, toolResults: toolResults)
                 case .activity(let activity):
                     AgentActivityView(activity: activity, toolResults: toolResults)
+                case .hostState(let state):
+                    AgentHostStateView(state: state)
                 case .receipts(let group):
                     AgentReceiptGroupView(group: group)
                 case .notice(let notice):
@@ -26,6 +28,175 @@ struct AgentTranscriptTurnView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Conversation turn")
+    }
+}
+
+private struct AgentHostStateView: View {
+    let state: AgentHostState
+    @Environment(EditorViewModel.self) private var editor
+    @State private var showsDiagnostics = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+            HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
+                Image(systemName: symbol)
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .foregroundStyle(color)
+                    .frame(width: AppTheme.IconSize.xs, height: AppTheme.IconSize.xs)
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                    Text(title)
+                        .interfaceFont(
+                            size: AppTheme.Typography.ui,
+                            weight: AppTheme.FontWeight.semibold
+                        )
+                        .foregroundStyle(AppTheme.Text.primaryColor)
+                    Text(detail)
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if state.record.action == .reviewChangedSource
+                || state.record.action == .reviewForApproval {
+                Button("Review \(PhaseDisplay.label(state.record.phase))") {
+                    editor.revealCockpit(cockpitTab(for: state.record.phase))
+                }
+                .buttonStyle(.capsule(.secondary, size: .regular))
+                .controlSize(.small)
+            }
+            if hasDiagnostics {
+                DisclosureGroup(isExpanded: $showsDiagnostics) {
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                        diagnosticRow("Tool", state.record.toolName)
+                        if let path = state.record.artifactPath {
+                            diagnosticRow("Artifact", path)
+                        }
+                        if let comparison = state.record.byteComparison {
+                            diagnosticRow("Byte comparison", comparison.rawValue)
+                        }
+                        if let previous = state.record.previousSHA256 {
+                            diagnosticRow("Previous fingerprint", previous)
+                        }
+                        if let current = state.record.currentSHA256 {
+                            diagnosticRow("Current fingerprint", current)
+                        }
+                    }
+                    .padding(.top, AppTheme.Spacing.xxs)
+                } label: {
+                    Text("Diagnostics")
+                        .interfaceFont(size: AppTheme.Typography.metadata)
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                }
+            }
+        }
+        .padding(AppTheme.Spacing.md)
+        .background(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
+                .fill(AppTheme.Background.raisedColor)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
+                .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(title). \(detail)")
+    }
+
+    private var title: String {
+        let phase = PhaseDisplay.label(state.record.phase)
+        return switch state.record.state {
+        case .draft: String(localized: "\(phase) draft")
+        case .writeRejected: String(localized: "\(phase) not saved")
+        case .persisted: String(localized: "\(phase) saved")
+        case .checked: String(localized: "\(phase) saved and checked")
+        case .approved: String(localized: "\(phase) approved")
+        case .approvalFailed: String(localized: "\(phase) not approved")
+        }
+    }
+
+    private var detail: String {
+        switch state.record.state {
+        case .draft:
+            String(localized: "The draft has not been written to the project.")
+        case .writeRejected:
+            switch state.record.action {
+            case .reviewChangedSource:
+                String(localized: "Review the changed project source before continuing.")
+            case .reopenProject:
+                String(localized: "Reopen the project, then try again.")
+            case .retryAfterHostRecovery:
+                String(localized: "Wait for the current project operation to finish, then try again.")
+            default:
+                String(localized: "The draft needs correction. The agent can submit it again.")
+            }
+        case .persisted:
+            switch state.record.byteComparison {
+            case .unchanged:
+                String(localized: "The host compared the exact bytes. The artifact is unchanged; checks are still pending.")
+            case .changed:
+                String(localized: "The artifact changed. Review it before approval.")
+            default:
+                String(localized: "The artifact is stored. Host checks are still pending.")
+            }
+        case .checked:
+            String(localized: "Host checks passed. Review the artifact before approval.")
+        case .approved:
+            String(localized: "The host recorded the user approval.")
+        case .approvalFailed:
+            switch state.record.action {
+            case .reopenProject:
+                String(localized: "The host could not record approval. Reopen the project, then try again.")
+            default:
+                String(localized: "The host could not record approval. Wait, then try again.")
+            }
+        }
+    }
+
+    private var symbol: String {
+        switch state.record.state {
+        case .writeRejected, .approvalFailed: "exclamationmark.triangle.fill"
+        case .approved: "checkmark.seal.fill"
+        case .checked: "checkmark.circle.fill"
+        case .draft, .persisted: "doc.badge.clock"
+        }
+    }
+
+    private var color: Color {
+        switch state.record.state {
+        case .writeRejected, .approvalFailed: AppTheme.Status.warningColor
+        case .approved, .checked: AppTheme.Status.successColor
+        case .draft, .persisted: AppTheme.Text.tertiaryColor
+        }
+    }
+
+    private var hasDiagnostics: Bool {
+        !state.record.toolName.isEmpty
+            || state.record.artifactPath != nil
+            || state.record.byteComparison != nil
+            || state.record.previousSHA256 != nil
+            || state.record.currentSHA256 != nil
+    }
+
+    private func cockpitTab(for phase: String) -> CockpitTab {
+        switch phase {
+        case "brief", "production_design", "treatment", "storyboard": .story
+        case "bible": .bible
+        case "shotlist": .shotlist
+        case "frames", "sanity", "render", "finish": .review
+        default: .pipeline
+        }
+    }
+
+    private func diagnosticRow(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
+            Text(label)
+                .interfaceFont(size: AppTheme.Typography.metadata)
+                .foregroundStyle(AppTheme.Text.mutedColor)
+            Text(value)
+                .interfaceFont(size: AppTheme.Typography.metadata, design: .monospaced)
+                .foregroundStyle(AppTheme.Text.tertiaryColor)
+                .textSelection(.enabled)
+        }
     }
 }
 

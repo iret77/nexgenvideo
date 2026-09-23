@@ -149,6 +149,17 @@ enum ToolName: String, CaseIterable, Sendable {
         }
     }
 
+    var isCanonicalArtifactWriter: Bool {
+        switch self {
+        case .writeAnalysisInterpretation, .writeBrief, .writeProductionDesign,
+             .writeTreatment, .writeStoryboard, .writeBible, .writeShotlist,
+             .writePhaseExtension:
+            true
+        default:
+            false
+        }
+    }
+
     func writesPhaseArtifact(args: [String: Any], dataRoot: URL) -> Bool {
         guard isDurableWrite else { return false }
         switch self {

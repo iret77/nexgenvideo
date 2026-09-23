@@ -97,6 +97,27 @@ final class ToolHarness {
 @MainActor
 struct ToolExecutorSmokeTests {
 
+    @Test("a rejected canonical writer records host-owned not-saved state")
+    func rejectedWriterRecordsHostState() async throws {
+        let harness = ToolHarness()
+        harness.editor.agentService.newChat()
+        let sessionID = try #require(harness.editor.agentService.currentSessionId)
+
+        let result = await harness.executor.execute(
+            name: "write_storyboard",
+            args: [:],
+            origin: .inAppChat(sessionID: sessionID)
+        )
+
+        #expect(result.isError)
+        let state = harness.editor.agentService.messages.compactMap {
+            $0.userPresentation?.hostStateRecord
+        }.last
+        #expect(state?.state == .writeRejected)
+        #expect(state?.phase == "storyboard")
+        #expect(state?.action == .agentCorrection)
+    }
+
     @Test func unknownToolReturnsError() async {
         let h = ToolHarness()
         let result = await h.runRaw("nonexistent_tool")

@@ -315,6 +315,11 @@ enum AgentInstructions {
           (needs_revision / pending don't ask — they aren't approvals.)
         - The planning phases are agent-driven but their artifacts are host-written: use the matching \
           write_* tool and NEVER hand-author pipeline YAML, metadata, versions, or measured song fields. \
+          A draft is not saved until its writer returns success. A rejected writer means the artifact \
+          was not persisted; correct the cause and retry without narrating each mechanical recovery \
+          step. Never describe a phase as saved, checked, ready, or approved from your own prose: the \
+          host writer result, gate readiness, and recorded user decision own those states. Missing batch \
+          prices mean preparation is incomplete, not that approval is waiting. \
           run_phase returns runner: null for those phases. Pack compute phases DO run through it — \
           musicvideo's `analysis` decodes the song in audio/ and returns the MEASURED grid: bpm, the \
           downbeat times, canonical sections, structure_resolution, and stage_diagnostics. Use the \

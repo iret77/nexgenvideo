@@ -1259,6 +1259,34 @@ final class AgentService {
         checkpointCurrentSession()
     }
 
+    func recordHostState(
+        _ record: AgentHostStateRecord,
+        origin: ToolCallOrigin
+    ) {
+        guard let sessionID = origin.chatSessionID else { return }
+        let message = AgentMessage(
+            role: .user,
+            blocks: [],
+            userPresentation: AgentUserPresentation(
+                choiceRecord: nil,
+                typedText: nil,
+                hostStateRecord: record
+            )
+        )
+        if sessionID == currentSessionId {
+            messages.append(message)
+            syncMessagesIntoCurrentSession()
+            onSessionsChanged?()
+            return
+        }
+        guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else {
+            return
+        }
+        sessions[index].messages.append(message)
+        sessions[index].updatedAt = Date()
+        onSessionsChanged?()
+    }
+
     /// The compact intent line for a generation dialog — picked chip labels then the free-text
     /// direction, comma-joined (matches the music tab's original composition).
     private static func intentLine(from dialog: AgentDialog, result: AgentDialogResult) -> String {
@@ -2080,9 +2108,10 @@ final class AgentService {
                 return .error("The approval is already being applied.")
             }
             guard let toolExecutor else {
-                let message = "The gate writer is unavailable. The approval request remains open."
-                gateApprovalError = message
-                return .error(message)
+                return recordGateApprovalFailure(
+                    "The gate writer is unavailable. The approval request remains open.",
+                    approval: approval
+                )
             }
             gateApprovalIsWriting = true
             defer { gateApprovalIsWriting = false }
@@ -2092,6 +2121,19 @@ final class AgentService {
                 pendingGateOrigin = nil
                 gateApprovalError = nil
                 if approval.sessionId != nil {
+                    recordHostState(
+                        AgentHostStateRecord(
+                            state: .approved,
+                            phase: approval.phase,
+                            toolName: approval.sourceToolName,
+                            action: .none,
+                            artifactPath: nil,
+                            byteComparison: nil,
+                            previousSHA256: nil,
+                            currentSHA256: nil
+                        ),
+                        origin: origin
+                    )
                     enqueueGateFollowUp(
                         "The user approved \(approval.phaseLabel), and the host wrote the gate successfully: \(payload) "
                             + "Continue from the updated project state; do not request this approval again.",
@@ -2113,6 +2155,25 @@ final class AgentService {
     private func recordGateApprovalFailure(_ reason: String, approval: GateApproval) -> ToolResult {
         let message = "Couldn't approve \(approval.phaseLabel): \(reason)"
         gateApprovalError = message
+        let normalizedReason = reason.lowercased()
+        let action: AgentHostStateRecord.Action = [
+            "reopen the project", "working copy is unavailable", "trusted format-pack declaration",
+        ].contains(where: { normalizedReason.contains($0) })
+            ? .reopenProject
+            : .retryAfterHostRecovery
+        recordHostState(
+            AgentHostStateRecord(
+                state: .approvalFailed,
+                phase: approval.phase,
+                toolName: approval.sourceToolName,
+                action: action,
+                artifactPath: nil,
+                byteComparison: nil,
+                previousSHA256: nil,
+                currentSHA256: nil
+            ),
+            origin: pendingGateOrigin ?? .direct
+        )
         enqueueGateFollowUp(
             "The user approved \(approval.phaseLabel), but the host could not write the gate: \(reason) "
                 + "The approval card remains open. Address the stated cause without claiming approval, "

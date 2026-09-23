@@ -192,7 +192,11 @@ final class ToolExecutor {
         var guardedPhase: String?
         var guardedRoot: URL?
         var guardedDeclaration: ProjectPackGate.MutationDeclaration?
+        var hostStatePhase: String?
+        var hostStateRoot: URL?
         var mutationLease: (root: URL, id: UUID)?
+        var artifactBefore: HostArtifactSnapshot?
+        var canonicalWriterPersisted = false
         defer {
             if let mutationLease {
                 editor.pipelinePhaseRunCoordinator.endMutation(
@@ -220,6 +224,16 @@ final class ToolExecutor {
             }
             try validateToolInput(in: args, against: schema, path: tool.rawValue)
             let resolved = try expandingIdPrefixes(in: args, editor: editor)
+            if tool.isCanonicalArtifactWriter {
+                hostStatePhase = tool.advancingPhase(args: resolved)
+                hostStateRoot = try? resolveDataRoot(resolved, editor: editor)
+                if let hostStatePhase, let hostStateRoot {
+                    artifactBefore = hostArtifactSnapshot(
+                        phase: hostStatePhase,
+                        dataRoot: hostStateRoot
+                    )
+                }
+            }
             if enforceHardGates {
                 if let phase = tool.advancingPhase(args: resolved) {
                     let root = try resolveDataRoot(resolved, editor: editor)
@@ -227,6 +241,9 @@ final class ToolExecutor {
                         editor,
                         dataRoot: root
                     )
+                    guardedPhase = phase
+                    guardedRoot = root
+                    guardedDeclaration = declaration
                     try editor.pipelineAgentHarness.guardPhaseWork(
                         tool: tool,
                         phase: phase,
@@ -234,9 +251,6 @@ final class ToolExecutor {
                         declaredPack: declaration.packName,
                         declaredBinding: declaration.binding
                     )
-                    guardedPhase = phase
-                    guardedRoot = root
-                    guardedDeclaration = declaration
                 } else if tool.usesCurrentPipelinePhase {
                     let root = try resolveDataRoot(resolved, editor: editor)
                     let declaration = try mutationPackDeclaration(
@@ -294,7 +308,35 @@ final class ToolExecutor {
                 }
                 try ProjectWorkingCopy.markDirty(key: key)
             }
+            if tool.isCanonicalArtifactWriter,
+               artifactBefore == nil,
+               let hostStateRoot {
+                artifactBefore = hostArtifactSnapshot(
+                    phase: hostStatePhase,
+                    dataRoot: hostStateRoot
+                )
+            }
+            if tool.isCanonicalArtifactWriter, let phase = hostStatePhase {
+                editor.agentService.recordHostState(
+                    AgentHostStateRecord(
+                        state: .draft,
+                        phase: phase,
+                        toolName: tool.rawValue,
+                        action: .none,
+                        artifactPath: artifactBefore?.path,
+                        byteComparison: nil,
+                        previousSHA256: artifactBefore?.bytes.map {
+                            FileDigest.sha256(of: $0)
+                        },
+                        currentSHA256: nil
+                    ),
+                    origin: origin
+                )
+            }
             result = try await run(tool, editor, resolved, origin: origin)
+            canonicalWriterPersisted = tool.isCanonicalArtifactWriter
+                && !result.isError
+                && result.turnDisposition == .continueTurn
             if tool != .runPhase,
                tool != .writeShotlist,
                !result.isError,
@@ -336,9 +378,20 @@ final class ToolExecutor {
         } catch {
             result = .error(error.localizedDescription)
         }
+        if let state = hostStateRecord(
+            tool: tool,
+            args: args,
+            result: result,
+            phase: hostStatePhase ?? guardedPhase,
+            dataRoot: hostStateRoot ?? guardedRoot,
+            artifactBefore: artifactBefore,
+            writerPersisted: canonicalWriterPersisted
+        ) {
+            editor.agentService.recordHostState(state, origin: origin)
+        }
         // A successful pipeline write diverges the working copy from the saved package — mark the
         // document edited so ⌘S persists it and the user is warned before closing without saving.
-        if !result.isError,
+        if (!result.isError || canonicalWriterPersisted),
            result.turnDisposition == .continueTurn,
            tool.isDurableWrite {
             editor.onPipelineChanged?()
@@ -366,6 +419,152 @@ final class ToolExecutor {
         }
         // Shorten on the post-run state so newly created ids in summaries are shortened too.
         return shorteningIds(in: result, editor: editor)
+    }
+
+    private struct HostArtifactSnapshot {
+        let path: String
+        let exists: Bool
+        let bytes: Data?
+    }
+
+    private func hostStateRecord(
+        tool: ToolName,
+        args: [String: Any],
+        result: ToolResult,
+        phase guardedPhase: String?,
+        dataRoot: URL?,
+        artifactBefore: HostArtifactSnapshot?,
+        writerPersisted: Bool
+    ) -> AgentHostStateRecord? {
+        let phase = guardedPhase ?? tool.advancingPhase(args: args)
+        if tool.isCanonicalArtifactWriter, let phase {
+            guard writerPersisted else {
+                let reason = result.content.compactMap { block -> String? in
+                    guard case .text(let text) = block else { return nil }
+                    return text
+                }.joined(separator: " ").lowercased()
+                return AgentHostStateRecord(
+                    state: .writeRejected,
+                    phase: phase,
+                    toolName: tool.rawValue,
+                    action: rejectionAction(reason: reason),
+                    artifactPath: artifactBefore?.path,
+                    byteComparison: nil,
+                    previousSHA256: artifactBefore?.bytes.map {
+                        FileDigest.sha256(of: $0)
+                    },
+                    currentSHA256: nil
+                )
+            }
+            let artifactAfter = dataRoot.flatMap {
+                hostArtifactSnapshot(phase: phase, dataRoot: $0)
+            }
+            let comparison = compare(before: artifactBefore, after: artifactAfter)
+            return AgentHostStateRecord(
+                state: .persisted,
+                phase: phase,
+                toolName: tool.rawValue,
+                action: .reviewForApproval,
+                artifactPath: artifactAfter?.path ?? artifactBefore?.path,
+                byteComparison: comparison,
+                previousSHA256: artifactBefore?.bytes.map {
+                    FileDigest.sha256(of: $0)
+                },
+                currentSHA256: artifactAfter?.bytes.map {
+                    FileDigest.sha256(of: $0)
+                }
+            )
+        }
+
+        let requestsApproval = tool == .approveGate || (
+            tool == .setGateState
+                && (args["state"] as? String).flatMap(GateState.init(rawValue:))
+                    .map(GateApproval.isApproval) == true
+        )
+        guard requestsApproval,
+              !result.isError,
+              result.turnDisposition == .suspendTurn,
+              let phase = (args["phase"] as? String)?.trimmingCharacters(
+                  in: .whitespacesAndNewlines
+              ),
+              !phase.isEmpty else { return nil }
+        return AgentHostStateRecord(
+            state: .checked,
+            phase: phase,
+            toolName: tool.rawValue,
+            action: .reviewForApproval,
+            artifactPath: nil,
+            byteComparison: nil,
+            previousSHA256: nil,
+            currentSHA256: nil
+        )
+    }
+
+    private func rejectionAction(reason: String) -> AgentHostStateRecord.Action {
+        if [
+            "approved source", "source material", "lineage", "fingerprint", "changed",
+        ].contains(where: { reason.contains($0) }) {
+            return .reviewChangedSource
+        }
+        if [
+            "reopen the project", "working copy is unavailable", "trusted format-pack declaration",
+        ].contains(where: { reason.contains($0) }) {
+            return .reopenProject
+        }
+        if [
+            "already running", "already in progress", "wait for it to finish",
+        ].contains(where: { reason.contains($0) }) {
+            return .retryAfterHostRecovery
+        }
+        return .agentCorrection
+    }
+
+    private func hostArtifactSnapshot(
+        phase: String?,
+        dataRoot: URL
+    ) -> HostArtifactSnapshot? {
+        guard let phase, let url = currentArtifactURL(phase: phase, dataRoot: dataRoot) else {
+            return nil
+        }
+        let root = dataRoot.standardizedFileURL
+        let target = url.standardizedFileURL
+        let prefix = root.path + "/"
+        guard target.path.hasPrefix(prefix) else { return nil }
+        let exists = FileManager.default.fileExists(atPath: target.path)
+        return HostArtifactSnapshot(
+            path: String(target.path.dropFirst(prefix.count)),
+            exists: exists,
+            bytes: exists ? try? Data(contentsOf: target) : nil
+        )
+    }
+
+    private func currentArtifactURL(phase: String, dataRoot: URL) -> URL? {
+        let relative: String?
+        switch phase {
+        case "analysis":
+            return AudioProjectLayout.expectedAnalysisArtifactURL(dataRoot: dataRoot)
+        case "brief": relative = PipelineLayout.briefFile
+        case "production_design": relative = PipelineLayout.productionDesignFile
+        case "treatment": relative = PipelineLayout.treatmentCurrentFile
+        case "storyboard": relative = PipelineLayout.storyboardCurrentFile
+        case "bible": relative = PipelineLayout.bibleFile
+        case "shotlist":
+            guard let version = latestShotlistVersion(dataRoot: dataRoot) else { return nil }
+            relative = PipelineLayout.shotlistVersionFile(version)
+        default: relative = nil
+        }
+        return relative.map { PipelineLayout.url($0, in: dataRoot) }
+    }
+
+    private func compare(
+        before: HostArtifactSnapshot?,
+        after: HostArtifactSnapshot?
+    ) -> AgentHostStateRecord.ByteComparison {
+        guard let after, after.exists, let current = after.bytes else { return .unavailable }
+        guard let before else { return .created }
+        if !before.exists { return .created }
+        guard let previous = before.bytes else { return .unavailable }
+        return previous == current ? .unchanged : .changed
     }
 
     private func normalizedToolCallOrigin(

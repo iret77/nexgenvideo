@@ -7,7 +7,10 @@ struct GenerationBatchCard: View {
         let coordinator = editor.generationBatchCoordinator
         if let batch = coordinator.pending {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
-                Text("Review \(batch.payload.items.count) generations").fontWeight(AppTheme.FontWeight.semibold)
+                Text(batch.totalEUR == nil
+                    ? String(localized: "Prepare \(batch.payload.items.count) generations")
+                    : String(localized: "Review \(batch.payload.items.count) generations"))
+                    .fontWeight(AppTheme.FontWeight.semibold)
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
                         ForEach(Array(batch.payload.items.enumerated()), id: \.element.id) { index, item in
@@ -26,7 +29,7 @@ struct GenerationBatchCard: View {
                 if let total = batch.totalEUR {
                     Text("Estimated total: €\(total, specifier: "%.2f")")
                 } else {
-                    Text("Every generation needs a monetary estimate before this batch can run unattended.")
+                    Text("Cost estimates are missing. Approval is unavailable until every generation is priced.")
                         .foregroundStyle(AppTheme.Status.warningColor)
                 }
                 if let error = coordinator.error { Text(error).foregroundStyle(AppTheme.Status.warningColor) }
@@ -34,7 +37,9 @@ struct GenerationBatchCard: View {
                     Button("Decline") { coordinator.decline(editor: editor) }
                         .buttonStyle(.capsule(.secondary, size: .regular)).disabled(coordinator.approving)
                     Spacer()
-                    Button("Approve \(batch.payload.items.count) generations") {
+                    Button(batch.totalEUR == nil
+                        ? String(localized: "Waiting for cost estimates")
+                        : String(localized: "Approve \(batch.payload.items.count) generations")) {
                         Task { await coordinator.approve(editor: editor) }
                     }.buttonStyle(.capsule(.prominent, size: .regular))
                         .disabled(coordinator.approving || batch.totalEUR == nil)

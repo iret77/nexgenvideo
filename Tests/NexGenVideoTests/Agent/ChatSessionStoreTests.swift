@@ -86,6 +86,38 @@ struct ChatSessionStoreTests {
         #expect(back.messages.first?.userPresentation?.workflowRecord == record)
     }
 
+    @Test("host artifact state round-trips without becoming model prose")
+    func hostStateRoundTrips() throws {
+        let record = AgentHostStateRecord(
+            state: .persisted,
+            phase: "storyboard",
+            toolName: "write_storyboard",
+            action: .reviewForApproval,
+            artifactPath: "storyboard/current.yaml",
+            byteComparison: .changed,
+            previousSHA256: String(repeating: "a", count: 64),
+            currentSHA256: String(repeating: "b", count: 64)
+        )
+        let session = ChatSession(
+            title: "t",
+            messages: [AgentMessage(
+                role: .user,
+                blocks: [],
+                userPresentation: .init(
+                    choiceRecord: nil,
+                    typedText: nil,
+                    hostStateRecord: record
+                )
+            )]
+        )
+
+        let data = try #require(ChatSessionStore.encodeSession(session))
+        let back = try decoder.decode(ChatSession.self, from: data)
+
+        #expect(back.messages.first?.blocks.isEmpty == true)
+        #expect(back.messages.first?.userPresentation?.hostStateRecord == record)
+    }
+
     @Test("conversation titles preserve distinguishing text at both ends")
     func conversationTitleUsesMiddleCompaction() {
         let source = String(repeating: "opening detail ", count: 8)

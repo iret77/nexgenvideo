@@ -81,22 +81,61 @@ struct AgentWorkflowRecord: Codable, Equatable, Sendable {
     }
 }
 
+struct AgentHostStateRecord: Codable, Equatable, Sendable {
+    enum State: String, Codable, Equatable, Sendable {
+        case draft
+        case writeRejected
+        case persisted
+        case checked
+        case approved
+        case approvalFailed
+    }
+
+    enum Action: String, Codable, Equatable, Sendable {
+        case none
+        case agentCorrection
+        case reviewChangedSource
+        case reviewForApproval
+        case reopenProject
+        case retryAfterHostRecovery
+    }
+
+    enum ByteComparison: String, Codable, Equatable, Sendable {
+        case created
+        case unchanged
+        case changed
+        case unavailable
+    }
+
+    let state: State
+    let phase: String
+    let toolName: String
+    let action: Action
+    let artifactPath: String?
+    let byteComparison: ByteComparison?
+    let previousSHA256: String?
+    let currentSHA256: String?
+}
+
 struct AgentUserPresentation: Codable, Equatable, Sendable {
     let choiceRecord: AgentChoiceRecord?
     let typedText: String?
     let notice: String?
     let workflowRecord: AgentWorkflowRecord?
+    let hostStateRecord: AgentHostStateRecord?
 
     init(
         choiceRecord: AgentChoiceRecord?,
         typedText: String?,
         notice: String? = nil,
-        workflowRecord: AgentWorkflowRecord? = nil
+        workflowRecord: AgentWorkflowRecord? = nil,
+        hostStateRecord: AgentHostStateRecord? = nil
     ) {
         self.choiceRecord = choiceRecord
         self.typedText = typedText
         self.notice = notice
         self.workflowRecord = workflowRecord
+        self.hostStateRecord = hostStateRecord
     }
 }
 

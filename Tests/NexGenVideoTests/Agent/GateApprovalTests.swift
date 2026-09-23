@@ -17,9 +17,21 @@ struct GateApprovalTests {
         #expect(approval.phaseLabel == PhaseDisplay.label("brief"))
         #expect(approval.phaseLabel == "Brief")
         #expect(approval.notes == "looks good")
+        #expect(approval.sourceToolName == ToolName.approveGate.rawValue)
 
         // A snake_case id resolves to its curated title, never leaking the raw key to the card.
         #expect(GateApproval(phase: "production_design").phaseLabel == "Production Design")
+    }
+
+    @Test("gate approvals preserve the requesting tool for diagnostics")
+    func preservesSourceTool() {
+        let approval = GateApproval(
+            phase: "brief",
+            sourceToolName: ToolName.setGateState.rawValue
+        )
+
+        #expect(approval.scoped(to: UUID()).sourceToolName == ToolName.setGateState.rawValue)
+        #expect(!approval.matchesRequest(GateApproval(phase: "brief")))
     }
 
     @Test("Only the approving states surface a user confirmation")
@@ -278,6 +290,29 @@ struct GateApprovalTests {
         let state = try await h.runOK("get_project_state", args: ["project_dir": dataRoot.path]) as? [String: Any]
         let phases = try #require(state?["phases"] as? [[String: Any]])
         #expect(phases.first { $0["phase"] as? String == "project_init" }?["state"] as? String == "pending")
+    }
+
+    @Test("a pending gate records checked without recording approval")
+    func pendingGateRecordsCheckedState() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        h.editor.agentService.newChat()
+        let sessionID = try #require(h.editor.agentService.currentSessionId)
+
+        let result = await h.executor.execute(
+            name: "approve_gate",
+            args: ["project_dir": dataRoot.path, "phase": "project_init"],
+            origin: .inAppChat(sessionID: sessionID)
+        )
+
+        #expect(!result.isError)
+        #expect(result.turnDisposition == .suspendTurn)
+        let state = h.editor.agentService.messages.compactMap {
+            $0.userPresentation?.hostStateRecord
+        }.last
+        #expect(state?.state == .checked)
+        #expect(state?.state != .approved)
+        #expect(h.editor.agentService.pendingGateApproval?.phase == "project_init")
     }
 
     @Test("set_gate_state approval request does not mark the project edited")

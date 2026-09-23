@@ -933,7 +933,8 @@ extension ToolExecutor {
                     dataRoot: root,
                     action: .setState(state),
                     declaredPack: declaredPack,
-                    declaredBinding: declaredBinding
+                    declaredBinding: declaredBinding,
+                    sourceToolName: ToolName.setGateState.rawValue
                 ),
                 origin: origin
             )

@@ -45,10 +45,16 @@ struct AgentNoticeReceipt: Identifiable {
     let text: String
 }
 
+struct AgentHostState: Identifiable {
+    let id: UUID
+    let record: AgentHostStateRecord
+}
+
 enum AgentTranscriptItem: Identifiable {
     case userIntent(AgentUserIntent)
     case assistantResult(AgentMessage)
     case activity(AgentActivity)
+    case hostState(AgentHostState)
     case receipts(AgentReceiptGroup)
     case notice(AgentNoticeReceipt)
 
@@ -57,6 +63,7 @@ enum AgentTranscriptItem: Identifiable {
         case .userIntent(let intent): "intent-\(intent.id.uuidString)"
         case .assistantResult(let message): "result-\(message.id.uuidString)"
         case .activity(let activity): "activity-\(activity.id.uuidString)"
+        case .hostState(let state): "host-state-\(state.id.uuidString)"
         case .receipts(let group): "receipts-\(group.id.uuidString)"
         case .notice(let notice): "notice-\(notice.id.uuidString)"
         }
@@ -102,6 +109,7 @@ enum AgentTranscriptProjection {
         let activity = makeActivity(messages, isRunning: isRunning)
         var intents: [AgentTranscriptItem] = []
         var resultMessage: AgentMessage?
+        var hostStates: [AgentHostState] = []
         var receipts: [AgentTranscriptItem] = []
         var notices: [AgentTranscriptItem] = []
 
@@ -112,6 +120,12 @@ enum AgentTranscriptProjection {
                     intents.append(.userIntent(.init(id: message.id, text: text)))
                 }
                 if let presentation = message.userPresentation {
+                    if let hostState = presentation.hostStateRecord {
+                        appendHostState(
+                            .init(id: message.id, record: hostState),
+                            to: &hostStates
+                        )
+                    }
                     if let workflow = presentation.workflowRecord {
                         appendReceipt(
                             .init(id: message.id, content: .workflow(workflow)),
@@ -151,10 +165,26 @@ enum AgentTranscriptProjection {
         }
 
         let activityItems = activity.map { [AgentTranscriptItem.activity($0)] } ?? []
-        let results = resultMessage.map { [AgentTranscriptItem.assistantResult($0)] } ?? []
-        let output = intents + results + activityItems + receipts + notices
+        let results = hostStates.isEmpty
+            ? resultMessage.map { [AgentTranscriptItem.assistantResult($0)] } ?? []
+            : []
+        let stateItems = hostStates.map(AgentTranscriptItem.hostState)
+        let output = intents + stateItems + results + activityItems + receipts + notices
         guard !output.isEmpty else { return nil }
         return AgentTranscriptTurn(id: first.id, items: output)
+    }
+
+    private static func appendHostState(
+        _ state: AgentHostState,
+        to output: inout [AgentHostState]
+    ) {
+        if let index = output.firstIndex(where: {
+            $0.record.phase == state.record.phase
+        }) {
+            output[index] = state
+        } else {
+            output.append(state)
+        }
     }
 
     private static func appendReceipt(

@@ -13,6 +13,7 @@ struct GateApprovalCard: View {
     @Environment(EditorViewModel.self) private var editor
     @State private var review = GateReviewModel()
     @State private var showsStoryboard = false
+    @State private var showsDiagnostics = false
 
     private var reviewHint: String? {
         if approval.phase == "analysis" {
@@ -39,6 +40,12 @@ struct GateApprovalCard: View {
                         await review.refresh(approval: approval, editor: editor)
                         showsStoryboard = review.storyboard != nil
                     }
+                }
+                .buttonStyle(.capsule(.secondary, size: .regular))
+                .disabled(isWorking || isBlocked)
+            } else {
+                Button("Review \(approval.phaseLabel)") {
+                    editor.revealCockpit(reviewDestination)
                 }
                 .buttonStyle(.capsule(.secondary, size: .regular))
                 .disabled(isWorking || isBlocked)
@@ -112,15 +119,22 @@ struct GateApprovalCard: View {
 
     private var summary: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
-            Text("The agent is asking you to approve \(approval.phaseLabel).")
+            Text("\(approval.phaseLabel) passed host checks. Review it before approval.")
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .fixedSize(horizontal: false, vertical: true)
             if let notes = approval.notes?.trimmingCharacters(in: .whitespacesAndNewlines), !notes.isEmpty {
-                Text(notes)
-                    .interfaceFont(size: AppTheme.Typography.ui)
-                    .foregroundStyle(AppTheme.Text.secondaryColor)
-                    .fixedSize(horizontal: false, vertical: true)
+                DisclosureGroup(isExpanded: $showsDiagnostics) {
+                    Text(notes)
+                        .interfaceFont(size: AppTheme.Typography.metadata, design: .monospaced)
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                } label: {
+                    Text("Approval notes")
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                }
             }
             if let reviewHint {
                 Text(reviewHint)
@@ -139,6 +153,16 @@ struct GateApprovalCard: View {
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Status.warningColor)
             }
+        }
+    }
+
+    private var reviewDestination: CockpitTab {
+        switch approval.phase {
+        case "brief", "production_design", "treatment", "storyboard": .story
+        case "bible": .bible
+        case "shotlist": .shotlist
+        case "frames", "sanity", "render", "finish": .review
+        default: .pipeline
         }
     }
 

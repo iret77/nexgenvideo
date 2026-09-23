@@ -124,6 +124,29 @@ struct BriefWriteContractTests {
         #expect(project.budgetEur == brief.budgetEur)
     }
 
+    @Test("a successful writer records draft then exact persisted host state")
+    func successfulWriterRecordsHostState() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        h.editor.agentService.newChat()
+        let sessionID = try #require(h.editor.agentService.currentSessionId)
+
+        let result = await h.executor.execute(
+            name: "write_brief",
+            args: validArgs(dataRoot: dataRoot),
+            origin: .inAppChat(sessionID: sessionID)
+        )
+
+        #expect(!result.isError)
+        let states = h.editor.agentService.messages.compactMap {
+            $0.userPresentation?.hostStateRecord
+        }
+        #expect(states.map(\.state) == [.draft, .persisted])
+        #expect(states.last?.artifactPath == PipelineLayout.briefFile)
+        #expect(states.last?.byteComparison == .created)
+        #expect(states.last?.currentSHA256?.count == 64)
+    }
+
     @Test("an invalid enum value is rejected and names the field")
     func invalidEnumRejected() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
