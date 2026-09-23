@@ -797,24 +797,26 @@ struct InspectorView: View {
         let single = clips.count == 1 ? clips.first : nil
         let kfVisible = single != nil && editor.keyframesPanelVisible
 
-        if let clip = single, kfVisible {
-            HStack(alignment: .top, spacing: AppTheme.Spacing.none) {
-                VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-                    transformSection(clips: clips)
-                    speedSection(clips: clips + selectedAudioClips)
-                        .padding(.trailing, AppTheme.Timeline.keyframeControlsColumnWidth + AppTheme.Spacing.sm)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.trailing, AppTheme.Spacing.sm)
-                AppDivider()
-                KeyframesPanel(clip: clip)
+        Group {
+            if let clip = single, kfVisible {
+                HStack(alignment: .top, spacing: AppTheme.Spacing.none) {
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+                        transformSection(clips: clips)
+                        speedSection(clips: clips + selectedAudioClips)
+                    }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.leading, AppTheme.Spacing.sm)
+                    .padding(.trailing, AppTheme.Spacing.sm)
+                    AppDivider()
+                    KeyframesPanel(clip: clip)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.leading, AppTheme.Spacing.sm)
+                }
+            } else {
+                transformSection(clips: clips)
+                speedSection(clips: clips + selectedAudioClips)
             }
-        } else {
-            transformSection(clips: clips)
-            speedSection(clips: clips + selectedAudioClips)
         }
+        .inspectorKeyframeAccessoryColumn(single != nil)
 
     }
 
@@ -840,6 +842,12 @@ struct InspectorView: View {
             .disabled(!enabled)
             .opacity(enabled ? AppTheme.Opacity.opaque : AppTheme.Opacity.settingsWindow)
             .help(enabled ? (on ? "Hide keyframe timeline" : "Show keyframe timeline") : "Select a single clip to enable")
+            .background {
+                AppRelaunchClickProbe(
+                    identifier: "inspector.keyframes",
+                    acceptanceState: on
+                )
+            }
         }
     }
 
@@ -913,15 +921,13 @@ struct InspectorView: View {
         property: AnimatableProperty,
         @ViewBuilder fields: @escaping () -> Fields
     ) -> some View {
-        propertyRow(label: label) {
-            HStack(spacing: AppTheme.Spacing.sm) {
-                fields()
-                if let clipId {
-                    keyframeControls(clipId: clipId, property: property)
-                }
+        InspectorAnimatableFormRow(label: label, showsAccessory: clipId != nil) {
+            fields()
+        } accessory: {
+            if let clipId {
+                keyframeControls(clipId: clipId, property: property)
             }
         }
-        .frame(minHeight: AppTheme.Timeline.keyframeRowHeight)
     }
 
     private func keyframeControls(clipId: String, property: AnimatableProperty) -> some View {

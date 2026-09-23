@@ -455,13 +455,56 @@ enum WorkspaceUIAcceptance {
                     }
                 }
             }
+            let capturesKeyframes = item.family == "video" || item.family == "audio"
+            if capturesKeyframes, probeState(identifier: "inspector.keyframes", in: window) != false {
+                guard click(identifier: "inspector.keyframes", in: window) == nil,
+                      await waitUntil(timeout: .seconds(5), {
+                          host.layoutSubtreeIfNeeded()
+                          return probeState(identifier: "inspector.keyframes", in: window) == false
+                      }) else {
+                    fail("inspector \(item.family) keyframes did not close", scale: scale)
+                }
+            }
             try? await Task.sleep(for: .milliseconds(300))
             host.layoutSubtreeIfNeeded()
             let name = "scale-\(scaleLabel(scale))-inspector-\(item.family).png"
             guard snapshot(host, at: evidenceURL.appendingPathComponent(name)) else {
                 fail("could not capture inspector \(item.family)", scale: scale)
             }
-            emit("inspector", scale: scale, fields: ["family": item.family, "screenshot": name])
+            var fields: [String: Any] = ["family": item.family, "screenshot": name]
+            if capturesKeyframes { fields["keyframes"] = "closed" }
+            emit("inspector", scale: scale, fields: fields)
+            if capturesKeyframes {
+                guard click(identifier: "inspector.keyframes", in: window) == nil,
+                      await waitUntil(timeout: .seconds(5), {
+                          host.layoutSubtreeIfNeeded()
+                          return probeState(identifier: "inspector.keyframes", in: window) == true
+                      }) else {
+                    fail("inspector \(item.family) keyframes did not open", scale: scale)
+                }
+                try? await Task.sleep(for: .milliseconds(300))
+                host.layoutSubtreeIfNeeded()
+                let openName = "scale-\(scaleLabel(scale))-inspector-\(item.family)-keyframes-open.png"
+                guard snapshot(host, at: evidenceURL.appendingPathComponent(openName)) else {
+                    fail("could not capture inspector \(item.family) open keyframes", scale: scale)
+                }
+                emit(
+                    "inspector",
+                    scale: scale,
+                    fields: [
+                        "family": item.family,
+                        "keyframes": "open",
+                        "screenshot": openName,
+                    ]
+                )
+                guard click(identifier: "inspector.keyframes", in: window) == nil,
+                      await waitUntil(timeout: .seconds(5), {
+                          host.layoutSubtreeIfNeeded()
+                          return probeState(identifier: "inspector.keyframes", in: window) == false
+                      }) else {
+                    fail("inspector \(item.family) keyframes did not close again", scale: scale)
+                }
+            }
         }
         let captionIdentifier = "media.tab.Captions"
         if probeState(identifier: captionIdentifier, in: window) != true {
@@ -577,6 +620,7 @@ enum WorkspaceUIAcceptance {
         defaults.set(scale, forKey: AppTheme.Typography.scaleKey)
         defaults.set(true, forKey: "mediaPanelVisible")
         defaults.set(true, forKey: "inspectorPanelVisible")
+        defaults.set(false, forKey: "keyframesPanelVisible")
         resetSplitAutosaveDefaults()
     }
 

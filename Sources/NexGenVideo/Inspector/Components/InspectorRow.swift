@@ -1,5 +1,22 @@
 import SwiftUI
 
+private struct InspectorKeyframeAccessoryColumnKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+private extension EnvironmentValues {
+    var inspectorKeyframeAccessoryColumn: Bool {
+        get { self[InspectorKeyframeAccessoryColumnKey.self] }
+        set { self[InspectorKeyframeAccessoryColumnKey.self] = newValue }
+    }
+}
+
+extension View {
+    func inspectorKeyframeAccessoryColumn(_ reserved: Bool) -> some View {
+        environment(\.inspectorKeyframeAccessoryColumn, reserved)
+    }
+}
+
 private struct InspectorControlChrome: ViewModifier {
     var focused = false
     var mixed = false
@@ -41,13 +58,18 @@ extension View {
 private struct InspectorFormLayout: Layout {
     let scale: CGFloat
     let stacked: Bool
+    let accessoryColumn: Bool
     private var gap: CGFloat { AppTheme.Spacing.sm }
     private var labelWidth: CGFloat { AppTheme.ComponentSize.inspectorLabelWidth * scale }
+    private var accessoryWidth: CGFloat {
+        accessoryColumn ? AppTheme.Timeline.keyframeControlsColumnWidth : 0
+    }
+    private var accessoryGap: CGFloat { accessoryColumn ? gap : 0 }
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let width = proposal.width.flatMap { $0.isFinite ? max(0, $0) : nil }
             ?? AppTheme.ComponentSize.inspectorInlineMinWidth * scale
-        guard subviews.count == 2 else {
+        guard subviews.count >= 2 else {
             let height = subviews.first?.sizeThatFits(ProposedViewSize(width: width, height: nil)).height ?? 0
             return CGSize(width: width, height: height)
         }
@@ -55,64 +77,116 @@ private struct InspectorFormLayout: Layout {
         return CGSize(
             width: width,
             height: sizes.inline
-                ? max(sizes.label.height, sizes.control.height)
-                : sizes.label.height + gap + sizes.control.height
+                ? max(sizes.label.height, max(sizes.control.height, sizes.accessory.height))
+                : sizes.label.height + gap + max(sizes.control.height, sizes.accessory.height)
         )
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        guard subviews.count == 2 else {
+        guard subviews.count >= 2 else {
             subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
             return
         }
         let sizes = measuredSizes(width: bounds.width, subviews: subviews)
+        let controlMaxX = bounds.maxX - accessoryWidth - accessoryGap
         if sizes.inline {
-            let height = max(sizes.label.height, sizes.control.height)
+            let height = max(sizes.label.height, max(sizes.control.height, sizes.accessory.height))
             subviews[0].place(
                 at: CGPoint(x: bounds.minX, y: bounds.minY + (height - sizes.label.height) / 2),
                 proposal: ProposedViewSize(width: labelWidth, height: sizes.label.height)
             )
             subviews[1].place(
-                at: CGPoint(x: bounds.maxX - sizes.control.width, y: bounds.minY + (height - sizes.control.height) / 2),
+                at: CGPoint(x: controlMaxX - sizes.control.width, y: bounds.minY + (height - sizes.control.height) / 2),
                 proposal: ProposedViewSize(width: sizes.control.width, height: sizes.control.height)
             )
+            placeAccessory(in: bounds, lineY: bounds.minY, lineHeight: height, subviews: subviews, size: sizes.accessory)
         } else {
+            let controlLineHeight = max(sizes.control.height, sizes.accessory.height)
+            let controlLineY = bounds.minY + sizes.label.height + gap
             subviews[0].place(
                 at: CGPoint(x: bounds.minX, y: bounds.minY),
                 proposal: ProposedViewSize(width: bounds.width, height: sizes.label.height)
             )
             subviews[1].place(
-                at: CGPoint(x: bounds.maxX - sizes.control.width, y: bounds.minY + sizes.label.height + gap),
+                at: CGPoint(x: controlMaxX - sizes.control.width, y: controlLineY + (controlLineHeight - sizes.control.height) / 2),
                 proposal: ProposedViewSize(width: sizes.control.width, height: sizes.control.height)
             )
+            placeAccessory(in: bounds, lineY: controlLineY, lineHeight: controlLineHeight, subviews: subviews, size: sizes.accessory)
         }
     }
 
-    private func measuredSizes(width: CGFloat, subviews: Subviews) -> (label: CGSize, control: CGSize, inline: Bool) {
+    private func measuredSizes(
+        width: CGFloat,
+        subviews: Subviews
+    ) -> (label: CGSize, control: CGSize, accessory: CGSize, inline: Bool) {
         let inline = !stacked && width >= AppTheme.ComponentSize.inspectorInlineMinWidth * scale
-        let controlWidth = inline ? max(0, width - labelWidth - gap) : width
+        let contentWidth = max(0, width - accessoryWidth - accessoryGap)
+        let controlWidth = inline ? max(0, contentWidth - labelWidth - gap) : contentWidth
         let inlineControl = subviews[1].sizeThatFits(ProposedViewSize(width: controlWidth, height: nil))
         let fitsInline = inline && inlineControl.width <= controlWidth
         let control = fitsInline
             ? inlineControl
-            : subviews[1].sizeThatFits(ProposedViewSize(width: width, height: nil))
+            : subviews[1].sizeThatFits(ProposedViewSize(width: contentWidth, height: nil))
         let label = subviews[0].sizeThatFits(ProposedViewSize(width: fitsInline ? labelWidth : width, height: nil))
-        return (label, control, fitsInline)
+        let accessory = accessoryColumn && subviews.count > 2
+            ? subviews[2].sizeThatFits(ProposedViewSize(width: accessoryWidth, height: nil))
+            : CGSize.zero
+        return (label, control, accessory, fitsInline)
+    }
+
+    private func placeAccessory(
+        in bounds: CGRect,
+        lineY: CGFloat,
+        lineHeight: CGFloat,
+        subviews: Subviews,
+        size: CGSize
+    ) {
+        guard accessoryColumn, subviews.count > 2 else { return }
+        subviews[2].place(
+            at: CGPoint(x: bounds.maxX - accessoryWidth, y: lineY + (lineHeight - size.height) / 2),
+            proposal: ProposedViewSize(width: accessoryWidth, height: size.height)
+        )
     }
 }
 
-struct InspectorFormRow<Trailing: View>: View {
+struct InspectorFormRow<Trailing: View, Accessory: View>: View {
     let label: String
-    var icon: String? = nil
-    var labelHelp: String? = nil
-    var stacked = false
-    @ViewBuilder var trailing: () -> Trailing
+    let icon: String?
+    let labelHelp: String?
+    let stacked: Bool
+    let reservesAccessoryColumn: Bool
+    @ViewBuilder let trailing: () -> Trailing
+    @ViewBuilder let accessory: () -> Accessory
     @Environment(\.interfaceScale) private var interfaceScale
+    @Environment(\.inspectorKeyframeAccessoryColumn) private var groupReservesAccessoryColumn
+
+    init(
+        label: String,
+        icon: String? = nil,
+        labelHelp: String? = nil,
+        stacked: Bool = false,
+        reservesAccessoryColumn: Bool = true,
+        @ViewBuilder trailing: @escaping () -> Trailing,
+        @ViewBuilder accessory: @escaping () -> Accessory
+    ) {
+        self.label = label
+        self.icon = icon
+        self.labelHelp = labelHelp
+        self.stacked = stacked
+        self.reservesAccessoryColumn = reservesAccessoryColumn
+        self.trailing = trailing
+        self.accessory = accessory
+    }
 
     var body: some View {
-        InspectorFormLayout(scale: CGFloat(interfaceScale), stacked: stacked) {
+        InspectorFormLayout(
+            scale: CGFloat(interfaceScale),
+            stacked: stacked,
+            accessoryColumn: reservesAccessoryColumn || groupReservesAccessoryColumn
+        ) {
             labelContent
             trailing()
+            accessory()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -139,6 +213,55 @@ struct InspectorFormRow<Trailing: View>: View {
                     .accessibilityLabel(labelHelp)
             }
         }
+    }
+}
+
+extension InspectorFormRow where Accessory == EmptyView {
+    init(
+        label: String,
+        icon: String? = nil,
+        labelHelp: String? = nil,
+        stacked: Bool = false,
+        @ViewBuilder trailing: @escaping () -> Trailing
+    ) {
+        self.init(
+            label: label,
+            icon: icon,
+            labelHelp: labelHelp,
+            stacked: stacked,
+            reservesAccessoryColumn: false,
+            trailing: trailing,
+            accessory: { EmptyView() }
+        )
+    }
+}
+
+struct InspectorAnimatableFormRow<Fields: View, Accessory: View>: View {
+    let label: String
+    let showsAccessory: Bool
+    @ViewBuilder let fields: () -> Fields
+    @ViewBuilder let accessory: () -> Accessory
+
+    init(
+        label: String,
+        showsAccessory: Bool = true,
+        @ViewBuilder fields: @escaping () -> Fields,
+        @ViewBuilder accessory: @escaping () -> Accessory
+    ) {
+        self.label = label
+        self.showsAccessory = showsAccessory
+        self.fields = fields
+        self.accessory = accessory
+    }
+
+    var body: some View {
+        InspectorFormRow(
+            label: label,
+            reservesAccessoryColumn: showsAccessory,
+            trailing: fields,
+            accessory: accessory
+        )
+        .frame(minHeight: AppTheme.Timeline.keyframeRowHeight)
     }
 }
 
