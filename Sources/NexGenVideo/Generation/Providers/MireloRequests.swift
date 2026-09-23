@@ -402,7 +402,7 @@ enum MireloResultParser {
             expectedSHA256: nil
         )]
         let noteData = try JSONSerialization.data(
-            withJSONObject: result,
+            withJSONObject: stableResultMetadata(result),
             options: [.sortedKeys]
         )
         descriptors.append(MireloResultDescriptor(
@@ -449,26 +449,48 @@ enum MireloResultParser {
         for (index, pdf) in (result["score_pdfs"] as? [[String: Any]] ?? []).enumerated() {
             guard let value = pdf["url"] as? String,
                   let url = URL(string: value) else { continue }
-            let supplied = (pdf["filename"] as? String)?.components(
-                separatedBy: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_. ")).inverted
-            ).joined(separator: "_")
-            let filename = supplied.flatMap { value -> String? in
-                guard !value.isEmpty, value != ".", value != "..",
-                      URL(fileURLWithPath: value).pathExtension.lowercased() == "pdf" else {
-                    return nil
-                }
-                return value
-            } ?? "score-\(index + 1).pdf"
             descriptors.append(.init(
                 kind: .scorePDF,
                 remoteURL: url,
                 embeddedData: nil,
-                filename: filename,
+                filename: String(format: "score-%03d.pdf", index + 1),
                 sourceURLExpiresAt: nil,
                 expectedSHA256: pdf["sha256"] as? String
             ))
         }
         return descriptors
+    }
+
+    static func stableResultMetadata(_ result: [String: Any]) -> [String: Any] {
+        stableJSONValue(result) as? [String: Any] ?? [:]
+    }
+
+    static func stableJSONArtifact(_ data: Data) throws -> Data {
+        let object = try JSONSerialization.jsonObject(with: data)
+        let stable = stableJSONValue(object)
+        guard JSONSerialization.isValidJSONObject(stable) else {
+            throw GenerationRequestError.storage(
+                "Mirelo returned an invalid score manifest."
+            )
+        }
+        return try JSONSerialization.data(withJSONObject: stable, options: [.sortedKeys])
+    }
+
+    private static func stableJSONValue(_ value: Any) -> Any {
+        if let dictionary = value as? [String: Any] {
+            return dictionary.reduce(into: [String: Any]()) { result, pair in
+                let key = pair.key.lowercased()
+                guard key != "url", !key.hasSuffix("_url"),
+                      key != "expires_at", !key.hasSuffix("_url_expires_at") else {
+                    return
+                }
+                result[pair.key] = stableJSONValue(pair.value)
+            }
+        }
+        if let array = value as? [Any] {
+            return array.map(stableJSONValue)
+        }
+        return value
     }
 
     private static func extensionForAudioFormat(_ format: String) -> String {

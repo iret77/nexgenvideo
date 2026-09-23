@@ -13,6 +13,7 @@ enum RemoteMediaPolicy {
         case redirectLimit
         case redirectLoop
         case responseTooLarge
+        case httpStatus(Int)
         case invalidPayload(String)
 
         var errorDescription: String? {
@@ -23,6 +24,7 @@ enum RemoteMediaPolicy {
             case .redirectLimit: "Remote media redirected too many times."
             case .redirectLoop: "Remote media entered a redirect loop."
             case .responseTooLarge: "Remote media exceeds the configured import limit."
+            case .httpStatus(let status): "Remote media server returned HTTP \(status)."
             case .invalidPayload(let detail): "Remote media payload is invalid: \(detail)"
             }
         }
@@ -207,9 +209,7 @@ enum RemoteMediaDownloader {
                 throw RemoteMediaPolicy.PolicyError.invalidPayload("the response is not HTTP.")
             }
             guard (200..<300).contains(http.statusCode) else {
-                throw RemoteMediaPolicy.PolicyError.invalidPayload(
-                    "the server returned HTTP \(http.statusCode)."
-                )
+                throw RemoteMediaPolicy.PolicyError.httpStatus(http.statusCode)
             }
             guard let finalURL = http.url else {
                 throw RemoteMediaPolicy.PolicyError.invalidPayload("the final URL is missing.")

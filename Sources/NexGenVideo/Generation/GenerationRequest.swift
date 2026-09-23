@@ -394,6 +394,12 @@ enum GenerationController {
                         )
                     }
                 }
+            case .audio(let audio):
+                referenceSnapshot = try await GenerationReferenceSnapshot.prepare(
+                    references: audio.references,
+                    trim: audio.trimmedSourceOverride,
+                    preprocess: audio.preprocessRef
+                )
             default: referenceSnapshot = nil
             }
         } catch { return .failure(.optionsInvalid(error.localizedDescription)) }
@@ -462,6 +468,8 @@ enum GenerationController {
                 }
             } else if case .image(let image, _) = prepared {
                 try referenceSnapshot?.requireIdentity(image.references)
+            } else if case .audio(let audio) = prepared {
+                try referenceSnapshot?.requireIdentity(audio.references)
             }
             try generation.scope?.requireCurrent(editor: editor)
         } catch { return .failure(.gate(error.localizedDescription)) }

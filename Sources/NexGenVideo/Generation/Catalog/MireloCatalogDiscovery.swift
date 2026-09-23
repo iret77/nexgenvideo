@@ -69,19 +69,20 @@ enum MireloCatalogDiscovery {
 
     static func catalogEntry(_ model: MireloModel) -> CatalogEntry? {
         let supported = supportedOperationIDs(model)
-        let inputs = [
-            supported.contains(MireloOperation.textToSFX.rawValue) ? "text" : nil,
-            supported.contains(MireloOperation.videoToSFX.rawValue) ? "video" : nil,
-            supported.contains(MireloOperation.extend.rawValue)
-                || supported.contains(MireloOperation.inpaint.rawValue) ? "audio" : nil,
-        ].compactMap { $0 }
+        // The generic panel has one source mode; edit operations stay on run_mirelo_audio.
+        let inputs: [String]
+        if supported.contains(MireloOperation.textToSFX.rawValue) {
+            inputs = ["text"]
+        } else if supported.contains(MireloOperation.videoToSFX.rawValue) {
+            inputs = ["video"]
+        } else {
+            inputs = []
+        }
         guard !inputs.isEmpty else { return nil }
-        let ranges = [
-            supported.contains(MireloOperation.textToSFX.rawValue)
-                ? model.operations[MireloOperation.textToSFX.rawValue]?.durationMs : nil,
-            supported.contains(MireloOperation.videoToSFX.rawValue)
-                ? model.operations[MireloOperation.videoToSFX.rawValue]?.durationMs : nil,
-        ].compactMap { $0 }
+        let operation = inputs == ["text"]
+            ? MireloOperation.textToSFX
+            : MireloOperation.videoToSFX
+        let ranges = [model.operations[operation.rawValue]?.durationMs].compactMap { $0 }
         let minimum = ranges.compactMap(\.min).min().map { max(1, Int(ceil(Double($0) / 1_000))) }
         let maximum = ranges.compactMap(\.max).max().map { max(1, Int(floor(Double($0) / 1_000))) }
         return CatalogEntry(

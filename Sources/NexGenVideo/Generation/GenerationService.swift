@@ -921,10 +921,23 @@ final class GenerationService {
                 "\(provider.displayName) runs over MCP — sign in under Settings \u{2192} Providers.",
                 authorization: authorization, editor: editor, onFailure: onFailure)
         case .mirelo:
-            return failBeforeSubmission(
-                placeholders,
-                "Mirelo audio runs through the host Mirelo operation path.",
-                authorization: authorization, editor: editor, onFailure: onFailure)
+            guard case .audio(let audioParams) = params else {
+                return failBeforeSubmission(
+                    placeholders,
+                    "Mirelo supports audio requests on this route.",
+                    authorization: authorization, editor: editor, onFailure: onFailure)
+            }
+            await runMireloJob(
+                endpoint: endpoint,
+                params: audioParams,
+                genInput: genInput,
+                placeholders: placeholders,
+                editor: editor,
+                authorization: authorization,
+                onComplete: onComplete,
+                onFailure: onFailure
+            )
+            return
         case .google:
             guard case .image(let p) = params,
                   let model = GoogleModelRegistry.model(for: endpoint) else {
@@ -1917,6 +1930,433 @@ final class GenerationService {
         if bytes[0] == 0xFF, (bytes[1] & 0xF6) == 0xF0 { return "aac" }
         if Array(bytes[4..<8]) == [0x66, 0x74, 0x79, 0x70] { return "m4a" }
         return nil
+    }
+
+    private func runMireloJob(
+        endpoint: String,
+        params: AudioGenerationParams,
+        genInput: GenerationInput,
+        placeholders: [MediaAsset],
+        editor: EditorViewModel,
+        authorization: GenerationAuthorization,
+        onComplete: (@MainActor (MediaAsset) -> Void)?,
+        onFailure: (@MainActor () -> Void)?
+    ) async {
+        guard let placeholder = placeholders.first, placeholders.count == 1 else {
+            return failBeforeSubmission(
+                placeholders,
+                "Mirelo's generic audio route produces one output per request.",
+                authorization: authorization,
+                editor: editor,
+                onFailure: onFailure
+            )
+        }
+        guard let apiKey = ProviderKeychain.load(.mirelo), !apiKey.isEmpty else {
+            return failBeforeSubmission(
+                placeholders,
+                "Add a Mirelo API key in Settings → Providers and wait for connection verification.",
+                authorization: authorization,
+                editor: editor,
+                onFailure: onFailure
+            )
+        }
+        guard let model = MireloCapabilityCatalog.shared.model(id: endpoint),
+              let durationSeconds = params.durationSeconds,
+              durationSeconds > 0,
+              durationSeconds <= Int.max / 1_000 else {
+            return failBeforeSubmission(
+                placeholders,
+                "Refresh Mirelo Providers and choose an executable SFX model with a valid duration.",
+                authorization: authorization,
+                editor: editor,
+                onFailure: onFailure
+            )
+        }
+        guard let projectKey = editor.projectId,
+              let workingRoot = editor.workingRoot,
+              let workingCopyKey = editor.openWorkingCopyKey,
+              let transactionID = authorization.transactionId,
+              UUID(uuidString: transactionID) != nil,
+              let mutationScope = authorization.projectMutationScope else {
+            return failBeforeSubmission(
+                placeholders,
+                "Save the project before running Mirelo audio.",
+                authorization: authorization,
+                editor: editor,
+                onFailure: onFailure
+            )
+        }
+
+        let sourceURL = params.videoURL.map { URL(fileURLWithPath: $0) }
+        guard let operation = Self.mireloGenericOperation(
+            model: model,
+            hasVideoSource: sourceURL != nil
+        ) else {
+            return failBeforeSubmission(
+                placeholders,
+                "Mirelo model '\(model.id)' does not support this generic audio input.",
+                authorization: authorization,
+                editor: editor,
+                onFailure: onFailure
+            )
+        }
+        let durationMS = durationSeconds * 1_000
+        do {
+            try MireloRequestBuilder.validate(
+                operation: operation,
+                model: model,
+                durationMS: durationMS,
+                appendDurationMS: nil,
+                regionStartMS: nil,
+                regionEndMS: nil,
+                numVariants: 1,
+                prompt: params.prompt,
+                loop: false,
+                preserveSpeech: false
+            )
+            guard model.formats.contains("wav") else {
+                throw GenerationRequestError.optionsInvalid(
+                    "Mirelo model '\(model.id)' does not offer WAV output."
+                )
+            }
+            try mutationScope.requireCurrent(editor: editor)
+        } catch {
+            return failBeforeSubmission(
+                placeholders,
+                error.localizedDescription,
+                authorization: authorization,
+                editor: editor,
+                onFailure: onFailure
+            )
+        }
+
+        let client = MireloClient(apiKey: apiKey)
+        let store: MireloExecutionStore
+        do {
+            store = try MireloExecutionStore.live()
+        } catch {
+            return failBeforeSubmission(
+                placeholders,
+                error.localizedDescription,
+                authorization: authorization,
+                editor: editor,
+                onFailure: onFailure
+            )
+        }
+        var executionWasApproved = false
+        do {
+            let sourceReceipts: [MireloSourceReceipt]
+            let uploadedID: String?
+            if let sourceURL {
+                guard let snapshot = authorization.referenceSnapshot,
+                      snapshot.urls.count == 1,
+                      snapshot.urls[0].standardizedFileURL == sourceURL.standardizedFileURL,
+                      let source = snapshot.sources.first,
+                      let receipt = snapshot.receipts.first,
+                      source.type == ClipType.video.rawValue else {
+                    throw GenerationRequestError.gate(
+                        "The Mirelo video source no longer matches the approved project snapshot."
+                    )
+                }
+                try await snapshot.requireUnchanged()
+                try mutationScope.requireCurrent(editor: editor)
+                let ticket = try await client.createAsset(for: sourceURL)
+                try mutationScope.requireCurrent(editor: editor)
+                try await client.upload(sourceURL, ticket: ticket)
+                try mutationScope.requireCurrent(editor: editor)
+                uploadedID = ticket.id
+                sourceReceipts = [MireloSourceReceipt(
+                    mediaAssetID: source.assetID,
+                    projectPath: try Self.mireloProjectPath(source.url, root: workingRoot),
+                    sha256: receipt.sourceSHA256,
+                    type: .video
+                )]
+            } else {
+                uploadedID = nil
+                sourceReceipts = []
+            }
+
+            let body: Data
+            if let uploadedID {
+                body = try MireloRequestBuilder.videoToSFX(
+                    model: model.id,
+                    assetID: uploadedID,
+                    prompt: params.prompt.isEmpty ? nil : params.prompt,
+                    durationMS: durationMS,
+                    startOffsetMS: 0,
+                    numVariants: 1,
+                    preserveSpeech: false,
+                    outputFormat: "wav"
+                )
+            } else {
+                body = try MireloRequestBuilder.textToSFX(
+                    model: model.id,
+                    prompt: params.prompt,
+                    durationMS: durationMS,
+                    numVariants: 1,
+                    loop: false,
+                    outputFormat: "wav"
+                )
+            }
+            let intent = try JSONSerialization.data(withJSONObject: [
+                "operation": operation.rawValue,
+                "model": ModelCatalog.deriveLogicalId(genInput.model),
+                "prompt": params.prompt,
+                "durationMs": durationMS,
+                "numVariants": 1,
+                "outputFormat": "wav",
+                "sourceMediaIds": sourceReceipts.map(\.mediaAssetID),
+            ], options: [.sortedKeys])
+            let preflight = try await client.preflight(
+                operation: operation,
+                body: body,
+                durationMS: durationMS
+            )
+            try mutationScope.requireCurrent(editor: editor)
+            try Self.validateMireloFunding(
+                preflight,
+                account: MireloCapabilityCatalog.shared.account
+            )
+            let catalogCredits = model.creditsPerSecond > 0
+                ? Int((model.creditsPerSecond * Double(durationSeconds)).rounded(.up))
+                : nil
+            guard catalogCredits == preflight.credits else {
+                throw GenerationRequestError.gate(
+                    "Mirelo's current preflight is \(preflight.credits) credits, not the \(catalogCredits.map(String.init) ?? "unpriced") credits shown for this model. Refresh Providers and review the request again; no provider job was submitted."
+                )
+            }
+            let prepared = try await MireloExecutionCoordinator.shared.prepare(
+                store: store,
+                projectKey: projectKey,
+                logicalJobID: transactionID,
+                operation: operation,
+                intentBody: intent,
+                requestBody: body,
+                sources: sourceReceipts,
+                preflight: preflight
+            )
+            try mutationScope.requireCurrent(editor: editor)
+            _ = try await MireloExecutionCoordinator.shared.approve(
+                store: store,
+                record: prepared,
+                spendTransactionID: transactionID
+            )
+            executionWasApproved = true
+            try mutationScope.requireCurrent(editor: editor)
+            var outcome = try await MireloExecutionCoordinator.shared.execute(
+                store: store,
+                projectKey: projectKey,
+                logicalJobID: transactionID,
+                client: client
+            )
+            try mutationScope.requireCurrent(editor: editor)
+            guard let providerJobID = outcome.record.providerJobID else {
+                throw GenerationRequestError.storage(
+                    "Mirelo accepted the request without a durable job identifier."
+                )
+            }
+            markSubmitted(
+                authorization: authorization,
+                providerRequestId: providerJobID,
+                resumable: true,
+                editor: editor
+            )
+
+            var descriptor = try Self.singleMireloAudioDescriptor(outcome)
+            let staged: URL
+            do {
+                staged = try await Self.downloadMireloAudio(descriptor)
+            } catch RemoteMediaPolicy.PolicyError.httpStatus(let status)
+                where [403, 404, 410].contains(status) {
+                outcome = try await MireloExecutionCoordinator.shared.refreshResult(
+                    store: store,
+                    record: outcome.record,
+                    client: client
+                )
+                descriptor = try Self.singleMireloAudioDescriptor(outcome)
+                do {
+                    staged = try await Self.downloadMireloAudio(descriptor)
+                } catch RemoteMediaPolicy.PolicyError.httpStatus(let refreshedStatus)
+                    where [403, 404, 410].contains(refreshedStatus) {
+                    throw GenerationRequestError.gate(
+                        "Mirelo refreshed the result link, but it is already unavailable. Retry this same generation later; it was not resubmitted."
+                    )
+                }
+            }
+            defer { try? FileManager.default.removeItem(at: staged) }
+            try await RemoteMediaPayloadValidator.validate(staged, expectedType: .audio)
+            try mutationScope.requireCurrent(editor: editor)
+            let returnedExtension = URL(fileURLWithPath: descriptor.filename).pathExtension
+            let extensionValue = returnedExtension.isEmpty ? "wav" : returnedExtension
+            let destination = placeholder.url.deletingPathExtension()
+                .appendingPathExtension(extensionValue)
+            let digest = try FileDigest.sha256(of: staged)
+            if FileManager.default.fileExists(atPath: destination.path) {
+                guard try FileDigest.sha256(of: destination) == digest else {
+                    throw GenerationRequestError.storage(
+                        "The Mirelo destination already contains different bytes. Restore or reconcile this generation before retrying."
+                    )
+                }
+            } else {
+                try ProjectWorkingCopy.markDirty(key: workingCopyKey)
+                let partial = destination.deletingLastPathComponent()
+                    .appendingPathComponent(".mirelo-\(UUID().uuidString).partial")
+                defer { try? FileManager.default.removeItem(at: partial) }
+                try FileManager.default.copyItem(at: staged, to: partial)
+                try FileManager.default.moveItem(at: partial, to: destination)
+            }
+            try mutationScope.requireCurrent(editor: editor)
+            placeholder.url = destination
+            placeholder.pendingDownloadURL = nil
+            placeholder.generationStatus = .none
+            editor.importMediaAsset(placeholder, skipAppend: true)
+            editor.appendGenerationLog(for: placeholder)
+            try await editor.finalizeImportedAsset(
+                placeholder,
+                mutationScope: mutationScope
+            )
+            let artifact = MireloArtifact(
+                kind: .audio,
+                projectPath: try Self.mireloProjectPath(destination, root: workingRoot),
+                sha256: digest,
+                mediaAssetID: placeholder.id,
+                sourceURLExpiresAt: descriptor.sourceURLExpiresAt
+            )
+            _ = try await MireloExecutionCoordinator.shared.complete(
+                store: store,
+                record: outcome.record,
+                artifacts: [artifact]
+            )
+            onComplete?(placeholder)
+            AppNotifications.generationComplete(
+                assetId: placeholder.id,
+                projectURL: editor.projectURL,
+                assetName: placeholder.name,
+                assetType: placeholder.type,
+                count: 1
+            )
+            markCharged(authorization: authorization, editor: editor)
+        } catch {
+            let current = try? store.load(
+                projectKey: projectKey,
+                logicalJobID: transactionID
+            )
+            if let providerJobID = current?.providerJobID {
+                markSubmitted(
+                    authorization: authorization,
+                    providerRequestId: providerJobID,
+                    resumable: true,
+                    editor: editor
+                )
+            }
+            if !executionWasApproved
+                || (current?.state == .failed && current?.providerJobID == nil) {
+                failBeforeSubmission(
+                    placeholders,
+                    error.localizedDescription,
+                    authorization: authorization,
+                    editor: editor,
+                    onFailure: onFailure
+                )
+            } else {
+                failJob(placeholders, error.localizedDescription, onFailure)
+            }
+        }
+    }
+
+    private static func singleMireloAudioDescriptor(
+        _ outcome: MireloExecutionOutcome
+    ) throws -> MireloResultDescriptor {
+        let descriptors = try MireloResultParser.descriptors(
+            operation: outcome.record.operation,
+            terminalResponse: outcome.terminalResponse
+        )
+        guard descriptors.count == 1,
+              let descriptor = descriptors.first,
+              descriptor.kind == .audio,
+              descriptor.remoteURL != nil else {
+            throw GenerationRequestError.storage(
+                "Mirelo's generic audio route returned an unsupported result set."
+            )
+        }
+        return descriptor
+    }
+
+    nonisolated static func mireloGenericOperation(
+        model: MireloModel,
+        hasVideoSource: Bool
+    ) -> MireloOperation? {
+        let operation: MireloOperation = hasVideoSource ? .videoToSFX : .textToSFX
+        return MireloCatalogDiscovery.supportedOperationIDs(model).contains(operation.rawValue)
+            ? operation
+            : nil
+    }
+
+    private static func downloadMireloAudio(
+        _ descriptor: MireloResultDescriptor
+    ) async throws -> URL {
+        guard let remoteURL = descriptor.remoteURL else {
+            throw GenerationRequestError.storage("Mirelo returned no audio result URL.")
+        }
+        let result = try await RemoteMediaDownloader.download(
+            remoteURL,
+            maxBytes: 1024 * 1024 * 1024,
+            timeout: 120
+        )
+        return result.temporaryURL
+    }
+
+    private static func validateMireloFunding(
+        _ preflight: MireloPreflight,
+        account: MireloAccount?
+    ) throws {
+        guard preflight.credits >= 0 else {
+            throw GenerationRequestError.gate(
+                "Mirelo preflight returned an invalid credit amount. No provider job was submitted."
+            )
+        }
+        if let recovery = preflight.creditRecovery {
+            guard recovery.creditsRequired == preflight.credits else {
+                throw GenerationRequestError.gate(
+                    "Mirelo preflight returned inconsistent funding evidence. No provider job was submitted."
+                )
+            }
+            guard recovery.canFundRequest else {
+                throw GenerationRequestError.gate(
+                    "Mirelo requires \(recovery.creditsRequired) credits; \(recovery.creditsAvailable) are currently spendable. No provider job was submitted."
+                )
+            }
+        }
+        let billingMode = preflight.billingMode ?? account?.billingMode
+        guard billingMode == "metered" || billingMode == "unmetered" else {
+            throw GenerationRequestError.gate(
+                "Mirelo preflight did not identify the account's billing mode. No provider job was submitted."
+            )
+        }
+        guard billingMode != "metered" || preflight.creditRecovery != nil else {
+            throw GenerationRequestError.gate(
+                "Mirelo preflight omitted the metered account's funding decision. No provider job was submitted."
+            )
+        }
+        guard account == nil || account?.provisioningState == "ready" else {
+            throw GenerationRequestError.gate(
+                "Mirelo account provisioning is not ready. No provider job was submitted."
+            )
+        }
+    }
+
+    private static func mireloProjectPath(_ url: URL, root: URL) throws -> String {
+        let canonicalRoot = root.standardizedFileURL.resolvingSymlinksInPath()
+        let canonicalURL = url.standardizedFileURL.resolvingSymlinksInPath()
+        let prefix = canonicalRoot.path.hasSuffix("/")
+            ? canonicalRoot.path
+            : canonicalRoot.path + "/"
+        guard canonicalURL.path.hasPrefix(prefix) else {
+            throw GenerationRequestError.storage(
+                "Mirelo sources and results must remain inside the project working copy."
+            )
+        }
+        return String(canonicalURL.path.dropFirst(prefix.count))
     }
 
     private func runElevenLabsJob(

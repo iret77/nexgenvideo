@@ -1384,12 +1384,29 @@ extension EditorViewModel {
     }
 
     func finalizeImportedAsset(_ asset: MediaAsset) async {
+        await finalizeImportedAsset(asset, beforeMutation: {})
+    }
+
+    func finalizeImportedAsset(
+        _ asset: MediaAsset,
+        mutationScope: GenerationProjectMutationScope
+    ) async throws {
+        try await finalizeImportedAsset(asset) {
+            try mutationScope.requireCurrent(editor: self)
+        }
+    }
+
+    private func finalizeImportedAsset(
+        _ asset: MediaAsset,
+        beforeMutation: () throws -> Void
+    ) async rethrows {
         Log.project.notice(
             "media finalize start asset=\(asset.id.prefix(8)) type=\(asset.type.rawValue)",
             telemetry: "Media asset finalize started",
             data: ["assetId": Telemetry.shortId(asset.id), "type": asset.type.rawValue]
         )
         await asset.loadMetadata()
+        try beforeMutation()
         updateManifestMetadata(for: asset)
         refreshMissingMediaCache()
         searchIndex.schedule(asset)

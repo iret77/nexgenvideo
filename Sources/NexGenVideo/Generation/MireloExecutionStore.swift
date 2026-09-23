@@ -42,6 +42,8 @@ struct MireloExecutionRecord: Codable, Sendable, Equatable {
     let projectKey: String
     let logicalJobID: String
     let operation: MireloOperation
+    let intentSHA256: String
+    let intentBody: Data
     let requestSHA256: String
     let requestBody: Data
     let idempotencyKey: String?
@@ -102,6 +104,8 @@ struct MireloExecutionStore: Sendable {
         ) {
             guard existing.requestSHA256 == candidate.requestSHA256,
                   existing.requestBody == candidate.requestBody,
+                  existing.intentSHA256 == candidate.intentSHA256,
+                  existing.intentBody == candidate.intentBody,
                   existing.operation == candidate.operation,
                   existing.sources == candidate.sources else {
                 throw GenerationRequestError.gate(
@@ -145,6 +149,8 @@ struct MireloExecutionStore: Sendable {
             ) {
                 guard existing.requestSHA256 == candidate.requestSHA256,
                       existing.requestBody == candidate.requestBody,
+                      existing.intentSHA256 == candidate.intentSHA256,
+                      existing.intentBody == candidate.intentBody,
                       existing.operation == candidate.operation,
                       existing.sources == candidate.sources else {
                     throw GenerationRequestError.gate(
@@ -177,6 +183,8 @@ struct MireloExecutionStore: Sendable {
               current.authorityID == expected.authorityID,
               current.projectKey == expected.projectKey,
               current.logicalJobID == expected.logicalJobID,
+              current.intentSHA256 == expected.intentSHA256,
+              current.intentBody == expected.intentBody,
               current.requestSHA256 == expected.requestSHA256,
               current.requestBody == expected.requestBody,
               current.idempotencyKey == expected.idempotencyKey,
@@ -260,6 +268,7 @@ struct MireloExecutionStore: Sendable {
             .providerSucceeded, .completed,
         ]
         guard value.preflight.credits >= 0,
+              value.intentSHA256 == FileDigest.sha256(of: value.intentBody),
               value.requestSHA256 == FileDigest.sha256(of: value.requestBody),
               (value.idempotencyKey != nil) == value.operation.usesIdempotencyKey,
               !value.operation.usesIdempotencyKey
@@ -287,6 +296,7 @@ struct MireloExecutionStore: Sendable {
              (.submitting, .accepted),
              (.submitting, .acceptanceUnknown),
              (.submitting, .failed),
+             (.acceptanceUnknown, .accepted),
              (.acceptanceUnknown, .submitting),
              (.accepted, .accepted),
              (.accepted, .pollingInterrupted),

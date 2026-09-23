@@ -7,12 +7,14 @@ struct MireloExecutionOutcome: Sendable, Equatable {
 
 actor MireloExecutionCoordinator {
     static let shared = MireloExecutionCoordinator()
+    private var inFlight: [String: Task<MireloExecutionOutcome, Error>] = [:]
 
     func prepare(
         store: MireloExecutionStore,
         projectKey: String,
         logicalJobID: String,
         operation: MireloOperation,
+        intentBody: Data? = nil,
         requestBody: Data,
         sources: [MireloSourceReceipt],
         preflight: MireloPreflight,
@@ -24,6 +26,7 @@ actor MireloExecutionCoordinator {
             )
         }
         let canonicalBody = try Self.canonicalJSON(requestBody)
+        let canonicalIntent = try Self.canonicalJSON(intentBody ?? requestBody)
         let authorityID = try store.authorityID(
             projectKey: projectKey,
             logicalJobID: logicalJobID
@@ -34,6 +37,8 @@ actor MireloExecutionCoordinator {
             projectKey: projectKey,
             logicalJobID: logicalJobID,
             operation: operation,
+            intentSHA256: FileDigest.sha256(of: canonicalIntent),
+            intentBody: canonicalIntent,
             requestSHA256: FileDigest.sha256(of: canonicalBody),
             requestBody: canonicalBody,
             idempotencyKey: operation.usesIdempotencyKey ? authorityID : nil,
@@ -79,6 +84,32 @@ actor MireloExecutionCoordinator {
     }
 
     func execute(
+        store: MireloExecutionStore,
+        projectKey: String,
+        logicalJobID: String,
+        client: MireloClient
+    ) async throws -> MireloExecutionOutcome {
+        let authorityID = try store.authorityID(
+            projectKey: projectKey,
+            logicalJobID: logicalJobID
+        )
+        if let task = inFlight[authorityID] {
+            return try await task.value
+        }
+        let task = Task {
+            try await self.executeOwned(
+                store: store,
+                projectKey: projectKey,
+                logicalJobID: logicalJobID,
+                client: client
+            )
+        }
+        inFlight[authorityID] = task
+        defer { inFlight.removeValue(forKey: authorityID) }
+        return try await task.value
+    }
+
+    private func executeOwned(
         store: MireloExecutionStore,
         projectKey: String,
         logicalJobID: String,
@@ -205,12 +236,34 @@ actor MireloExecutionCoordinator {
                 body: submitting.requestBody,
                 idempotencyKey: submitting.idempotencyKey
             )
-            return try store.update(submitting) {
-                $0.state = .accepted
-                $0.providerJobID = receipt.id
-                $0.providerStatusURL = receipt.statusURL
-                $0.lastProviderStatus = "accepted"
-                $0.lastError = nil
+            do {
+                return try store.update(submitting) {
+                    $0.state = .accepted
+                    $0.providerJobID = receipt.id
+                    $0.providerStatusURL = receipt.statusURL
+                    $0.lastProviderStatus = "accepted"
+                    $0.lastError = nil
+                }
+            } catch {
+                guard let current = try store.load(
+                    projectKey: submitting.projectKey,
+                    logicalJobID: submitting.logicalJobID
+                ) else { throw error }
+                if current.providerJobID == receipt.id,
+                   (current.state == .accepted || current.state == .pollingInterrupted) {
+                    return current
+                }
+                guard current.providerJobID == nil,
+                      (current.state == .submitting || current.state == .acceptanceUnknown) else {
+                    throw error
+                }
+                return try store.update(current) {
+                    $0.state = .accepted
+                    $0.providerJobID = receipt.id
+                    $0.providerStatusURL = receipt.statusURL
+                    $0.lastProviderStatus = "accepted"
+                    $0.lastError = nil
+                }
             }
         } catch is CancellationError {
             let message = submitting.operation.usesIdempotencyKey
@@ -371,8 +424,11 @@ actor MireloExecutionCoordinator {
             : ["failed", "canceled", "expired"]
         let errorObject = root["error"] as? [String: Any]
         let errors = root["errors"] as? [[String: Any]]
-        let message = errorObject?["message"] as? String
-            ?? errors?.compactMap { $0["message"] as? String }.joined(separator: "; ")
+        let joinedErrors = errors?.compactMap { $0["message"] as? String }
+            .filter { !$0.isEmpty }
+            .joined(separator: "; ")
+        let message = (errorObject?["message"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            ?? joinedErrors.flatMap { $0.isEmpty ? nil : $0 }
         return StatusSnapshot(
             status: normalized,
             isPending: pending.contains(normalized),
@@ -385,8 +441,8 @@ actor MireloExecutionCoordinator {
     private static func definitivelyRejected(_ error: MireloHTTPError) -> Bool {
         guard let status = error.status else { return false }
         if error.retryable == true { return false }
-        if status >= 500 { return false }
-        return (400...499).contains(status)
+        return [400, 401, 402, 403, 404, 405, 406, 411, 413, 414, 415, 416, 417, 422, 429, 431]
+            .contains(status)
     }
 
     private static func canonicalJSON(_ data: Data) throws -> Data {
