@@ -16,6 +16,19 @@ enum KeyframesMetrics {
     }
 }
 
+private struct HorizontalOverflowClip: Shape {
+    let horizontalOverflow: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        Path(CGRect(
+            x: rect.minX - horizontalOverflow,
+            y: rect.minY,
+            width: rect.width + horizontalOverflow * 2,
+            height: rect.height
+        ))
+    }
+}
+
 /// Inspector ruler + colored clip strip block
 struct ClipRulerBlock: View {
     let clip: Clip
@@ -413,7 +426,11 @@ struct KeyframesPanel: View {
         .background {
             AppRelaunchClickProbe(identifier: identifier)
         }
-        .clipped()
+        .clipShape(HorizontalOverflowClip(
+            horizontalOverflow: showsPlayheadTriangle
+                ? AppTheme.Timeline.playheadTriangleSize / 2 + AppTheme.BorderWidth.thin / 2
+                : AppTheme.Spacing.none
+        ))
         .allowsHitTesting(false)
     }
 
