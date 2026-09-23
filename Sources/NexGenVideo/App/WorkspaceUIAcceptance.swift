@@ -35,7 +35,7 @@ enum WorkspaceUIAcceptance {
             let projectURL: URL
             let originalProject: [String: Data]
             do {
-                projectURL = try makeProjectFixture(scale: scale)
+                projectURL = try await makeProjectFixture(scale: scale)
                 originalProject = try projectSnapshot(at: projectURL)
                 document = try await VideoProject.load(from: projectURL)
                 document.makeWindowControllers()
@@ -281,6 +281,431 @@ enum WorkspaceUIAcceptance {
                   visiblePanelFrames(in: host) == restoredFrames else {
                 fail("restored panel layout did not settle", scale: scale)
             }
+
+            let selectionTimeline = editor.timeline
+            let selectionCurrentFrame = editor.currentFrame
+            let selectionSourceFrame = editor.sourcePlayheadFrame
+            let selectionClipIDs = editor.selectedClipIds
+            let selectionAssetIDs = editor.selectedMediaAssetIds
+            let selectionFolderIDs = editor.selectedFolderIds
+            let selectionInspectedObject = editor.inspectedObject
+            let selectionPreviewTabs = editor.previewTabs
+            let selectionPreviewTabID = editor.activePreviewTabId
+            let selectionPreviewHistory = editor.previewTabHistory
+            let selectionPreviewHistoryIndex = editor.previewTabHistoryIndex
+            let selectionSourceStates = editor.sourcePreviewStates
+
+            guard click(identifier: "selection.asset.selection-source", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      host.layoutSubtreeIfNeeded()
+                      return editor.activeSourceAsset?.id == "selection-source"
+                          && editor.inspectedObject == .mediaAsset("selection-source")
+                          && probeState(identifier: "preview.selectionContext", in: window) == false
+                          && probeState(identifier: "inspector.selectionContext", in: window) == false
+            }) else {
+                fail("source selection did not activate the media context", scale: scale)
+            }
+            guard click(
+                identifier: "selection.asset.selection-secondary",
+                modifiers: [.shift],
+                in: window
+            ) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.selectedMediaAssetIds == ["selection-source", "selection-secondary"]
+                          && editor.activeSourceAsset?.id == "selection-secondary"
+                  }),
+                  click(
+                      identifier: "selection.asset.selection-secondary",
+                      modifiers: [.shift],
+                      in: window
+                  ) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.selectedMediaAssetIds == ["selection-source"]
+                          && editor.activeSourceAsset?.id == "selection-secondary"
+                  }),
+                  click(
+                      identifier: "selection.asset.selection-source",
+                      modifiers: [.shift],
+                      in: window
+                  ) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.selectedMediaAssetIds.isEmpty
+                          && editor.activeSourceAsset?.id == "selection-source"
+                  }),
+                  click(identifier: "selection.asset.selection-source", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.selectedMediaAssetIds == ["selection-source"]
+                          && editor.activeSourceAsset?.id == "selection-source"
+                  }) else {
+                fail("source multiselection did not preserve deterministic active context", scale: scale)
+            }
+            guard click(identifier: "selection.asset.selection-offline", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.activeSourceAsset?.id == "selection-offline"
+                          && editor.inspectedObject == .mediaAsset("selection-offline")
+                          && editor.isMediaOffline("selection-offline")
+                          && !editor.canPlaceActiveSource
+                  }),
+                  click(identifier: "selection.asset.selection-source", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.activeSourceAsset?.id == "selection-source"
+                          && editor.inspectedObject == .mediaAsset("selection-source")
+                  }) else {
+                fail("offline source selection exposed an invalid placement command", scale: scale)
+            }
+            editor.seekSourceToFrame(18)
+            guard click(identifier: "source.markIn", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.activeSourcePreviewState?.inFrame == 18
+                  }) else {
+                fail("source Mark In control did not write the source range", scale: scale)
+            }
+            editor.seekSourceToFrame(72)
+            guard pressKey(keyCode: 31, characters: "o", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.activeSourcePreviewState?.outFrame == 72
+                  }) else {
+                fail("source Mark Out keyboard command did not write the source range", scale: scale)
+            }
+            editor.seekSourceToFrame(42)
+            editor.currentFrame = 75
+
+            let timelineBeforePlacement = editor.timeline
+            guard let acceptanceUndoManager = document.undoManager else {
+                fail("selection acceptance has no undo manager", scale: scale)
+            }
+            guard click(identifier: "source.insert", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.timeline != timelineBeforePlacement
+                          && acceptanceUndoManager.undoActionName == "Insert Source"
+                  }),
+                  editor.activeSourcePreviewState?.inFrame == 18,
+                  editor.activeSourcePreviewState?.outFrame == 72 else {
+                fail("source insert did not preserve the active source range", scale: scale)
+            }
+            guard pressKey(
+                keyCode: 6,
+                characters: "z",
+                modifiers: [.command],
+                in: window
+            ) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.timeline == timelineBeforePlacement
+                          && editor.activeSourceAsset?.id == "selection-source"
+                  }) else {
+                fail("undo did not restore the pre-insert timeline and source context", scale: scale)
+            }
+            guard click(identifier: "source.overwrite", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.timeline != timelineBeforePlacement
+                          && acceptanceUndoManager.undoActionName == "Overwrite Source"
+                  }) else {
+                fail("source overwrite did not create one undoable edit", scale: scale)
+            }
+            guard pressKey(
+                keyCode: 6,
+                characters: "z",
+                modifiers: [.command],
+                in: window
+            ) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.timeline == timelineBeforePlacement
+                          && editor.sourcePlayheadFrame == 42
+                          && editor.currentFrame == 75
+                  }) else {
+                fail("undo did not keep source and timeline playheads independent", scale: scale)
+            }
+
+            guard click(identifier: "preview.playPause", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), { editor.isPlaying }) else {
+                fail("source transport did not start playback", scale: scale)
+            }
+            guard click(identifier: "media.search", in: window) == nil,
+                  typeKeys(
+                      [
+                          (1, "s"), (14, "e"), (37, "l"), (14, "e"),
+                          (8, "c"), (17, "t"), (34, "i"), (31, "o"), (45, "n"),
+                      ],
+                      in: window
+                  ) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      probeState(identifier: "media.search", in: window) == true
+                          && probeState(identifier: "media.listMode", in: window) == true
+                          && editor.activeSourceAsset?.id == "selection-source"
+                          && editor.inspectedObject == .mediaAsset("selection-source")
+                          && editor.isPlaying
+                  }),
+                  pressKey(
+                      keyCode: 0,
+                      characters: "a",
+                      modifiers: [.command],
+                      in: window
+                  ) == nil,
+                  pressKey(keyCode: 51, characters: "\u{8}", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      probeState(identifier: "media.search", in: window) == false
+                          && probeState(identifier: "media.listMode", in: window) == true
+                          && editor.activeSourceAsset?.id == "selection-source"
+                          && editor.inspectedObject == .mediaAsset("selection-source")
+                          && editor.isPlaying
+                  }) else {
+                fail("search changed or interrupted the active source context", scale: scale)
+            }
+            scheduleKeySequence(
+                [(115, "\u{F729}"), (36, "\r")],
+                in: window
+            )
+            guard click(identifier: "media.sort", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      probeState(identifier: "media.sort", in: window) == true
+                          && probeState(identifier: "media.listMode", in: window) == true
+                          && editor.activeSourceAsset?.id == "selection-source"
+                          && editor.inspectedObject == .mediaAsset("selection-source")
+                          && editor.isPlaying
+                  }) else {
+                fail("sorting changed or interrupted the active source context", scale: scale)
+            }
+            scheduleKeySequence([(115, "\u{F729}"), (36, "\r")], in: window)
+            guard click(identifier: "media.filter", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      probeState(identifier: "media.filter", in: window) == true
+                          && probeState(identifier: "media.listMode", in: window) == true
+                          && editor.activeSourceAsset?.id == "selection-source"
+                          && editor.inspectedObject == .mediaAsset("selection-source")
+                          && editor.isPlaying
+                  }) else {
+                fail("filtering changed or interrupted the active source context", scale: scale)
+            }
+            guard click(identifier: "preview.playPause", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), { !editor.isPlaying }) else {
+                fail("source transport did not stop playback", scale: scale)
+            }
+
+            guard click(identifier: "selection.ruler", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.isTimelinePreviewActive
+                          && editor.currentFrame == 96
+                          && editor.sourcePreviewState(for: "selection-source")
+                              == SourcePreviewState(playheadFrame: 42, inFrame: 18, outFrame: 72)
+                  }) else {
+                fail("timeline ruler did not activate an independent timeline playhead", scale: scale)
+            }
+            guard click(identifier: "selection.clip.selection-title", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.isTimelinePreviewActive
+                          && editor.selectedClipIds == ["selection-title"]
+                          && editor.inspectedObject == .clip("selection-title")
+                  }),
+                  click(identifier: "selection.empty", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.isTimelinePreviewActive
+                          && editor.selectedClipIds.isEmpty
+                          && editor.inspectedObject == nil
+                  }) else {
+                fail("title or empty-area selection did not produce a deterministic context", scale: scale)
+            }
+            guard click(identifier: "selection.clip.selection-clip", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.isTimelinePreviewActive
+                          && editor.inspectedObject == .clip("selection-clip")
+                  }),
+                  pressKey(keyCode: 30, characters: "]", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.clipFor(id: "selection-clip")?.durationFrames == 96
+                          && editor.clipFor(id: "selection-clip")?.trimEndFrame == 24
+                          && editor.sourcePreviewState(for: "selection-source")
+                              == SourcePreviewState(playheadFrame: 42, inFrame: 18, outFrame: 72)
+                  }),
+                  click(identifier: "selection.asset.selection-source", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.activeSourceAsset?.id == "selection-source"
+                          && editor.sourcePlayheadFrame == 42
+                          && editor.currentFrame == 96
+                          && editor.activeSourcePreviewState?.inFrame == 18
+                          && editor.activeSourcePreviewState?.outFrame == 72
+                  }),
+                  click(identifier: "selection.clip.selection-clip", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.isTimelinePreviewActive
+                          && editor.inspectedObject == .clip("selection-clip")
+                  }) else {
+                fail("timeline clip trim did not preserve the independent source context", scale: scale)
+            }
+            guard click(identifier: "selection.trackLock.selection-track", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.timeline.tracks.first?.editLocked == true
+                  }) else {
+                fail("native track lock did not lock the selected clip", scale: scale)
+            }
+            let lockedTimeline = editor.timeline
+            guard pressKey(keyCode: 51, characters: "\u{8}", in: window) == nil else {
+                fail("could not send the locked Delete keyboard command", scale: scale)
+            }
+            try? await Task.sleep(for: .milliseconds(100))
+            guard editor.timeline == lockedTimeline,
+                  editor.selectedClipIds == ["selection-clip"],
+                  await waitUntil(timeout: .seconds(5), {
+                      host.layoutSubtreeIfNeeded()
+                      return probeState(identifier: "preview.selectionContext", in: window) == true
+                          && probeState(identifier: "inspector.selectionContext", in: window) == true
+                          && probeState(identifier: "inspector.clipMutation", in: window) == false
+                  }) else {
+                fail("locked timeline selection exposed an editable clip context", scale: scale)
+            }
+            let timelineSelectionName = "scale-\(scaleLabel(scale))-selection-timeline"
+            guard snapshot(host, at: evidenceURL.appendingPathComponent("\(timelineSelectionName).png")) else {
+                fail("could not capture timeline selection evidence", scale: scale)
+            }
+            emit(
+                "selection-timeline",
+                scale: scale,
+                fields: [
+                    "screenshot": "\(timelineSelectionName).png",
+                    "activeClip": "selection-clip",
+                    "clipMutationEnabled": false,
+                    "lockedMutationBlocked": true,
+                    "rememberedAsset": editor.selectedMediaAssetIds.contains("selection-source"),
+                    "nativeClipSelection": true,
+                    "nativeTrackLock": true,
+                    "nativeLockedDeleteBlocked": true,
+                    "nativeTimelineRuler": true,
+                    "nativeTimelineTrim": true,
+                    "nativeTitleSelection": true,
+                    "nativeEmptySelection": true,
+                    "sourceStatePreserved": editor.sourcePreviewState(for: "selection-source")
+                        == SourcePreviewState(playheadFrame: 42, inFrame: 18, outFrame: 72),
+                ]
+            )
+
+            guard click(identifier: "selection.asset.selection-source", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      host.layoutSubtreeIfNeeded()
+                      guard let inspectorFrame = visiblePanelFrames(in: host)["inspectorPanel"] else {
+                          return false
+                      }
+                      return editor.activeSourceAsset?.id == "selection-source"
+                          && editor.selectedClipIds == ["selection-clip"]
+                          && probeState(identifier: "preview.selectionContext", in: window) == false
+                          && probeState(identifier: "inspector.selectionContext", in: window) == false
+                          && visibleProbe(
+                              identifier: "inspector.sourceRange",
+                              in: window,
+                              containedBy: inspectorFrame,
+                              requiredState: true
+                          )
+                          && visibleProbe(
+                              identifier: "inspector.sourcePlacement",
+                              in: window,
+                              containedBy: inspectorFrame,
+                              requiredState: true
+                          )
+                          && !editor.canInsertActiveSource
+                          && editor.canOverwriteActiveSource
+                  }) else {
+                fail("locked clip state leaked into source controls", scale: scale)
+            }
+            scheduleKeySequence([(53, "\u{1b}")], in: window)
+            guard contextClick(identifier: "selection.clip.selection-clip", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.isTimelinePreviewActive
+                          && editor.inspectedObject == .clip("selection-clip")
+            }) else {
+                fail("timeline context click did not activate the exact remembered clip", scale: scale)
+            }
+            try? await Task.sleep(for: .milliseconds(450))
+            scheduleKeySequence([(53, "\u{1b}")], in: window)
+            guard contextClick(identifier: "selection.asset.selection-source", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.activeSourceAsset?.id == "selection-source"
+                          && editor.inspectedObject == .mediaAsset("selection-source")
+            }) else {
+                fail("media context click did not activate the exact remembered source", scale: scale)
+            }
+            try? await Task.sleep(for: .milliseconds(450))
+            guard pressKey(keyCode: 53, characters: "\u{1b}", in: window) == nil else {
+                fail("could not dismiss the media context menu", scale: scale)
+            }
+            try? await Task.sleep(for: .milliseconds(100))
+            guard click(identifier: "selection.trackLock.selection-track", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.timeline.tracks.first(where: { $0.id == "selection-track" })?.editLocked == false
+                  }),
+                  click(identifier: "selection.asset.selection-source", in: window) == nil,
+                  pressKey(keyCode: 51, characters: "\u{8}", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      !editor.mediaAssets.contains { $0.id == "selection-source" }
+                          && editor.clipFor(id: "selection-clip") == nil
+                  }),
+                  pressKey(
+                      keyCode: 6,
+                      characters: "z",
+                      modifiers: [.command],
+                      in: window
+                  ) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      host.layoutSubtreeIfNeeded()
+                      host.displayIfNeeded()
+                      return editor.activeSourceAsset?.id == "selection-source"
+                          && editor.selectedMediaAssetIds == ["selection-source"]
+                          && editor.inspectedObject == .mediaAsset("selection-source")
+                          && editor.clipFor(id: "selection-clip") != nil
+                          && findProbe(in: host, identifier: "selection.trackLock.selection-track") != nil
+                          && editor.sourcePreviewState(for: "selection-source")
+                              == SourcePreviewState(playheadFrame: 42, inFrame: 18, outFrame: 72)
+                  }),
+                  click(identifier: "selection.trackLock.selection-track", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.timeline.tracks.first(where: { $0.id == "selection-track" })?.editLocked == true
+                  }) else {
+                fail("active source deletion or Undo did not restore the exact context", scale: scale)
+            }
+            let mediaSelectionName = "scale-\(scaleLabel(scale))-selection-media"
+            guard snapshot(host, at: evidenceURL.appendingPathComponent("\(mediaSelectionName).png")) else {
+                fail("could not capture media selection evidence", scale: scale)
+            }
+            emit(
+                "selection-source",
+                scale: scale,
+                fields: [
+                    "screenshot": "\(mediaSelectionName).png",
+                    "activeAsset": "selection-source",
+                    "sourceFrame": editor.sourcePlayheadFrame,
+                    "sourceIn": editor.activeSourcePreviewState?.inFrame ?? -1,
+                    "sourceOut": editor.activeSourcePreviewState?.outFrame ?? -1,
+                    "timelineFrame": editor.currentFrame,
+                    "rememberedClip": editor.selectedClipIds.contains("selection-clip"),
+                    "rangeEnabled": editor.canEditActiveSourceRange,
+                    "placementEnabled": editor.canPlaceActiveSource,
+                    "insertEnabled": editor.canInsertActiveSource,
+                    "overwriteEnabled": editor.canOverwriteActiveSource,
+                    "insertUndoVerified": true,
+                    "overwriteUndoVerified": true,
+                    "nativeSourceCommands": true,
+                    "nativeMultiselectDeselect": true,
+                    "nativeSearchPreservedPlayback": true,
+                    "sortAndFilterPreservedPlayback": true,
+                    "listModePreserved": true,
+                    "contextClickRoutingVerified": true,
+                    "offlineSourceHandled": true,
+                    "nativeActiveDeleteUndo": true,
+                ]
+            )
+
+            editor.timeline = selectionTimeline
+            editor.currentFrame = selectionCurrentFrame
+            editor.selectedClipIds = selectionClipIDs
+            editor.selectedMediaAssetIds = selectionAssetIDs
+            editor.selectedFolderIds = selectionFolderIDs
+            editor.inspectedObject = selectionInspectedObject
+            editor.previewTabs = selectionPreviewTabs
+            editor.activePreviewTabId = selectionPreviewTabID
+            editor.previewTabHistory = selectionPreviewHistory
+            editor.previewTabHistoryIndex = selectionPreviewHistoryIndex
+            editor.sourcePreviewStates = selectionSourceStates
+            editor.sourcePlayheadFrame = selectionSourceFrame
+            editor.videoEngine?.activateTab(editor.activePreviewTab)
+            acceptanceUndoManager.removeAllActions()
+
             guard click(identifier: "editor.workspace.production", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
                       host.layoutSubtreeIfNeeded()
@@ -373,7 +798,7 @@ enum WorkspaceUIAcceptance {
         exit(1)
     }
 
-    private static func makeProjectFixture(scale: Double) throws -> URL {
+    private static func makeProjectFixture(scale: Double) async throws -> URL {
         let title = scale == 1.25
             ? "An exceptionally long project name for the final picture lock"
             : "Ein außergewöhnlich langes Projekt für den finalen Filmschnitt"
@@ -385,11 +810,91 @@ enum WorkspaceUIAcceptance {
             at: projectURL,
             withIntermediateDirectories: true
         )
-        try JSONEncoder().encode(Timeline()).write(
+        let mediaDirectory = projectURL.appendingPathComponent(
+            Project.mediaDirectoryName,
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: mediaDirectory,
+            withIntermediateDirectories: true
+        )
+        let generatedVideo = try await ImageVideoGenerator.blackVideo(
+            size: CGSize(width: 640, height: 360)
+        )
+        let sourceURL = mediaDirectory.appendingPathComponent("selection-source.mov")
+        try FileManager.default.copyItem(at: generatedVideo, to: sourceURL)
+
+        var clip = Clip(
+            mediaRef: "selection-source",
+            mediaType: .video,
+            sourceClipType: .video,
+            startFrame: 0,
+            durationFrames: 120
+        )
+        clip.id = "selection-clip"
+        var title = Clip(
+            mediaRef: "",
+            mediaType: .text,
+            sourceClipType: .text,
+            startFrame: 0,
+            durationFrames: 30
+        )
+        title.id = "selection-title"
+        title.textContent = "Picture Lock"
+        var timeline = Timeline()
+        timeline.fps = 30
+        timeline.width = 640
+        timeline.height = 360
+        timeline.settingsConfigured = true
+        var track = Track(type: .video, clips: [clip])
+        track.id = "selection-track"
+        var titleTrack = Track(type: .video, clips: [title])
+        titleTrack.id = "selection-title-track"
+        timeline.tracks = [track, titleTrack]
+        try JSONEncoder().encode(timeline).write(
             to: projectURL.appendingPathComponent(Project.timelineFilename),
             options: .atomic
         )
-        try JSONEncoder().encode(MediaManifest()).write(
+        var manifest = MediaManifest()
+        manifest.entries = [
+            MediaManifestEntry(
+                id: "selection-source",
+                name: "Selection Source",
+                type: .video,
+                source: .project(relativePath: "\(Project.mediaDirectoryName)/selection-source.mov"),
+                duration: 4,
+                sourceWidth: 640,
+                sourceHeight: 360,
+                sourceFPS: 30,
+                hasAudio: false,
+                originalFilename: "Selection Source.mov"
+            ),
+            MediaManifestEntry(
+                id: "selection-secondary",
+                name: "Secondary Source",
+                type: .video,
+                source: .project(relativePath: "\(Project.mediaDirectoryName)/selection-source.mov"),
+                duration: 4,
+                sourceWidth: 640,
+                sourceHeight: 360,
+                sourceFPS: 30,
+                hasAudio: false,
+                originalFilename: "Secondary Source.mov"
+            ),
+            MediaManifestEntry(
+                id: "selection-offline",
+                name: "Offline Source",
+                type: .video,
+                source: .project(relativePath: "\(Project.mediaDirectoryName)/offline-source.mov"),
+                duration: 4,
+                sourceWidth: 640,
+                sourceHeight: 360,
+                sourceFPS: 30,
+                hasAudio: false,
+                originalFilename: "Offline Source.mov"
+            ),
+        ]
+        try JSONEncoder().encode(manifest).write(
             to: projectURL.appendingPathComponent(Project.manifestFilename),
             options: .atomic
         )
@@ -785,7 +1290,11 @@ enum WorkspaceUIAcceptance {
         }
     }
 
-    private static func click(identifier: String, in window: NSWindow) -> String? {
+    private static func click(
+        identifier: String,
+        modifiers: NSEvent.ModifierFlags = [],
+        in window: NSWindow
+    ) -> String? {
         guard window.isVisible, window.isKeyWindow, !window.ignoresMouseEvents,
               let root = window.contentView,
               let probe = findProbe(in: root, identifier: identifier),
@@ -805,7 +1314,7 @@ enum WorkspaceUIAcceptance {
         guard let down = NSEvent.mouseEvent(
             with: .leftMouseDown,
             location: location,
-            modifierFlags: [],
+            modifierFlags: modifiers,
             timestamp: timestamp,
             windowNumber: window.windowNumber,
             context: nil,
@@ -815,7 +1324,7 @@ enum WorkspaceUIAcceptance {
         ), let up = NSEvent.mouseEvent(
             with: .leftMouseUp,
             location: location,
-            modifierFlags: [],
+            modifierFlags: modifiers,
             timestamp: timestamp + 0.001,
             windowNumber: window.windowNumber,
             context: nil,
@@ -827,6 +1336,109 @@ enum WorkspaceUIAcceptance {
         }
         NSApp.postEvent(down, atStart: false)
         NSApp.postEvent(up, atStart: false)
+        return nil
+    }
+
+    private static func contextClick(identifier: String, in window: NSWindow) -> String? {
+        guard window.isVisible, window.isKeyWindow, !window.ignoresMouseEvents,
+              let root = window.contentView,
+              let probe = findProbe(in: root, identifier: identifier),
+              probe.window === window,
+              !probe.isHiddenOrHasHiddenAncestor else {
+            return "control geometry unavailable"
+        }
+        let frame = probe.bounds
+        guard frame.width.isFinite, frame.height.isFinite, frame.width > 0, frame.height > 0 else {
+            return "control has no finite frame"
+        }
+        let location = probe.convert(NSPoint(x: frame.midX, y: frame.midY), to: nil)
+        let timestamp = ProcessInfo.processInfo.systemUptime
+        guard let down = NSEvent.mouseEvent(
+            with: .rightMouseDown,
+            location: location,
+            modifierFlags: [],
+            timestamp: timestamp,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 1,
+            pressure: 1
+        ), let up = NSEvent.mouseEvent(
+            with: .rightMouseUp,
+            location: location,
+            modifierFlags: [],
+            timestamp: timestamp + 0.001,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 1,
+            pressure: 0
+        ) else {
+            return "AppKit could not create context-menu events"
+        }
+        NSApp.postEvent(down, atStart: false)
+        NSApp.postEvent(up, atStart: false)
+        return nil
+    }
+
+    private static func pressKey(
+        keyCode: UInt16,
+        characters: String,
+        modifiers: NSEvent.ModifierFlags = [],
+        in window: NSWindow
+    ) -> String? {
+        guard window.isVisible, window.isKeyWindow else { return "window is not ready for keyboard input" }
+        let timestamp = ProcessInfo.processInfo.systemUptime
+        guard let down = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: modifiers,
+            timestamp: timestamp,
+            windowNumber: window.windowNumber,
+            context: nil,
+            characters: characters,
+            charactersIgnoringModifiers: characters,
+            isARepeat: false,
+            keyCode: keyCode
+        ), let up = NSEvent.keyEvent(
+            with: .keyUp,
+            location: .zero,
+            modifierFlags: modifiers,
+            timestamp: timestamp + 0.001,
+            windowNumber: window.windowNumber,
+            context: nil,
+            characters: characters,
+            charactersIgnoringModifiers: characters,
+            isARepeat: false,
+            keyCode: keyCode
+        ) else {
+            return "AppKit could not create keyboard events"
+        }
+        NSApp.postEvent(down, atStart: false)
+        NSApp.postEvent(up, atStart: false)
+        return nil
+    }
+
+    private static func scheduleKeySequence(
+        _ keys: [(UInt16, String)],
+        in window: NSWindow
+    ) {
+        for (index, key) in keys.enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2 + Double(index) * 0.1) {
+                _ = pressKey(keyCode: key.0, characters: key.1, in: window)
+            }
+        }
+    }
+
+    private static func typeKeys(
+        _ keys: [(UInt16, String)],
+        in window: NSWindow
+    ) -> String? {
+        for key in keys {
+            if let error = pressKey(keyCode: key.0, characters: key.1, in: window) {
+                return error
+            }
+        }
         return nil
     }
 

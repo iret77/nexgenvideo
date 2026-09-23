@@ -1,5 +1,12 @@
 import AppKit
 
+struct TimelineInteractionSnapshot {
+    let selectedClipIds: Set<String>
+    let selectedGap: GapSelection?
+    let selectedTimelineRange: TimelineRangeSelection?
+    let inspectedObject: InspectedObject?
+}
+
 /// Clip-level mutations: move, split, remove, speed, property edits, overwrite-style
 /// region clearing, and the playhead-relative shortcuts that wrap them.
 extension EditorViewModel {
@@ -13,18 +20,40 @@ extension EditorViewModel {
         let assets = assets.filter(\.type.isPlaceable)
         guard !assets.isEmpty else { return }
         guard timeline.tracks.indices.contains(trackIndex) else { return }
+        guard !timeline.tracks[trackIndex].editLocked else { return }
         // Pin by id: clearRegion's pruneEmptyTracks can shift indices.
         let visualTrackId = timeline.tracks[trackIndex].id
         let audioTrackId: String? = linkedAudioTrackIndex.flatMap {
             timeline.tracks.indices.contains($0) ? timeline.tracks[$0].id : nil
         }
+        if assets.contains(where: { $0.type == .video && $0.hasAudio }),
+           let linkedAudioTrackIndex,
+           timeline.tracks.indices.contains(linkedAudioTrackIndex),
+           timeline.tracks[linkedAudioTrackIndex].editLocked {
+            return
+        }
+        let totalDuration = assets.reduce(0) {
+            $0 + clipDurationFrames(for: $1, segment: segments[$1.id])
+        }
+        guard canClearRegion(
+            trackIndex: trackIndex,
+            start: startFrame,
+            end: startFrame + totalDuration
+        ) else { return }
+        if let linkedAudioTrackIndex,
+           timeline.tracks.indices.contains(linkedAudioTrackIndex) {
+            guard canClearRegion(
+                trackIndex: linkedAudioTrackIndex,
+                start: startFrame,
+                end: startFrame + totalDuration
+            ) else { return }
+        }
 
         withTimelineSwap(actionName: "Add Clips") {
-            let totalDur = assets.reduce(0) { $0 + clipDurationFrames(for: $1, segment: segments[$1.id]) }
-            clearRegion(trackIndex: trackIndex, start: startFrame, end: startFrame + totalDur, prune: false)
+            clearRegion(trackIndex: trackIndex, start: startFrame, end: startFrame + totalDuration, prune: false)
             if let aid = audioTrackId,
                let audioIdx = timeline.tracks.firstIndex(where: { $0.id == aid }) {
-                clearRegion(trackIndex: audioIdx, start: startFrame, end: startFrame + totalDur, prune: false)
+                clearRegion(trackIndex: audioIdx, start: startFrame, end: startFrame + totalDuration, prune: false)
             }
 
             guard let resolvedTrackIndex = timeline.tracks.firstIndex(where: { $0.id == visualTrackId }) else {
@@ -52,7 +81,9 @@ extension EditorViewModel {
         var clipInfos: [(clip: Clip, fromTrack: Int, toTrack: Int, toFrame: Int)] = []
         for m in moves {
             guard let loc = findClip(id: m.clipId),
-                  timeline.tracks.indices.contains(m.toTrack) else { continue }
+                  timeline.tracks.indices.contains(m.toTrack),
+                  !timeline.tracks[loc.trackIndex].editLocked,
+                  !timeline.tracks[m.toTrack].editLocked else { return }
             let clip = timeline.tracks[loc.trackIndex].clips[loc.clipIndex]
             let destType = timeline.tracks[m.toTrack].type
             let srcType = timeline.tracks[loc.trackIndex].type
@@ -60,6 +91,17 @@ extension EditorViewModel {
             clipInfos.append((clip, loc.trackIndex, m.toTrack, max(0, m.toFrame)))
         }
         guard !clipInfos.isEmpty else { return }
+        let movedIDs = Set(clipInfos.map { $0.clip.id })
+        let affectedMoveIDs = Set(movedIDs.flatMap { [$0] + linkedPartnerIds(of: $0) })
+        guard !affectedMoveIDs.contains(where: isClipEditLocked) else { return }
+        for info in clipInfos {
+            guard canClearRegion(
+                trackIndex: info.toTrack,
+                start: info.toFrame,
+                end: info.toFrame + info.clip.durationFrames,
+                excluding: movedIDs
+            ) else { return }
+        }
 
         let actionName = moves.count == 1 ? "Move Clip" : "Move Clips"
         withTimelineSwap(actionName: actionName) {
@@ -102,6 +144,7 @@ extension EditorViewModel {
         let groupIds: Set<String> = clip.linkGroupId != nil
             ? Set([clipId] + linkedPartnerIds(of: clipId))
             : [clipId]
+        guard !groupIds.contains(where: isClipEditLocked) else { return [] }
 
         undoManager?.beginUndoGrouping()
         var rightIds: [String] = []
@@ -192,22 +235,32 @@ extension EditorViewModel {
     }
 
     func removeClips(ids: Set<String>, prune: Bool = true) {
+        guard !ids.contains(where: isClipEditLocked) else { return }
         let hasMatches = timeline.tracks.contains { t in t.clips.contains { ids.contains($0.id) } }
         guard hasMatches else { return }
         let count = timeline.tracks.reduce(0) { $0 + $1.clips.lazy.filter { ids.contains($0.id) }.count }
-        selectedClipIds.subtract(ids)
         withTimelineSwap(actionName: "Remove Clip\(count == 1 ? "" : "s")") {
+            selectedClipIds.subtract(ids)
             for i in timeline.tracks.indices {
                 timeline.tracks[i].clips.removeAll { ids.contains($0.id) }
             }
             if prune { pruneEmptyTracks() }
+            if isTimelinePreviewActive,
+               case .clip(let inspectedID) = inspectedObject,
+               ids.contains(inspectedID) {
+                inspectedObject = InspectedObject.fromSelection(
+                    clipIDs: selectedClipIds,
+                    mediaAssetIDs: [],
+                    isMarquee: false
+                )
+            }
         }
     }
 
     // MARK: - Speed
 
     func applyClipSpeed(clipId: String, newSpeed: Double) {
-        guard let loc = findClip(id: clipId) else { return }
+        guard let loc = findClip(id: clipId), !timeline.tracks[loc.trackIndex].editLocked else { return }
         if preDragTimeline == nil {
             preDragTimeline = timeline
         }
@@ -218,6 +271,13 @@ extension EditorViewModel {
     }
 
     func commitClipSpeed(ids: [String], newSpeed: Double) {
+        guard !ids.contains(where: isClipEditLocked) else {
+            if let preDragTimeline { timeline = preDragTimeline }
+            preDragTimeline = nil
+            for id in ids { dragBefore.removeValue(forKey: id) }
+            notifyTimelineChanged()
+            return
+        }
         let before: Timeline = preDragTimeline ?? timeline
         for id in ids {
             guard let loc = findClip(id: id) else { continue }
@@ -232,11 +292,24 @@ extension EditorViewModel {
         registerTimelineSwap(undoState: before, redoState: after, actionName: "Change Speed")
     }
 
-    func registerTimelineSwap(undoState: Timeline, redoState: Timeline, actionName: String) {
+    func registerTimelineSwap(
+        undoState: Timeline,
+        redoState: Timeline,
+        actionName: String,
+        undoInteraction: TimelineInteractionSnapshot? = nil,
+        redoInteraction: TimelineInteractionSnapshot? = nil
+    ) {
         undoManager?.registerUndo(withTarget: self) { vm in
             vm.timeline = undoState
+            if let undoInteraction { vm.applyTimelineInteractionSnapshot(undoInteraction) }
             vm.notifyTimelineChanged()
-            vm.registerTimelineSwap(undoState: redoState, redoState: undoState, actionName: actionName)
+            vm.registerTimelineSwap(
+                undoState: redoState,
+                redoState: undoState,
+                actionName: actionName,
+                undoInteraction: redoInteraction,
+                redoInteraction: undoInteraction
+            )
         }
         undoManager?.setActionName(actionName)
     }
@@ -244,11 +317,13 @@ extension EditorViewModel {
     /// Run `work` as a single atomic mutation, registering one timeline-swap undo
     func withTimelineSwap(actionName: String, _ work: () throws -> Void) rethrows {
         let before = timeline
+        let beforeInteraction = timelineInteractionSnapshot()
         undoManager?.disableUndoRegistration()
         do {
             try work()
         } catch {
             timeline = before
+            applyTimelineInteractionSnapshot(beforeInteraction)
             undoManager?.enableUndoRegistration()
             notifyTimelineChanged()
             throw error
@@ -259,8 +334,30 @@ extension EditorViewModel {
         // Skip when nested: an outer withTimelineSwap is still suppressing
         // registrations and will capture our diff in its own swap.
         guard undoManager?.isUndoRegistrationEnabled ?? true else { return }
-        registerTimelineSwap(undoState: before, redoState: after, actionName: actionName)
+        registerTimelineSwap(
+            undoState: before,
+            redoState: after,
+            actionName: actionName,
+            undoInteraction: beforeInteraction,
+            redoInteraction: timelineInteractionSnapshot()
+        )
         notifyTimelineChanged()
+    }
+
+    private func timelineInteractionSnapshot() -> TimelineInteractionSnapshot {
+        TimelineInteractionSnapshot(
+            selectedClipIds: selectedClipIds,
+            selectedGap: selectedGap,
+            selectedTimelineRange: selectedTimelineRange,
+            inspectedObject: inspectedObject
+        )
+    }
+
+    private func applyTimelineInteractionSnapshot(_ snapshot: TimelineInteractionSnapshot) {
+        selectedClipIds = snapshot.selectedClipIds
+        selectedGap = snapshot.selectedGap
+        selectedTimelineRange = snapshot.selectedTimelineRange
+        inspectedObject = snapshot.inspectedObject
     }
 
     fileprivate func setClipSpeed(at loc: ClipLocation, newSpeed: Double) {
@@ -297,6 +394,7 @@ extension EditorViewModel {
     /// Apply `modify` to every clip whose id is in `ids`. Captures a full-clip
     /// before snapshot for each and registers a bidirectional undo/redo swap
     func mutateClips(ids: Set<String>, actionName: String, _ modify: (inout Clip) -> Void) {
+        guard !ids.contains(where: isClipEditLocked) else { return }
         var before: [(id: String, clip: Clip)] = []
         for ti in timeline.tracks.indices {
             for ci in timeline.tracks[ti].clips.indices where ids.contains(timeline.tracks[ti].clips[ci].id) {
@@ -333,7 +431,7 @@ extension EditorViewModel {
     }
 
     func applyClipProperty(clipId: String, rebuild: Bool = false, _ modify: (inout Clip) -> Void) {
-        guard let loc = findClip(id: clipId) else { return }
+        guard let loc = findClip(id: clipId), !timeline.tracks[loc.trackIndex].editLocked else { return }
         var clip = timeline.tracks[loc.trackIndex].clips[loc.clipIndex]
         if dragBefore[clipId] == nil {
             dragBefore[clipId] = clip
@@ -353,6 +451,7 @@ extension EditorViewModel {
     }
 
     func applyClipProperties(clipIds: [String], rebuild: Bool = false, _ modify: (inout Clip) -> Void) {
+        guard !clipIds.contains(where: isClipEditLocked) else { return }
         var touchedText = false
         var touchedVisual = false
         for clipId in clipIds {
@@ -440,7 +539,14 @@ extension EditorViewModel {
     }
 
     func commitClipProperty(clipId: String, _ modify: (inout Clip) -> Void) {
-        guard let loc = findClip(id: clipId) else { return }
+        guard let loc = findClip(id: clipId), !timeline.tracks[loc.trackIndex].editLocked else {
+            if let original = dragBefore.removeValue(forKey: clipId),
+               let location = findClip(id: clipId) {
+                timeline.tracks[location.trackIndex].clips[location.clipIndex] = original
+                notifyTimelineChanged()
+            }
+            return
+        }
         var clip = timeline.tracks[loc.trackIndex].clips[loc.clipIndex]
         let before = dragBefore.removeValue(forKey: clipId) ?? clip
         modify(&clip)
@@ -454,6 +560,20 @@ extension EditorViewModel {
     }
 
     func commitClipProperties(clipIds: [String], _ modify: (inout Clip) -> Void) {
+        guard !clipIds.contains(where: isClipEditLocked) else {
+            var restored = false
+            for clipId in clipIds {
+                guard let original = dragBefore.removeValue(forKey: clipId),
+                      let location = findClip(id: clipId) else { continue }
+                timeline.tracks[location.trackIndex].clips[location.clipIndex] = original
+                restored = true
+            }
+            if restored {
+                videoEngine?.syncTextLayers()
+                notifyTimelineChanged()
+            }
+            return
+        }
         var touchedText = false
         var touchedVisual = false
         for clipId in clipIds {
@@ -527,6 +647,7 @@ extension EditorViewModel {
         guard oldMediaRef != newAssetId else { return }
 
         let targetIds = linkedClipIdsSharingMedia(anchor: clipId)
+        guard !targetIds.contains(where: isClipEditLocked) else { return }
 
         var oldTrims: [String: (start: Int, end: Int)] = [:]
         for id in targetIds {
@@ -595,15 +716,23 @@ extension EditorViewModel {
         deleteMediaAssets(ids: selectedMediaAssetIds)
     }
 
+    func canDeleteMediaAssets(ids: Set<String>) -> Bool {
+        !timeline.tracks.contains { track in
+            track.editLocked && track.clips.contains { ids.contains($0.mediaRef) }
+        }
+    }
+
     func deleteMediaAssets(ids: Set<String>) {
         guard !ids.isEmpty else { return }
         guard mediaAssets.contains(where: { ids.contains($0.id) }) else { return }
+        guard canDeleteMediaAssets(ids: ids) else { return }
 
         let before = mediaLibraryUndoSnapshot()
         let clipIdsToRemove = Set(timeline.tracks
             .flatMap(\.clips)
             .filter { ids.contains($0.mediaRef) }
             .map(\.id))
+        guard !clipIdsToRemove.contains(where: isClipEditLocked) else { return }
         if !clipIdsToRemove.isEmpty {
             selectedClipIds.subtract(clipIdsToRemove)
             for i in timeline.tracks.indices {
@@ -623,7 +752,6 @@ extension EditorViewModel {
 
         undoManager?.registerUndo(withTarget: self) { vm in
             vm.restoreMediaLibraryUndoSnapshot(before, actionName: "Delete Media")
-            vm.selectedMediaAssetIds.removeAll()
         }
         undoManager?.setActionName("Delete Media")
         if !clipIdsToRemove.isEmpty {
@@ -635,7 +763,7 @@ extension EditorViewModel {
 
     /// Clear a region on a track by removing, trimming, or splitting the clips that overlap it.
     func clearRegion(trackIndex: Int, start: Int, end: Int, prune: Bool = true) {
-        guard timeline.tracks.indices.contains(trackIndex) else { return }
+        guard canClearRegion(trackIndex: trackIndex, start: start, end: end) else { return }
         let actions = OverwriteEngine.computeOverwrite(
             clips: timeline.tracks[trackIndex].clips,
             regionStart: start,
@@ -682,6 +810,21 @@ extension EditorViewModel {
                 }
             }
         }
+    }
+
+    func canClearRegion(
+        trackIndex: Int,
+        start: Int,
+        end: Int,
+        excluding excludedClipIDs: Set<String> = []
+    ) -> Bool {
+        guard timeline.tracks.indices.contains(trackIndex),
+              !timeline.tracks[trackIndex].editLocked else { return false }
+        let overlapping = timeline.tracks[trackIndex].clips.filter {
+            !excludedClipIDs.contains($0.id) && $0.startFrame < end && start < $0.endFrame
+        }
+        let affected = Set(overlapping.flatMap { [$0.id] + linkedPartnerIds(of: $0.id) })
+        return !affected.contains(where: isClipEditLocked)
     }
 
 }

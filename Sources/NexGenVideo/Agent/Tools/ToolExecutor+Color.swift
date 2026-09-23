@@ -63,6 +63,9 @@ extension ToolExecutor {
                 throw ToolError("Clip \(id) is a \(clip.mediaType.rawValue) clip; apply_color needs a video or image clip.")
             }
         }
+        guard !input.clipIds.contains(where: editor.isClipEditLocked) else {
+            throw ToolError("apply_color cannot edit clips on a locked track")
+        }
         // LUT file I/O up front so it can throw before mutating.
         var lutDestPath: String?
         if let path = input.lut?.path, !path.isEmpty {

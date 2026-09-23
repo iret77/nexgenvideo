@@ -4,6 +4,7 @@ struct FolderTileView: View {
     let folder: MediaFolder
     let isSelected: Bool
     let isDropHover: Bool
+    let canDelete: Bool
     let childCount: Int
     @Binding var isRenaming: Bool
     let onTap: () -> Void
@@ -117,6 +118,7 @@ struct FolderTileView: View {
         Button("Rename") { beginRename() }
         Divider() // app-theme: native-menu-divider
         Button("Delete", role: .destructive) { onDelete() }
+            .disabled(!canDelete)
     }
 
     private func beginRename() {

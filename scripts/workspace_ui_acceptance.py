@@ -59,10 +59,12 @@ def run_scale(executable, output, scale):
     hidden = [row for row in rows if row.get("event") == "panels-hidden"]
     narrow = [row for row in rows if row.get("event") == "narrow-production"]
     pinned = [row for row in rows if row.get("event") == "narrow-production-pinned"]
+    selection_source = [row for row in rows if row.get("event") == "selection-source"]
+    selection_timeline = [row for row in rows if row.get("event") == "selection-timeline"]
     invariants = [row for row in rows if row.get("event") == "invariants"]
     screenshots = [
         row.get("screenshot")
-        for row in workspace_rows + hidden + narrow + pinned
+        for row in workspace_rows + hidden + narrow + pinned + selection_source + selection_timeline
     ]
     valid_images = all(
         isinstance(name, str)
@@ -79,12 +81,46 @@ def run_scale(executable, output, scale):
         and len(hidden) == 1
         and len(narrow) == 1
         and len(pinned) == 1
+        and len(selection_source) == 1
+        and selection_source[0].get("activeAsset") == "selection-source"
+        and selection_source[0].get("sourceFrame") == 42
+        and selection_source[0].get("sourceIn") == 18
+        and selection_source[0].get("sourceOut") == 72
+        and selection_source[0].get("timelineFrame") == 96
+        and selection_source[0].get("rememberedClip") is True
+        and selection_source[0].get("rangeEnabled") is True
+        and selection_source[0].get("placementEnabled") is True
+        and selection_source[0].get("insertEnabled") is False
+        and selection_source[0].get("overwriteEnabled") is True
+        and selection_source[0].get("insertUndoVerified") is True
+        and selection_source[0].get("overwriteUndoVerified") is True
+        and selection_source[0].get("nativeSourceCommands") is True
+        and selection_source[0].get("nativeMultiselectDeselect") is True
+        and selection_source[0].get("nativeSearchPreservedPlayback") is True
+        and selection_source[0].get("sortAndFilterPreservedPlayback") is True
+        and selection_source[0].get("listModePreserved") is True
+        and selection_source[0].get("contextClickRoutingVerified") is True
+        and selection_source[0].get("offlineSourceHandled") is True
+        and selection_source[0].get("nativeActiveDeleteUndo") is True
+        and len(selection_timeline) == 1
+        and selection_timeline[0].get("activeClip") == "selection-clip"
+        and selection_timeline[0].get("clipMutationEnabled") is False
+        and selection_timeline[0].get("lockedMutationBlocked") is True
+        and selection_timeline[0].get("rememberedAsset") is True
+        and selection_timeline[0].get("nativeClipSelection") is True
+        and selection_timeline[0].get("nativeTrackLock") is True
+        and selection_timeline[0].get("nativeLockedDeleteBlocked") is True
+        and selection_timeline[0].get("nativeTimelineRuler") is True
+        and selection_timeline[0].get("nativeTimelineTrim") is True
+        and selection_timeline[0].get("nativeTitleSelection") is True
+        and selection_timeline[0].get("nativeEmptySelection") is True
+        and selection_timeline[0].get("sourceStatePreserved") is True
         and len(invariants) == 1
         and invariants[0].get("liveStateUnchanged") is True
         and invariants[0].get("projectBytesUnchanged") is True
         and invariants[0].get("undoUnchanged") is True
         and invariants[0].get("workingCopyUnchanged") is True
-        and len(screenshots) == 8
+        and len(screenshots) == 10
         and valid_images
     )
     return {

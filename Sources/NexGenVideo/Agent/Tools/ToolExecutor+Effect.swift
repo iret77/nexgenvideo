@@ -44,6 +44,9 @@ extension ToolExecutor {
                 throw ToolError("Clip \(id) is a \(clip.mediaType.rawValue) clip; apply_effect needs a video or image clip.")
             }
         }
+        guard !input.clipIds.contains(where: editor.isClipEditLocked) else {
+            throw ToolError("apply_effect cannot edit clips on a locked track")
+        }
 
         let actionName = input.clipIds.count == 1 ? "Apply Effect (Agent)" : "Apply Effect ×\(input.clipIds.count) (Agent)"
         withUndoGroup(editor, actionName: actionName) {

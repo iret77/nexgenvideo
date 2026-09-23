@@ -61,6 +61,7 @@ final class TimelineInputController {
         }
 
         if point.y >= scrollOffsetY && point.y < scrollOffsetY + geometry.rulerHeight {
+            editor.activateTimelineSelection()
             let frame = geometry.frameAt(x: point.x)
             if let edge = timelineRangeEdgeHit(at: point, geometry: geometry) {
                 beginTimelineRangeEdgeDrag(edge)
@@ -79,6 +80,7 @@ final class TimelineInputController {
             if let hit = hitTestClip(at: point, trackIndex: trackIndex, geometry: geometry) {
                 let clickFrame = razorPreviewFrame ?? geometry.frameAt(x: point.x)
                 let clip = editor.timeline.tracks[hit.trackIndex].clips[hit.clipIndex]
+                guard !editor.isClipEditLocked(clip.id) else { return }
                 editor.splitClip(clipId: clip.id, atFrame: clickFrame)
                 view.needsDisplay = true
             }
@@ -109,6 +111,13 @@ final class TimelineInputController {
                 editor.selectedClipIds = [clip.id]
             } else if !isOption, !editor.selectedClipIds.contains(clip.id) {
                 editor.selectedClipIds = linkedOn ? editor.expandToLinkGroup([clip.id]) : [clip.id]
+            }
+            editor.activateTimelineSelection(inspectedClipID: clip.id)
+
+            if editor.selectedTimelineClipsAreEditLocked {
+                dragState = .idle
+                view.needsDisplay = true
+                return
             }
 
             let localX = point.x - rect.minX
@@ -195,6 +204,7 @@ final class TimelineInputController {
             }
             editor.selectedGap = hitTestGap(at: point, trackIndex: trackIndex, geometry: geometry)
             editor.isMarqueeSelecting = true
+            editor.activateTimelineSelection()
             dragState = .marquee(DragState.MarqueeDrag(origin: point, baseSelection: editor.selectedClipIds))
         }
 
@@ -896,6 +906,7 @@ final class TimelineInputController {
     }
 
     private func beginTimelineRangeSelection(at frame: Int) {
+        editor.activateTimelineSelection()
         dragState = .timelineRange(DragState.TimelineRangeDrag(anchorFrame: frame))
         snapState = SnapEngine.SnapState()
         snapIndicatorX = nil

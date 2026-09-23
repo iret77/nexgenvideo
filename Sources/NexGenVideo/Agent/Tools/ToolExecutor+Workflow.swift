@@ -3338,6 +3338,9 @@ extension ToolExecutor {
             let videoTrackId = ensureAssemblyTrack(editor, existingId: sidecar.videoTrackId, type: .video)
             sidecar.videoTrackId = videoTrackId
             if let vi = editor.timeline.tracks.firstIndex(where: { $0.id == videoTrackId }) {
+                guard !editor.timeline.tracks[vi].editLocked else {
+                    throw ToolError("assemble_timeline cannot replace the locked assembly video track")
+                }
                 editor.timeline.tracks[vi].clips = []
             }
             for placement in placements {
@@ -3458,6 +3461,11 @@ extension ToolExecutor {
                             && $0.clips.contains { $0.mediaRef == song.id }
                     }?.id
                 } else {
+                    guard !editor.timeline.tracks.contains(where: {
+                        $0.type == .audio && $0.editLocked && $0.clips.contains { $0.mediaRef == song.id }
+                    }) else {
+                        throw ToolError("assemble_timeline cannot replace the song on a locked track")
+                    }
                     for index in editor.timeline.tracks.indices
                     where editor.timeline.tracks[index].type == .audio {
                         editor.timeline.tracks[index].clips.removeAll {
@@ -3469,6 +3477,9 @@ extension ToolExecutor {
                     let audioTrackId = ensureAssemblyTrack(editor, existingId: sidecar.audioTrackId, type: .audio)
                     sidecar.audioTrackId = audioTrackId
                     if let ai = editor.timeline.tracks.firstIndex(where: { $0.id == audioTrackId }) {
+                        guard !editor.timeline.tracks[ai].editLocked else {
+                            throw ToolError("assemble_timeline cannot write the locked assembly audio track")
+                        }
                         let songFrames = max(1, BeatAssembly.frame(seconds: grid?.durationS ?? song.duration, fps: fps))
                         _ = editor.placeClip(
                             asset: song, trackIndex: ai, startFrame: 0,

@@ -139,6 +139,16 @@ struct MediaTab: View {
         }
         .onExitCommand { if editor.pendingSwapClipId != nil { editor.cancelMediaSwap() } }
         .background(KeyCommandSink(onNewFolder: createNewFolderInCurrent, onNavigateUp: navigateUp))
+        .background {
+            if WorkspaceUIAcceptance.isRequested {
+                AppRelaunchClickProbe(
+                    identifier: "media.listMode",
+                    acceptanceState: viewMode == .folder && currentFolderId == nil
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
+            }
+        }
         .onChange(of: editor.folders.map(\.id)) { _, _ in pruneStaleFolderState() }
         .onChange(of: editor.mediaPanelRevealAssetId, initial: true) { _, target in
             guard workspace == editor.workspaceFocus, let target else { return }
@@ -378,7 +388,11 @@ struct MediaTab: View {
             }
         }
 
-        toolbarMenuIcon(systemName: "arrow.up.arrow.down") {
+        toolbarMenuIcon(
+            systemName: "arrow.up.arrow.down",
+            acceptanceIdentifier: "media.sort",
+            acceptanceState: sortMode == .name
+        ) {
             ForEach(SortMode.allCases, id: \.self) { mode in
                 Button {
                     sortMode = mode
@@ -390,7 +404,9 @@ struct MediaTab: View {
 
         toolbarMenuIcon(
             systemName: "line.3.horizontal.decrease",
-            foregroundStyle: hasActiveFilters ? AppTheme.Accent.primary : AppTheme.Text.tertiaryColor
+            foregroundStyle: hasActiveFilters ? AppTheme.Accent.primary : AppTheme.Text.tertiaryColor,
+            acceptanceIdentifier: "media.filter",
+            acceptanceState: filterTypes.contains(.video)
         ) {
             ForEach(Self.filterableTypes, id: \.self) { type in
                 Button { toggleFilter(type) } label: {
@@ -522,6 +538,16 @@ struct MediaTab: View {
                 .textFieldStyle(.plain)
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.primaryColor)
+                .background {
+                    if WorkspaceUIAcceptance.isRequested {
+                        AppRelaunchClickProbe(
+                            identifier: "media.search",
+                            acceptanceState: searchQuery == "selection"
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .allowsHitTesting(false)
+                    }
+                }
             if !searchQuery.isEmpty {
                 Button { searchQuery = "" } label: {
                     Image(systemName: "xmark.circle.fill")
@@ -605,6 +631,8 @@ struct MediaTab: View {
     private func toolbarMenuIcon<Content: View>(
         systemName: String,
         foregroundStyle: some ShapeStyle = AppTheme.Text.tertiaryColor,
+        acceptanceIdentifier: String? = nil,
+        acceptanceState: Bool? = nil,
         @ViewBuilder content: () -> Content
     ) -> some View {
         Menu(content: content) {
@@ -618,6 +646,16 @@ struct MediaTab: View {
         .fixedSize()
         .focusable(false)
         .hoverHighlight()
+        .background {
+            if WorkspaceUIAcceptance.isRequested, let acceptanceIdentifier {
+                AppRelaunchClickProbe(
+                    identifier: acceptanceIdentifier,
+                    acceptanceState: acceptanceState
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
+            }
+        }
     }
 
     // MARK: - Folder commands

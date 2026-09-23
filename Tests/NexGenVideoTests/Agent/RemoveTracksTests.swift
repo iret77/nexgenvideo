@@ -45,4 +45,16 @@ struct RemoveTracksTests {
         let result = await h.runRaw("remove_tracks", args: ["trackIndexes": [Int]()])
         #expect(result.isError == true)
     }
+
+    @Test func rejectsLockedTrackWithoutRemovingAnyTarget() async throws {
+        let h = harness()
+        h.editor.timeline.tracks[2].editLocked = true
+        let original = h.editor.timeline
+
+        let result = await h.runRaw("remove_tracks", args: ["trackIndexes": [0, 2]])
+
+        #expect(result.isError == true)
+        #expect(ToolHarness.textOf(result).contains("A1 is locked"))
+        #expect(h.editor.timeline == original)
+    }
 }

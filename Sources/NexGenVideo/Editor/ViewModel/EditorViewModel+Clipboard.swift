@@ -11,7 +11,13 @@ struct ClipClipboardEntry: Sendable {
 
 extension EditorViewModel {
 
-    var canPasteClips: Bool { !clipClipboard.isEmpty }
+    var canPasteClips: Bool {
+        pasteDestinationTrack() != nil
+    }
+
+    func canPasteClips(atTrack trackIndex: Int, atFrame: Int? = nil) -> Bool {
+        pastePlacements(atTrack: trackIndex, startFrame: atFrame ?? activeFrame) != nil
+    }
 
     /// Snapshot the current selection into `clipClipboard`
     func copySelectedClipsToClipboard() {
@@ -47,16 +53,7 @@ extension EditorViewModel {
 
     /// Keyboard paste: lands at the playhead
     func pasteClipsAtPlayhead() {
-        guard let anchor = clipClipboard.first else { return }
-        let destTrack: Int
-        if let idx = timeline.tracks.firstIndex(where: { $0.id == anchor.sourceTrackId }),
-           timeline.tracks[idx].type.isCompatible(with: anchor.clip.mediaType) {
-            destTrack = idx
-        } else if let fallback = timeline.tracks.firstIndex(where: { $0.type.isCompatible(with: anchor.clip.mediaType) }) {
-            destTrack = fallback
-        } else {
-            return
-        }
+        guard let destTrack = pasteDestinationTrack() else { return }
         pasteClips(atTrack: destTrack, atFrame: activeFrame)
     }
 
@@ -64,26 +61,49 @@ extension EditorViewModel {
     func pasteClips(atTrack trackIndex: Int, atFrame startFrame: Int) {
         guard !clipClipboard.isEmpty else { return }
         guard timeline.tracks.indices.contains(trackIndex) else { return }
-        let baseFrame = max(0, startFrame)
-
-        var placements: [ClonePlacement] = []
-        for entry in clipClipboard {
-            let dstTrack = trackIndex + entry.trackOffset
-            guard timeline.tracks.indices.contains(dstTrack) else { continue }
-            let trackType = timeline.tracks[dstTrack].type
-            guard trackType.isCompatible(with: entry.clip.mediaType) else { continue }
-            placements.append(ClonePlacement(
-                source: entry.clip,
-                trackId: timeline.tracks[dstTrack].id,
-                dstStart: baseFrame + entry.frameOffset
-            ))
-        }
+        guard let placements = pastePlacements(atTrack: trackIndex, startFrame: startFrame) else { return }
 
         let actionName = placements.count == 1 ? "Paste Clip" : "Paste Clips"
         let newIds = cloneClipsAt(placements, actionName: actionName)
         if !newIds.isEmpty {
             selectedClipIds = Set(newIds)
         }
+    }
+
+    private func pasteDestinationTrack() -> Int? {
+        guard let anchor = clipClipboard.first else { return nil }
+        if let source = timeline.tracks.firstIndex(where: { $0.id == anchor.sourceTrackId }),
+           canPasteClips(atTrack: source) {
+            return source
+        }
+        return timeline.tracks.indices.first { canPasteClips(atTrack: $0) }
+    }
+
+    private func pastePlacements(atTrack trackIndex: Int, startFrame: Int) -> [ClonePlacement]? {
+        guard !clipClipboard.isEmpty, timeline.tracks.indices.contains(trackIndex) else { return nil }
+        let baseFrame = max(0, startFrame)
+        var placements: [ClonePlacement] = []
+        placements.reserveCapacity(clipClipboard.count)
+        for entry in clipClipboard {
+            let destination = trackIndex + entry.trackOffset
+            let destinationStart = baseFrame + entry.frameOffset
+            guard timeline.tracks.indices.contains(destination),
+                  !timeline.tracks[destination].editLocked,
+                  timeline.tracks[destination].type.isCompatible(with: entry.clip.mediaType),
+                  canClearRegion(
+                      trackIndex: destination,
+                      start: destinationStart,
+                      end: destinationStart + entry.clip.durationFrames
+                  ) else {
+                return nil
+            }
+            placements.append(ClonePlacement(
+                source: entry.clip,
+                trackId: timeline.tracks[destination].id,
+                dstStart: destinationStart
+            ))
+        }
+        return placements
     }
 
     /// Option+drag landing: put a copy at the drop target
@@ -96,7 +116,7 @@ extension EditorViewModel {
                   timeline.tracks.indices.contains(m.toTrack) else { continue }
             let src = timeline.tracks[loc.trackIndex].clips[loc.clipIndex]
             let dst = timeline.tracks[m.toTrack]
-            guard dst.type.isCompatible(with: src.mediaType) else { continue }
+            guard !dst.editLocked, dst.type.isCompatible(with: src.mediaType) else { return }
             placements.append(ClonePlacement(
                 source: src,
                 trackId: dst.id,
@@ -123,6 +143,15 @@ private extension EditorViewModel {
     /// Shared cloning core for paste + opt-drag-duplicate.
     func cloneClipsAt(_ placements: [ClonePlacement], actionName: String) -> [String] {
         guard !placements.isEmpty else { return [] }
+        guard placements.allSatisfy({ placement in
+            guard let index = timeline.tracks.firstIndex(where: { $0.id == placement.trackId }),
+                  !timeline.tracks[index].editLocked else { return false }
+            return canClearRegion(
+                trackIndex: index,
+                start: placement.dstStart,
+                end: placement.dstStart + placement.source.durationFrames
+            )
+        }) else { return [] }
 
         var groupCounts: [String: Int] = [:]
         for p in placements {

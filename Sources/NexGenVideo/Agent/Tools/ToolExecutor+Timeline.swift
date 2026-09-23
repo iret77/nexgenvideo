@@ -83,7 +83,12 @@ extension ToolExecutor {
         return .ok(json)
     }
 
-    private static let trackDefaults: [String: Any] = ["muted": false, "hidden": false, "syncLocked": true]
+    private static let trackDefaults: [String: Any] = [
+        "muted": false,
+        "hidden": false,
+        "editLocked": false,
+        "syncLocked": true,
+    ]
 
     private static let clipDefaults: [String: Any] = {
         var clip = Clip(mediaRef: "", startFrame: 0, durationFrames: 0)

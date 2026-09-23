@@ -190,6 +190,7 @@ struct ToolExecutorReadOnlyTests {
         let track = Self.firstTrack(json)
         #expect(track?["muted"] == nil)
         #expect(track?["hidden"] == nil)
+        #expect(track?["editLocked"] == nil)
         #expect(track?["syncLocked"] == nil)
         #expect(track?["label"] as? String == "V1")
 
@@ -560,6 +561,115 @@ struct ToolExecutorClipTests {
         ])
         #expect(result.isError)
         #expect(ToolHarness.textOf(result).contains("out of range"))
+    }
+
+    @Test func clipMutationToolsRejectLockedTracksWithoutPartialWrites() async throws {
+        var track = Fixtures.videoTrack(clips: [
+            Fixtures.clip(id: "locked-clip", start: 0, duration: 60),
+        ])
+        track.editLocked = true
+        let h = ToolHarness(timeline: Fixtures.timeline(tracks: [track]))
+        let asset = h.addAsset(type: .video)
+        h.editor.timeline.tracks[0].clips[0].mediaRef = asset.id
+        let folderID = h.editor.createFolder(name: "Locked Source")
+        asset.folderId = folderID
+        let original = h.editor.timeline
+
+        let add = await h.runRaw("add_clips", args: [
+            "entries": [[
+                "mediaRef": asset.id,
+                "trackIndex": 0,
+                "startFrame": 90,
+                "durationFrames": 30,
+            ]]
+        ])
+        let change = await h.runRaw("set_clip_properties", args: [
+            "clipIds": ["locked-clip"],
+            "opacity": 0.5,
+        ])
+        let remove = await h.runRaw("remove_clips", args: ["clipIds": ["locked-clip"]])
+        let title = await h.runRaw("add_texts", args: [
+            "entries": [[
+                "trackIndex": 0,
+                "startFrame": 90,
+                "durationFrames": 30,
+                "content": "Locked title",
+            ]]
+        ])
+        let deleteMedia = await h.runRaw("delete_media", args: ["assetIds": [asset.id]])
+        let deleteFolder = await h.runRaw("delete_folder", args: ["folderIds": [folderID]])
+
+        #expect(add.isError)
+        #expect(change.isError)
+        #expect(remove.isError)
+        #expect(title.isError)
+        #expect(deleteMedia.isError)
+        #expect(deleteFolder.isError)
+        #expect(h.editor.timeline == original)
+        #expect(h.editor.mediaAssets.contains { $0.id == asset.id })
+        #expect(h.editor.folder(id: folderID) != nil)
+        #expect(ToolHarness.textOf(add).contains("locked"))
+        #expect(ToolHarness.textOf(change).contains("locked"))
+        #expect(ToolHarness.textOf(remove).contains("locked"))
+        #expect(ToolHarness.textOf(title).contains("locked"))
+        #expect(ToolHarness.textOf(deleteMedia).contains("locked"))
+        #expect(ToolHarness.textOf(deleteFolder).contains("locked"))
+    }
+
+    @Test func effectToolsRejectMixedLockedTargetsBeforeMutationOrLUTIO() async {
+        let unlocked = Fixtures.clip(id: "unlocked-clip", start: 0, duration: 60)
+        let locked = Fixtures.clip(id: "locked-clip", start: 60, duration: 60)
+        var lockedTrack = Fixtures.videoTrack(clips: [locked])
+        lockedTrack.editLocked = true
+        let h = ToolHarness(timeline: Fixtures.timeline(tracks: [
+            Fixtures.videoTrack(clips: [unlocked]),
+            lockedTrack,
+        ]))
+        let original = h.editor.timeline
+
+        let effect = await h.runRaw("apply_effect", args: [
+            "clipIds": ["unlocked-clip", "locked-clip"],
+            "effects": [[
+                "type": "blur.gaussian",
+                "params": ["radius": 12],
+            ]],
+        ])
+        let color = await h.runRaw("apply_color", args: [
+            "clipIds": ["unlocked-clip", "locked-clip"],
+            "lut": ["path": "/tmp/locked-selection-missing.cube"],
+        ])
+
+        #expect(effect.isError)
+        #expect(color.isError)
+        #expect(ToolHarness.textOf(effect).contains("locked"))
+        #expect(ToolHarness.textOf(color).contains("locked"))
+        #expect(!ToolHarness.textOf(color).contains("Invalid LUT"))
+        #expect(h.editor.timeline == original)
+    }
+
+    @Test func insertClipsReportsLockedSyncFollowerBeforeMutation() async {
+        let downstream = Fixtures.clip(id: "locked-downstream", start: 90, duration: 30)
+        var lockedFollower = Fixtures.audioTrack(clips: [downstream])
+        lockedFollower.editLocked = true
+        let h = ToolHarness(timeline: Fixtures.timeline(tracks: [
+            Fixtures.videoTrack(),
+            lockedFollower,
+        ]))
+        let asset = h.addAsset(type: .video)
+        let original = h.editor.timeline
+
+        let result = await h.runRaw("insert_clips", args: [
+            "trackIndex": 0,
+            "atFrame": 30,
+            "entries": [[
+                "mediaRef": asset.id,
+                "durationFrames": 30,
+            ]],
+        ])
+
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("locked"))
+        #expect(h.editor.timeline == original)
     }
 
     @Test func addClipsRejectsMissingMediaRef() async throws {

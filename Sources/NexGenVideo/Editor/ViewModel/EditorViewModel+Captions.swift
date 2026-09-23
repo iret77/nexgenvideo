@@ -256,6 +256,16 @@ extension EditorViewModel {
             .trimmingCharacters(in: .whitespaces)
     }
 
+    var canRemoveFillerWordsFromCaptions: Bool {
+        let edits = timeline.tracks.flatMap(\.clips).filter { clip in
+            guard clip.mediaType == .text,
+                  clip.captionGroupId != nil,
+                  let original = clip.textContent else { return false }
+            return Self.stripFillerWords(original) != original
+        }
+        return !edits.isEmpty && !edits.contains(where: { isClipEditLocked($0.id) })
+    }
+
     /// Strips a fixed filler-word list from every caption on the timeline. Deterministic —
     /// no model call — so this runs natively instead of round-tripping through the agent.
     /// Timing is untouched; one undo step for the whole pass.
@@ -267,7 +277,7 @@ extension EditorViewModel {
             let stripped = Self.stripFillerWords(original)
             return stripped != original ? (clip.id, stripped) : nil
         }
-        guard !edits.isEmpty else { return 0 }
+        guard canRemoveFillerWordsFromCaptions else { return 0 }
 
         undoManager?.beginUndoGrouping()
         for edit in edits {

@@ -27,6 +27,7 @@ struct Track: Codable, Sendable, Equatable, Identifiable {
     var type: ClipType
     var muted: Bool = false
     var hidden: Bool = false
+    var editLocked: Bool = false
     var syncLocked: Bool = true
     var clips: [Clip] = []
 
@@ -54,7 +55,7 @@ struct Track: Codable, Sendable, Equatable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, type, muted, hidden, syncLocked, clips
+        case id, type, muted, hidden, editLocked, syncLocked, clips
     }
 }
 
@@ -66,6 +67,7 @@ extension Track {
             type: try c.decode(ClipType.self, forKey: .type),
             muted: (try? c.decode(Bool.self, forKey: .muted)) ?? false,
             hidden: (try? c.decode(Bool.self, forKey: .hidden)) ?? false,
+            editLocked: (try? c.decode(Bool.self, forKey: .editLocked)) ?? false,
             syncLocked: (try? c.decode(Bool.self, forKey: .syncLocked)) ?? true,
             clips: (try? c.decode([Clip].self, forKey: .clips)) ?? []
         )

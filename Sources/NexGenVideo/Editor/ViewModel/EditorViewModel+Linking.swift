@@ -138,7 +138,7 @@ extension EditorViewModel {
 
     /// Apply a trim-drag commit. Expands the edit set to linked partners when `propagateToLinked` is on and hands off to `trimClips`.
     func commitTrim(clipId: String, edge: TrimEdge, deltaFrames: Int, propagateToLinked: Bool) {
-        guard let loc = findClip(id: clipId) else { return }
+        guard let loc = findClip(id: clipId), !timeline.tracks[loc.trackIndex].editLocked else { return }
         let leadClip = timeline.tracks[loc.trackIndex].clips[loc.clipIndex]
         let leadNew = trimValues(for: leadClip, edge: edge, delta: deltaFrames)
         var edits: [(clipId: String, trimStartFrame: Int, trimEndFrame: Int)] = [
@@ -182,6 +182,7 @@ extension EditorViewModel {
         let z = zones
         for i in z.firstAudioIndex..<z.trackCount {
             let track = timeline.tracks[i]
+            guard !track.editLocked else { continue }
             let conflicts = track.clips.contains { c in
                 !(c.endFrame <= startFrame || c.startFrame >= startFrame + duration)
             }
@@ -333,6 +334,8 @@ extension EditorViewModel {
     // MARK: - Context-menu enablement
 
     var canUnlinkSelected: Bool {
+        let expanded = expandToLinkGroup(selectedClipIds)
+        guard !expanded.contains(where: isClipEditLocked) else { return false }
         for track in timeline.tracks {
             for clip in track.clips where selectedClipIds.contains(clip.id) && clip.linkGroupId != nil {
                 return true
@@ -342,7 +345,8 @@ extension EditorViewModel {
     }
 
     var canLinkSelected: Bool {
-        guard selectedClipIds.count >= 2 else { return false }
+        guard selectedClipIds.count >= 2,
+              !selectedClipIds.contains(where: isClipEditLocked) else { return false }
         var types = Set<ClipType>()
         var groups = Set<String>()
         var ungrouped = 0

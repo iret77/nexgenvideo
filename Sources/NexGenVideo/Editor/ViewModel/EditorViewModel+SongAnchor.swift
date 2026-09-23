@@ -268,6 +268,13 @@ extension EditorViewModel {
            existingSongClips[0].startFrame == 0 {
             return
         }
+        guard !timeline.tracks.contains(where: {
+            $0.type == .audio
+                && $0.editLocked
+                && $0.clips.contains { anchorIds.contains($0.mediaRef) }
+        }) else {
+            throw SongAnchorError.placementFailed
+        }
 
         var preferredTrackIndex: Int?
         for index in timeline.tracks.indices where timeline.tracks[index].type == .audio {
@@ -281,7 +288,7 @@ extension EditorViewModel {
             }
         }
         let trackIndex = preferredTrackIndex
-            ?? timeline.tracks.firstIndex { $0.type == .audio }
+            ?? timeline.tracks.firstIndex { $0.type == .audio && !$0.editLocked }
             ?? insertTrack(at: timeline.tracks.count, type: .audio)
         let frames = max(
             1,

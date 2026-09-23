@@ -24,7 +24,8 @@ extension EditorViewModel {
     /// resizes in place — no adjacent-clip shift on the same track, no sync-lock
     /// push to other tracks.
     func trimClips(_ edits: [(clipId: String, trimStartFrame: Int, trimEndFrame: Int)]) {
-        guard !edits.isEmpty else { return }
+        guard !edits.isEmpty,
+              !edits.contains(where: { isClipEditLocked($0.clipId) }) else { return }
         undoManager?.beginUndoGrouping()
         for e in edits {
             trimClipInternal(clipId: e.clipId, trimStartFrame: e.trimStartFrame, trimEndFrame: e.trimEndFrame)
@@ -37,7 +38,7 @@ extension EditorViewModel {
     /// along to preserve cross-track alignment; refuses if any would collide.
     func rippleDeleteSelectedClips() {
         let ids = selectedClipIds
-        guard !ids.isEmpty else { return }
+        guard !ids.isEmpty, !ids.contains(where: isClipEditLocked) else { return }
 
         // Merged ranges used to shift sync-locked tracks that have no deletions of their own.
         let globalRemovedRanges: [FrameRange] = timeline.tracks
@@ -52,11 +53,16 @@ extension EditorViewModel {
             if hasOwnRemovals {
                 shiftsByTrack[ti] = RippleEngine.computeRippleShifts(clips: track.clips, removedIds: ids)
             } else if track.syncLocked {
-                shiftsByTrack[ti] = RippleEngine.computeRippleShiftsForRanges(
+                let shifts = RippleEngine.computeRippleShiftsForRanges(
                     clips: track.clips,
                     removedRanges: globalRemovedRanges
                 )
-                if let reason = validateShifts(trackIndex: ti, shifts: shiftsByTrack[ti] ?? []) {
+                guard !track.editLocked || shifts.isEmpty else {
+                    refuseRipple(reason: "The edit would move clips on a locked track.")
+                    return
+                }
+                shiftsByTrack[ti] = shifts
+                if let reason = validateShifts(trackIndex: ti, shifts: shifts) {
                     refuseRipple(reason: reason)
                     return
                 }
@@ -71,6 +77,7 @@ extension EditorViewModel {
 
     @discardableResult
     func applyShifts(_ shifts: [ClipShift]) -> Int {
+        guard !shifts.contains(where: { isClipEditLocked($0.clipId) }) else { return 0 }
         var applied = 0
         for shift in shifts {
             guard let loc = findClip(id: shift.clipId) else { continue }
@@ -82,6 +89,9 @@ extension EditorViewModel {
 
     /// Ripple-delete timeline-frame `ranges` anchored to `anchorClipId`
     func rippleDeleteRanges(anchorClipId: String, ranges: [FrameRange]) -> RippleRangesOutcome {
+        guard !isClipEditLocked(anchorClipId) else {
+            return .refused("The track is locked.")
+        }
         guard let anchorLoc = findClip(id: anchorClipId) else {
             return .refused("Clip not found: \(anchorClipId)")
         }
@@ -92,6 +102,9 @@ extension EditorViewModel {
     func rippleDeleteRangesOnTrack(trackIndex: Int, ranges: [FrameRange]) -> RippleRangesOutcome {
         guard timeline.tracks.indices.contains(trackIndex) else {
             return .refused("Track index out of range: \(trackIndex)")
+        }
+        guard !timeline.tracks[trackIndex].editLocked else {
+            return .refused("The track is locked.")
         }
         let merged = RippleEngine.mergeRanges(ranges.filter { $0.length > 0 })
         guard !merged.isEmpty else { return .refused("No non-empty ranges to delete") }
@@ -106,6 +119,9 @@ extension EditorViewModel {
                 if let l = findClip(id: pid) { clearTrackIds.insert(timeline.tracks[l.trackIndex].id) }
             }
         }
+        guard !timeline.tracks.contains(where: { clearTrackIds.contains($0.id) && $0.editLocked }) else {
+            return .refused("The edit would change a locked linked track.")
+        }
 
         // Refuse up front if a sync-locked follower can't absorb the shift. These tracks
         // aren't cleared, so their clips are unchanged when the shift is applied below.
@@ -113,6 +129,9 @@ extension EditorViewModel {
             let track = timeline.tracks[ti]
             guard !clearTrackIds.contains(track.id), track.syncLocked else { continue }
             let shifts = RippleEngine.computeRippleShiftsForRanges(clips: track.clips, removedRanges: merged)
+            guard !track.editLocked || shifts.isEmpty else {
+                return .refused("The edit would move clips on a locked track.")
+            }
             if let reason = validateShifts(trackIndex: ti, shifts: shifts) {
                 return .refused(reason)
             }
@@ -158,6 +177,7 @@ extension EditorViewModel {
     func rippleDeleteSelectedGap() {
         guard let gap = selectedGap,
               timeline.tracks.indices.contains(gap.trackIndex),
+              !timeline.tracks[gap.trackIndex].editLocked,
               gap.range.length > 0 else { return }
         // An out-of-band edit may have filled the gap.
         guard !timeline.tracks[gap.trackIndex].clips.contains(where: {
@@ -176,6 +196,10 @@ extension EditorViewModel {
                 refuseRipple(reason: reason)
                 return
             }
+            guard !timeline.tracks[ti].editLocked || shifts.isEmpty else {
+                refuseRipple(reason: "The edit would move clips on a locked track.")
+                return
+            }
             shiftsByTrack[ti] = shifts
         }
 
@@ -187,21 +211,85 @@ extension EditorViewModel {
 
     /// Ripple insert: add clips at `atFrame` and push everything past it right by the
     /// insertion's duration on the target track and every sync-locked track.
+    func rippleInsertTouchesLockedTrack(
+        trackIndex: Int?,
+        atFrame: Int,
+        pushAmount: Int,
+        needsLinkedAudio: Bool
+    ) -> Bool {
+        if let trackIndex {
+            guard timeline.tracks.indices.contains(trackIndex) else { return false }
+            guard !timeline.tracks[trackIndex].editLocked else { return true }
+        }
+        let existingLinkedAudioTrackIndex = needsLinkedAudio
+            ? timeline.tracks.firstIndex { $0.type == .audio && !$0.editLocked }
+            : nil
+        let pushTracks = timeline.tracks.indices.filter {
+            trackIndex == $0 || $0 == existingLinkedAudioTrackIndex || timeline.tracks[$0].syncLocked
+        }
+        for ti in pushTracks {
+            let track = timeline.tracks[ti]
+            let shifts = RippleEngine.computeRipplePush(
+                clips: track.clips,
+                insertFrame: atFrame,
+                pushAmount: pushAmount
+            )
+            if track.editLocked, !shifts.isEmpty { return true }
+            if let straddler = track.clips.first(where: {
+                $0.startFrame < atFrame && atFrame < $0.endFrame
+            }) {
+                let affected = Set([straddler.id] + linkedPartnerIds(of: straddler.id))
+                if affected.contains(where: isClipEditLocked) { return true }
+            }
+        }
+        return false
+    }
+
     @discardableResult
     func rippleInsertClips(assets: [MediaAsset], trackIndex: Int, atFrame: Int, segments: [String: ClosedRange<Double>] = [:]) -> [String] {
-        guard timeline.tracks.indices.contains(trackIndex) else { return [] }
+        guard timeline.tracks.indices.contains(trackIndex),
+              !timeline.tracks[trackIndex].editLocked else { return [] }
+        let totalPush = assets.reduce(0) { $0 + clipDurationFrames(for: $1, segment: segments[$1.id]) }
+        let targetIsVideo = timeline.tracks[trackIndex].type == .video
+        let needsLinkedAudio = targetIsVideo && assets.contains { $0.type == .video && $0.hasAudio }
+        let existingLinkedAudioTrackIndex = needsLinkedAudio
+            ? timeline.tracks.firstIndex { $0.type == .audio && !$0.editLocked }
+            : nil
+        guard !rippleInsertTouchesLockedTrack(
+            trackIndex: trackIndex,
+            atFrame: atFrame,
+            pushAmount: totalPush,
+            needsLinkedAudio: needsLinkedAudio
+        ) else { return [] }
         var created: [String] = []
         withTimelineSwap(actionName: "Ripple Insert Clips") {
-            let totalPush = assets.reduce(0) { $0 + clipDurationFrames(for: $1, segment: segments[$1.id]) }
-
-            for ti in timeline.tracks.indices where ti == trackIndex || timeline.tracks[ti].syncLocked {
+            let linkedAudioTrackIndex: Int? = needsLinkedAudio
+                ? (existingLinkedAudioTrackIndex ?? insertTrack(at: timeline.tracks.count, type: .audio))
+                : nil
+            let pushTracks = timeline.tracks.indices.filter {
+                $0 == trackIndex || $0 == linkedAudioTrackIndex || timeline.tracks[$0].syncLocked
+            }
+            for ti in pushTracks {
+                if let straddler = timeline.tracks[ti].clips.first(where: {
+                    $0.startFrame < atFrame && atFrame < $0.endFrame
+                }) {
+                    _ = splitClip(clipId: straddler.id, atFrame: atFrame)
+                }
+            }
+            for ti in pushTracks {
                 applyShifts(RippleEngine.computeRipplePush(
                     clips: timeline.tracks[ti].clips,
                     insertFrame: atFrame,
                     pushAmount: totalPush
                 ))
             }
-            created = createClips(from: assets, trackIndex: trackIndex, startFrame: atFrame, segments: segments)
+            created = createClips(
+                from: assets,
+                trackIndex: trackIndex,
+                startFrame: atFrame,
+                linkedAudioTrackIndex: linkedAudioTrackIndex,
+                segments: segments
+            )
             sortClips(trackIndex: trackIndex)
         }
         return created
@@ -219,17 +307,27 @@ extension EditorViewModel {
     /// audio lands on, then places the clips sequentially into the gap.
     @discardableResult
     func rippleInsertClips(specs: [RippleInsertSpec], trackIndex: Int, atFrame: Int) -> [String] {
-        guard timeline.tracks.indices.contains(trackIndex), !specs.isEmpty else { return [] }
+        guard timeline.tracks.indices.contains(trackIndex),
+              !timeline.tracks[trackIndex].editLocked,
+              !specs.isEmpty else { return [] }
+        let totalPush = specs.reduce(0) { $0 + $1.durationFrames }
+        let targetIsVideo = timeline.tracks[trackIndex].type == .video
+        let needsLinkedAudio = targetIsVideo && specs.contains { $0.asset.type == .video && $0.asset.hasAudio }
+        let existingLinkedAudioTrackIndex = needsLinkedAudio
+            ? timeline.tracks.firstIndex { $0.type == .audio && !$0.editLocked }
+            : nil
+        guard !rippleInsertTouchesLockedTrack(
+            trackIndex: trackIndex,
+            atFrame: atFrame,
+            pushAmount: totalPush,
+            needsLinkedAudio: needsLinkedAudio
+        ) else { return [] }
         var created: [String] = []
         withTimelineSwap(actionName: specs.count == 1 ? "Ripple Insert Clip (Agent)" : "Ripple Insert Clips (Agent)") {
-            let totalPush = specs.reduce(0) { $0 + $1.durationFrames }
-
             // Pin the linked-audio destination before pushing so it ripples too; otherwise the
             // auto-created audio partner would land on an un-pushed track and overlap.
-            let targetIsVideo = timeline.tracks[trackIndex].type == .video
-            let needsLinkedAudio = targetIsVideo && specs.contains { $0.asset.type == .video && $0.asset.hasAudio }
             let linkedAudioTrackIndex: Int? = needsLinkedAudio
-                ? (timeline.tracks.firstIndex { $0.type == .audio } ?? insertTrack(at: timeline.tracks.count, type: .audio))
+                ? (existingLinkedAudioTrackIndex ?? insertTrack(at: timeline.tracks.count, type: .audio))
                 : nil
 
             // Tracks the gap opens on. Splitting below doesn't add tracks, so these stay valid.

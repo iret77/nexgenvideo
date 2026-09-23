@@ -161,11 +161,7 @@ final class EditorViewModel {
                 isMarquee: isMarqueeSelecting
             )
         case .mediaAsset:
-            return InspectedObject.fromSelection(
-                clipIDs: [],
-                mediaAssetIDs: selectedMediaAssetIds,
-                isMarquee: false
-            )
+            return activeSourceAsset.map { .mediaAsset($0.id) }
         }
     }
 
@@ -242,7 +238,13 @@ final class EditorViewModel {
     var previewTabHistory: [String] = [PreviewTab.timeline.id]
     var previewTabHistoryIndex: Int = 0
     var sourcePlayheadFrame: Int = 0 {
-        didSet { playheadState.sourceFrame = sourcePlayheadFrame }
+        didSet {
+            playheadState.sourceFrame = sourcePlayheadFrame
+            guard case .mediaAsset(let id, _, _) = activePreviewTab else { return }
+            var state = sourcePreviewStates[id] ?? SourcePreviewState()
+            state.playheadFrame = sourcePlayheadFrame
+            sourcePreviewStates[id] = state
+        }
     }
     var layoutPreset: LayoutPreset = {
         if let raw = UserDefaults.standard.string(forKey: "layoutPreset"),
@@ -1369,10 +1371,21 @@ final class EditorViewModel {
         trimStartFrame: Int? = nil,
         trimEndFrame: Int? = nil
     ) -> [String] {
-        guard timeline.tracks.indices.contains(trackIndex) else { return [] }
+        guard timeline.tracks.indices.contains(trackIndex),
+              !timeline.tracks[trackIndex].editLocked else { return [] }
         let targetIsVideo = timeline.tracks[trackIndex].type == .video
         let shouldLink = addLinkedAudio && targetIsVideo && asset.type == .video && asset.hasAudio
         let linkGroupId: String? = shouldLink ? UUID().uuidString : nil
+        let audioTrackIdx: Int?
+        if shouldLink {
+            audioTrackIdx = linkedAudioTrackIndex.flatMap { timeline.tracks.indices.contains($0) ? $0 : nil }
+                ?? resolveOrCreateAudioTrack(startFrame: startFrame, duration: durationFrames)
+            guard let audioTrackIdx,
+                  timeline.tracks.indices.contains(audioTrackIdx),
+                  !timeline.tracks[audioTrackIdx].editLocked else { return [] }
+        } else {
+            audioTrackIdx = nil
+        }
         let trimStart = sourceSegment.map { secondsToFrame(seconds: $0.lowerBound, fps: timeline.fps) } ?? 0
         let totalSourceFrames = secondsToFrame(seconds: asset.duration, fps: timeline.fps)
 
@@ -1398,10 +1411,7 @@ final class EditorViewModel {
         sortClips(trackIndex: trackIndex)
         var ids = [clip.id]
 
-        if let gid = linkGroupId {
-            let audioTrackIdx = linkedAudioTrackIndex.flatMap { timeline.tracks.indices.contains($0) ? $0 : nil }
-                ?? resolveOrCreateAudioTrack(startFrame: startFrame, duration: durationFrames)
-            guard timeline.tracks.indices.contains(audioTrackIdx) else { return ids }
+        if let gid = linkGroupId, let audioTrackIdx {
             var audioClip = Clip(mediaRef: asset.id, mediaType: .audio, sourceClipType: asset.type, startFrame: startFrame, durationFrames: durationFrames)
             audioClip.linkGroupId = gid
             applyTrim(&audioClip)
@@ -1522,5 +1532,7 @@ final class EditorViewModel {
 
     private var workspacePresentationStates = EditorViewModel.initialWorkspacePresentations()
     @ObservationIgnored private var isRestoringWorkspacePresentation = false
+
+    var sourcePreviewStates: [String: SourcePreviewState] = [:]
 
 }

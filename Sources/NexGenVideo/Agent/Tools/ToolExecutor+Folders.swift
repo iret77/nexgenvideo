@@ -102,6 +102,9 @@ extension ToolExecutor {
                 throw ToolError("Media asset not found: \(id)")
             }
         }
+        guard editor.canDeleteMediaAssets(ids: Set(assetIds)) else {
+            throw ToolError("Cannot delete media referenced by an edit-locked track")
+        }
         editor.deleteMediaAssets(ids: Set(assetIds))
         return .ok("Deleted \(assetIds.count) asset(s). Any clips referencing them were removed from the timeline.")
     }
@@ -111,6 +114,9 @@ extension ToolExecutor {
         guard !folderIds.isEmpty else { throw ToolError("folderIds is required") }
         for id in folderIds {
             guard editor.folder(id: id) != nil else { throw ToolError("folderId not found: \(id)") }
+        }
+        guard editor.canDeleteFolders(ids: Set(folderIds)) else {
+            throw ToolError("Cannot delete a folder containing media referenced by an edit-locked track")
         }
         editor.deleteFolders(ids: Set(folderIds))
         return .ok("Deleted \(folderIds.count) folder(s) with their contents. Any clips referencing deleted assets were removed from the timeline.")

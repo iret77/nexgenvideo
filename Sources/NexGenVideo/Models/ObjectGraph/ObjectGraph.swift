@@ -134,7 +134,9 @@ extension ObjectGraph {
     func breadcrumb(for object: InspectedObject) -> ObjectBreadcrumb {
         switch object {
         case .clip(let id):
-            var segments: [ObjectBreadcrumb.Segment] = []
+            var segments: [ObjectBreadcrumb.Segment] = [
+                .init(label: "Timeline Clip", object: nil),
+            ]
             if let track = clipTrackLabels[id] {
                 segments.append(.init(label: track, object: nil))
             }
@@ -143,7 +145,7 @@ extension ObjectGraph {
 
         case .mediaAsset(let id):
             return ObjectBreadcrumb(segments: [
-                .init(label: "Media", object: nil),
+                .init(label: "Original Media", object: nil),
                 .init(label: assetName(id) ?? "Asset", object: object),
             ])
 

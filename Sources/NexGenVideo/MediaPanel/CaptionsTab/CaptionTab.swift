@@ -225,6 +225,7 @@ struct CaptionTab: View {
             Button {
                 removeFillerWords()
             } label: { Label("Remove filler words", systemImage: "text.badge.minus") }
+            .disabled(!editor.canRemoveFillerWordsFromCaptions)
             Button {
                 prefillCaptionTask("fix any misspelled names, brand names, or technical jargon in the captions using the surrounding context, keeping timing unchanged.")
             } label: { Label("Fix names & jargon", systemImage: "checkmark.bubble") }

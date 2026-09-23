@@ -48,7 +48,8 @@ extension EditorViewModel {
     }
 
     func finalizeGeneratingClip(placeholderId: String, asset: MediaAsset) {
-        guard let loc = findClipLocationByMediaRef(placeholderId) else { return }
+        guard let loc = findClipLocationByMediaRef(placeholderId),
+              !timeline.tracks[loc.trackIndex].editLocked else { return }
         let realFrames = max(1, secondsToFrame(seconds: asset.duration, fps: timeline.fps))
         undoManager?.disableUndoRegistration()
         timeline.tracks[loc.trackIndex].clips[loc.clipIndex].durationFrames = realFrames

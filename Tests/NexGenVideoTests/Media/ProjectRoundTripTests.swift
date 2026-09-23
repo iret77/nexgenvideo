@@ -111,18 +111,20 @@ struct ProjectRoundTripTests {
     @Test func trackMutedAndHiddenFlagsSurviveRoundTrip() throws {
         var v = Fixtures.videoTrack()
         v.hidden = true
+        v.editLocked = true
         var a = Fixtures.audioTrack()
         a.muted = true
         let timeline = Fixtures.timeline(tracks: [v, a])
         let decoded = try roundTrip(timeline)
         #expect(decoded.tracks[0].hidden == true)
+        #expect(decoded.tracks[0].editLocked == true)
         #expect(decoded.tracks[1].muted == true)
     }
 
     // MARK: - Legacy / tolerant decode
 
     @Test func trackMissingMutedFieldDecodesAsFalse() throws {
-        // Older projects didn't have muted/hidden/syncLocked. They must decode with defaults.
+        // Older projects didn't have the track flags. They must decode with defaults.
         let json = """
         {
           "id": "t1",
@@ -134,6 +136,7 @@ struct ProjectRoundTripTests {
         let track = try JSONDecoder().decode(Track.self, from: Data(json.utf8))
         #expect(track.muted == false)
         #expect(track.hidden == false)
+        #expect(track.editLocked == false)
         #expect(track.syncLocked == true)
     }
 
