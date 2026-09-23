@@ -265,6 +265,11 @@ struct KeyframesPanel: View {
     @Environment(\.interfaceScale) private var interfaceScale
     @State private var snapX: CGFloat?
 
+    init(clip: Clip, initialSnapX: CGFloat? = nil) {
+        self.clip = clip
+        _snapX = State(initialValue: initialSnapX)
+    }
+
     private static let videoRows: [AnimatableProperty] = [
         .position, .scale, .rotation, .opacity, .crop,
     ]
@@ -295,15 +300,11 @@ struct KeyframesPanel: View {
     }
 
     private func panel(labelsAboveTracks: Bool) -> some View {
-        ZStack(alignment: .topLeading) {
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-                rulerRow(labelsAboveTracks: labelsAboveTracks)
-                ForEach(rows, id: \.self) { property in
-                    laneRow(property, labelsAboveTracks: labelsAboveTracks)
-                }
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+            rulerRow(labelsAboveTracks: labelsAboveTracks)
+            ForEach(rows, id: \.self) { property in
+                laneRow(property, labelsAboveTracks: labelsAboveTracks)
             }
-            timelineOverlays
-                .padding(.leading, labelsAboveTracks ? AppTheme.Spacing.none : timelineLeadingInset)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -326,6 +327,12 @@ struct KeyframesPanel: View {
             .frame(maxWidth: .infinity)
             .background {
                 AppRelaunchClickProbe(identifier: "inspector.keyframes.ruler")
+            }
+            .overlay {
+                timelineOverlay(
+                    showsPlayheadTriangle: true,
+                    identifier: "inspector.keyframes.ruler.overlay"
+                )
             }
     }
 
@@ -387,22 +394,32 @@ struct KeyframesPanel: View {
                 identifier: "inspector.keyframes.lane.\(property.rawValue).track"
             )
         }
+        .overlay {
+            timelineOverlay(
+                showsPlayheadTriangle: false,
+                identifier: "inspector.keyframes.lane.\(property.rawValue).overlay"
+            )
+        }
     }
 
-    private var timelineOverlays: some View {
+    private func timelineOverlay(
+        showsPlayheadTriangle: Bool,
+        identifier: String
+    ) -> some View {
         ZStack(alignment: .topLeading) {
-            playheadOverlay
-            snapOverlay
+            playheadOverlay(showsTriangle: showsPlayheadTriangle, identifier: identifier)
+            snapOverlay(identifier: identifier)
         }
         .background {
-            AppRelaunchClickProbe(identifier: "inspector.keyframes.timeline-axis")
+            AppRelaunchClickProbe(identifier: identifier)
         }
+        .clipped()
         .allowsHitTesting(false)
     }
 
     /// Dashed yellow vertical line at the active snap x
     @ViewBuilder
-    private var snapOverlay: some View {
+    private func snapOverlay(identifier: String) -> some View {
         if let x = snapX {
             Canvas { ctx, size in
                 var p = Path()
@@ -417,22 +434,33 @@ struct KeyframesPanel: View {
                     )
                 )
             }
+            .background {
+                AppRelaunchClickProbe(identifier: "\(identifier).snap")
+            }
             .allowsHitTesting(false)
         }
     }
 
-    /// Single red playhead overlay spanning the panel's full width
-    private var playheadOverlay: some View {
+    private func playheadOverlay(showsTriangle: Bool, identifier: String) -> some View {
         GeometryReader { proxy in
             let frame = editor.activeFrame
             if clip.contains(timelineFrame: frame) {
                 let x = KeyframesMetrics.xForFrame(frame, clipStart: clip.startFrame, span: span, width: proxy.size.width)
                 Canvas { ctx, size in
                     let path = CGMutablePath()
-                    Playhead.appendPath(path, x: x, top: AppTheme.Timeline.playheadTriangleSize, bottom: size.height, triangle: true)
+                    Playhead.appendPath(
+                        path,
+                        x: x,
+                        top: showsTriangle ? AppTheme.Timeline.playheadTriangleSize : AppTheme.Spacing.none,
+                        bottom: size.height,
+                        triangle: showsTriangle
+                    )
                     let color = Color(nsColor: AppTheme.Timeline.playhead)
                     ctx.fill(Path(path), with: .color(color))
                     ctx.stroke(Path(path), with: .color(color), lineWidth: AppTheme.BorderWidth.thin)
+                }
+                .background {
+                    AppRelaunchClickProbe(identifier: "\(identifier).playhead")
                 }
             }
         }

@@ -163,11 +163,11 @@ struct InspectorFormLayoutTests {
 
                     let panel = try frame("keyframes-panel", in: host)
                     let ruler = try frame("inspector.keyframes.ruler", in: host)
-                    let timelineAxis = try frame("inspector.keyframes.timeline-axis", in: host)
+                    let rulerOverlay = try frame("inspector.keyframes.ruler.overlay", in: host)
                     #expect(isContained(ruler, in: panel))
-                    #expect(isContained(timelineAxis, in: panel))
-                    #expect(abs(timelineAxis.minX - ruler.minX) < 1)
-                    #expect(abs(timelineAxis.maxX - ruler.maxX) < 1)
+                    #expect(isContained(rulerOverlay, in: ruler))
+                    #expect(abs(rulerOverlay.minX - ruler.minX) < 1)
+                    #expect(abs(rulerOverlay.maxX - ruler.maxX) < 1)
                     let usesLabelsAboveTracks = panelWidth < wideLayoutMinimumWidth
                     if usesLabelsAboveTracks {
                         #expect(abs(ruler.minX - panel.minX) < 1)
@@ -187,11 +187,18 @@ struct InspectorFormLayoutTests {
                             "inspector.keyframes.lane.\(property.rawValue).track",
                             in: host
                         )
+                        let overlay = try frame(
+                            "inspector.keyframes.lane.\(property.rawValue).overlay",
+                            in: host
+                        )
                         #expect(label.width > 0)
                         #expect(label.height > 0)
                         #expect(track.width >= AppTheme.Timeline.keyframeLaneMinimumTrackWidth)
                         #expect(isContained(label, in: panel))
                         #expect(isContained(track, in: panel))
+                        #expect(isContained(overlay, in: track))
+                        #expect(abs(overlay.minX - track.minX) < 1)
+                        #expect(abs(overlay.maxX - track.maxX) < 1)
                         #expect(abs(track.minX - ruler.minX) < 1)
                         #expect(abs(track.maxX - ruler.maxX) < 1)
                         if usesLabelsAboveTracks {
@@ -200,6 +207,77 @@ struct InspectorFormLayoutTests {
                             #expect(label.maxX + AppTheme.Spacing.sm <= track.minX + 1)
                         }
                     }
+                }
+            }
+        }
+    }
+
+    @Test func narrowKeyframeGuidesStayInsideRulerAndTracks() throws {
+        let clip = Fixtures.clip(id: "video", mediaType: .video, start: 12, duration: 90)
+        let panelWidth = AppTheme.Layout.inspectorMin - AppTheme.Spacing.lg * 2
+        let guideCases: [(activeFrame: Int, snapX: CGFloat?)] = [
+            (clip.startFrame, nil),
+            (clip.startFrame + clip.durationFrames / 2, nil),
+            (clip.startFrame + clip.durationFrames / 2, panelWidth / 2),
+        ]
+
+        for guideCase in guideCases {
+            let editor = EditorViewModel()
+            editor.timeline = Fixtures.timeline(tracks: [Fixtures.videoTrack(clips: [clip])])
+            editor.seekToFrame(guideCase.activeFrame)
+            let fixture = KeyframesPanel(clip: clip, initialSnapX: guideCase.snapX)
+                .environment(editor)
+                .frame(width: panelWidth)
+                .background(InspectorGeometryProbe(name: "keyframes-panel"))
+            let host = NSHostingView(rootView: fixture)
+            host.setFrameSize(.init(width: panelWidth, height: AppTheme.Window.projectMin.height))
+            host.layoutSubtreeIfNeeded()
+            _ = host.fittingSize
+            host.layoutSubtreeIfNeeded()
+
+            let ruler = try frame("inspector.keyframes.ruler", in: host)
+            let rulerOverlay = try frame("inspector.keyframes.ruler.overlay", in: host)
+            let rulerPlayhead = try frame("inspector.keyframes.ruler.overlay.playhead", in: host)
+            #expect(isContained(rulerOverlay, in: ruler))
+            #expect(isContained(rulerPlayhead, in: ruler))
+            if guideCase.snapX != nil {
+                let rulerSnap = try frame("inspector.keyframes.ruler.overlay.snap", in: host)
+                #expect(isContained(rulerSnap, in: ruler))
+            }
+            for property in [
+                AnimatableProperty.position,
+                .scale,
+                .rotation,
+                .opacity,
+                .crop,
+            ] {
+                let label = try frame(
+                    "inspector.keyframes.lane.\(property.rawValue).label",
+                    in: host
+                )
+                let track = try frame(
+                    "inspector.keyframes.lane.\(property.rawValue).track",
+                    in: host
+                )
+                let overlay = try frame(
+                    "inspector.keyframes.lane.\(property.rawValue).overlay",
+                    in: host
+                )
+                let playhead = try frame(
+                    "inspector.keyframes.lane.\(property.rawValue).overlay.playhead",
+                    in: host
+                )
+                #expect(label.maxY + AppTheme.Spacing.xs <= track.minY + 1)
+                #expect(isContained(overlay, in: track))
+                #expect(isContained(playhead, in: track))
+                #expect(!overlay.intersects(label))
+                if guideCase.snapX != nil {
+                    let snap = try frame(
+                        "inspector.keyframes.lane.\(property.rawValue).overlay.snap",
+                        in: host
+                    )
+                    #expect(isContained(snap, in: track))
+                    #expect(!snap.intersects(label))
                 }
             }
         }

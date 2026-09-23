@@ -488,124 +488,72 @@ enum WorkspaceUIAcceptance {
                 guard let root = window.contentView else {
                     fail("inspector \(item.family) window content was unavailable", scale: scale)
                 }
-                let inspectorFrame = visiblePanelFrames(in: host)["inspectorPanel"]
-                let panelProbe = findProbe(in: root, identifier: "inspector.keyframes.panel")
-                let firstProperty = expectedLaneProperties.first
-                let firstLabel = firstProperty.flatMap {
-                    findProbe(
-                        in: root,
-                        identifier: "inspector.keyframes.lane.\($0.rawValue).label"
-                    )
-                }
-                let inspectorScrollView = firstLabel.flatMap { enclosingScrollView(for: $0) }
-                guard let inspectorFrame,
-                      let panelProbe,
-                      let inspectorScrollView else {
-                    var diagnostic = keyframeGeometryDiagnostics(
-                        root: root,
-                        panelProbe: panelProbe,
-                        scrollView: inspectorScrollView,
-                        probe: firstLabel
-                    )
-                    diagnostic["family"] = item.family
-                    diagnostic["reason"] = "panel, first label, or enclosing scroll view unavailable"
-                    emit(
-                        "inspector-keyframe-diagnostic",
-                        scale: scale,
-                        fields: diagnostic
-                    )
-                    fail("inspector \(item.family) keyframe scroll geometry was unavailable", scale: scale)
-                }
-                let originalScrollOrigin = inspectorScrollView.contentView.bounds.origin
-                var laneEvidence: [[String: Any]] = []
-                for property in expectedLaneProperties {
-                    let identifier = "inspector.keyframes.lane.\(property.rawValue).label"
-                    let probe = findProbe(in: root, identifier: identifier)
-                    guard let probe,
-                          enclosingScrollView(for: probe) === inspectorScrollView,
-                          let documentView = inspectorScrollView.documentView else {
-                        var diagnostic = keyframeGeometryDiagnostics(
-                            root: root,
-                            panelProbe: panelProbe,
-                            scrollView: inspectorScrollView,
-                            probe: probe
-                        )
-                        diagnostic["family"] = item.family
-                        diagnostic["property"] = property.rawValue
-                        diagnostic["reason"] = "lane label did not share the inspector scroll view"
-                        emit(
-                            "inspector-keyframe-diagnostic",
-                            scale: scale,
-                            fields: diagnostic
-                        )
-                        fail("inspector \(item.family) keyframe lane was unreachable", scale: scale)
-                    }
-                    let target = probe.convert(probe.bounds, to: documentView)
-                    documentView.scrollToVisible(target)
-                    inspectorScrollView.reflectScrolledClipView(inspectorScrollView.contentView)
-                    try? await Task.sleep(for: .milliseconds(100))
-                    host.layoutSubtreeIfNeeded()
-
-                    let clipFrame = inspectorScrollView.contentView.convert(
-                        inspectorScrollView.contentView.bounds,
-                        to: root
-                    )
-                    let probeFrame = probe.convert(probe.bounds, to: root)
-                    let isVisible = probe.window === window
-                        && !probe.isHiddenOrHasHiddenAncestor
-                        && probeFrame.width > 0
-                        && probeFrame.height > 0
-                        && clipFrame.insetBy(
-                            dx: -AppTheme.BorderWidth.thin,
-                            dy: -AppTheme.BorderWidth.thin
-                        ).contains(probeFrame)
-                        && inspectorFrame.insetBy(
-                            dx: -AppTheme.BorderWidth.thin,
-                            dy: -AppTheme.BorderWidth.thin
-                        ).contains(probeFrame)
-                    var geometry = keyframeGeometryDiagnostics(
-                        root: root,
-                        panelProbe: panelProbe,
-                        scrollView: inspectorScrollView,
-                        probe: probe
-                    )
-                    geometry["property"] = property.rawValue
-                    geometry["visible"] = isVisible
-                    laneEvidence.append(geometry)
-                    guard isVisible else {
-                        geometry["family"] = item.family
-                        geometry["reason"] = "lane label was outside the scroll clip"
-                        emit(
-                            "inspector-keyframe-diagnostic",
-                            scale: scale,
-                            fields: geometry
-                        )
-                        fail(
-                            "inspector \(item.family) keyframe lane was outside the scroll clip",
-                            scale: scale
-                        )
-                    }
-                }
-                try? await Task.sleep(for: .milliseconds(200))
-                host.layoutSubtreeIfNeeded()
                 let openName = "scale-\(scaleLabel(scale))-inspector-\(item.family)-keyframes-open.png"
-                guard snapshot(host, at: evidenceURL.appendingPathComponent(openName)) else {
-                    fail("could not capture inspector \(item.family) open keyframes", scale: scale)
+                let sideEvidence = await captureKeyframeLayoutEvidence(
+                    family: item.family,
+                    properties: expectedLaneProperties,
+                    window: window,
+                    host: host,
+                    evidenceURL: evidenceURL,
+                    screenshotName: openName,
+                    inspectorWidthTarget: nil,
+                    scale: scale
+                )
+                guard let splitState = inspectorSplitState(in: root),
+                      let originalInspectorFrame = visiblePanelFrames(in: host)["inspectorPanel"] else {
+                    fail("inspector \(item.family) split geometry was unavailable", scale: scale)
                 }
-                inspectorScrollView.contentView.scroll(to: originalScrollOrigin)
-                inspectorScrollView.reflectScrolledClipView(inspectorScrollView.contentView)
-                host.layoutSubtreeIfNeeded()
+                splitState.splitView.setPosition(
+                    splitState.splitView.bounds.maxX - AppTheme.Layout.inspectorMin,
+                    ofDividerAt: splitState.dividerIndex
+                )
+                guard await waitUntil(timeout: .seconds(5), {
+                    host.layoutSubtreeIfNeeded()
+                    guard let frame = visiblePanelFrames(in: host)["inspectorPanel"] else {
+                        return false
+                    }
+                    return abs(frame.width - AppTheme.Layout.inspectorMin)
+                        <= AppTheme.BorderWidth.thin
+                }) else {
+                    fail("inspector \(item.family) did not reach minimum width", scale: scale)
+                }
+                let stackedName = "scale-\(scaleLabel(scale))-inspector-\(item.family)-keyframes-open-stacked.png"
+                let stackedEvidence = await captureKeyframeLayoutEvidence(
+                    family: item.family,
+                    properties: expectedLaneProperties,
+                    window: window,
+                    host: host,
+                    evidenceURL: evidenceURL,
+                    screenshotName: stackedName,
+                    inspectorWidthTarget: AppTheme.Layout.inspectorMin,
+                    scale: scale
+                )
+                splitState.splitView.setPosition(
+                    splitState.originalPosition,
+                    ofDividerAt: splitState.dividerIndex
+                )
+                guard await waitUntil(timeout: .seconds(5), {
+                    host.layoutSubtreeIfNeeded()
+                    guard let frame = visiblePanelFrames(in: host)["inspectorPanel"] else {
+                        return false
+                    }
+                    return abs(frame.width - originalInspectorFrame.width)
+                        <= AppTheme.BorderWidth.thin
+                }) else {
+                    fail("inspector \(item.family) width did not restore", scale: scale)
+                }
+                let layoutEvidence = [sideEvidence, stackedEvidence]
+                guard layoutEvidence.compactMap({ $0["mode"] as? String }) == ["side", "stacked"] else {
+                    fail("inspector \(item.family) did not exercise both keyframe layouts", scale: scale)
+                }
                 emit(
                     "inspector",
                     scale: scale,
                     fields: [
                         "family": item.family,
                         "keyframes": "open",
-                        "laneLabelEvidence": laneEvidence,
-                        "laneLabelVisibility": "sequential-in-scroll-clip",
-                        "reachableLaneLabels": expectedLaneProperties.map(\.rawValue),
+                        "laneLayoutEvidence": layoutEvidence,
                         "screenshot": openName,
-                        "visibleLaneLabel": expectedLaneProperties.last?.rawValue ?? "",
                     ]
                 )
                 guard click(identifier: "inspector.keyframes", in: window) == nil,
@@ -924,6 +872,227 @@ enum WorkspaceUIAcceptance {
         return result
     }
 
+    private struct InspectorSplitState {
+        let splitView: NSSplitView
+        let dividerIndex: Int
+        let originalPosition: CGFloat
+    }
+
+    private static func inspectorSplitState(in root: NSView) -> InspectorSplitState? {
+        guard var child = findView(in: root, accessibilityIdentifier: "inspectorPanel") else {
+            return nil
+        }
+        while let parent = child.superview {
+            if let splitView = parent as? NSSplitView,
+               splitView.isVertical,
+               let index = splitView.subviews.firstIndex(where: { $0 === child }),
+               index > 0 {
+                return InspectorSplitState(
+                    splitView: splitView,
+                    dividerIndex: index - 1,
+                    originalPosition: splitView.subviews[index - 1].frame.maxX
+                )
+            }
+            child = parent
+        }
+        return nil
+    }
+
+    private static func findView(
+        in view: NSView,
+        accessibilityIdentifier: String
+    ) -> NSView? {
+        if view.accessibilityIdentifier() == accessibilityIdentifier,
+           view.window != nil,
+           !view.isHiddenOrHasHiddenAncestor {
+            return view
+        }
+        for child in view.subviews {
+            if let match = findView(in: child, accessibilityIdentifier: accessibilityIdentifier) {
+                return match
+            }
+        }
+        return nil
+    }
+
+    private static func visibleGeometryProbe(
+        identifier: String,
+        in window: NSWindow,
+        containedBy bounds: NSRect
+    ) -> NSView? {
+        guard let root = window.contentView else { return nil }
+        return probes(in: root, identifier: identifier).first { probe in
+            let frame = probe.convert(probe.bounds, to: root)
+            return probe.window === window
+                && !probe.isHiddenOrHasHiddenAncestor
+                && frame.width > 0
+                && frame.height > 0
+                && frame.minX >= bounds.minX - AppTheme.BorderWidth.thin
+                && frame.maxX <= bounds.maxX + AppTheme.BorderWidth.thin
+        }
+    }
+
+    private static func captureKeyframeLayoutEvidence(
+        family: String,
+        properties: [AnimatableProperty],
+        window: NSWindow,
+        host: NSView,
+        evidenceURL: URL,
+        screenshotName: String,
+        inspectorWidthTarget: CGFloat?,
+        scale: Double
+    ) async -> [String: Any] {
+        host.layoutSubtreeIfNeeded()
+        guard let root = window.contentView,
+              let inspectorFrame = visiblePanelFrames(in: host)["inspectorPanel"],
+              let panelProbe = visibleGeometryProbe(
+                  identifier: "inspector.keyframes.panel",
+                  in: window,
+                  containedBy: inspectorFrame
+              ),
+              let firstProperty = properties.first,
+              let firstLabel = visibleGeometryProbe(
+                  identifier: "inspector.keyframes.lane.\(firstProperty.rawValue).label",
+                  in: window,
+                  containedBy: inspectorFrame
+              ),
+              let scrollView = enclosingScrollView(for: firstLabel),
+              let documentView = scrollView.documentView else {
+            fail("inspector \(family) keyframe layout geometry was unavailable", scale: scale)
+        }
+        let originalScrollOrigin = scrollView.contentView.bounds.origin
+        let rulerProbe = visibleGeometryProbe(
+            identifier: "inspector.keyframes.ruler",
+            in: window,
+            containedBy: inspectorFrame
+        )
+        let rulerOverlay = visibleGeometryProbe(
+            identifier: "inspector.keyframes.ruler.overlay",
+            in: window,
+            containedBy: inspectorFrame
+        )
+        guard let rulerProbe, let rulerOverlay else {
+            fail("inspector \(family) ruler geometry was unavailable", scale: scale)
+        }
+        documentView.scrollToVisible(rulerProbe.convert(rulerProbe.bounds, to: documentView))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+        host.layoutSubtreeIfNeeded()
+        let rulerFrame = rulerProbe.convert(rulerProbe.bounds, to: root)
+        let rulerOverlayFrame = rulerOverlay.convert(rulerOverlay.bounds, to: root)
+        let rulerClipFrame = scrollView.contentView.convert(scrollView.contentView.bounds, to: root)
+        guard visibleFrame(rulerFrame, inside: rulerClipFrame, and: inspectorFrame),
+              matchingFrame(rulerOverlayFrame, rulerFrame) else {
+            fail("inspector \(family) ruler overlay was outside its drawing area", scale: scale)
+        }
+
+        var laneEvidence: [[String: Any]] = []
+        var detectedModes = Set<String>()
+        for property in properties {
+            let prefix = "inspector.keyframes.lane.\(property.rawValue)"
+            guard let label = visibleGeometryProbe(
+                identifier: "\(prefix).label",
+                in: window,
+                containedBy: inspectorFrame
+            ), let track = visibleGeometryProbe(
+                identifier: "\(prefix).track",
+                in: window,
+                containedBy: inspectorFrame
+            ), let overlay = visibleGeometryProbe(
+                identifier: "\(prefix).overlay",
+                in: window,
+                containedBy: inspectorFrame
+            ), enclosingScrollView(for: label) === scrollView,
+               enclosingScrollView(for: track) === scrollView,
+               enclosingScrollView(for: overlay) === scrollView else {
+                fail("inspector \(family) \(property.rawValue) geometry was unavailable", scale: scale)
+            }
+            let target = label.convert(label.bounds, to: documentView)
+                .union(track.convert(track.bounds, to: documentView))
+                .union(overlay.convert(overlay.bounds, to: documentView))
+            documentView.scrollToVisible(target)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+            try? await Task.sleep(for: .milliseconds(100))
+            host.layoutSubtreeIfNeeded()
+
+            let clipFrame = scrollView.contentView.convert(scrollView.contentView.bounds, to: root)
+            let labelFrame = label.convert(label.bounds, to: root)
+            let trackFrame = track.convert(track.bounds, to: root)
+            let overlayFrame = overlay.convert(overlay.bounds, to: root)
+            let side = labelFrame.maxX + AppTheme.Spacing.sm
+                <= trackFrame.minX + AppTheme.BorderWidth.thin
+            let stacked = labelFrame.maxY + AppTheme.Spacing.xs
+                <= trackFrame.minY + AppTheme.BorderWidth.thin
+            guard side != stacked,
+                  visibleFrame(labelFrame, inside: clipFrame, and: inspectorFrame),
+                  visibleFrame(trackFrame, inside: clipFrame, and: inspectorFrame),
+                  visibleFrame(overlayFrame, inside: clipFrame, and: inspectorFrame),
+                  matchingFrame(overlayFrame, trackFrame),
+                  abs(trackFrame.minX - rulerFrame.minX) <= AppTheme.BorderWidth.thin,
+                  abs(trackFrame.maxX - rulerFrame.maxX) <= AppTheme.BorderWidth.thin else {
+                fail("inspector \(family) \(property.rawValue) layout geometry was invalid", scale: scale)
+            }
+            detectedModes.insert(side ? "side" : "stacked")
+            laneEvidence.append([
+                "clipFrame": frameDescription(clipFrame),
+                "labelFrame": frameDescription(labelFrame),
+                "overlayFrame": frameDescription(overlayFrame),
+                "property": property.rawValue,
+                "trackFrame": frameDescription(trackFrame),
+                "visible": true,
+            ])
+        }
+        guard detectedModes.count == 1, let mode = detectedModes.first else {
+            fail("inspector \(family) keyframe lanes disagreed on layout", scale: scale)
+        }
+        try? await Task.sleep(for: .milliseconds(200))
+        host.layoutSubtreeIfNeeded()
+        guard snapshot(host, at: evidenceURL.appendingPathComponent(screenshotName)) else {
+            fail("could not capture inspector \(family) \(mode) keyframes", scale: scale)
+        }
+        let panelFrame = panelProbe.convert(panelProbe.bounds, to: root)
+        scrollView.contentView.scroll(to: originalScrollOrigin)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+        host.layoutSubtreeIfNeeded()
+        var evidence: [String: Any] = [
+            "inspectorFrame": frameDescription(inspectorFrame),
+            "laneEvidence": laneEvidence,
+            "mode": mode,
+            "panelFrame": frameDescription(panelFrame),
+            "reachableLaneLabels": properties.map(\.rawValue),
+            "rulerFrame": frameDescription(rulerFrame),
+            "rulerOverlayFrame": frameDescription(rulerOverlayFrame),
+            "screenshot": screenshotName,
+        ]
+        if let inspectorWidthTarget {
+            evidence["inspectorWidthTarget"] = Double(inspectorWidthTarget)
+        }
+        return evidence
+    }
+
+    private static func visibleFrame(
+        _ frame: NSRect,
+        inside clipFrame: NSRect,
+        and inspectorFrame: NSRect
+    ) -> Bool {
+        frame.width > 0
+            && frame.height > 0
+            && clipFrame.insetBy(
+                dx: -AppTheme.BorderWidth.thin,
+                dy: -AppTheme.BorderWidth.thin
+            ).contains(frame)
+            && inspectorFrame.insetBy(
+                dx: -AppTheme.BorderWidth.thin,
+                dy: -AppTheme.BorderWidth.thin
+            ).contains(frame)
+    }
+
+    private static func matchingFrame(_ lhs: NSRect, _ rhs: NSRect) -> Bool {
+        abs(lhs.minX - rhs.minX) <= AppTheme.BorderWidth.thin
+            && abs(lhs.minY - rhs.minY) <= AppTheme.BorderWidth.thin
+            && abs(lhs.maxX - rhs.maxX) <= AppTheme.BorderWidth.thin
+            && abs(lhs.maxY - rhs.maxY) <= AppTheme.BorderWidth.thin
+    }
+
     private static func enclosingScrollView(for view: NSView) -> NSScrollView? {
         var ancestor = view.superview
         while let current = ancestor {
@@ -931,25 +1100,6 @@ enum WorkspaceUIAcceptance {
             ancestor = current.superview
         }
         return nil
-    }
-
-    private static func keyframeGeometryDiagnostics(
-        root: NSView,
-        panelProbe: NSView?,
-        scrollView: NSScrollView?,
-        probe: NSView?
-    ) -> [String: Any] {
-        [
-            "clipFrame": scrollView.map {
-                frameDescription($0.contentView.convert($0.contentView.bounds, to: root))
-            } ?? "unavailable",
-            "panelFrame": panelProbe.map {
-                frameDescription($0.convert($0.bounds, to: root))
-            } ?? "unavailable",
-            "probeFrame": probe.map {
-                frameDescription($0.convert($0.bounds, to: root))
-            } ?? "unavailable",
-        ]
     }
 
     private static func panelDiagnostics(in root: NSView) -> [[String: Any]] {

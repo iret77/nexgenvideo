@@ -36,24 +36,83 @@ def valid_frame(frame):
     )
 
 
+def contains_frame(outer, inner, tolerance=1):
+    return (
+        inner["x"] >= outer["x"] - tolerance
+        and inner["y"] >= outer["y"] - tolerance
+        and inner["x"] + inner["width"]
+        <= outer["x"] + outer["width"] + tolerance
+        and inner["y"] + inner["height"]
+        <= outer["y"] + outer["height"] + tolerance
+    )
+
+
+def matching_frame(first, second, tolerance=1):
+    return all(abs(first[key] - second[key]) <= tolerance for key in first)
+
+
+def valid_keyframe_layout(layout, expected_mode, expected_lanes):
+    inspector = layout.get("inspectorFrame")
+    panel = layout.get("panelFrame")
+    ruler = layout.get("rulerFrame")
+    ruler_overlay = layout.get("rulerOverlayFrame")
+    lanes = layout.get("laneEvidence")
+    if (
+        layout.get("mode") != expected_mode
+        or layout.get("reachableLaneLabels") != expected_lanes
+        or not isinstance(layout.get("screenshot"), str)
+        or not all(valid_frame(frame) for frame in [inspector, panel, ruler, ruler_overlay])
+        or not contains_frame(inspector, ruler)
+        or not matching_frame(ruler, ruler_overlay)
+        or not isinstance(lanes, list)
+        or any(not isinstance(item, dict) for item in lanes)
+        or [item.get("property") for item in lanes] != expected_lanes
+    ):
+        return False
+    if expected_mode == "stacked":
+        target = layout.get("inspectorWidthTarget")
+        if not isinstance(target, (int, float)) or abs(inspector["width"] - target) > 1:
+            return False
+    elif "inspectorWidthTarget" in layout:
+        return False
+    for lane in lanes:
+        clip = lane.get("clipFrame")
+        label = lane.get("labelFrame")
+        track = lane.get("trackFrame")
+        overlay = lane.get("overlayFrame")
+        if (
+            lane.get("visible") is not True
+            or not all(valid_frame(frame) for frame in [clip, label, track, overlay])
+            or not contains_frame(clip, label)
+            or not contains_frame(clip, track)
+            or not contains_frame(inspector, label)
+            or not contains_frame(inspector, track)
+            or not matching_frame(track, overlay)
+            or abs(track["x"] - ruler["x"]) > 1
+            or abs(track["width"] - ruler["width"]) > 1
+        ):
+            return False
+        if expected_mode == "side":
+            if label["x"] + label["width"] > track["x"] + 1:
+                return False
+        elif label["y"] + label["height"] > track["y"] + 1:
+            return False
+    return True
+
+
 def valid_keyframe_lane_evidence(row):
     expected = EXPECTED_KEYFRAME_LANES.get(row.get("family"))
-    evidence = row.get("laneLabelEvidence")
+    evidence = row.get("laneLayoutEvidence")
     if (
         expected is None
-        or row.get("laneLabelVisibility") != "sequential-in-scroll-clip"
-        or row.get("reachableLaneLabels") != expected
-        or row.get("visibleLaneLabel") != expected[-1]
         or not isinstance(evidence, list)
-        or [item.get("property") for item in evidence] != expected
+        or any(not isinstance(item, dict) for item in evidence)
+        or [item.get("mode") for item in evidence] != ["side", "stacked"]
     ):
         return False
     return all(
-        item.get("visible") is True
-        and valid_frame(item.get("clipFrame"))
-        and valid_frame(item.get("panelFrame"))
-        and valid_frame(item.get("probeFrame"))
-        for item in evidence
+        valid_keyframe_layout(layout, mode, expected)
+        for layout, mode in zip(evidence, ["side", "stacked"])
     )
 
 
@@ -111,7 +170,18 @@ def run_scale(executable, output, scale):
     open_keyframes = [row for row in inspector if row.get("keyframes") == "open"]
     screenshots = [
         row.get("screenshot")
-        for row in workspace_rows + hidden + narrow + pinned + inspector
+        for row in workspace_rows + hidden + narrow + pinned
+    ]
+    screenshots += [
+        row.get("screenshot")
+        for row in inspector
+        if row.get("keyframes") != "open"
+    ]
+    screenshots += [
+        layout.get("screenshot")
+        for row in open_keyframes
+        for layout in row.get("laneLayoutEvidence", [])
+        if isinstance(layout, dict)
     ]
     valid_images = all(
         isinstance(name, str)
@@ -138,7 +208,8 @@ def run_scale(executable, output, scale):
         and invariants[0].get("projectBytesUnchanged") is True
         and invariants[0].get("undoUnchanged") is True
         and invariants[0].get("workingCopyUnchanged") is True
-        and len(screenshots) == 8 + len(EXPECTED_INSPECTOR_CASES)
+        and len(screenshots)
+        == 8 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES)
         and valid_images
     )
     return {
