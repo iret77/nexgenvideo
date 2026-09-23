@@ -81,7 +81,7 @@ struct AssetThumbnailView: View {
             Divider() // app-theme: native-menu-divider
         }
         if ids.count == 1, ids.first == asset.id {
-            if asset.mireloResumeAvailable {
+            if editor.generationService.isMireloResumeActionAvailable(for: asset) {
                 Button("Resume Mirelo Job") {
                     editor.generationService.resumeMireloGeneration(
                         asset: asset,

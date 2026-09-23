@@ -57,6 +57,15 @@ final class ToolExecutor {
     private var agentUndoStack: [String] = []
     var feedbackState = FeedbackState()
     let imageObservations = ImageObservationCache()
+    var mireloStoreProvider: () throws -> MireloExecutionStore = {
+        try MireloExecutionStore.live()
+    }
+    var mireloAPIKeyProvider: () -> String? = {
+        ProviderKeychain.load(.mirelo)
+    }
+    var mireloClientProvider: (String) -> MireloClient = {
+        MireloClient(apiKey: $0)
+    }
 
     func requirePhaseIdle(
         _ editor: EditorViewModel,

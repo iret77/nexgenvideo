@@ -97,6 +97,41 @@ struct MireloExecutionStore: Sendable {
         return value
     }
 
+    func all(projectKey: String) throws -> [MireloExecutionRecord] {
+        try validateComponent(projectKey, label: "project")
+        let folder = try mireloFolder(projectKey: projectKey)
+        guard FileManager.default.fileExists(atPath: folder.path) else { return [] }
+        return try FileManager.default.contentsOfDirectory(
+            at: folder,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey]
+        )
+        .filter { !$0.lastPathComponent.hasPrefix(".") }
+        .map { url in
+            let values = try url.resourceValues(forKeys: [
+                .isDirectoryKey,
+                .isSymbolicLinkKey,
+            ])
+            guard values.isDirectory == true,
+                  values.isSymbolicLink != true,
+                  UUID(uuidString: url.lastPathComponent) != nil,
+                  let record = try load(
+                    projectKey: projectKey,
+                    logicalJobID: url.lastPathComponent
+                  ) else {
+                throw GenerationRequestError.storage(
+                    "The Mirelo execution authority contains an invalid project record."
+                )
+            }
+            return record
+        }
+        .sorted {
+            if $0.createdAt == $1.createdAt {
+                return $0.logicalJobID < $1.logicalJobID
+            }
+            return $0.createdAt < $1.createdAt
+        }
+    }
+
     func create(_ candidate: MireloExecutionRecord) throws -> MireloExecutionRecord {
         if let existing = try load(
             projectKey: candidate.projectKey,
@@ -267,11 +302,16 @@ struct MireloExecutionStore: Sendable {
     private func jobFolder(projectKey: String, logicalJobID: String) throws -> URL {
         try validateComponent(projectKey, label: "project")
         try validateComponent(logicalJobID, label: "logical job")
+        return try mireloFolder(projectKey: projectKey)
+            .appendingPathComponent(logicalJobID, isDirectory: true)
+    }
+
+    private func mireloFolder(projectKey: String) throws -> URL {
+        try validateComponent(projectKey, label: "project")
         return authority.root
             .appendingPathComponent(authority.hostID, isDirectory: true)
             .appendingPathComponent(projectKey, isDirectory: true)
             .appendingPathComponent("mirelo", isDirectory: true)
-            .appendingPathComponent(logicalJobID, isDirectory: true)
     }
 
     private func validateComponent(_ value: String, label: String) throws {

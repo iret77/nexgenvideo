@@ -419,7 +419,8 @@ struct PreviewContainerView: View {
                 }
                 .frame(maxWidth: AppTheme.ComponentSize.previewErrorMaxWidth, maxHeight: AppTheme.ComponentSize.previewErrorMaxHeight)
                 .fixedSize(horizontal: false, vertical: true)
-                if let asset = activeMediaAsset, asset.mireloResumeAvailable {
+                if let asset = activeMediaAsset,
+                   editor.generationService.isMireloResumeActionAvailable(for: asset) {
                     Button {
                         editor.generationService.resumeMireloGeneration(
                             asset: asset,

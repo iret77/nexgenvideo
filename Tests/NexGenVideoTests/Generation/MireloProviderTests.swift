@@ -297,6 +297,132 @@ struct MireloProviderTests {
         )
     }
 
+    private func authorityRecord(
+        store: MireloExecutionStore,
+        projectKey: String,
+        logicalID: String,
+        spendTransactionID: String,
+        state: MireloExecutionRecord.State,
+        providerJobID: String? = nil,
+        lastError: String? = nil
+    ) async throws -> MireloExecutionRecord {
+        let body = try MireloRequestBuilder.textToSFX(
+            model: "sfx-1.6",
+            prompt: "A dry camera shutter",
+            durationMS: 5_000,
+            numVariants: 1,
+            loop: false,
+            outputFormat: "wav"
+        )
+        let prepared = try await MireloExecutionCoordinator.shared.prepare(
+            store: store,
+            projectKey: projectKey,
+            logicalJobID: logicalID,
+            operation: .textToSFX,
+            intentBody: body,
+            requestBody: body,
+            sources: [],
+            preflight: affordablePreflight()
+        )
+        var current = try await MireloExecutionCoordinator.shared.approve(
+            store: store,
+            record: prepared,
+            spendTransactionID: spendTransactionID
+        )
+        if state == .failed {
+            return try store.update(current) {
+                $0.state = .failed
+                $0.lastError = lastError
+            }
+        }
+        guard state == .accepted, let providerJobID else {
+            return current
+        }
+        current = try store.update(current) {
+            $0.state = .submitting
+        }
+        return try store.update(current) {
+            $0.state = .accepted
+            $0.providerJobID = providerJobID
+            $0.lastProviderStatus = "accepted"
+        }
+    }
+
+    @MainActor
+    private func openProject(
+        at package: URL,
+        storeProvider: @escaping () throws -> MireloExecutionStore
+    ) async throws -> VideoProject {
+        let document = try await VideoProject.load(from: package)
+        document.editorViewModel.generationService.mireloStoreProvider = storeProvider
+        document.makeWindowControllers()
+        return document
+    }
+
+    @MainActor
+    private func releaseProject(_ document: VideoProject) -> String? {
+        for controller in document.windowControllers {
+            controller.window?.orderOut(nil)
+            document.removeWindowController(controller)
+        }
+        let key = document.editorViewModel.openWorkingCopyKey
+        document.editorViewModel.releaseWorkingCopy()
+        return key
+    }
+
+    private func writeProjectState(
+        package: URL,
+        manifest: MediaManifest,
+        log: GenerationLog
+    ) throws {
+        try JSONEncoder().encode(manifest).write(
+            to: package.appendingPathComponent(Project.manifestFilename),
+            options: .atomic
+        )
+        try JSONEncoder().encode(log).write(
+            to: package.appendingPathComponent(Project.generationLogFilename),
+            options: .atomic
+        )
+    }
+
+    private func preflightFixture(credits: Int) throws -> Data {
+        try JSONSerialization.data(withJSONObject: [
+            "credits": credits,
+            "estimated_ms": 9_000,
+            "credit_recovery": [
+                "credits_required": credits,
+                "credits_available": 1_100,
+                "credit_shortfall": 0,
+                "provisioning_state": "ready",
+            ],
+        ], options: [.sortedKeys])
+    }
+
+    @MainActor
+    private func publishFixtureCatalog() async throws {
+        let accountURL = baseURL.appendingPathComponent("v3/me")
+        let modelsURL = baseURL.appendingPathComponent("v3/models")
+        FixtureURLProtocol.install([
+            accountURL: [.init(data: try fixture("account"))],
+            modelsURL: [.init(data: try fixture("models"))],
+        ])
+        let fixtureSession = session()
+        defer { fixtureSession.invalidateAndCancel() }
+        let client = MireloClient(
+            apiKey: "fixture-key",
+            baseURL: baseURL,
+            session: fixtureSession
+        )
+        async let account = client.account()
+        async let models = client.models()
+        let (resolvedAccount, resolvedModels) = try await (account, models)
+        MireloCapabilityCatalog.shared.publish(
+            account: resolvedAccount,
+            models: resolvedModels,
+            observedAt: Date()
+        )
+    }
+
     private func wavFixture() -> Data {
         Data([
             0x52, 0x49, 0x46, 0x46, 0x34, 0x00, 0x00, 0x00,
@@ -1700,6 +1826,550 @@ struct MireloProviderTests {
         #expect(events.filter { $0.kind == .reserved }.count == 1)
         #expect(events.filter { $0.kind == .submitted }.count == 1)
         #expect(Set(events.map(\.transactionId)) == Set([context.logicalID]))
+    }
+
+    @Test("project open restores missing native placeholder after ledger reconciliation")
+    @MainActor
+    func projectOpenRestoresMissingNativePlaceholder() async throws {
+        let package = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mirelo-open-native-\(UUID().uuidString).ngv",
+            isDirectory: true
+        )
+        try Fixtures.prepareProjectPackage(at: package)
+        let projectKey = try #require(ProjectIdentity.existingUUID(for: package))
+        let logicalID = "21212121-2121-4121-8121-212121212121"
+        let (executionStore, storeRoot) = try store()
+        _ = try await authorityRecord(
+            store: executionStore,
+            projectKey: projectKey,
+            logicalID: logicalID,
+            spendTransactionID: logicalID,
+            state: .accepted,
+            providerJobID: "open-native-job"
+        )
+        var input = GenerationInput(
+            prompt: "A dry camera shutter",
+            model: "mirelo/sfx-1.6",
+            duration: 5,
+            aspectRatio: ""
+        )
+        input.spendTransactionId = logicalID
+        var manifest = MediaManifest()
+        manifest.entries = [MediaManifestEntry(
+            id: "missing-native",
+            name: "Missing Native SFX",
+            type: .audio,
+            source: .project(relativePath: "media/missing-native.wav"),
+            duration: 5,
+            generationInput: input,
+            mireloExecutionTransactionId: logicalID
+        )]
+        var log = GenerationLog()
+        log.spendEvents = [GenerationSpendEvent(
+            transactionId: logicalID,
+            kind: .reserved,
+            model: input.model,
+            provider: .mirelo,
+            transport: .api,
+            endpoint: "sfx-1.6"
+        )]
+        try writeProjectState(package: package, manifest: manifest, log: log)
+        var workingCopyKey: String?
+        defer {
+            if let workingCopyKey { ProjectWorkingCopy.discard(key: workingCopyKey) }
+            try? FileManager.default.removeItem(at: package)
+            try? FileManager.default.removeItem(at: storeRoot)
+        }
+
+        let document = try await openProject(at: package) { executionStore }
+        workingCopyKey = document.editorViewModel.openWorkingCopyKey
+        let restored = try #require(document.editorViewModel.mediaAssets.first)
+        #expect(restored.mireloResumeAvailable)
+        #expect(document.editorViewModel.generationService.isMireloResumeActionAvailable(
+            for: restored
+        ))
+        guard case .failed(let message) = restored.generationStatus else {
+            Issue.record("Expected project open to expose the saved Mirelo resume path")
+            return
+        }
+        #expect(message.contains("accepted"))
+        let submitted = document.editorViewModel.generationLog.spendEvents.filter {
+            $0.transactionId == logicalID && $0.kind == .submitted
+        }
+        #expect(submitted.count == 1)
+        #expect(submitted.first?.providerRequestId == "open-native-job")
+        _ = releaseProject(document)
+    }
+
+    @Test("rejected native reservation detaches atomically and remains rejected after reopen")
+    @MainActor
+    func rejectedNativeReleaseSurvivesReopen() async throws {
+        let package = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mirelo-rejected-native-\(UUID().uuidString).ngv",
+            isDirectory: true
+        )
+        try Fixtures.prepareProjectPackage(at: package)
+        let projectKey = try #require(ProjectIdentity.existingUUID(for: package))
+        let logicalID = "22222222-2222-4222-8222-222222222222"
+        let rejection = "Mirelo rejected the exact request before creating a job."
+        let (executionStore, storeRoot) = try store()
+        _ = try await authorityRecord(
+            store: executionStore,
+            projectKey: projectKey,
+            logicalID: logicalID,
+            spendTransactionID: logicalID,
+            state: .failed,
+            lastError: rejection
+        )
+        var input = GenerationInput(
+            prompt: "A dry camera shutter",
+            model: "mirelo/sfx-1.6",
+            duration: 5,
+            aspectRatio: ""
+        )
+        input.spendTransactionId = logicalID
+        var manifest = MediaManifest()
+        manifest.entries = [MediaManifestEntry(
+            id: "rejected-native",
+            name: "Rejected Native SFX",
+            type: .audio,
+            source: .project(relativePath: "media/rejected-native.wav"),
+            duration: 5,
+            generationInput: input,
+            mireloExecutionTransactionId: logicalID
+        )]
+        var log = GenerationLog()
+        log.entries = [GenerationLogEntry(
+            model: input.model,
+            costCredits: 50,
+            createdAt: Date(),
+            spendTransactionId: logicalID
+        )]
+        log.spendEvents = [GenerationSpendEvent(
+            transactionId: logicalID,
+            kind: .reserved,
+            model: input.model,
+            provider: .mirelo,
+            transport: .api,
+            endpoint: "sfx-1.6"
+        )]
+        try writeProjectState(package: package, manifest: manifest, log: log)
+        var workingCopyKey: String?
+        defer {
+            if let workingCopyKey { ProjectWorkingCopy.discard(key: workingCopyKey) }
+            try? FileManager.default.removeItem(at: package)
+            try? FileManager.default.removeItem(at: storeRoot)
+        }
+
+        let firstDocument = try await openProject(at: package) { executionStore }
+        workingCopyKey = firstDocument.editorViewModel.openWorkingCopyKey
+        let firstAsset = try #require(firstDocument.editorViewModel.mediaAssets.first)
+        guard case .failed(let firstMessage) = firstAsset.generationStatus else {
+            Issue.record("Expected the provider rejection to remain visible")
+            return
+        }
+        #expect(firstMessage == rejection)
+        #expect(firstAsset.generationInput?.spendTransactionId == nil)
+        #expect(firstAsset.mireloExecutionTransactionId == logicalID)
+        #expect(firstDocument.editorViewModel.generationLog.entries.allSatisfy {
+            $0.spendTransactionId != logicalID
+        })
+        #expect(firstDocument.editorViewModel.generationLog.spendEvents.filter {
+            $0.transactionId == logicalID && $0.kind == .released
+        }.count == 1)
+        let releasedSpend = try GenerationBudgetGuard.spendSnapshot(
+            log: firstDocument.editorViewModel.generationLog,
+            generatedInputs: firstDocument.editorViewModel.mediaAssets.compactMap(\.generationInput)
+        )
+        #expect(releasedSpend.activeReservationCount == 0)
+        #expect(releasedSpend.legacyGenerationCount == 0)
+        let workingRoot = try #require(firstDocument.editorViewModel.workingRoot)
+        let persistedManifest = try JSONDecoder().decode(
+            MediaManifest.self,
+            from: Data(contentsOf: workingRoot.appendingPathComponent(Project.manifestFilename))
+        )
+        let persistedLog = try JSONDecoder().decode(
+            GenerationLog.self,
+            from: Data(contentsOf: workingRoot.appendingPathComponent(Project.generationLogFilename))
+        )
+        #expect(persistedManifest.entries.first?.generationInput?.spendTransactionId == nil)
+        #expect(persistedManifest.entries.first?.mireloExecutionTransactionId == logicalID)
+        #expect(persistedLog.spendEvents.last?.kind == .released)
+        _ = releaseProject(firstDocument)
+
+        let secondDocument = try await openProject(at: package) { executionStore }
+        let reopened = try #require(secondDocument.editorViewModel.mediaAssets.first)
+        guard case .failed(let reopenedMessage) = reopened.generationStatus else {
+            Issue.record("Expected the rejection after reopening the recovery copy")
+            return
+        }
+        #expect(reopenedMessage == rejection)
+        #expect(!reopenedMessage.contains("could not be reconciled"))
+        #expect(secondDocument.editorViewModel.generationLog.spendEvents.filter {
+            $0.transactionId == logicalID && $0.kind == .released
+        }.count == 1)
+        _ = releaseProject(secondDocument)
+    }
+
+    @Test("project open reconciles accepted agent job without a media placeholder")
+    @MainActor
+    func projectOpenReconcilesAcceptedAgentJob() async throws {
+        let package = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mirelo-open-agent-\(UUID().uuidString).ngv",
+            isDirectory: true
+        )
+        try Fixtures.prepareProjectPackage(at: package)
+        let projectKey = try #require(ProjectIdentity.existingUUID(for: package))
+        let logicalID = "23232323-2323-4323-8323-232323232323"
+        let transactionID = "24242424-2424-4424-8424-242424242424"
+        let (executionStore, storeRoot) = try store()
+        _ = try await authorityRecord(
+            store: executionStore,
+            projectKey: projectKey,
+            logicalID: logicalID,
+            spendTransactionID: transactionID,
+            state: .accepted,
+            providerJobID: "agent-job-without-placeholder"
+        )
+        var log = GenerationLog()
+        log.spendEvents = [GenerationSpendEvent(
+            transactionId: transactionID,
+            kind: .reserved,
+            model: "mirelo/sfx-1.6",
+            provider: .mirelo,
+            transport: .api,
+            endpoint: MireloOperation.textToSFX.createPath
+        )]
+        try writeProjectState(package: package, manifest: MediaManifest(), log: log)
+        var workingCopyKey: String?
+        defer {
+            if let workingCopyKey { ProjectWorkingCopy.discard(key: workingCopyKey) }
+            try? FileManager.default.removeItem(at: package)
+            try? FileManager.default.removeItem(at: storeRoot)
+        }
+
+        let document = try await openProject(at: package) { executionStore }
+        workingCopyKey = document.editorViewModel.openWorkingCopyKey
+        #expect(document.editorViewModel.mediaAssets.isEmpty)
+        let submitted = document.editorViewModel.generationLog.spendEvents.filter {
+            $0.transactionId == transactionID && $0.kind == .submitted
+        }
+        #expect(submitted.count == 1)
+        #expect(submitted.first?.providerRequestId == "agent-job-without-placeholder")
+        _ = releaseProject(document)
+    }
+
+    @Test("non-Mirelo asset does not open the Mirelo authority store")
+    @MainActor
+    func nonMireloAssetIgnoresMireloStoreFailure() async throws {
+        let package = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "non-mirelo-open-\(UUID().uuidString).ngv",
+            isDirectory: true
+        )
+        try Fixtures.prepareProjectPackage(at: package)
+        let media = package.appendingPathComponent("media/non-mirelo.wav")
+        try FileManager.default.createDirectory(
+            at: media.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try wavFixture().write(to: media)
+        let transactionID = UUID().uuidString
+        var input = GenerationInput(
+            prompt: "A non-Mirelo sound",
+            model: "fal-ai/stable-audio-25/text-to-audio",
+            duration: 5,
+            aspectRatio: ""
+        )
+        input.spendTransactionId = transactionID
+        var manifest = MediaManifest()
+        manifest.entries = [MediaManifestEntry(
+            id: "non-mirelo",
+            name: "Non-Mirelo",
+            type: .audio,
+            source: .project(relativePath: "media/non-mirelo.wav"),
+            duration: 5,
+            generationInput: input
+        )]
+        var log = GenerationLog()
+        log.spendEvents = [GenerationSpendEvent(
+            transactionId: transactionID,
+            kind: .reserved,
+            model: input.model,
+            provider: .fal,
+            transport: .api,
+            endpoint: "stable-audio"
+        )]
+        try writeProjectState(package: package, manifest: manifest, log: log)
+        var storeOpenCount = 0
+        var workingCopyKey: String?
+        defer {
+            if let workingCopyKey { ProjectWorkingCopy.discard(key: workingCopyKey) }
+            try? FileManager.default.removeItem(at: package)
+        }
+
+        let document = try await openProject(at: package) {
+            storeOpenCount += 1
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        workingCopyKey = document.editorViewModel.openWorkingCopyKey
+        let restored = try #require(document.editorViewModel.mediaAssets.first)
+        #expect(storeOpenCount == 0)
+        #expect(restored.generationStatus == .none)
+        #expect(!restored.mireloResumeAvailable)
+        _ = releaseProject(document)
+    }
+
+    @Test("active native job hides the UI resume consumer")
+    @MainActor
+    func activeNativeJobGuardsResumeConsumer() {
+        let editor = EditorViewModel()
+        let asset = MediaAsset(
+            url: URL(fileURLWithPath: "/tmp/active-mirelo.wav"),
+            type: .audio,
+            name: "Active Mirelo"
+        )
+        asset.mireloResumeAvailable = true
+        asset.generationStatus = .generating
+        editor.mediaAssets = [asset]
+        var storeOpenCount = 0
+        editor.generationService.mireloStoreProvider = {
+            storeOpenCount += 1
+            throw CocoaError(.fileReadCorruptFile)
+        }
+
+        #expect(!editor.generationService.isMireloResumeActionAvailable(for: asset))
+        editor.generationService.resumeMireloGeneration(asset: asset, editor: editor)
+        #expect(storeOpenCount == 0)
+        #expect(asset.generationStatus == .generating)
+        asset.generationStatus = .failed("Polling stopped")
+        #expect(editor.generationService.isMireloResumeActionAvailable(for: asset))
+    }
+
+    @Test("cancelled native consumer waits for authority settlement before exposing resume")
+    @MainActor
+    func nativeCancellationReconcilesSettledState() async throws {
+        let preflightURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations/preflight")
+        let accountURL = baseURL.appendingPathComponent("v3/me")
+        let createURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations")
+        let createGate = FixtureGate()
+        FixtureURLProtocol.install([
+            preflightURL: [.init(data: try fixture("preflight-v3"))],
+            accountURL: [.init(data: try fixture("account"))],
+            createURL: [.init(
+                status: 202,
+                data: Data(#"{"id":"cancelled-native-job","status":"queued"}"#.utf8),
+                gate: createGate
+            )],
+        ])
+        let context = try await nativeContext(
+            logicalID: "25252525-2525-4525-8525-252525252525",
+            preflight: affordablePreflight()
+        )
+        defer {
+            context.editor.releaseWorkingCopy()
+            ProjectWorkingCopy.discard(key: context.workingCopyKey)
+            try? FileManager.default.removeItem(at: context.project)
+            try? FileManager.default.removeItem(at: context.storeRoot)
+        }
+        let fixtureSession = session()
+        defer { fixtureSession.invalidateAndCancel() }
+        let client = MireloClient(
+            apiKey: "fixture-key",
+            baseURL: baseURL,
+            session: fixtureSession
+        )
+        let service = context.editor.generationService
+        service.mireloStoreProvider = { context.store }
+        service.mireloAPIKeyProvider = { "fixture-key" }
+        service.mireloClientProvider = { _ in client }
+        context.asset.mireloResumeAvailable = true
+        context.asset.generationStatus = .failed("Resume")
+
+        service.resumeMireloGeneration(asset: context.asset, editor: context.editor)
+        await createGate.waitUntilStarted()
+        #expect(service.cancelGeneration(placeholderId: context.asset.id))
+        #expect(!service.isMireloResumeActionAvailable(for: context.asset))
+        #expect(context.asset.isGenerating)
+        await createGate.open()
+        await service.waitForGeneration(placeholderId: context.asset.id)
+
+        let settled = try #require(context.store.load(
+            projectKey: context.projectKey,
+            logicalJobID: context.logicalID
+        ))
+        #expect(settled.state != .prepared)
+        #expect(settled.state != .submitting)
+        #expect(context.asset.mireloResumeAvailable)
+        #expect(service.isMireloResumeActionAvailable(for: context.asset))
+        guard case .failed = context.asset.generationStatus else {
+            Issue.record("Expected a settled recovery message after cancellation")
+            return
+        }
+        #expect(FixtureURLProtocol.requests().filter { $0.url == createURL }.count == 1)
+    }
+
+    @Test("run_mirelo_audio rechecks approved prepared jobs before first create")
+    @MainActor
+    func agentPreparedResumeRequotesBeforeCreate() async throws {
+        let package = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mirelo-agent-prepared-\(UUID().uuidString).ngv",
+            isDirectory: true
+        )
+        try Fixtures.prepareProjectPackage(at: package)
+        let editor = EditorViewModel()
+        editor.projectURL = package
+        let workingCopyKey = try #require(editor.openWorkingCopyKey)
+        let projectKey = try #require(editor.projectId)
+        let (executionStore, storeRoot) = try store()
+        let fixtureSession = session()
+        let client = MireloClient(
+            apiKey: "fixture-key",
+            baseURL: baseURL,
+            session: fixtureSession
+        )
+        let executor = ToolExecutor(editor: editor, enforceHardGates: false)
+        executor.mireloStoreProvider = { executionStore }
+        executor.mireloAPIKeyProvider = { "fixture-key" }
+        executor.mireloClientProvider = { _ in client }
+        let rawPromptKey = PromptCompiler.rawPromptsDefaultsKey
+        let priorRawPrompt = UserDefaults.standard.object(forKey: rawPromptKey)
+        let priorAutoApprove = UserDefaults.standard.object(forKey: CostGuard.autoApproveKey)
+        UserDefaults.standard.set(true, forKey: rawPromptKey)
+        UserDefaults.standard.set(0, forKey: CostGuard.autoApproveKey)
+        try await publishFixtureCatalog()
+        defer {
+            fixtureSession.invalidateAndCancel()
+            MireloCapabilityCatalog.shared.clear()
+            if let priorRawPrompt {
+                UserDefaults.standard.set(priorRawPrompt, forKey: rawPromptKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: rawPromptKey)
+            }
+            if let priorAutoApprove {
+                UserDefaults.standard.set(priorAutoApprove, forKey: CostGuard.autoApproveKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: CostGuard.autoApproveKey)
+            }
+            editor.releaseWorkingCopy()
+            ProjectWorkingCopy.discard(key: workingCopyKey)
+            try? FileManager.default.removeItem(at: package)
+            try? FileManager.default.removeItem(at: storeRoot)
+        }
+
+        let preflightURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations/preflight")
+        let accountURL = baseURL.appendingPathComponent("v3/me")
+        let createURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations")
+        let failedJobURL = baseURL.appendingPathComponent(
+            "v3/text-to-sfx/generations/agent-prepared-job"
+        )
+        let unchangedID = "26262626-2626-4626-8626-262626262626"
+        let unchangedArgs: [String: Any] = [
+            "operation": MireloOperation.textToSFX.rawValue,
+            "logicalJobId": unchangedID,
+            "model": "sfx-1.6",
+            "prompt": "A dry camera shutter",
+            "durationMs": 5_000,
+            "rawPrompt": true,
+            "shotId": "none",
+        ]
+        FixtureURLProtocol.install([
+            preflightURL: [.init(data: try preflightFixture(credits: 50))],
+        ])
+        _ = try await executor.runMireloAudio(editor, unchangedArgs, origin: .direct)
+        #expect(editor.agentService.pendingSpendApproval != nil)
+        #expect(FixtureURLProtocol.requests().allSatisfy { $0.url != createURL })
+        editor.agentService.declineSpend()
+        let unchangedAuthorization = try GenerationBudgetGuard.authorizeUnknownPaidOperation(
+            modelId: "mirelo/sfx-1.6",
+            provider: .mirelo,
+            transport: .api,
+            endpoint: MireloOperation.textToSFX.createPath,
+            editor: editor
+        )
+        let unchangedPrepared = try #require(executionStore.load(
+            projectKey: projectKey,
+            logicalJobID: unchangedID
+        ))
+        _ = try await MireloExecutionCoordinator.shared.approve(
+            store: executionStore,
+            record: unchangedPrepared,
+            spendTransactionID: try #require(unchangedAuthorization.transactionId)
+        )
+
+        FixtureURLProtocol.install([
+            preflightURL: [.init(data: try preflightFixture(credits: 50))],
+            accountURL: [.init(data: try fixture("account"))],
+            createURL: [.init(
+                status: 202,
+                data: Data(#"{"id":"agent-prepared-job","status":"queued"}"#.utf8)
+            )],
+            failedJobURL: [.init(data: Data(
+                #"{"id":"agent-prepared-job","status":"failed","errors":[{"message":"fixture provider failure"}]}"#.utf8
+            ))],
+        ])
+        await #expect(throws: ToolError.self) {
+            _ = try await executor.runMireloAudio(
+                editor,
+                unchangedArgs,
+                origin: .direct
+            )
+        }
+        #expect(FixtureURLProtocol.requests().filter { $0.url == preflightURL }.count == 1)
+        #expect(FixtureURLProtocol.requests().filter { $0.url == accountURL }.count == 1)
+        #expect(FixtureURLProtocol.requests().filter { $0.url == createURL }.count == 1)
+
+        let changedID = "27272727-2727-4727-8727-272727272727"
+        let changedArgs: [String: Any] = [
+            "operation": MireloOperation.textToSFX.rawValue,
+            "logicalJobId": changedID,
+            "model": "sfx-1.6",
+            "prompt": "A short mechanical click",
+            "durationMs": 4_000,
+            "rawPrompt": true,
+            "shotId": "none",
+        ]
+        FixtureURLProtocol.install([
+            preflightURL: [.init(data: try preflightFixture(credits: 40))],
+        ])
+        _ = try await executor.runMireloAudio(editor, changedArgs, origin: .direct)
+        #expect(editor.agentService.pendingSpendApproval != nil)
+        editor.agentService.declineSpend()
+        let changedAuthorization = try GenerationBudgetGuard.authorizeUnknownPaidOperation(
+            modelId: "mirelo/sfx-1.6",
+            provider: .mirelo,
+            transport: .api,
+            endpoint: MireloOperation.textToSFX.createPath,
+            editor: editor
+        )
+        let changedPrepared = try #require(executionStore.load(
+            projectKey: projectKey,
+            logicalJobID: changedID
+        ))
+        _ = try await MireloExecutionCoordinator.shared.approve(
+            store: executionStore,
+            record: changedPrepared,
+            spendTransactionID: try #require(changedAuthorization.transactionId)
+        )
+
+        FixtureURLProtocol.install([
+            preflightURL: [.init(data: try preflightFixture(credits: 50))],
+            accountURL: [.init(data: try fixture("account"))],
+        ])
+        let result = try await executor.runMireloAudio(
+            editor,
+            changedArgs,
+            origin: .direct
+        )
+        #expect(result.turnDisposition == .suspendTurn)
+        #expect(editor.agentService.pendingSpendApproval != nil)
+        #expect(FixtureURLProtocol.requests().allSatisfy { $0.url != createURL })
+        let stillPrepared = try #require(executionStore.load(
+            projectKey: projectKey,
+            logicalJobID: changedID
+        ))
+        #expect(stillPrepared.state == .prepared)
+        #expect(stillPrepared.preflight.credits == 40)
+        editor.agentService.declineSpend()
     }
 
     @Test("project switch during a suspended result download performs no project write")

@@ -126,7 +126,7 @@ extension ToolExecutor {
             operation: operation,
             args: args
         )
-        let store = try MireloExecutionStore.live()
+        let store = try mireloStoreProvider()
         var existingRecord = try store.load(
             projectKey: projectKey,
             logicalJobID: logicalJobID
@@ -156,12 +156,12 @@ extension ToolExecutor {
                 )
             }
         }
-        guard let apiKey = ProviderKeychain.load(.mirelo), !apiKey.isEmpty else {
+        guard let apiKey = mireloAPIKeyProvider(), !apiKey.isEmpty else {
             throw ToolError(
                 "Add a Mirelo API key in Settings → Providers and wait for connection verification."
             )
         }
-        let client = MireloClient(apiKey: apiKey)
+        let client = mireloClientProvider(apiKey)
         if let existing = existingRecord,
            existing.approvedAt != nil,
            let transactionID = existing.spendTransactionID {

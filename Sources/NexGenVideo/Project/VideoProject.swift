@@ -865,6 +865,16 @@ final class VideoProject: NSDocument {
         var restored = 0
         var missing = 0
         var missingRefs: Set<String> = []
+        do {
+            try editorViewModel.generationService.reconcileMireloAcceptedSpend(
+                editor: editorViewModel
+            )
+        } catch {
+            Log.project.error(
+                "Mirelo project recovery failed: \(error.localizedDescription)"
+            )
+            presentError(error)
+        }
         for entry in editorViewModel.mediaManifest.entries {
             guard let url = resolver.expectedURL(for: entry.id) else {
                 Log.project.warning("restore: could not resolve URL for entry id=\(entry.id) name=\(entry.name)")

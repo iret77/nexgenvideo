@@ -58,6 +58,16 @@ final class GenerationService {
     private static let uploadCacheTTL: TimeInterval = 6 * 24 * 60 * 60
     private var generationTasks: [String: Task<Void, Never>] = [:]
     private var batchResumeTasks: [String: Task<Void, Error>] = [:]
+    private var mireloReconciliationTasks: [String: Task<Void, Never>] = [:]
+    var mireloStoreProvider: () throws -> MireloExecutionStore = {
+        try MireloExecutionStore.live()
+    }
+    var mireloAPIKeyProvider: () -> String? = {
+        ProviderKeychain.load(.mirelo)
+    }
+    var mireloClientProvider: (String) -> MireloClient = {
+        MireloClient(apiKey: $0)
+    }
 
     @discardableResult
     func generate(
@@ -311,6 +321,7 @@ final class GenerationService {
 
     func waitForGeneration(placeholderId: String) async {
         await generationTasks[placeholderId]?.value
+        await mireloReconciliationTasks[placeholderId]?.value
     }
 
     func resumeBatchJob(_ item: GenerationBatchAuthorization, editor: EditorViewModel) async throws {
@@ -1952,7 +1963,7 @@ final class GenerationService {
                 onFailure: onFailure
             )
         }
-        guard let apiKey = ProviderKeychain.load(.mirelo), !apiKey.isEmpty else {
+        guard let apiKey = mireloAPIKeyProvider(), !apiKey.isEmpty else {
             return failBeforeSubmission(
                 placeholders,
                 "Add a Mirelo API key in Settings → Providers and wait for connection verification.",
@@ -2031,10 +2042,10 @@ final class GenerationService {
             )
         }
 
-        let client = MireloClient(apiKey: apiKey)
+        let client = mireloClientProvider(apiKey)
         let store: MireloExecutionStore
         do {
-            store = try MireloExecutionStore.live()
+            store = try mireloStoreProvider()
         } catch {
             return failBeforeSubmission(
                 placeholders,
@@ -2144,7 +2155,8 @@ final class GenerationService {
             )
             executionWasApproved = true
             try mutationScope.requireCurrent(editor: editor)
-            placeholder.mireloResumeAvailable = true
+            placeholder.mireloExecutionTransactionId = transactionID
+            placeholder.mireloResumeAvailable = false
             editor.persistMediaAsset(placeholder)
             var outcome = try await MireloExecutionCoordinator.shared.execute(
                 store: store,
@@ -2188,6 +2200,18 @@ final class GenerationService {
             } catch {
                 return
             }
+            if error is CancellationError, executionWasApproved {
+                scheduleMireloSettlementReconciliation(
+                    asset: placeholder,
+                    editor: editor,
+                    store: store,
+                    projectKey: projectKey,
+                    transactionID: transactionID,
+                    mutationScope: mutationScope,
+                    onFailure: onFailure
+                )
+                return
+            }
             let current = try? store.load(
                 projectKey: projectKey,
                 logicalJobID: transactionID
@@ -2199,8 +2223,7 @@ final class GenerationService {
                     editor: editor
                 )
             }
-            if !executionWasApproved
-                || (current?.state == .failed && current?.providerJobID == nil) {
+            if !executionWasApproved {
                 placeholder.mireloResumeAvailable = false
                 failBeforeSubmission(
                     placeholders,
@@ -2209,6 +2232,25 @@ final class GenerationService {
                     editor: editor,
                     onFailure: onFailure
                 )
+            } else if let current,
+                      current.state == .failed,
+                      current.providerJobID == nil {
+                do {
+                    try releaseNativeMireloReservationIfRejected(
+                        current,
+                        asset: placeholder,
+                        editor: editor
+                    )
+                    placeholder.mireloResumeAvailable = false
+                    failJob(
+                        placeholders,
+                        current.lastError ?? error.localizedDescription,
+                        onFailure
+                    )
+                } catch {
+                    placeholder.mireloResumeAvailable = false
+                    failJob(placeholders, error.localizedDescription, onFailure)
+                }
             } else {
                 placeholder.mireloResumeAvailable = current.map(Self.mireloCanResume) ?? false
                 failJob(placeholders, error.localizedDescription, onFailure)
@@ -2219,19 +2261,19 @@ final class GenerationService {
     typealias NativeMireloDownload = @Sendable (MireloResultDescriptor) async throws -> URL
 
     func resumeMireloGeneration(asset: MediaAsset, editor: EditorViewModel) {
-        guard asset.mireloResumeAvailable,
-              generationTasks[asset.id] == nil,
+        guard isMireloResumeActionAvailable(for: asset),
               let workingRoot = editor.workingRoot,
               let resumeScope = try? GenerationProjectMutationScope(
                 projectHome: workingRoot,
                 editor: editor
               ) else { return }
+        asset.mireloResumeAvailable = false
         asset.generationStatus = .generating
         let task = Task { @MainActor [weak self, weak editor, weak asset] in
             guard let self, let editor, let asset else { return }
             defer { self.generationTasks.removeValue(forKey: asset.id) }
             do {
-                guard let apiKey = ProviderKeychain.load(.mirelo), !apiKey.isEmpty else {
+                guard let apiKey = self.mireloAPIKeyProvider(), !apiKey.isEmpty else {
                     throw GenerationRequestError.gate(
                         "Add a Mirelo API key in Settings → Providers and wait for connection verification."
                     )
@@ -2239,8 +2281,8 @@ final class GenerationService {
                 try await self.performNativeMireloResume(
                     asset: asset,
                     editor: editor,
-                    store: try MireloExecutionStore.live(),
-                    client: MireloClient(apiKey: apiKey),
+                    store: try self.mireloStoreProvider(),
+                    client: self.mireloClientProvider(apiKey),
                     approveCreditChange: { previous, current in
                         Self.confirmMireloCreditChange(previous: previous, current: current)
                     }
@@ -2259,26 +2301,63 @@ final class GenerationService {
                     return
                 }
                 guard editor.mediaAssets.contains(where: { $0 === asset }) else { return }
+                if error is CancellationError,
+                   let projectKey = editor.projectId,
+                   let transactionID = asset.mireloExecutionTransactionId
+                        ?? asset.generationInput?.spendTransactionId,
+                   let store = try? self.mireloStoreProvider() {
+                    self.scheduleMireloSettlementReconciliation(
+                        asset: asset,
+                        editor: editor,
+                        store: store,
+                        projectKey: projectKey,
+                        transactionID: transactionID,
+                        mutationScope: resumeScope
+                    )
+                    return
+                }
                 asset.generationStatus = .failed(error.localizedDescription)
                 if let projectKey = editor.projectId,
-                   let transactionID = asset.generationInput?.spendTransactionId,
-                   let store = try? MireloExecutionStore.live() {
-                    let record = try? store.load(
-                        projectKey: projectKey,
-                        logicalJobID: transactionID
-                    )
-                    if let record {
-                        try? self.releaseNativeMireloReservationIfRejected(
+                   let transactionID = asset.mireloExecutionTransactionId
+                        ?? asset.generationInput?.spendTransactionId,
+                   let store = try? self.mireloStoreProvider() {
+                    do {
+                        guard let record = try store.load(
+                            projectKey: projectKey,
+                            logicalJobID: transactionID
+                        ) else {
+                            throw GenerationRequestError.storage(
+                                "The saved Mirelo recovery record is missing."
+                            )
+                        }
+                        try self.releaseNativeMireloReservationIfRejected(
                             record,
                             asset: asset,
                             editor: editor
                         )
+                        asset.mireloResumeAvailable = Self.mireloCanResume(record)
+                        if record.state == .failed {
+                            asset.generationStatus = .failed(
+                                record.lastError ?? error.localizedDescription
+                            )
+                        }
+                    } catch {
+                        asset.mireloResumeAvailable = false
+                        asset.generationStatus = .failed(
+                            "Mirelo recovery data could not be reconciled: \(error.localizedDescription)"
+                        )
                     }
-                    asset.mireloResumeAvailable = record.map(Self.mireloCanResume) ?? false
                 }
             }
         }
         generationTasks[asset.id] = task
+    }
+
+    func isMireloResumeActionAvailable(for asset: MediaAsset) -> Bool {
+        asset.mireloResumeAvailable
+            && !asset.isGenerating
+            && generationTasks[asset.id] == nil
+            && mireloReconciliationTasks[asset.id] == nil
     }
 
     func performNativeMireloResume(
@@ -2292,7 +2371,8 @@ final class GenerationService {
         guard let projectKey = editor.projectId,
               let workingRoot = editor.workingRoot,
               let workingCopyKey = editor.openWorkingCopyKey,
-              let transactionID = asset.generationInput?.spendTransactionId else {
+              let transactionID = asset.mireloExecutionTransactionId
+                ?? asset.generationInput?.spendTransactionId else {
             throw GenerationRequestError.storage(
                 "This media item has no saved Mirelo recovery identity."
             )
@@ -2349,7 +2429,7 @@ final class GenerationService {
         }
 
         try mutationScope.requireCurrent(editor: editor)
-        asset.mireloResumeAvailable = true
+        asset.mireloResumeAvailable = false
         asset.generationStatus = .generating
         editor.persistMediaAsset(asset)
         var outcome = try await MireloExecutionCoordinator.shared.execute(
@@ -2388,7 +2468,9 @@ final class GenerationService {
         editor: EditorViewModel,
         store suppliedStore: MireloExecutionStore? = nil
     ) {
-        guard let transactionID = asset.generationInput?.spendTransactionId,
+        guard Self.isMireloRecoveryAsset(asset, editor: editor),
+              let transactionID = asset.mireloExecutionTransactionId
+                ?? asset.generationInput?.spendTransactionId,
               let projectKey = editor.projectId,
               let workingRoot = editor.workingRoot else { return }
         do {
@@ -2396,7 +2478,7 @@ final class GenerationService {
             if let suppliedStore {
                 store = suppliedStore
             } else {
-                store = try MireloExecutionStore.live()
+                store = try mireloStoreProvider()
             }
             guard let record = try store.load(
                 projectKey: projectKey,
@@ -2407,6 +2489,20 @@ final class GenerationService {
                 projectHome: workingRoot,
                 editor: editor
             )
+            if record.state == .failed {
+                if record.providerJobID == nil {
+                    try releaseNativeMireloReservationIfRejected(
+                        record,
+                        asset: asset,
+                        editor: editor
+                    )
+                }
+                asset.mireloResumeAvailable = false
+                asset.generationStatus = .failed(
+                    record.lastError ?? "The Mirelo job failed."
+                )
+                return
+            }
             let authorization = try nativeMireloAuthorization(
                 record: record,
                 asset: asset,
@@ -2419,18 +2515,6 @@ final class GenerationService {
                     authorization: authorization,
                     editor: editor
                 )
-            }
-            if record.state == .failed, record.providerJobID == nil {
-                try releaseNativeMireloReservationIfRejected(
-                    record,
-                    asset: asset,
-                    editor: editor
-                )
-                asset.mireloResumeAvailable = false
-                asset.generationStatus = .failed(
-                    record.lastError ?? "Mirelo rejected this request before creating a job."
-                )
-                return
             }
             if record.state == .completed,
                try nativeMireloArtifactIsInstalled(
@@ -2453,6 +2537,190 @@ final class GenerationService {
                 "Mirelo recovery data could not be reconciled: \(error.localizedDescription)"
             )
         }
+    }
+
+    func reconcileMireloAcceptedSpend(
+        editor: EditorViewModel,
+        store suppliedStore: MireloExecutionStore? = nil
+    ) throws {
+        let mireloTransactions = Set(editor.generationLog.spendEvents.compactMap {
+            $0.provider == .mirelo ? $0.transactionId : nil
+        })
+        guard !mireloTransactions.isEmpty,
+              let projectKey = editor.projectId,
+              let workingRoot = editor.workingRoot else { return }
+        let store: MireloExecutionStore
+        if let suppliedStore {
+            store = suppliedStore
+        } else {
+            store = try mireloStoreProvider()
+        }
+        let records = try store.all(projectKey: projectKey).filter {
+            $0.approvedAt != nil
+                && $0.providerJobID != nil
+                && $0.spendTransactionID != nil
+        }
+        let grouped = Dictionary(grouping: records) { record in
+            record.spendTransactionID ?? ""
+        }
+        guard grouped.values.allSatisfy({ $0.count == 1 }) else {
+            throw GenerationRequestError.storage(
+                "Accepted Mirelo authority records conflict for one project spend reservation."
+            )
+        }
+        let scope = try GenerationProjectMutationScope(
+            projectHome: workingRoot,
+            editor: editor
+        )
+        var pending: [(MireloExecutionRecord, GenerationAuthorization)] = []
+        for record in records {
+            guard let transactionID = record.spendTransactionID,
+                  mireloTransactions.contains(transactionID),
+                  let providerJobID = record.providerJobID else {
+                throw GenerationRequestError.storage(
+                    "An accepted Mirelo authority record has no matching project reservation."
+                )
+            }
+            let events = editor.generationLog.spendEvents.filter {
+                $0.transactionId == transactionID
+            }
+            guard let first = events.first,
+                  first.kind == .reserved,
+                  first.provider == .mirelo,
+                  first.transport == .api,
+                  events.allSatisfy({
+                    $0.model == first.model
+                        && $0.provider == first.provider
+                        && $0.transport == first.transport
+                        && $0.endpoint == first.endpoint
+                  }) else {
+                throw GenerationRequestError.storage(
+                    "An accepted Mirelo authority record conflicts with its project reservation."
+                )
+            }
+            if let submitted = events.first(where: { $0.kind == .submitted }) {
+                guard submitted.providerRequestId == providerJobID else {
+                    throw GenerationRequestError.storage(
+                        "The accepted Mirelo provider job conflicts with the project spend record."
+                    )
+                }
+                continue
+            }
+            guard events.last?.kind == .reserved else {
+                throw GenerationRequestError.storage(
+                    "The accepted Mirelo authority record has no reconcilable reservation."
+                )
+            }
+            pending.append((record, GenerationAuthorization(
+                transactionId: transactionID,
+                target: ResolvedGenerationTarget(
+                    modelId: first.model,
+                    provider: .mirelo,
+                    endpoint: first.endpoint,
+                    binding: ProviderBinding(
+                        provider: .mirelo,
+                        transport: .api,
+                        kind: .generation,
+                        providerRef: first.endpoint,
+                        billing: .perCall
+                    )
+                ),
+                estimate: first.money,
+                projectMutationScope: scope
+            )))
+        }
+        for (record, authorization) in pending {
+            try scope.requireCurrent(editor: editor)
+            try recordMireloSubmittedIfNeeded(
+                record,
+                authorization: authorization,
+                editor: editor
+            )
+        }
+    }
+
+    private static func isMireloRecoveryAsset(
+        _ asset: MediaAsset,
+        editor: EditorViewModel
+    ) -> Bool {
+        if asset.generationInput?.model.hasPrefix("mirelo/") == true {
+            return true
+        }
+        guard let transactionID = asset.mireloExecutionTransactionId
+            ?? asset.generationInput?.spendTransactionId else { return false }
+        return editor.generationLog.spendEvents.contains {
+            $0.transactionId == transactionID && $0.provider == .mirelo
+        }
+    }
+
+    private func scheduleMireloSettlementReconciliation(
+        asset: MediaAsset,
+        editor: EditorViewModel,
+        store: MireloExecutionStore,
+        projectKey: String,
+        transactionID: String,
+        mutationScope: GenerationProjectMutationScope,
+        onFailure: (@MainActor () -> Void)? = nil
+    ) {
+        guard mireloReconciliationTasks[asset.id] == nil else { return }
+        asset.mireloResumeAvailable = false
+        asset.generationStatus = .generating
+        let assetID = asset.id
+        let task = Task { @MainActor [weak self, weak editor, weak asset] in
+            let settled: Result<MireloExecutionRecord?, Error>
+            do {
+                settled = .success(try await MireloExecutionCoordinator.shared.awaitSettlement(
+                    store: store,
+                    projectKey: projectKey,
+                    logicalJobID: transactionID
+                ))
+            } catch {
+                settled = .failure(error)
+            }
+            guard let self else { return }
+            defer { self.mireloReconciliationTasks.removeValue(forKey: assetID) }
+            guard let editor, let asset else { return }
+            do {
+                let record = try settled.get()
+                try mutationScope.requireCurrent(editor: editor)
+                guard editor.projectId == projectKey,
+                      editor.mediaAssets.contains(where: { $0 === asset }),
+                      (asset.mireloExecutionTransactionId
+                        ?? asset.generationInput?.spendTransactionId) == transactionID,
+                      let record,
+                      record.projectKey == projectKey,
+                      record.logicalJobID == transactionID,
+                      record.spendTransactionID == transactionID else {
+                    throw GenerationRequestError.storage(
+                        "The Mirelo recovery identity changed while cancellation settled."
+                    )
+                }
+                self.restoreMireloRecoveryState(
+                    asset: asset,
+                    editor: editor,
+                    store: store
+                )
+                if case .failed = asset.generationStatus {
+                    onFailure?()
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                do {
+                    try mutationScope.requireCurrent(editor: editor)
+                } catch {
+                    return
+                }
+                guard editor.projectId == projectKey,
+                      editor.mediaAssets.contains(where: { $0 === asset }) else { return }
+                asset.mireloResumeAvailable = false
+                asset.generationStatus = .failed(
+                    "Mirelo recovery data could not be reconciled: \(error.localizedDescription)"
+                )
+                onFailure?()
+            }
+        }
+        mireloReconciliationTasks[asset.id] = task
     }
 
     private func finalizeNativeMireloOutcome(
@@ -2592,7 +2860,8 @@ final class GenerationService {
         editor: EditorViewModel,
         mutationScope: GenerationProjectMutationScope
     ) throws -> GenerationAuthorization {
-        guard let transactionID = asset.generationInput?.spendTransactionId,
+        guard let transactionID = asset.mireloExecutionTransactionId
+                ?? asset.generationInput?.spendTransactionId,
               transactionID == record.spendTransactionID else {
             throw GenerationRequestError.storage(
                 "The media item does not match its Mirelo spend transaction."
@@ -2683,9 +2952,27 @@ final class GenerationService {
               record.providerJobID == nil,
               let workingRoot = editor.workingRoot else { return }
         let transactionID = record.spendTransactionID ?? ""
-        guard editor.generationLog.spendEvents.last(where: {
+        guard let last = editor.generationLog.spendEvents.last(where: {
             $0.transactionId == transactionID
-        })?.kind == .reserved else { return }
+        }) else {
+            throw GenerationRequestError.storage(
+                "The rejected Mirelo job has no project spend reservation."
+            )
+        }
+        if last.kind == .released {
+            guard asset.mireloExecutionTransactionId == transactionID,
+                  asset.generationInput?.spendTransactionId == nil else {
+                throw GenerationRequestError.storage(
+                    "The released Mirelo reservation is still attached to generated media."
+                )
+            }
+            return
+        }
+        guard last.kind == .reserved else {
+            throw GenerationRequestError.storage(
+                "An accepted or unresolved Mirelo job cannot release its reservation."
+            )
+        }
         let scope = try GenerationProjectMutationScope(
             projectHome: workingRoot,
             editor: editor
@@ -2696,9 +2983,10 @@ final class GenerationService {
             editor: editor,
             mutationScope: scope
         )
-        try editor.recordSpendEvent(
+        try editor.releaseRejectedSpendReservation(
             authorization: authorization,
-            kind: .released,
+            asset: asset,
+            executionTransactionID: transactionID,
             note: record.lastError
         )
     }

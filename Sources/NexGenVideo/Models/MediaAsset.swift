@@ -74,6 +74,7 @@ final class MediaAsset: Identifiable {
     var cachedRemoteURLExpiresAt: Date?
     var originalFilename: String?
     var mireloResumeAvailable = false
+    var mireloExecutionTransactionId: String?
 
     /// Returns the cached URL if it's set AND not expired; else nil.
     var freshRemoteURL: String? {
@@ -162,6 +163,7 @@ final class MediaAsset: Identifiable {
         self.folderId = entry.folderId
         self.cachedRemoteURL = entry.cachedRemoteURL
         self.cachedRemoteURLExpiresAt = entry.cachedRemoteURLExpiresAt
+        self.mireloExecutionTransactionId = entry.mireloExecutionTransactionId
     }
 
     /// Produce a serializable manifest entry from this asset.
@@ -188,6 +190,7 @@ final class MediaAsset: Identifiable {
             cachedRemoteURL: fresh,
             cachedRemoteURLExpiresAt: fresh == nil ? nil : cachedRemoteURLExpiresAt,
             originalFilename: originalFilename,
+            mireloExecutionTransactionId: mireloExecutionTransactionId,
         )
     }
 

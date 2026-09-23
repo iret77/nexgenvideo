@@ -62,6 +62,7 @@ struct MediaManifestEntry: Codable, Sendable, Equatable, Identifiable {
     var cachedRemoteURL: String?
     var cachedRemoteURLExpiresAt: Date?
     var originalFilename: String? = nil
+    var mireloExecutionTransactionId: String? = nil
 }
 
 struct GenerationInput: Codable, Sendable, Equatable {

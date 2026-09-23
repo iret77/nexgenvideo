@@ -24,8 +24,13 @@ actor MireloExecutionCoordinator {
         let task: Task<Void, Never>
     }
 
+    private struct SettlementWaiter {
+        let continuation: CheckedContinuation<Void, Error>
+    }
+
     private var inFlight: [String: Flight] = [:]
     private var retiring: [String: RetiringFlight] = [:]
+    private var settlementWaiters: [String: [UUID: SettlementWaiter]] = [:]
 
     func prepare(
         store: MireloExecutionStore,
@@ -140,6 +145,48 @@ actor MireloExecutionCoordinator {
         }
     }
 
+    func awaitSettlement(
+        store: MireloExecutionStore,
+        projectKey: String,
+        logicalJobID: String
+    ) async throws -> MireloExecutionRecord? {
+        let authorityID = try store.authorityID(
+            projectKey: projectKey,
+            logicalJobID: logicalJobID
+        )
+        try Task.checkCancellation()
+        guard inFlight[authorityID] != nil || retiring[authorityID] != nil else {
+            return try store.load(
+                projectKey: projectKey,
+                logicalJobID: logicalJobID
+            )
+        }
+        let waiterID = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                settlementWaiters[authorityID, default: [:]][waiterID] = SettlementWaiter(
+                    continuation: continuation
+                )
+            }
+        } onCancel: {
+            Task {
+                await self.cancelSettlementWaiter(
+                    waiterID,
+                    authorityID: authorityID
+                )
+            }
+        }
+        try Task.checkCancellation()
+        return try store.load(
+            projectKey: projectKey,
+            logicalJobID: logicalJobID
+        )
+    }
+
     private func register(
         waiterID: UUID,
         authorityID: String,
@@ -198,6 +245,17 @@ actor MireloExecutionCoordinator {
         }
     }
 
+    private func cancelSettlementWaiter(_ waiterID: UUID, authorityID: String) {
+        guard var waiters = settlementWaiters[authorityID],
+              let waiter = waiters.removeValue(forKey: waiterID) else { return }
+        if waiters.isEmpty {
+            settlementWaiters.removeValue(forKey: authorityID)
+        } else {
+            settlementWaiters[authorityID] = waiters
+        }
+        waiter.continuation.resume(throwing: CancellationError())
+    }
+
     private func finishFlight(
         authorityID: String,
         flightID: UUID,
@@ -206,10 +264,17 @@ actor MireloExecutionCoordinator {
         if retiring[authorityID]?.id == flightID {
             retiring.removeValue(forKey: authorityID)
         }
-        guard let flight = inFlight[authorityID], flight.id == flightID else { return }
-        inFlight.removeValue(forKey: authorityID)
-        for waiter in flight.waiters.values {
-            waiter.continuation.resume(with: result)
+        if let flight = inFlight[authorityID], flight.id == flightID {
+            inFlight.removeValue(forKey: authorityID)
+            for waiter in flight.waiters.values {
+                waiter.continuation.resume(with: result)
+            }
+        }
+        if inFlight[authorityID] == nil, retiring[authorityID] == nil,
+           let waiters = settlementWaiters.removeValue(forKey: authorityID) {
+            for waiter in waiters.values {
+                waiter.continuation.resume()
+            }
         }
     }
 
