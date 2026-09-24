@@ -6,15 +6,6 @@ struct ToolbarView: View {
 
     var body: some View {
         HStack(spacing: AppTheme.Spacing.md) {
-            // Undo / Redo
-            HStack(spacing: AppTheme.Spacing.md) {
-                toolbarButton("arrow.uturn.backward", help: "Undo (⌘Z)", action: undo)
-                toolbarButton("arrow.uturn.forward", help: "Redo (⇧⌘Z)", action: redo)
-            }
-
-            AppDivider()
-                .frame(height: AppTheme.Spacing.xl)
-
             // Tool mode
             HStack(spacing: AppTheme.Spacing.md) {
                 toolModeButton("cursorarrow", mode: .pointer, help: "Pointer (V)")
@@ -26,9 +17,15 @@ struct ToolbarView: View {
 
             // Split, trim buttons — trim is edit-only chrome (docs/UI_UX_CONCEPT.md §3)
             HStack(spacing: AppTheme.Spacing.md) {
-                toolbarButton("square.split.2x1", help: "Split at Playhead (⌘K)", action: editor.splitAtPlayhead)
-                bracketButton("[", help: "Trim Start to Playhead (Q)", isDisabled: !editor.allowsTimelineEditChrome, action: editor.trimStartToPlayhead)
-                bracketButton("]", help: "Trim End to Playhead (W)", isDisabled: !editor.allowsTimelineEditChrome, action: editor.trimEndToPlayhead)
+                toolbarButton("square.split.2x1", help: "Split selected clips at playhead (⌘K)", isDisabled: !editor.canPerformTimelineCommand(.split)) {
+                    editor.performTimelineCommand(.split)
+                }
+                bracketButton("[", help: "Trim selected clips from playhead (Q)", isDisabled: !editor.canPerformTimelineCommand(.trimStart)) {
+                    editor.performTimelineCommand(.trimStart)
+                }
+                bracketButton("]", help: "Trim selected clips to playhead (W)", isDisabled: !editor.canPerformTimelineCommand(.trimEnd)) {
+                    editor.performTimelineCommand(.trimEnd)
+                }
             }
 
             AppDivider()
@@ -114,14 +111,6 @@ struct ToolbarView: View {
 
     private func setZoomScale(_ zoomScale: Double) {
         editor.zoomScale = min(Zoom.max, max(editor.minZoomScale, zoomScale))
-    }
-
-    private func undo() {
-        NSApp.sendAction(Selector(("undo:")), to: nil, from: nil)
-    }
-
-    private func redo() {
-        NSApp.sendAction(Selector(("redo:")), to: nil, from: nil)
     }
 
     private func toolModeButton(_ systemName: String, mode: ToolMode, help: String) -> some View {

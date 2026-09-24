@@ -714,7 +714,10 @@ extension EditorViewModel {
     // MARK: - Playhead-relative operations
 
     func splitAtPlayhead() {
-        let selected = timelineCommandClipIDs
+        splitAtPlayhead(clipIDs: timelineCommandClipIDs)
+    }
+
+    func splitAtPlayhead(clipIDs selected: Set<String>) {
         guard !selected.isEmpty else { return }
         var representatives: [String] = []
         var covered: Set<String> = []
@@ -730,8 +733,12 @@ extension EditorViewModel {
     }
 
     func trimStartToPlayhead() {
+        trimStartToPlayhead(clipIDs: timelineCommandClipIDs)
+    }
+
+    func trimStartToPlayhead(clipIDs: Set<String>) {
         var edits: [(clipId: String, trimStartFrame: Int, trimEndFrame: Int)] = []
-        for id in timelineCommandClipIDs {
+        for id in clipIDs {
             guard let loc = findClip(id: id) else { continue }
             let clip = timeline.tracks[loc.trackIndex].clips[loc.clipIndex]
             guard currentFrame > clip.startFrame && currentFrame < clip.endFrame else { continue }
@@ -747,8 +754,12 @@ extension EditorViewModel {
     }
 
     func trimEndToPlayhead() {
+        trimEndToPlayhead(clipIDs: timelineCommandClipIDs)
+    }
+
+    func trimEndToPlayhead(clipIDs: Set<String>) {
         var edits: [(clipId: String, trimStartFrame: Int, trimEndFrame: Int)] = []
-        for id in timelineCommandClipIDs {
+        for id in clipIDs {
             guard let loc = findClip(id: id) else { continue }
             let clip = timeline.tracks[loc.trackIndex].clips[loc.clipIndex]
             guard currentFrame > clip.startFrame && currentFrame < clip.endFrame else { continue }

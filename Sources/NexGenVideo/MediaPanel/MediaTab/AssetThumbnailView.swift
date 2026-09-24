@@ -165,10 +165,15 @@ struct AssetThumbnailView: View {
         AppTheme.Background.clearColor
             .frame(width: AppTheme.Spacing.none, height: AppTheme.Spacing.none)
             .onAppear {
+                let preservesGroup = editor.selectedVisibleMediaAssetIDs.contains(asset.id)
                 if let libraryPurpose {
-                    editor.activateMediaAsset(asset, preservingSelection: true, for: libraryPurpose)
+                    editor.activateMediaAsset(asset, preservingSelection: preservesGroup, for: libraryPurpose)
                 } else {
-                    editor.activateMediaAsset(asset, preservingSelection: true)
+                    editor.activateMediaAsset(asset, preservingSelection: preservesGroup)
+                }
+                if editor.workspaceFocus == .media || editor.workspaceFocus == .edit {
+                    editor.focusedPanel = editor.workspaceFocus == .media ? .preview : .media
+                    editor.mediaCommandFocus = .browser
                 }
             }
     }
@@ -178,15 +183,16 @@ struct AssetThumbnailView: View {
         let ids = contextTargetIds
         if asset.type != .document {
             if asset.type == .video || asset.type == .audio || asset.type == .lottie {
-                Button("Mark In") { performSourceAction { $0.markSourceIn() } }
-                Button("Mark Out") { performSourceAction { $0.markSourceOut() } }
-                Button("Clear Source Range") { performSourceAction { $0.clearSourceRange() } }
+                Button("Mark In") { performSourceAction(.markIn) }
+                Button("Mark Out") { performSourceAction(.markOut) }
+                Button("Clear Source Range") { performSourceAction(.clearRange) }
+                    .disabled(!editor.canPerformSourceCommand(.clearRange, assetID: asset.id))
                 Divider() // app-theme: native-menu-divider
             }
             if asset.type.isPlaceable {
-                Button("Insert at Playhead") { performSourceAction { $0.insertActiveSource() } }
+                Button("Insert at Playhead") { performSourceAction(.insert) }
                     .disabled(!canInsertContextAsset)
-                Button("Overwrite at Playhead") { performSourceAction { $0.overwriteActiveSource() } }
+                Button("Overwrite at Playhead") { performSourceAction(.overwrite) }
                     .disabled(!canOverwriteContextAsset)
                 Divider() // app-theme: native-menu-divider
             }
@@ -214,31 +220,34 @@ struct AssetThumbnailView: View {
         Button("Reveal in Finder") { revealInFinder(ids: ids) }
         Button("Copy Path") { copyPaths(ids: ids) }
         Divider() // app-theme: native-menu-divider
-        Button("Delete", role: .destructive) { deleteAssets(ids: ids) }
-            .disabled(!editor.canDeleteMediaAssets(ids: Set(ids)))
+        Button(ids.count == 1 ? "Delete Media" : "Delete \(ids.count) Media Items", role: .destructive) {
+            deleteAssets(ids: ids)
+        }
+        .disabled(!editor.canDeleteMediaAssets(ids: Set(ids)))
     }
 
-    private func performSourceAction(_ action: (EditorViewModel) -> Void) {
+    private func performSourceAction(_ command: NativeSourceCommand) {
+        let preservesGroup = editor.selectedVisibleMediaAssetIDs.contains(asset.id)
         if let libraryPurpose {
-            editor.activateMediaAsset(asset, preservingSelection: true, for: libraryPurpose)
+            editor.activateMediaAsset(asset, preservingSelection: preservesGroup, for: libraryPurpose)
         } else {
-            editor.activateMediaAsset(asset, preservingSelection: true)
+            editor.activateMediaAsset(asset, preservingSelection: preservesGroup)
         }
-        action(editor)
+        editor.performSourceCommand(command, assetID: asset.id)
     }
 
     private var canInsertContextAsset: Bool {
-        editor.canInsertSourceAsset(asset)
+        editor.canPerformSourceCommand(.insert, assetID: asset.id)
     }
 
     private var canOverwriteContextAsset: Bool {
-        editor.canOverwriteSourceAsset(asset)
+        editor.canPerformSourceCommand(.overwrite, assetID: asset.id)
     }
 
     private var contextTargetIds: [String] {
-        if editor.selectedMediaAssetIds.contains(asset.id) {
+        if editor.selectedVisibleMediaAssetIDs.contains(asset.id) {
             return editor.mediaAssets
-                .filter { editor.selectedMediaAssetIds.contains($0.id) }
+                .filter { editor.selectedVisibleMediaAssetIDs.contains($0.id) }
                 .map(\.id)
         }
         return [asset.id]
@@ -265,18 +274,11 @@ struct AssetThumbnailView: View {
     }
 
     private func copyPaths(ids: [String]) {
-        let paths = editor.mediaAssets
-            .filter { ids.contains($0.id) }
-            .map(\.url.path)
-        guard !paths.isEmpty else { return }
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString(paths.joined(separator: "\n"), forType: .string)
+        editor.copyVisibleMediaPaths(Set(ids))
     }
 
     private func deleteAssets(ids: [String]) {
-        editor.selectedMediaAssetIds = Set(ids)
-        editor.deleteSelectedMediaAssets()
+        editor.deleteVisibleMedia(folders: [], assets: Set(ids))
     }
 
     private var thumbnailContent: some View {

@@ -5,6 +5,7 @@ struct FolderTileView: View {
     let isSelected: Bool
     let isDropHover: Bool
     let canDelete: Bool
+    let deleteTitle: String
     let childCount: Int
     @Binding var isRenaming: Bool
     let onTap: () -> Void
@@ -12,6 +13,7 @@ struct FolderTileView: View {
     let onCommitRename: (String) -> Void
     let onCancelRename: () -> Void
     let onDelete: () -> Void
+    let onContextActivate: () -> Void
     let shouldAutoFocus: Bool
     let onAutoFocusConsumed: () -> Void
 
@@ -84,7 +86,12 @@ struct FolderTileView: View {
         .frame(maxWidth: .infinity)
         .contentShape(Rectangle())
         .onTapGesture { handleClick() }
-        .contextMenu { contextMenuItems }
+        .contextMenu {
+            AppTheme.Background.clearColor
+                .frame(width: AppTheme.Spacing.none, height: AppTheme.Spacing.none)
+                .onAppear(perform: onContextActivate)
+            contextMenuItems
+        }
         .onAppear {
             if shouldAutoFocus {
                 renameDraft = folder.name
@@ -117,7 +124,7 @@ struct FolderTileView: View {
         Button("Open") { onOpen() }
         Button("Rename") { beginRename() }
         Divider() // app-theme: native-menu-divider
-        Button("Delete", role: .destructive) { onDelete() }
+        Button(deleteTitle, role: .destructive) { onDelete() }
             .disabled(!canDelete)
     }
 

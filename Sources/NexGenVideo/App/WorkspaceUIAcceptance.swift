@@ -250,9 +250,18 @@ enum WorkspaceUIAcceptance {
                       editor.mediaLibrarySession(for: .workspace).query == "zzzz"
                           && editor.mediaPanelOrderedItemIds.isEmpty
                   }),
+                  pressKey(keyCode: 49, characters: " ", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.mediaLibrarySession(for: .workspace).query == "zzzz "
+                          && !editor.isPlaying
+                  }),
+                  pressKey(keyCode: 51, characters: "\u{8}", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.mediaLibrarySession(for: .workspace).query == "zzzz"
+                  }),
                   click(identifier: "media.workspace.browser", in: window) == nil,
                   pressKey(keyCode: 51, characters: "\u{8}", in: window) == nil else {
-                fail("search did not hide the selected browser folder", scale: scale)
+                fail("search text intercepted Space/Delete or failed to hide the selected folder", scale: scale)
             }
             try? await Task.sleep(for: .milliseconds(100))
             hiddenSearchFolderDeleteExcluded = editor.folder(id: "acceptance-folder-0") != nil
@@ -1359,7 +1368,7 @@ enum WorkspaceUIAcceptance {
                   }),
                   contextClick(identifier: "selection.clip.selection-linked-video", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
-                      editor.activeTimelineInspectionClipID == "selection-linked-video"
+                      editor.activeTimelineInspectionClipID == nil
                           && editor.timelineCommandClipIDs
                               == ["selection-linked-video", "selection-linked-audio"]
                   }) else {
@@ -1458,43 +1467,29 @@ enum WorkspaceUIAcceptance {
             guard contextClick(identifier: "selection.clip.selection-clip", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
                       editor.selectedClipIds == ["selection-title", "selection-clip"]
-                          && editor.activeTimelineInspectionClipID == "selection-clip"
-                          && editor.timelineInspectorClipIDs == ["selection-clip"]
-                          && editor.inspectedObject == .clip("selection-clip")
-                          && editor.selectionContextHint?.contains("Selection Source") == true
-                          && probeState(identifier: "preview.selectionContext", in: window) == true
-                          && probeState(identifier: "inspector.selectionContext", in: window) == true
-                          && probeState(
-                              identifier: "preview.selectionContext.selection-clip",
-                              in: window
-                          ) == true
-                          && probeState(
-                              identifier: "inspector.selectionContext.selection-clip",
-                              in: window
-                          ) == true
-                          && probeState(
-                              identifier: "inspector.clipMutation.selection-clip",
-                              in: window
-                          ) == true
+                          && editor.activeTimelineInspectionClipID == nil
+                          && editor.timelineCommandClipIDs == ["selection-title", "selection-clip"]
+                          && editor.inspectedObject == nil
+                          && probeState(identifier: "preview.selectionContext", in: window) == false
+                          && probeState(identifier: "inspector.selectionContext", in: window) == false
                   }) else {
-                fail("context click did not keep one visible and actionable clip target", scale: scale)
+                fail("context click did not preserve the visible clip group", scale: scale)
             }
             scheduleKeySequence([(115, "\u{F729}"), (36, "\r")], in: window)
             guard await waitUntil(timeout: .seconds(5), {
-                      editor.clipClipboard.count == 1
-                          && editor.clipClipboard.first?.clip.id == "selection-clip"
+                      Set(editor.clipClipboard.map(\.clip.id)) == ["selection-title", "selection-clip"]
                           && editor.explicitTimelineInspectionClipID == nil
                           && editor.isTimelineBatchSelection
                   }) else {
-                fail("context Copy did not end in the remembered batch context", scale: scale)
+                fail("context Copy did not capture the visible clip group", scale: scale)
             }
             scheduleKeySequence([(53, "\u{1b}")], in: window)
             guard contextClick(identifier: "selection.clip.selection-clip", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
-                      editor.activeTimelineInspectionClipID == "selection-clip"
-                          && editor.timelineCommandClipIDs == ["selection-clip"]
+                      editor.activeTimelineInspectionClipID == nil
+                          && editor.timelineCommandClipIDs == ["selection-title", "selection-clip"]
                   }) else {
-                fail("could not prepare the explicit Escape target", scale: scale)
+                fail("could not prepare the group Escape target", scale: scale)
             }
             try? await Task.sleep(for: .milliseconds(450))
             guard editor.selectedClipIds == ["selection-title", "selection-clip"],
@@ -1502,27 +1497,31 @@ enum WorkspaceUIAcceptance {
                   editor.inspectedObject == nil,
                   probeState(identifier: "preview.selectionContext", in: window) == false,
                   probeState(identifier: "inspector.selectionContext", in: window) == false else {
-                fail("Escape did not end the explicit timeline context", scale: scale)
+                fail("Escape changed the remembered timeline group", scale: scale)
             }
             guard contextClick(identifier: "selection.clip.selection-clip", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
-                      editor.activeTimelineInspectionClipID == "selection-clip"
-                          && editor.timelineCommandClipIDs == ["selection-clip"]
+                      editor.activeTimelineInspectionClipID == nil
+                          && editor.timelineCommandClipIDs == ["selection-title", "selection-clip"]
                   }) else {
-                fail("could not prepare the explicit Delete target", scale: scale)
+                fail("could not prepare the group Delete target", scale: scale)
             }
             scheduleKeySequence(
-                [(115, "\u{F729}"), (125, "\u{F701}"), (36, "\r")],
+                [(115, "\u{F729}"), (125, "\u{F701}"), (125, "\u{F701}"), (36, "\r")],
                 in: window
             )
             guard await waitUntil(timeout: .seconds(5), {
                       editor.clipFor(id: "selection-clip") == nil
-                          && editor.clipFor(id: "selection-title") != nil
-                          && editor.selectedClipIds == ["selection-title"]
+                          && editor.clipFor(id: "selection-title") == nil
+                          && editor.selectedClipIds.isEmpty
                           && editor.explicitTimelineInspectionClipID == nil
-                          && editor.inspectedObject == .clip("selection-title")
-                  }),
-                  pressKey(
+                          && editor.inspectedObject == nil
+                  }) else {
+                fail("group context Delete did not remove the same clips", scale: scale)
+            }
+            let contextDeletedTimeline = editor.timeline
+            let contextDeleteUndoName = acceptanceUndoManager.undoActionName
+            guard pressKey(
                       keyCode: 6,
                       characters: "z",
                       modifiers: [.command],
@@ -1530,6 +1529,7 @@ enum WorkspaceUIAcceptance {
                   ) == nil,
                   await waitUntil(timeout: .seconds(5), {
                       editor.clipFor(id: "selection-clip") != nil
+                          && editor.clipFor(id: "selection-title") != nil
                           && editor.selectedClipIds == ["selection-title", "selection-clip"]
                           && editor.explicitTimelineInspectionClipID == nil
                           && editor.isTimelineBatchSelection
@@ -1537,7 +1537,22 @@ enum WorkspaceUIAcceptance {
                           && probeState(identifier: "preview.selectionContext", in: window) == false
                           && probeState(identifier: "inspector.selectionContext", in: window) == false
                   }) else {
-                fail("explicit context Delete mutated the remembered batch", scale: scale)
+                fail("group context Delete or Undo did not affect the same clips", scale: scale)
+            }
+            let beforeShortcutDelete = editor.timelineRenderRevision
+            guard pressKey(keyCode: 51, characters: "\u{8}", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.timeline == contextDeletedTimeline
+                          && acceptanceUndoManager.undoActionName == contextDeleteUndoName
+                          && editor.timelineRenderRevision > beforeShortcutDelete
+                  }),
+                  pressKey(keyCode: 6, characters: "z", modifiers: [.command], in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.clipFor(id: "selection-clip") != nil
+                          && editor.clipFor(id: "selection-title") != nil
+                          && editor.selectedClipIds == ["selection-title", "selection-clip"]
+                  }) else {
+                fail("context and shortcut Delete diverged in mutation or Undo", scale: scale)
             }
             guard click(identifier: "selection.empty", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {

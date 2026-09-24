@@ -40,7 +40,16 @@ struct TakeReviewView: View {
                     ForEach(takes, id: \.id) { take in
                         Text("\(take.shotID) · \(take.phase) · \(take.recordedAt) · \(take.id.prefix(8))").tag(take.id)
                     }
-                }.disabled(busy)
+                }
+                .disabled(busy)
+                .contextMenu {
+                    if let snapshot {
+                        Button("Use Reviewed Take \(snapshot.take.shotID)") {
+                            useReviewedTake(snapshot)
+                        }
+                        .disabled(busy || !canSelect || !canWrite)
+                    }
+                }
                 if let snapshot {
                     VideoPlayer(player: player).frame(minHeight: AppTheme.Layout.previewMinHeight)
                     TakeRangeReviewView(snapshot: snapshot, wholeTakePlayer: player, canWrite: canWrite).id(snapshot.take.id)
@@ -56,16 +65,9 @@ struct TakeReviewView: View {
                             }
                         }.frame(maxHeight: AppTheme.ComponentSize.productionStyleReviewMaxHeight)
                     }
-                    Button("Use reviewed take") {
-                        busy = true
-                        Task {
-                            do {
-                                try await TakeReview.select(take: snapshot.take, home: snapshot.home, editor: editor)
-                                message = "Take selected. Its source and conditioning were revalidated."
-                            } catch { message = error.localizedDescription }
-                            busy = false
-                        }
-                    }.buttonStyle(InlineActionButtonStyle(variant: .approval)).disabled(busy || !canSelect || !canWrite)
+                    Button("Use reviewed take") { useReviewedTake(snapshot) }
+                        .buttonStyle(InlineActionButtonStyle(variant: .approval))
+                        .disabled(busy || !canSelect || !canWrite)
                     if findings.count < TakeReview.Pass.allCases.count && findings.last?.verdict != .rejected {
                         let pass = TakeReview.Pass.allCases[findings.count]
                         Text("\(findings.count + 1) of 6 · \(pass.label)").fontWeight(AppTheme.FontWeight.semibold)
@@ -123,6 +125,18 @@ struct TakeReviewView: View {
         .task(id: selectedID) { await select() }
         .onDisappear { player?.pause() }
         .onChange(of: editor.workingRoot) { _, _ in presented = false; snapshot = nil; player?.pause(); player = nil }
+    }
+
+    private func useReviewedTake(_ snapshot: TakeReview.Snapshot) {
+        guard !busy, canSelect, canWrite else { return }
+        busy = true
+        Task {
+            do {
+                try await TakeReview.select(take: snapshot.take, home: snapshot.home, editor: editor)
+                message = "Take selected. Its source and conditioning were revalidated."
+            } catch { message = error.localizedDescription }
+            busy = false
+        }
     }
 
     private func load() async {

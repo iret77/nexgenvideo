@@ -216,29 +216,29 @@ final class TimelineHeaderView: NSView {
         let point = convert(event.locationInWindow, from: nil)
 
         for (ti, rect) in muteButtonRects {
-            if rect.contains(point) {
-                editor.toggleTrackMute(trackIndex: ti)
+            if rect.contains(point), editor.timeline.tracks.indices.contains(ti) {
+                editor.performTrackCommand(.mute, trackID: editor.timeline.tracks[ti].id)
                 needsDisplay = true
                 return
             }
         }
         for (ti, rect) in hideButtonRects {
-            if rect.contains(point) {
-                editor.toggleTrackHidden(trackIndex: ti)
+            if rect.contains(point), editor.timeline.tracks.indices.contains(ti) {
+                editor.performTrackCommand(.visibility, trackID: editor.timeline.tracks[ti].id)
                 needsDisplay = true
                 return
             }
         }
         for (ti, rect) in syncLockButtonRects {
-            if rect.contains(point) {
-                editor.toggleTrackSyncLock(trackIndex: ti)
+            if rect.contains(point), editor.timeline.tracks.indices.contains(ti) {
+                editor.performTrackCommand(.syncLock, trackID: editor.timeline.tracks[ti].id)
                 needsDisplay = true
                 return
             }
         }
         for (ti, rect) in editLockButtonRects {
-            if rect.contains(point) {
-                editor.toggleTrackEditLock(trackIndex: ti)
+            if rect.contains(point), editor.timeline.tracks.indices.contains(ti) {
+                editor.performTrackCommand(.editLock, trackID: editor.timeline.tracks[ti].id)
                 needsDisplay = true
                 return
             }
@@ -247,6 +247,45 @@ final class TimelineHeaderView: NSView {
         if let ti = hitTestResizeHandle(at: point) {
             resizeDrag = (ti, editor.timeline.tracks[ti].displayHeight)
         }
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = convert(event.locationInWindow, from: nil)
+        guard point.y >= bounds.origin.y + AppTheme.Layout.rulerHeight else { return nil }
+        let index = TimelineGeometry(editor: editor, bounds: bounds).trackAt(y: point.y)
+        guard editor.timeline.tracks.indices.contains(index) else { return nil }
+        let track = editor.timeline.tracks[index]
+        let label = editor.timelineTrackDisplayLabel(at: index)
+        let menu = NSMenu(title: label)
+        menu.autoenablesItems = false
+        func add(_ title: String, action: Selector, command: NativeTrackCommand) {
+            let item = NSMenuItem(title: "\(title) \(label)", action: action, keyEquivalent: "")
+            item.target = self
+            item.representedObject = track.id
+            item.isEnabled = editor.canPerformTrackCommand(command, trackID: track.id)
+            menu.addItem(item)
+        }
+        if track.type == .audio {
+            add(track.muted ? "Unmute" : "Mute", action: #selector(performTrackMute(_:)), command: .mute)
+        } else {
+            add(track.hidden ? "Show" : "Hide", action: #selector(performTrackVisibility(_:)), command: .visibility)
+        }
+        add(track.editLocked ? "Unlock" : "Lock", action: #selector(performTrackEditLock(_:)), command: .editLock)
+        add(track.syncLocked ? "Disable Sync Lock on" : "Enable Sync Lock on", action: #selector(performTrackSyncLock(_:)), command: .syncLock)
+        menu.addItem(.separator())
+        add("Remove Empty", action: #selector(performTrackRemove(_:)), command: .remove)
+        return menu
+    }
+
+    @objc private func performTrackMute(_ sender: NSMenuItem) { performTrack(.mute, sender: sender) }
+    @objc private func performTrackVisibility(_ sender: NSMenuItem) { performTrack(.visibility, sender: sender) }
+    @objc private func performTrackEditLock(_ sender: NSMenuItem) { performTrack(.editLock, sender: sender) }
+    @objc private func performTrackSyncLock(_ sender: NSMenuItem) { performTrack(.syncLock, sender: sender) }
+    @objc private func performTrackRemove(_ sender: NSMenuItem) { performTrack(.remove, sender: sender) }
+
+    private func performTrack(_ command: NativeTrackCommand, sender: NSMenuItem) {
+        guard let trackID = sender.representedObject as? String else { return }
+        if editor.performTrackCommand(command, trackID: trackID) { needsDisplay = true }
     }
 
     override func mouseDragged(with event: NSEvent) {

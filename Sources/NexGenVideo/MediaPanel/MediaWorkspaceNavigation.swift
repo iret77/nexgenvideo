@@ -188,11 +188,27 @@ struct MediaWorkspaceNavigation: View {
 
     @ViewBuilder
     private func folderContextMenu(_ folder: MediaFolder) -> some View {
+        AppTheme.Background.clearColor
+            .frame(width: AppTheme.Spacing.none, height: AppTheme.Spacing.none)
+            .onAppear {
+                let selected = selection.contains(folder.id) ? selection : Set([folder.id])
+                if selection != selected {
+                    synchronizedSelection = selected
+                    selection = selected
+                }
+                editor.focusMediaFolderTree(selection: selected)
+            }
         Button("Open") { openFolder(folder.id) }
         Button("New Subfolder") { createFolder(in: folder.id) }
         Button("Rename") { beginRename(folder) }
         Divider()
-        Button("Remove", role: .destructive) { pendingDelete = [folder.id] }
+        Button(selection.count > 1 && selection.contains(folder.id)
+               ? "Remove \(selection.count) Folders" : "Remove Folder", role: .destructive) {
+            let ids = selection.contains(folder.id) ? selection : Set([folder.id])
+            guard editor.canDeleteFolders(ids: ids) else { return }
+            pendingDelete = ids
+        }
+        .disabled(!editor.canDeleteFolders(ids: selection.contains(folder.id) ? selection : [folder.id]))
     }
 
     private var footer: some View {

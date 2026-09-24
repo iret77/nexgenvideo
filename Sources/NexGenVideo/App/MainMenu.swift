@@ -98,6 +98,10 @@ enum MainMenuBuilder {
 
         menu.addItem(.separator())
 
+        let duplicateItem = NSMenuItem(title: "Duplicate at Playhead", action: #selector(EditorActions.duplicateSelectedClips(_:)), keyEquivalent: "d")
+        duplicateItem.keyEquivalentModifierMask = [.command]
+        menu.addItem(duplicateItem)
+
         let splitItem = NSMenuItem(title: "Split at Playhead", action: #selector(EditorActions.splitAtPlayhead(_:)), keyEquivalent: "k")
         splitItem.keyEquivalentModifierMask = [.command]
         menu.addItem(splitItem)
@@ -266,6 +270,7 @@ enum MainMenuBuilder {
 
 /// Actions dispatched through the responder chain to reach the active EditorViewModel.
 @MainActor @objc protocol EditorActions {
+    func duplicateSelectedClips(_ sender: Any?)
     func splitAtPlayhead(_ sender: Any?)
     func trimStartToPlayhead(_ sender: Any?)
     func trimEndToPlayhead(_ sender: Any?)

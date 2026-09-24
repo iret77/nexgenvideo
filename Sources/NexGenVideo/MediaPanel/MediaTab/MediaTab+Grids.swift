@@ -536,7 +536,9 @@ extension MediaTab {
                 folder: folder,
                 isSelected: editor.selectedFolderIds.contains(folder.id),
                 isDropHover: dropTargetFolderId == folder.id,
-                canDelete: editor.canDeleteFolders(ids: [folder.id]),
+                canDelete: editor.canDeleteFolders(ids: contextFolderIDs(for: folder)),
+                deleteTitle: contextFolderIDs(for: folder).count == 1
+                    ? "Delete Folder" : "Delete \(contextFolderIDs(for: folder).count) Folders",
                 childCount: editor.subfolders(of: folder.id).count + editor.assetsIn(folderId: folder.id).count,
                 isRenaming: Binding(
                     get: { renamingFolderId == folder.id },
@@ -549,7 +551,16 @@ extension MediaTab {
                     renamingFolderId = nil
                 },
                 onCancelRename: { renamingFolderId = nil },
-                onDelete: { editor.deleteFolders(ids: [folder.id]) },
+                onDelete: {
+                    editor.deleteVisibleMedia(folders: contextFolderIDs(for: folder), assets: [])
+                },
+                onContextActivate: {
+                    focusMediaBrowser()
+                    if !editor.selectedVisibleMediaFolderIDs.contains(folder.id) {
+                        editor.selectedFolderIds = [folder.id]
+                        editor.selectedMediaAssetIds.removeAll()
+                    }
+                },
                 shouldAutoFocus: pendingFolderFocusId == folder.id,
                 onAutoFocusConsumed: { pendingFolderFocusId = nil }
             )
@@ -585,10 +596,15 @@ extension MediaTab {
         }
     }
 
+    fileprivate func contextFolderIDs(for folder: MediaFolder) -> Set<String> {
+        let selected = editor.selectedVisibleMediaFolderIDs
+        return selected.contains(folder.id) ? selected : [folder.id]
+    }
+
     @ViewBuilder
     fileprivate func moveToFolderMenu(for asset: MediaAsset) -> some View {
-        let targetIds: Set<String> = editor.selectedMediaAssetIds.contains(asset.id)
-            ? editor.selectedMediaAssetIds
+        let targetIds: Set<String> = editor.selectedVisibleMediaAssetIDs.contains(asset.id)
+            ? editor.selectedVisibleMediaAssetIDs
             : [asset.id]
         Menu("Move to Folder") {
             Button("New Folder") {
