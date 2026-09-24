@@ -138,6 +138,71 @@ struct MediaWorkspaceTests {
             == SourcePreviewState())
     }
 
+    @Test func workspaceRestoreDoesNotBorrowARangeThroughExport() {
+        let editor = EditorViewModel()
+        editor.timeline.fps = 30
+        let source = MediaAsset(
+            id: "export-intermediary-source",
+            url: URL(fileURLWithPath: "/tmp/export-intermediary.mov"),
+            type: .video,
+            name: "Export Intermediary",
+            duration: 10,
+            originalFilename: "Export Intermediary.mov"
+        )
+        editor.mediaAssets = [source]
+
+        editor.setWorkspaceFocus(.postproduction)
+        editor.selectMediaAsset(source)
+        editor.setWorkspaceFocus(.production)
+        editor.mediaLibrarySession(for: .postproductionSource).sourceStates[source.id] = nil
+        editor.selectMediaAsset(source, for: .productionSource)
+        editor.seekSourceToFrame(18)
+        editor.markSourceIn()
+        editor.seekSourceToFrame(72)
+        editor.markSourceOut()
+
+        editor.setWorkspaceFocus(.export)
+        editor.setWorkspaceFocus(.postproduction)
+
+        #expect(editor.activeSourceAsset?.id == source.id)
+        #expect(editor.activeSourcePreviewState == SourcePreviewState())
+        #expect(editor.mediaLibrarySession(for: .postproductionSource).sourceState(for: source.id)
+            == SourcePreviewState())
+    }
+
+    @Test func workspaceRestoreDoesNotBorrowARangeThroughATimelineWorkspace() {
+        let editor = EditorViewModel()
+        editor.timeline.fps = 30
+        let source = MediaAsset(
+            id: "timeline-intermediary-source",
+            url: URL(fileURLWithPath: "/tmp/timeline-intermediary.mov"),
+            type: .video,
+            name: "Timeline Intermediary",
+            duration: 10,
+            originalFilename: "Timeline Intermediary.mov"
+        )
+        editor.mediaAssets = [source]
+
+        editor.setWorkspaceFocus(.postproduction)
+        editor.selectMediaAsset(source)
+        editor.setWorkspaceFocus(.production)
+        editor.mediaLibrarySession(for: .postproductionSource).sourceStates[source.id] = nil
+        editor.selectMediaAsset(source, for: .productionSource)
+        editor.seekSourceToFrame(18)
+        editor.markSourceIn()
+        editor.seekSourceToFrame(72)
+        editor.markSourceOut()
+
+        editor.setWorkspaceFocus(.edit)
+        #expect(editor.isTimelinePreviewActive)
+        editor.setWorkspaceFocus(.postproduction)
+
+        #expect(editor.activeSourceAsset?.id == source.id)
+        #expect(editor.activeSourcePreviewState == SourcePreviewState())
+        #expect(editor.mediaLibrarySession(for: .postproductionSource).sourceState(for: source.id)
+            == SourcePreviewState())
+    }
+
     @Test func sourceRangeSurvivesTimelineInspectionAndAnotherPicker() {
         let editor = EditorViewModel()
         editor.timeline.fps = 30

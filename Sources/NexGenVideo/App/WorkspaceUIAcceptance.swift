@@ -109,6 +109,9 @@ enum WorkspaceUIAcceptance {
             guard visiblePanelFrames(in: host) == preparedMediaFrames else {
                 fail("large media layout did not settle", scale: scale)
             }
+            var browserFolderReturnOpened = false
+            var hiddenSearchFolderDeleteExcluded = false
+            var rootSessionWasIntentional = false
             guard click(identifier: "editor.panel.sidebar", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
                       host.layoutSubtreeIfNeeded()
@@ -237,11 +240,39 @@ enum WorkspaceUIAcceptance {
                   await waitUntil(timeout: .seconds(5), {
                       editor.mediaCommandFocus == .browser
                           && editor.selectedFolderIds == ["acceptance-folder-0"]
+                  }) else {
+                fail("native folder tree did not route the shared media library", scale: scale)
+            }
+            guard click(identifier: "media.search", in: window) == nil,
+                  typeKeys([(6, "z"), (6, "z"), (6, "z"), (6, "z")], in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.mediaLibrarySession(for: .workspace).query == "zzzz"
+                          && editor.mediaPanelOrderedItemIds.isEmpty
                   }),
+                  click(identifier: "media.workspace.browser", in: window) == nil,
+                  pressKey(keyCode: 51, characters: "\u{8}", in: window) == nil else {
+                fail("search did not hide the selected browser folder", scale: scale)
+            }
+            try? await Task.sleep(for: .milliseconds(100))
+            hiddenSearchFolderDeleteExcluded = editor.folder(id: "acceptance-folder-0") != nil
+                && editor.selectedFolderIds == ["acceptance-folder-0"]
+            guard hiddenSearchFolderDeleteExcluded,
+                  click(identifier: "media.search", in: window) == nil,
+                  pressKey(keyCode: 0, characters: "a", modifiers: [.command], in: window) == nil,
+                  pressKey(keyCode: 51, characters: "\u{8}", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.mediaLibrarySession(for: .workspace).query.isEmpty
+                          && editor.mediaPanelOrderedItemIds.contains(
+                              MediaPanelItemKey.folder("acceptance-folder-0")
+                          )
+                  }),
+                  click(identifier: "media.workspace.browser", in: window) == nil,
                   pressKey(keyCode: 36, characters: "\r", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
-                      editor.mediaPanelCurrentFolderId == "acceptance-folder-0"
+                      let opened = editor.mediaPanelCurrentFolderId == "acceptance-folder-0"
                           && editor.selectedFolderIds.isEmpty
+                      if opened { browserFolderReturnOpened = true }
+                      return opened
                   }),
                   click(identifier: "media.search", in: window) == nil,
                   typeKeys(
@@ -292,6 +323,25 @@ enum WorkspaceUIAcceptance {
                   click(identifier: "media.folder.library", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
                       editor.mediaPanelCurrentFolderId == nil
+                          && editor.mediaLibrarySession(for: .workspace).folderID == nil
+                  }) else {
+                fail("native folder and browser selection paths diverged", scale: scale)
+            }
+            editor.publishMediaPanelFolder("acceptance-folder-0", for: .production)
+            guard click(identifier: "editor.workspace.production", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.workspaceFocus == .production
+                          && editor.mediaPanelCurrentFolderId == "acceptance-folder-0"
+                  }),
+                  click(identifier: "editor.workspace.media", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      host.layoutSubtreeIfNeeded()
+                      let restored = editor.workspaceFocus == .media
+                          && editor.mediaPanelCurrentFolderId == nil
+                          && editor.mediaLibrarySession(for: .workspace).folderID == nil
+                          && probeState(identifier: "media.listMode", in: window) == true
+                      if restored { rootSessionWasIntentional = true }
+                      return restored
                   }),
                   click(identifier: "media.search", in: window) == nil,
                   typeKeys(
@@ -320,7 +370,9 @@ enum WorkspaceUIAcceptance {
                     "browserMaximizePreservedSurface": true,
                     "browserRestorePreservedSurface": true,
                     "browserRoleRestoredAfterWorkspaceReturn": true,
-                    "browserFolderReturnOpened": editor.mediaPanelCurrentFolderId == nil,
+                    "browserFolderReturnOpened": browserFolderReturnOpened,
+                    "hiddenSearchFolderDeleteExcluded": hiddenSearchFolderDeleteExcluded,
+                    "rootSessionWasIntentional": rootSessionWasIntentional,
                     "globalSearchReachedAnotherFolder": true,
                     "browserDeleteExcludedTreeFolder": editor.folder(id: "acceptance-folder-0") != nil,
                     "browserAssetSelectionSurvivedOwnershipTransfer": true,
@@ -401,6 +453,16 @@ enum WorkspaceUIAcceptance {
                               in: host,
                               identifier: "mediaPicker.production.asset.acceptance-bulk-0"
                           ) != nil
+                  }) else {
+                fail("production picker did not scroll or apply the native filter", scale: scale)
+            }
+            productionPicker.scrollAnchorID = "acceptance-bulk-0"
+            guard await waitUntil(timeout: .seconds(5), {
+                      host.layoutSubtreeIfNeeded()
+                      return clickTargetIsVisible(
+                          identifier: "mediaPicker.production.asset.acceptance-bulk-0",
+                          in: window
+                      )
                   }),
                   click(
                       identifier: "mediaPicker.production.asset.acceptance-bulk-0",
@@ -440,6 +502,16 @@ enum WorkspaceUIAcceptance {
                   await waitUntil(timeout: .seconds(5), {
                       probeState(identifier: "mediaPicker.postproduction.filter.video", in: window) == true
                           && postPicker.filterTypes == [.video]
+                  }) else {
+                fail("postproduction picker did not apply the native filter", scale: scale)
+            }
+            postPicker.scrollAnchorID = "acceptance-bulk-0"
+            guard await waitUntil(timeout: .seconds(5), {
+                      host.layoutSubtreeIfNeeded()
+                      return clickTargetIsVisible(
+                          identifier: "mediaPicker.postproduction.asset.acceptance-bulk-0",
+                          in: window
+                      )
                   }),
                   click(
                       identifier: "mediaPicker.postproduction.asset.acceptance-bulk-0",
@@ -516,7 +588,7 @@ enum WorkspaceUIAcceptance {
                     "activeAsset": editor.activeSourceAsset?.id ?? "",
                     "compatibleQueryPreserved": true,
                     "revealedFolder": editor.mediaLibrarySession(for: .workspace).folderID ?? "",
-                    "rootSessionWasIntentional": true,
+                    "rootSessionWasIntentional": rootSessionWasIntentional,
                 ]
             )
             guard click(identifier: "media.search", in: window) == nil,
@@ -764,13 +836,80 @@ enum WorkspaceUIAcceptance {
                   }) else {
                 fail("edit browser command ownership did not survive a workspace return", scale: scale)
             }
+            let hiddenBrowserSelection = editor.selectedMediaAssetIds
+            let hiddenBrowserFolder = editor.mediaPanelCurrentFolderId
+            var captionsHiddenBrowserCommandsBlocked = false
+            var musicHiddenBrowserCommandsBlocked = false
+            guard click(identifier: "media.tab.Captions", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.mediaPanelTab == .captions
+                          && editor.mediaCommandFocus == nil
+                  }),
+                  click(identifier: "editor.workspace.production", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.workspaceFocus == .production
+                  }),
+                  click(identifier: "editor.workspace.edit", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.workspaceFocus == .edit
+                          && editor.mediaPanelTab == .captions
+                          && editor.mediaCommandFocus == nil
+                  }),
+                  pressKey(keyCode: 124, characters: "\u{F703}", in: window) == nil,
+                  pressKey(keyCode: 51, characters: "\u{8}", in: window) == nil,
+                  pressKey(keyCode: 36, characters: "\r", in: window) == nil else {
+                fail("Captions restored hidden media-browser commands", scale: scale)
+            }
+            try? await Task.sleep(for: .milliseconds(100))
+            captionsHiddenBrowserCommandsBlocked = editor.selectedMediaAssetIds == hiddenBrowserSelection
+                && editor.mediaPanelCurrentFolderId == hiddenBrowserFolder
+                && editor.mediaPanelOpenFolderId == nil
+            guard captionsHiddenBrowserCommandsBlocked,
+                  click(identifier: "media.tab.Music", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.mediaPanelTab == .music
+                          && editor.mediaCommandFocus == nil
+                  }),
+                  click(identifier: "editor.workspace.production", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.workspaceFocus == .production
+                  }),
+                  click(identifier: "editor.workspace.edit", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.workspaceFocus == .edit
+                          && editor.mediaPanelTab == .music
+                          && editor.mediaCommandFocus == nil
+                  }),
+                  pressKey(keyCode: 123, characters: "\u{F702}", in: window) == nil,
+                  pressKey(keyCode: 51, characters: "\u{8}", in: window) == nil,
+                  pressKey(keyCode: 36, characters: "\r", in: window) == nil else {
+                fail("Music restored hidden media-browser commands", scale: scale)
+            }
+            try? await Task.sleep(for: .milliseconds(100))
+            musicHiddenBrowserCommandsBlocked = editor.selectedMediaAssetIds == hiddenBrowserSelection
+                && editor.mediaPanelCurrentFolderId == hiddenBrowserFolder
+                && editor.mediaPanelOpenFolderId == nil
+            guard musicHiddenBrowserCommandsBlocked,
+                  click(identifier: "media.tab.Assets", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.mediaPanelTab == .assets
+                  }),
+                  click(identifier: "selection.asset.selection-source", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.selectedMediaAssetIds == ["selection-source"]
+                          && editor.mediaCommandFocus == .browser
+                  }) else {
+                fail("edit media browser did not recover after hidden-tab command checks", scale: scale)
+            }
             emit(
                 "media-command-restore",
                 scale: scale,
                 fields: [
+                    "captionsHiddenBrowserCommandsBlocked": captionsHiddenBrowserCommandsBlocked,
                     "editBrowserArrowSelected": "selection-secondary",
                     "editBrowserRoleRestored": true,
                     "mediaBrowserRoleRestored": true,
+                    "musicHiddenBrowserCommandsBlocked": musicHiddenBrowserCommandsBlocked,
                 ]
             )
 
@@ -2805,10 +2944,11 @@ enum WorkspaceUIAcceptance {
             return "control has no finite frame"
         }
         let fraction = max(0, min(1, horizontalFraction))
-        let location = probe.convert(
-            NSPoint(x: frame.minX + frame.width * fraction, y: frame.midY),
-            to: nil
-        )
+        let localPoint = NSPoint(x: frame.minX + frame.width * fraction, y: frame.midY)
+        guard clickPointIsVisible(localPoint, in: probe) else {
+            return "control is outside its clip viewport"
+        }
+        let location = probe.convert(localPoint, to: nil)
         guard root.bounds.contains(root.convert(location, from: nil)) else {
             return "control is outside the window"
         }
@@ -2839,6 +2979,37 @@ enum WorkspaceUIAcceptance {
         NSApp.postEvent(down, atStart: false)
         NSApp.postEvent(up, atStart: false)
         return nil
+    }
+
+    private static func clickTargetIsVisible(
+        identifier: String,
+        horizontalFraction: CGFloat = 0.5,
+        in window: NSWindow
+    ) -> Bool {
+        guard let root = window.contentView,
+              let probe = findProbe(in: root, identifier: identifier),
+              probe.window === window,
+              !probe.isHiddenOrHasHiddenAncestor else { return false }
+        let frame = probe.bounds
+        guard frame.width.isFinite, frame.height.isFinite, frame.width > 0, frame.height > 0 else {
+            return false
+        }
+        let fraction = max(0, min(1, horizontalFraction))
+        let point = NSPoint(x: frame.minX + frame.width * fraction, y: frame.midY)
+        return clickPointIsVisible(point, in: probe)
+            && root.bounds.contains(root.convert(probe.convert(point, to: nil), from: nil))
+    }
+
+    private static func clickPointIsVisible(_ point: NSPoint, in probe: NSView) -> Bool {
+        var ancestor = probe.superview
+        while let view = ancestor {
+            if let clipView = view as? NSClipView,
+               !clipView.visibleRect.contains(probe.convert(point, to: clipView)) {
+                return false
+            }
+            ancestor = view.superview
+        }
+        return true
     }
 
     private static func scroll(identifier: String, in window: NSWindow) -> String? {

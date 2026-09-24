@@ -153,6 +153,9 @@ struct MediaTab: View {
         } action: { newValue in
             mediaPanelHeight = newValue
         }
+        .onChange(of: visibleMediaPanelItemIDs, initial: true) { _, ids in
+            publishOrderedIds(ids)
+        }
         .onExitCommand { if editor.pendingSwapClipId != nil { editor.cancelMediaSwap() } }
         .background(KeyCommandSink(onNewFolder: createNewFolderInCurrent, onNavigateUp: navigateUp))
         .simultaneousGesture(TapGesture().onEnded {
@@ -554,6 +557,20 @@ struct MediaTab: View {
 
     var selectedMediaAssetsInOrder: [MediaAsset] {
         editor.mediaAssets.filter { editor.selectedMediaAssetIds.contains($0.id) }
+    }
+
+    var visibleMediaPanelItemIDs: [String] {
+        if showsEmptyState { return [] }
+        if !trimmedSearchQuery.isEmpty { return visibleSearchResultAssetIDs }
+        switch viewMode {
+        case .folder:
+            return subfoldersInCurrentFolder.map { MediaPanelItemKey.folder($0.id) }
+                + assetsInCurrentFolder.map(\.id)
+        case .flat:
+            return sortAndFilter(editor.mediaAssets).map(\.id)
+        case .grouped:
+            return groupedVisibleAssetIDs
+        }
     }
 
     private var showsEmptyState: Bool {

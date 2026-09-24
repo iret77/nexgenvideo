@@ -907,7 +907,10 @@ final class EditorViewModel {
         inspectorPanelVisible = state.inspectorVisible
         focusedPanel = state.focusedPanel
         maximizedPanel = state.maximizedPanel
-        mediaCommandFocus = restorableMediaCommandFocus(state.mediaCommandFocus)
+        mediaCommandFocus = restorableMediaCommandFocus(
+            state.mediaCommandFocus,
+            mediaPanelTab: state.mediaPanelTab
+        )
         let clipIDs = Set(timeline.tracks.flatMap(\.clips).map(\.id))
         selectedClipIds = state.selectedClipIds.intersection(clipIDs)
         selectedGap = state.selectedGap.flatMap {
@@ -932,8 +935,8 @@ final class EditorViewModel {
         currentFrame = max(0, min(state.timelineFrame, timeline.totalFrames))
         var restoredSourceFrame = max(0, state.sourceFrame)
         let restoredPurpose = mediaLibraryPurpose(for: focus)
-        activeMediaLibraryPurpose = activeSourceAsset == nil ? nil : restoredPurpose
         if let purpose = restoredPurpose, let asset = activeSourceAsset {
+            activeMediaLibraryPurpose = purpose
             let sourceState = mediaLibrarySession(for: purpose).sourceStates[asset.id]
                 ?? (previousMediaLibraryPurpose == nil ? sourcePreviewStates[asset.id] : nil)
                 ?? SourcePreviewState()
@@ -949,7 +952,10 @@ final class EditorViewModel {
         isMarqueeSelecting = false
     }
 
-    private func restorableMediaCommandFocus(_ focus: MediaCommandFocus?) -> MediaCommandFocus? {
+    private func restorableMediaCommandFocus(
+        _ focus: MediaCommandFocus?,
+        mediaPanelTab: MediaPanelTab
+    ) -> MediaCommandFocus? {
         switch (workspaceFocus, focus) {
         case (.media, .some(.folderTree)):
             return focusedPanel == .media && isSidebarPresented ? .folderTree : nil
@@ -960,7 +966,9 @@ final class EditorViewModel {
             return focusedPanel == .preview
                 && (maximizedPanel == nil || maximizedPanel == .preview) ? .sourcePreview : nil
         case (.edit, .some(.browser)):
-            return focusedPanel == .media && isSidebarPresented ? .browser : nil
+            return focusedPanel == .media
+                && isSidebarPresented
+                && mediaPanelTab == .assets ? .browser : nil
         default:
             return nil
         }
@@ -1197,9 +1205,15 @@ final class EditorViewModel {
     func setMediaPanelTab(_ tab: MediaPanelTab, for workspace: WorkspaceFocus) {
         guard var state = workspacePresentationStates[workspace] else { return }
         state.mediaPanelTab = tab
+        if workspace == .edit, tab != .assets, state.mediaCommandFocus == .browser {
+            state.mediaCommandFocus = nil
+        }
         workspacePresentationStates[workspace] = state
         if workspace == workspaceFocus {
             mediaPanelTab = tab
+            if workspace == .edit, tab != .assets, mediaCommandFocus == .browser {
+                mediaCommandFocus = nil
+            }
         }
     }
 
@@ -1228,6 +1242,29 @@ final class EditorViewModel {
     @ObservationIgnored var mediaImportSequence: Int = 0
     @ObservationIgnored var mediaImportCancellationGeneration: Int = 0
     @ObservationIgnored var songAttachInProgress = false
+
+    var selectedVisibleMediaFolderIDs: Set<String> {
+        let visible = Set(mediaPanelOrderedItemIds.compactMap {
+            MediaPanelItemKey.folderId(from: $0)
+        })
+        return selectedFolderIds.intersection(visible)
+    }
+
+    var selectedVisibleMediaAssetIDs: Set<String> {
+        let visible = Set(mediaPanelOrderedItemIds.filter {
+            MediaPanelItemKey.folderId(from: $0) == nil
+        })
+        return selectedMediaAssetIds.intersection(visible)
+    }
+
+    func focusMediaFolderTree(selection: Set<String>) {
+        guard workspaceFocus == .media else { return }
+        let folderIDs = Set(folders.map(\.id))
+        focusedPanel = .media
+        mediaCommandFocus = .folderTree
+        selectedFolderIds = selection.intersection(folderIDs)
+        selectedMediaAssetIds.removeAll()
+    }
 
     func mediaLibrarySession(for purpose: MediaLibraryPurpose) -> MediaLibrarySession {
         if let session = mediaLibrarySessions[purpose] {

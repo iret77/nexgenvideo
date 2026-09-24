@@ -25,7 +25,6 @@ extension MediaTab {
         let tileWidth: CGFloat
         let spacing: CGFloat
         let cells: [MediaCell]
-        let orderedIds: [String]
     }
 
     struct GridDimensions {
@@ -35,7 +34,6 @@ extension MediaTab {
     }
 
     func listScroll(cells: [MediaCell]) -> some View {
-        let orderedIDs = cells.map(\.id)
         let session = editor.mediaLibrarySession(for: mediaPurpose)
         return ScrollViewReader { proxy in
             ScrollView {
@@ -56,10 +54,8 @@ extension MediaTab {
                 anchor: .center
             )
             .onAppear {
-                publishOrderedIds(orderedIDs)
                 if editor.mediaPanelColumnCount != 1 { editor.mediaPanelColumnCount = 1 }
             }
-            .onChange(of: orderedIDs) { _, ids in publishOrderedIds(ids) }
             .onChange(of: editor.mediaPanelScrollTarget) { _, target in
                 guard workspace == editor.workspaceFocus, let target else { return }
                 withAnimation(.easeOut(duration: AppTheme.Anim.hover)) {
@@ -92,10 +88,9 @@ extension MediaTab {
         for asset in assetsInCurrentFolder {
             cells.append(MediaCell(kind: .asset(asset)))
         }
-        let orderedIds = cells.map(\.id)
         return GridLayoutInfo(
             cols: dims.cols, tileWidth: dims.tileWidth, spacing: dims.spacing,
-            cells: cells, orderedIds: orderedIds
+            cells: cells
         )
     }
 
@@ -119,7 +114,6 @@ extension MediaTab {
     @ViewBuilder
     fileprivate func gridScroll<Cell: Identifiable, Content: View>(
         cells: [Cell],
-        orderedIds: [String],
         cols: Int,
         tileWidth: CGFloat,
         spacing: CGFloat,
@@ -155,8 +149,6 @@ extension MediaTab {
                 assetFrames = frames
                 if editor.mediaPanelColumnCount != cols { editor.mediaPanelColumnCount = cols }
             }
-            .onAppear { publishOrderedIds(orderedIds) }
-            .onChange(of: orderedIds) { _, ids in publishOrderedIds(ids) }
             .onChange(of: editor.mediaPanelScrollTarget) { _, target in
                 guard workspace == editor.workspaceFocus, let target else { return }
                 withAnimation(.easeOut(duration: AppTheme.Anim.hover)) {
@@ -179,7 +171,6 @@ extension MediaTab {
             let layout = computeLayout(width: geo.size.width)
             gridScroll(
                 cells: layout.cells,
-                orderedIds: layout.orderedIds,
                 cols: layout.cols,
                 tileWidth: layout.tileWidth,
                 spacing: layout.spacing,
@@ -202,12 +193,10 @@ extension MediaTab {
 extension MediaTab {
     var flatGridView: some View {
         let assets = sortAndFilter(editor.mediaAssets)
-        let orderedIds = assets.map(\.id)
         return GeometryReader { geo in
             let dims = gridDimensions(width: geo.size.width)
             gridScroll(
                 cells: assets,
-                orderedIds: orderedIds,
                 cols: dims.cols,
                 tileWidth: dims.tileWidth,
                 spacing: dims.spacing,
@@ -226,6 +215,22 @@ extension MediaTab {
 // MARK: - Grouped mode (folder sections with dividers)
 
 extension MediaTab {
+    var groupedVisibleAssetIDs: [String] {
+        let bucketed = editor.mediaAssets.reduce(into: [String?: [MediaAsset]]()) { dict, asset in
+            dict[asset.folderId, default: []].append(asset)
+        }
+        let folders = editor.folders
+            .map { ($0, editor.folderPath(for: $0.id).map(\.name).joined(separator: " / ")) }
+            .sorted { $0.1.localizedCaseInsensitiveCompare($1.1) == .orderedAscending }
+        var ids = collapsedGroupedKeys.contains("")
+            ? []
+            : sortAndFilter(bucketed[nil] ?? []).map(\.id)
+        for (folder, _) in folders where !collapsedGroupedKeys.contains(folder.id) {
+            ids.append(contentsOf: sortAndFilter(bucketed[folder.id] ?? []).map(\.id))
+        }
+        return ids
+    }
+
     var groupedGridView: some View {
         // Bucket once so each section is O(1).
         let bucketed = editor.mediaAssets.reduce(into: [String?: [MediaAsset]]()) { dict, asset in
@@ -236,10 +241,6 @@ extension MediaTab {
         let allFolders = editor.folders
             .map { ($0, editor.folderPath(for: $0.id).map(\.name).joined(separator: " / ")) }
             .sorted { $0.1.localizedCaseInsensitiveCompare($1.1) == .orderedAscending }
-        var orderedIds = collapsedGroupedKeys.contains("") ? [] : rootAssets.map(\.id)
-        for (folder, _) in allFolders where !collapsedGroupedKeys.contains(folder.id) {
-            orderedIds.append(contentsOf: sortAndFilter(bucketed[folder.id] ?? []).map(\.id))
-        }
         return GeometryReader { geo in
             let dims = gridDimensions(width: geo.size.width)
             ScrollViewReader { proxy in
@@ -280,8 +281,6 @@ extension MediaTab {
                     assetFrames = frames
                     if editor.mediaPanelColumnCount != dims.cols { editor.mediaPanelColumnCount = dims.cols }
                 }
-                .onAppear { publishOrderedIds(orderedIds) }
-                .onChange(of: orderedIds) { _, ids in publishOrderedIds(ids) }
                 .onChange(of: editor.mediaPanelScrollTarget) { _, target in
                     guard workspace == editor.workspaceFocus, let target else { return }
                     withAnimation(.easeOut(duration: AppTheme.Anim.hover)) {

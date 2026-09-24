@@ -155,6 +155,27 @@ struct WorkspaceFocusTests {
         #expect(editor.mediaCommandFocus == nil)
     }
 
+    @Test func editBrowserOwnershipRequiresTheVisibleAssetsTab() {
+        let restoreDefaults = preservePanelDefaults()
+        defer { restoreDefaults() }
+        let editor = EditorViewModel()
+
+        editor.setWorkspaceFocus(.edit)
+        editor.mediaPanelVisible = true
+        editor.focusedPanel = .media
+        editor.mediaCommandFocus = .browser
+        editor.setMediaPanelTab(.captions, for: .edit)
+
+        #expect(editor.mediaCommandFocus == nil)
+
+        editor.mediaCommandFocus = .browser
+        editor.setWorkspaceFocus(.production)
+        editor.setWorkspaceFocus(.edit)
+
+        #expect(editor.mediaPanelTab == .captions)
+        #expect(editor.mediaCommandFocus == nil)
+    }
+
     @Test func restoringWorkspacePanelsDoesNotRewriteUserDefaults() {
         let restoreDefaults = preservePanelDefaults()
         defer { restoreDefaults() }

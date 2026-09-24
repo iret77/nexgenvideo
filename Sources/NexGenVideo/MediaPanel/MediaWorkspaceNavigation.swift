@@ -55,8 +55,9 @@ struct MediaWorkspaceNavigation: View {
             selection = editor.selectedFolderIds
         }
         .simultaneousGesture(TapGesture().onEnded {
-            editor.focusedPanel = .media
-            editor.mediaCommandFocus = .folderTree
+            DispatchQueue.main.async {
+                editor.focusMediaFolderTree(selection: selection)
+            }
         })
         .onChange(of: editor.mediaPanelCurrentFolderId) { _, folderID in
             guard editor.workspaceFocus == .media else { return }

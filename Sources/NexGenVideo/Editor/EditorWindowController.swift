@@ -132,8 +132,8 @@ final class EditorWindowController: NSWindowController {
 
         case 36: // Return / Enter
             if canHandleMediaShortcut(),
-               selectedVisibleMediaFolderIDs.count == 1,
-               let folderId = selectedVisibleMediaFolderIDs.first {
+               editorViewModel.selectedVisibleMediaFolderIDs.count == 1,
+               let folderId = editorViewModel.selectedVisibleMediaFolderIDs.first {
                 editorViewModel.mediaPanelOpenFolderId = folderId
                 return true
             }
@@ -303,6 +303,7 @@ extension EditorWindowController: EditorActions {
         case (.edit, .some(.browser)):
             return editorViewModel.focusedPanel == .media
                 && editorViewModel.isSidebarPresented
+                && editorViewModel.mediaPanelTab == .assets
         default:
             return false
         }
@@ -310,13 +311,6 @@ extension EditorWindowController: EditorActions {
 
     private func canHandleMediaBrowserShortcut() -> Bool {
         canHandleMediaShortcut() && editorViewModel.mediaCommandFocus == .browser
-    }
-
-    private var selectedVisibleMediaFolderIDs: Set<String> {
-        let visibleFolderIDs = Set(editorViewModel.mediaPanelOrderedItemIds.compactMap {
-            MediaPanelItemKey.folderId(from: $0)
-        })
-        return editorViewModel.selectedFolderIds.intersection(visibleFolderIDs)
     }
 
     @discardableResult
@@ -329,19 +323,20 @@ extension EditorWindowController: EditorActions {
                 editorViewModel.mediaPanelDeleteFolderRequest = folderIDs
                 return true
             }
-            let folderIDs = selectedVisibleMediaFolderIDs
+            let folderIDs = editorViewModel.selectedVisibleMediaFolderIDs
+            let assetIDs = editorViewModel.selectedVisibleMediaAssetIDs
             let hasFolders = !folderIDs.isEmpty
-            let hasAssets = !editorViewModel.selectedMediaAssetIds.isEmpty
+            let hasAssets = !assetIDs.isEmpty
             guard hasFolders || hasAssets else { return false }
             guard (!hasFolders || editorViewModel.canDeleteFolders(ids: folderIDs)),
-                  (!hasAssets || editorViewModel.canDeleteMediaAssets(ids: editorViewModel.selectedMediaAssetIds)) else {
+                  (!hasAssets || editorViewModel.canDeleteMediaAssets(ids: assetIDs)) else {
                 return false
             }
             if hasFolders {
                 editorViewModel.deleteFolders(ids: folderIDs)
             }
             if hasAssets {
-                editorViewModel.deleteSelectedMediaAssets()
+                editorViewModel.deleteMediaAssets(ids: assetIDs)
             }
             return true
         }
@@ -484,8 +479,8 @@ extension EditorWindowController: EditorActions {
                     return !folderIds.isEmpty
                         && editorViewModel.canDeleteFolders(ids: folderIds)
                 }
-                let folderIds = selectedVisibleMediaFolderIDs
-                let assetIds = editorViewModel.selectedMediaAssetIds
+                let folderIds = editorViewModel.selectedVisibleMediaFolderIDs
+                let assetIds = editorViewModel.selectedVisibleMediaAssetIDs
                 return (!folderIds.isEmpty || !assetIds.isEmpty)
                     && (folderIds.isEmpty || editorViewModel.canDeleteFolders(ids: folderIds))
                     && (assetIds.isEmpty || editorViewModel.canDeleteMediaAssets(ids: assetIds))

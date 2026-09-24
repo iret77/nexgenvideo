@@ -1209,6 +1209,43 @@ struct MoveMediaSelectionTests {
 
         #expect(e.selectedMediaAssetIds == [ids[0]])
     }
+
+    @Test func visibleMediaSelectionExcludesFilteredAssetsAndFolders() {
+        let e = editor()
+        let visibleFolder = e.createFolder(name: "Visible")
+        let hiddenFolder = e.createFolder(name: "Hidden")
+        let visibleAsset = asset(name: "visible", folderId: nil)
+        let hiddenAsset = asset(name: "hidden", folderId: nil)
+        e.importMediaAsset(visibleAsset)
+        e.importMediaAsset(hiddenAsset)
+        e.selectedFolderIds = [visibleFolder, hiddenFolder]
+        e.selectedMediaAssetIds = [visibleAsset.id, hiddenAsset.id]
+        e.mediaPanelOrderedItemIds = [
+            MediaPanelItemKey.folder(visibleFolder),
+            visibleAsset.id,
+        ]
+
+        #expect(e.selectedVisibleMediaFolderIDs == [visibleFolder])
+        #expect(e.selectedVisibleMediaAssetIDs == [visibleAsset.id])
+    }
+
+    @Test func folderTreeOwnershipAdoptsItsVisibleSelection() {
+        let e = editor()
+        e.setWorkspaceFocus(.media)
+        let folderID = e.createFolder(name: "Tree")
+        let source = asset(name: "browser", folderId: nil)
+        e.importMediaAsset(source)
+        e.selectedMediaAssetIds = [source.id]
+        e.selectedFolderIds = []
+        e.mediaCommandFocus = .browser
+
+        e.focusMediaFolderTree(selection: [folderID])
+
+        #expect(e.focusedPanel == .media)
+        #expect(e.mediaCommandFocus == .folderTree)
+        #expect(e.selectedFolderIds == [folderID])
+        #expect(e.selectedMediaAssetIds.isEmpty)
+    }
 }
 
 // MARK: - MediaImportFlow

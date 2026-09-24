@@ -248,6 +248,8 @@ def run_scale(executable, output, scale):
         and media_keyboard[0].get("browserRestorePreservedSurface") is True
         and media_keyboard[0].get("browserRoleRestoredAfterWorkspaceReturn") is True
         and media_keyboard[0].get("browserFolderReturnOpened") is True
+        and media_keyboard[0].get("hiddenSearchFolderDeleteExcluded") is True
+        and media_keyboard[0].get("rootSessionWasIntentional") is True
         and media_keyboard[0].get("globalSearchReachedAnotherFolder") is True
         and media_keyboard[0].get("browserDeleteExcludedTreeFolder") is True
         and media_keyboard[0].get("browserAssetSelectionSurvivedOwnershipTransfer") is True
@@ -273,8 +275,10 @@ def run_scale(executable, output, scale):
         and media_reveal[0].get("revealedFolder") == "acceptance-folder-0"
         and media_reveal[0].get("rootSessionWasIntentional") is True
         and media_command_restore[0].get("editBrowserArrowSelected") == "selection-secondary"
+        and media_command_restore[0].get("captionsHiddenBrowserCommandsBlocked") is True
         and media_command_restore[0].get("editBrowserRoleRestored") is True
         and media_command_restore[0].get("mediaBrowserRoleRestored") is True
+        and media_command_restore[0].get("musicHiddenBrowserCommandsBlocked") is True
         and selection_source[0].get("activeAsset") == "selection-source"
         and selection_source[0].get("sourceFrame") == 42
         and selection_source[0].get("sourceIn") == 18

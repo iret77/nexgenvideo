@@ -6,6 +6,26 @@ extension MediaTab {
         searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    var visibleSearchResultAssetIDs: [String] {
+        let nameMatches = searchScope == .filename ? sortAndFilter(editor.mediaAssets) : []
+        var ids: [String] = []
+        var seen: Set<String> = []
+        func append(_ candidates: [String]) {
+            for id in candidates where seen.insert(id).inserted {
+                ids.append(id)
+            }
+        }
+        if !collapsedSearchSections.contains("Moments") {
+            append(visualHits.filter(hitPassesFilters).map(\.assetID))
+        }
+        if !collapsedSearchSections.contains("Transcript") {
+            append(spokenHits.filter(hitPassesFilters).map(\.assetID))
+        }
+        append(documentHits.filter(hitPassesFilters).map(\.assetID))
+        append(nameMatches.map(\.id))
+        return ids
+    }
+
     var searchResults: some View {
         let nameMatches = searchScope == .filename ? sortAndFilter(editor.mediaAssets) : []
         let visibleVisualHits = visualHits.filter(hitPassesFilters)
