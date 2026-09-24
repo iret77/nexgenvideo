@@ -1223,6 +1223,126 @@ struct ExportQueueTests {
         #expect(FileManager.default.fileExists(atPath: mediaBinding.temporaryURL.path))
     }
 
+    @Test("runtime recovery retains offline records until their exact partials are reachable")
+    func runtimeRecoveryRetainsOfflineRecords() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(
+            "export-runtime-offline-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let recovery = root.appendingPathComponent("runtime", isDirectory: true)
+        let offlineID = UUID().uuidString.lowercased()
+        let activeID = UUID().uuidString.lowercased()
+        let missingID = UUID().uuidString.lowercased()
+        let offlineSnapshot = ExportQueue.SourceBinding.snapshotRoot(jobID: offlineID)
+        let activeSnapshot = ExportQueue.SourceBinding.snapshotRoot(jobID: activeID)
+        let missingSnapshot = ExportQueue.SourceBinding.snapshotRoot(jobID: missingID)
+        defer {
+            try? fm.removeItem(at: root)
+            try? fm.removeItem(at: offlineSnapshot)
+            try? fm.removeItem(at: activeSnapshot)
+            try? fm.removeItem(at: missingSnapshot)
+        }
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let activeBinding = try ExportQueue.DestinationBinding(
+            url: root.appendingPathComponent("active.xml"),
+            jobID: activeID,
+            expectsDirectory: false
+        )
+        try fm.createDirectory(at: activeSnapshot, withIntermediateDirectories: true)
+        _ = try ExportRuntimeRecoveryStore.begin(
+            jobID: activeID,
+            kind: .xml,
+            snapshotURL: activeSnapshot,
+            destination: activeBinding,
+            companion: nil,
+            root: recovery
+        )
+
+        let offlineParent = root.appendingPathComponent("external", isDirectory: true)
+        try fm.createDirectory(at: offlineParent, withIntermediateDirectories: true)
+        let offlineBinding = try ExportQueue.DestinationBinding(
+            url: offlineParent.appendingPathComponent("timeline.xml"),
+            jobID: offlineID,
+            expectsDirectory: false
+        )
+        try fm.createDirectory(at: offlineSnapshot, withIntermediateDirectories: true)
+        _ = try ExportRuntimeRecoveryStore.begin(
+            jobID: offlineID,
+            kind: .xml,
+            snapshotURL: offlineSnapshot,
+            destination: offlineBinding,
+            companion: nil,
+            root: recovery
+        )
+        let offlineIdentity = try #require(
+            ExportFileIdentity.capture(offlineBinding.temporaryURL)
+        )
+        let foreign = offlineParent.appendingPathComponent("keep.txt")
+        try Data("keep".utf8).write(to: foreign)
+        let unavailableParent = root.appendingPathComponent("external-unmounted", isDirectory: true)
+        try fm.moveItem(at: offlineParent, to: unavailableParent)
+
+        try ExportRuntimeRecoveryStore.recoverAll(
+            excludingJobIDs: [activeID],
+            root: recovery
+        )
+        let offlineRecord = recovery.appendingPathComponent("\(offlineID).json")
+        let activeRecord = recovery.appendingPathComponent("\(activeID).json")
+        #expect(fm.fileExists(atPath: offlineRecord.path))
+        #expect(fm.fileExists(atPath: offlineSnapshot.path))
+        #expect(
+            try ExportFileIdentity.capture(
+                unavailableParent.appendingPathComponent(
+                    offlineBinding.temporaryURL.lastPathComponent
+                )
+            ) == offlineIdentity
+        )
+        #expect(fm.fileExists(atPath: activeBinding.temporaryURL.path))
+        #expect(fm.fileExists(atPath: activeSnapshot.path))
+        #expect(fm.fileExists(atPath: activeRecord.path))
+
+        try fm.moveItem(at: unavailableParent, to: offlineParent)
+        try ExportRuntimeRecoveryStore.recoverAll(
+            excludingJobIDs: [activeID],
+            root: recovery
+        )
+        #expect(!fm.fileExists(atPath: offlineBinding.temporaryURL.path))
+        #expect(!fm.fileExists(atPath: offlineSnapshot.path))
+        #expect(!fm.fileExists(atPath: offlineRecord.path))
+        #expect(try Data(contentsOf: foreign) == Data("keep".utf8))
+        #expect(fm.fileExists(atPath: activeBinding.temporaryURL.path))
+        #expect(fm.fileExists(atPath: activeSnapshot.path))
+        #expect(fm.fileExists(atPath: activeRecord.path))
+
+        let missingParent = root.appendingPathComponent("online", isDirectory: true)
+        try fm.createDirectory(at: missingParent, withIntermediateDirectories: true)
+        let missingBinding = try ExportQueue.DestinationBinding(
+            url: missingParent.appendingPathComponent("missing.xml"),
+            jobID: missingID,
+            expectsDirectory: false
+        )
+        try fm.createDirectory(at: missingSnapshot, withIntermediateDirectories: true)
+        _ = try ExportRuntimeRecoveryStore.begin(
+            jobID: missingID,
+            kind: .xml,
+            snapshotURL: missingSnapshot,
+            destination: missingBinding,
+            companion: nil,
+            root: recovery
+        )
+        try fm.removeItem(at: missingBinding.temporaryURL)
+        try ExportRuntimeRecoveryStore.recoverAll(
+            excludingJobIDs: [activeID],
+            root: recovery
+        )
+        #expect(!fm.fileExists(atPath: recovery.appendingPathComponent("\(missingID).json").path))
+        #expect(!fm.fileExists(atPath: missingSnapshot.path))
+        #expect(fm.fileExists(atPath: activeBinding.temporaryURL.path))
+        #expect(fm.fileExists(atPath: activeRecord.path))
+    }
+
     private struct PublishRecoveryFixture {
         let recovery: URL
         let document: URL

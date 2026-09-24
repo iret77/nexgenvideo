@@ -87,6 +87,37 @@ enum ExportActionsSelfTest {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 
+        let visibilityAction = "reveal"
+        let visibilityIdentifier = "export.job.\(completed.id).\(visibilityAction)"
+        try await prepareAction(job: completed, action: visibilityAction, window: window)
+        host.view.isHidden = true
+        window.displayIfNeeded()
+        let hiddenActionRejected = !AppRelaunchSelfTest.isClickProbeReady(
+            identifier: visibilityIdentifier,
+            in: window,
+            expectedEnabled: true
+        )
+        host.view.isHidden = false
+        window.displayIfNeeded()
+        guard hiddenActionRejected else {
+            throw ToolError("A hidden native export action remained clickable.")
+        }
+        try await prepareAction(job: completed, action: visibilityAction, window: window)
+        if let failure = AppRelaunchSelfTest.scrollClickProbeOutOfVisibleArea(
+            identifier: visibilityIdentifier,
+            in: window
+        ) {
+            throw ToolError("\(visibilityIdentifier): \(failure)")
+        }
+        guard !AppRelaunchSelfTest.isClickProbeReady(
+            identifier: visibilityIdentifier,
+            in: window,
+            expectedEnabled: true
+        ) else {
+            throw ToolError("An offscreen native export action remained clickable.")
+        }
+        try await prepareAction(job: completed, action: visibilityAction, window: window)
+
         _ = try await verifyActions(for: [completed, cancellable], window: window)
 
         let initialCount = queue.jobs(ownerKey: ownerKey).count
@@ -176,6 +207,8 @@ enum ExportActionsSelfTest {
             "retryStatus": retried.status.rawValue,
             "finalActionChecks": finalActionChecks,
             "disabledActionChecks": disabledActionChecks,
+            "hiddenActionChecks": 1,
+            "offscreenActionChecks": 1,
             "finderWindowReacquired": true,
         ]
         let data = try JSONSerialization.data(

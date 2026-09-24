@@ -207,10 +207,14 @@ enum ExportRuntimeRecoveryStore {
 
     private static func removeOwned(_ item: Record.Item) throws {
         guard let identity = item.identity else { return }
+        let fm = FileManager.default
         for path in item.paths {
             let url = URL(fileURLWithPath: path)
+            guard fm.fileExists(atPath: url.deletingLastPathComponent().path) else {
+                throw ToolError("The export runtime volume is unavailable.")
+            }
             guard try ExportFileIdentity.capture(url) == identity else { continue }
-            try FileManager.default.removeItem(at: url)
+            try fm.removeItem(at: url)
         }
     }
 

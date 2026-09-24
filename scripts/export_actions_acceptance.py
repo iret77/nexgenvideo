@@ -48,6 +48,8 @@ def main() -> int:
         "retryStatus",
         "finalActionChecks",
         "disabledActionChecks",
+        "hiddenActionChecks",
+        "offscreenActionChecks",
         "finderWindowReacquired",
     }
     if set(evidence) != required:
@@ -58,6 +60,8 @@ def main() -> int:
         raise SystemExit(f"native retry was not bound to the cancelled job: {evidence}")
     if evidence["finalActionChecks"] != 9 or evidence["disabledActionChecks"] != 6:
         raise SystemExit(f"native control coverage is incomplete: {evidence}")
+    if evidence["hiddenActionChecks"] != 1 or evidence["offscreenActionChecks"] != 1:
+        raise SystemExit(f"native visibility coverage is incomplete: {evidence}")
     if evidence["finderWindowReacquired"] is not True:
         raise SystemExit(f"export window did not reacquire key status: {evidence}")
     job_ids = [
