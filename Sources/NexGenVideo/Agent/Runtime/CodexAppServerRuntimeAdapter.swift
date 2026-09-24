@@ -26,6 +26,7 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
     private var invalidated = false
 
     var activeProviderTurnIdentifier: String? { providerTurnID }
+    var activeRunTaskForTesting: Task<Void, Never>? { activeTask }
 
     private(set) var descriptor: AgentRuntimeDescriptor
     private(set) var state: AgentRuntimeState = .idle

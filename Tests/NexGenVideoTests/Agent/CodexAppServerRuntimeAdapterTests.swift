@@ -1067,8 +1067,10 @@ struct CodexAppServerRuntimeAdapterTests {
             ))
 
             await driver.waitUntilPaused()
+            let runTask = try #require(adapter.activeRunTaskForTesting)
             adapter.cancel(sessionID: sessionID)
             driver.releasePausedOperation()
+            await runTask.value
             let events = await collectCodexEvents(stream)
             let expectedRequests: [String]
             switch operation {
