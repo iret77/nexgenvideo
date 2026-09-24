@@ -130,7 +130,8 @@ extension EditorViewModel {
         providerRequestResumable: Bool? = nil,
         providerReceipt: HiggsfieldJobReceipt? = nil,
         money: GenerationMoney? = nil,
-        note: String? = nil
+        note: String? = nil,
+        pricingStatus: GenerationPricingStatus? = nil
     ) throws {
         guard let transactionId = authorization.transactionId else { return }
         try authorization.projectMutationScope?.requireCurrent(editor: self)
@@ -147,7 +148,9 @@ extension EditorViewModel {
             providerRequestResumable: providerRequestResumable,
             money: money,
             note: note,
-            providerReceipt: providerReceipt
+            providerReceipt: providerReceipt,
+            billing: authorization.target.binding?.billing,
+            pricingStatus: pricingStatus
         )
         generationLog.spendEvents.append(event)
         do {
@@ -178,5 +181,33 @@ extension EditorViewModel {
             options: .atomic
         )
         onPipelineChanged?()
+    }
+
+    func refreshBudgetStatus() async throws {
+        budgetStatusLoadToken &+= 1
+        let token = budgetStatusLoadToken
+        guard let root = workingRoot else {
+            generationLog = GenerationLog()
+            await refreshProjectState()
+            return
+        }
+        let requestedRoot = root.standardizedFileURL.resolvingSymlinksInPath()
+        let url = requestedRoot.appendingPathComponent(Project.generationLogFilename)
+        let refreshed = try await Task.detached(priority: .userInitiated) {
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                return GenerationLog()
+            }
+            return try JSONDecoder().decode(GenerationLog.self, from: Data(contentsOf: url))
+        }.value
+        guard token == budgetStatusLoadToken,
+              workingRoot?.standardizedFileURL.resolvingSymlinksInPath() == requestedRoot else {
+            return
+        }
+        _ = try GenerationBudgetGuard.spendSnapshot(
+            log: refreshed,
+            generatedInputs: mediaAssets.compactMap(\.generationInput)
+        )
+        generationLog = refreshed
+        await refreshProjectState()
     }
 }

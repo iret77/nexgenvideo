@@ -25,6 +25,24 @@ EXPECTED_KEYFRAME_LANES = {
     "video": ["position", "scale", "rotation", "opacity", "crop"],
 }
 SCALES = (1.0, 1.25, 1.5)
+EXPECTED_BUDGET_CASES = {
+    "empty": (0, 0, True, 0),
+    "zero": (0, 0, True, 1),
+    "low": (9.25, 0, True, 1),
+    "exceeded": (12.5, 0, True, 1),
+    "unknown-price": (0, 0, False, 1),
+    "unknown-currency": (0, 0, False, 1),
+    "subscription-credits": (0, 0, False, 1),
+    "reserved": (0, 3.25, True, 1),
+    "submitted-failure": (0, 4, True, 1),
+    "released": (0, 0, True, 1),
+}
+STATUS_IDENTIFIERS = {
+    "editor.statusBar",
+    "editor.status.budget",
+    "editor.status.aiJobs",
+    "editor.status.exportJobs",
+}
 
 
 def valid_frame(frame):
@@ -49,6 +67,41 @@ def contains_frame(outer, inner, tolerance=1):
 
 def matching_frame(first, second, tolerance=1):
     return all(abs(first[key] - second[key]) <= tolerance for key in first)
+
+
+def valid_status_frames(row):
+    frames = row.get("statusFrames")
+    if not isinstance(frames, dict) or set(frames) != STATUS_IDENTIFIERS:
+        return False
+    if not all(valid_frame(frame) for frame in frames.values()):
+        return False
+    status = frames["editor.statusBar"]
+    return all(
+        contains_frame(status, frames[identifier])
+        for identifier in STATUS_IDENTIFIERS - {"editor.statusBar"}
+    )
+
+
+def valid_long_status_context(row):
+    value = row.get("statusContext")
+    return isinstance(value, str) and len(value) >= 40 and " · " in value
+
+
+def valid_budget_row(row):
+    expected = EXPECTED_BUDGET_CASES.get(row.get("case"))
+    if expected is None:
+        return False
+    charged, reserved, complete, items = expected
+    return (
+        row.get("charged") == charged
+        and row.get("reserved") == reserved
+        and row.get("complete") is complete
+        and row.get("items") == items
+        and valid_frame(row.get("popoverFrame"))
+        and isinstance(row.get("statusValue"), str)
+        and row["statusValue"].endswith(f"items={items}")
+        and isinstance(row.get("screenshot"), str)
+    )
 
 
 def valid_keyframe_layout(layout, expected_mode, expected_lanes):
@@ -167,6 +220,9 @@ def run_scale(executable, output, scale):
     pinned = [row for row in rows if row.get("event") == "narrow-production-pinned"]
     invariants = [row for row in rows if row.get("event") == "invariants"]
     inspector = [row for row in rows if row.get("event") == "inspector"]
+    budget = [row for row in rows if row.get("event") == "budget"]
+    project_switch = [row for row in rows if row.get("event") == "budget-project-switch"]
+    background_status = [row for row in rows if row.get("event") == "background-status"]
     open_keyframes = [row for row in inspector if row.get("keyframes") == "open"]
     screenshots = [
         row.get("screenshot")
@@ -177,6 +233,7 @@ def run_scale(executable, output, scale):
         for row in inspector
         if row.get("keyframes") != "open"
     ]
+    screenshots += [row.get("screenshot") for row in budget + project_switch]
     screenshots += [
         layout.get("screenshot")
         for row in open_keyframes
@@ -195,8 +252,12 @@ def run_scale(executable, output, scale):
         and completed
         and workspaces == EXPECTED_WORKSPACES
         and len(workspace_rows) == len(EXPECTED_WORKSPACES)
+        and all(valid_status_frames(row) for row in workspace_rows)
+        and all(valid_long_status_context(row) for row in workspace_rows)
         and len(hidden) == 1
         and len(narrow) == 1
+        and valid_status_frames(narrow[0])
+        and valid_long_status_context(narrow[0])
         and len(pinned) == 1
         and len(invariants) == 1
         and {(row.get("family"), row.get("keyframes")) for row in inspector}
@@ -204,12 +265,28 @@ def run_scale(executable, output, scale):
         and len(inspector) == len(EXPECTED_INSPECTOR_CASES)
         and len(open_keyframes) == len(EXPECTED_KEYFRAME_LANES)
         and all(valid_keyframe_lane_evidence(row) for row in open_keyframes)
+        and {row.get("case") for row in budget} == set(EXPECTED_BUDGET_CASES)
+        and len(budget) == len(EXPECTED_BUDGET_CASES)
+        and all(valid_budget_row(row) for row in budget)
+        and len(project_switch) == 1
+        and valid_status_frames(project_switch[0])
+        and valid_long_status_context(project_switch[0])
+        and "planning=none" in project_switch[0].get("emptyValue", "")
+        and "stop=none" in project_switch[0].get("emptyValue", "")
+        and "planning=10.00" in project_switch[0].get("restoredValue", "")
+        and "stop=12.00" in project_switch[0].get("restoredValue", "")
+        and len(background_status) == 1
+        and background_status[0].get("aiActiveObserved") is True
+        and background_status[0].get("exportActiveObserved") is True
+        and background_status[0].get("controlsClicked") is True
+        and valid_status_frames(background_status[0])
         and invariants[0].get("liveStateUnchanged") is True
         and invariants[0].get("projectBytesUnchanged") is True
         and invariants[0].get("undoUnchanged") is True
         and invariants[0].get("workingCopyUnchanged") is True
         and len(screenshots)
-        == 8 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES)
+        == 9 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES)
+        + len(EXPECTED_BUDGET_CASES)
         and valid_images
     )
     return {

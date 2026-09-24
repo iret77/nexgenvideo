@@ -53,6 +53,13 @@ struct GenerationMoney: Codable, Sendable, Equatable {
     let exchangeRateSource: String
 }
 
+enum GenerationPricingStatus: String, Codable, Sendable, Equatable {
+    case priced
+    case priceUnavailable
+    case currencyUnavailable
+    case subscriptionCredits
+}
+
 struct GenerationSpendEvent: Codable, Sendable, Equatable, Identifiable {
     enum Kind: String, Codable, Sendable {
         case reserved
@@ -74,6 +81,8 @@ struct GenerationSpendEvent: Codable, Sendable, Equatable, Identifiable {
     let note: String?
     let createdAt: Date
     let providerReceipt: HiggsfieldJobReceipt?
+    let billing: BillingMode?
+    let pricingStatus: GenerationPricingStatus?
 
     init(
         id: String = UUID().uuidString,
@@ -88,7 +97,9 @@ struct GenerationSpendEvent: Codable, Sendable, Equatable, Identifiable {
         money: GenerationMoney? = nil,
         note: String? = nil,
         createdAt: Date = Date(),
-        providerReceipt: HiggsfieldJobReceipt? = nil
+        providerReceipt: HiggsfieldJobReceipt? = nil,
+        billing: BillingMode? = nil,
+        pricingStatus: GenerationPricingStatus? = nil
     ) {
         self.id = id
         self.transactionId = transactionId
@@ -103,6 +114,8 @@ struct GenerationSpendEvent: Codable, Sendable, Equatable, Identifiable {
         self.note = note
         self.createdAt = createdAt
         self.providerReceipt = providerReceipt
+        self.billing = billing
+        self.pricingStatus = pricingStatus
     }
 }
 

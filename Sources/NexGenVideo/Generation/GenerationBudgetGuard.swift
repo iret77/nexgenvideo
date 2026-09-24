@@ -13,10 +13,29 @@ enum GenerationBudgetError: LocalizedError {
 
 struct ProjectSpendSnapshot: Sendable, Equatable {
     let verifiedEur: Double
+    let chargedEur: Double
+    let openReservationEur: Double
     let isComplete: Bool
     let activeReservationCount: Int
     let unpricedTransactionCount: Int
     let legacyGenerationCount: Int
+    let lineItems: [ProjectSpendLineItem]
+}
+
+struct ProjectSpendLineItem: Sendable, Equatable, Identifiable {
+    let id: String
+    let model: String
+    let provider: GenerationProvider
+    let transport: ProviderTransport
+    let endpoint: String
+    let billing: BillingMode?
+    let pricingStatus: GenerationPricingStatus
+    let state: GenerationSpendEvent.Kind
+    let money: GenerationMoney?
+    let createdAt: Date
+    let needsAttention: Bool
+
+    var countsTowardGuard: Bool { state != .released }
 }
 
 @MainActor
@@ -63,14 +82,23 @@ enum GenerationBudgetGuard {
 
         let estimate: GenerationMoney?
         let pricingFailure: String?
+        let pricingStatus: GenerationPricingStatus
         do {
             let quoted = try await quoteLoader(target, input)
             try validate(quoted)
             estimate = quoted
             pricingFailure = nil
+            pricingStatus = .priced
         } catch {
             estimate = nil
             pricingFailure = error.localizedDescription
+            if error is GenerationCurrencyUnavailableError {
+                pricingStatus = .currencyUnavailable
+            } else if target.binding?.billing == .subscription {
+                pricingStatus = .subscriptionCredits
+            } else {
+                pricingStatus = .priceUnavailable
+            }
         }
 
         if let ceiling = approvedPackage?.payload.estimate {
@@ -123,7 +151,8 @@ enum GenerationBudgetGuard {
             authorization: authorization,
             kind: .reserved,
             money: estimate,
-            note: pricingFailure
+            note: pricingFailure,
+            pricingStatus: pricingStatus
         )
         return authorization
     }
@@ -185,7 +214,10 @@ enum GenerationBudgetGuard {
         try editor.recordSpendEvent(
             authorization: authorization,
             kind: .reserved,
-            note: "Provider did not expose a monetary estimate."
+            note: "Provider did not expose a monetary estimate.",
+            pricingStatus: target.binding?.billing == .subscription
+                ? .subscriptionCredits
+                : .priceUnavailable
         )
         return authorization
     }
@@ -233,6 +265,12 @@ enum GenerationBudgetGuard {
                 throw corrupt("generation-log.json contains an incomplete spend event")
             }
             try validate(event.money)
+            if event.kind == .reserved, let pricingStatus = event.pricingStatus,
+               (pricingStatus == .priced) != (event.money != nil) {
+                throw corrupt(
+                    "transaction \(event.transactionId) has inconsistent pricing status"
+                )
+            }
             if var state = states[event.transactionId] {
                 guard state.model == event.model,
                       state.provider == event.provider,
@@ -263,19 +301,26 @@ enum GenerationBudgetGuard {
             }
         }
 
-        var total = 0.0
+        var chargedTotal = 0.0
+        var reservationTotal = 0.0
         var unpricedTransactionCount = 0
         var activeReservationCount = 0
         for state in states.values where state.kind != .released {
-            if state.kind != .charged {
+            if state.kind == .charged {
+                chargedTotal += state.chargedMoney?.eurAmount ?? 0
+            } else {
                 activeReservationCount += 1
+                reservationTotal += state.effectiveMoney?.eurAmount ?? 0
             }
             guard let money = state.effectiveMoney else {
                 unpricedTransactionCount += 1
                 continue
             }
-            total += money.eurAmount
+            guard money.eurAmount.isFinite, money.eurAmount >= 0 else {
+                throw corrupt("project spend total is invalid")
+            }
         }
+        let total = chargedTotal + reservationTotal
         guard total.isFinite, total >= 0 else {
             throw corrupt("project spend total is invalid")
         }
@@ -293,13 +338,34 @@ enum GenerationBudgetGuard {
             legacyTransactionIDs.count,
             legacyAssetIDs.count
         )
+        let lineItems = states.map { transactionId, state in
+            ProjectSpendLineItem(
+                id: transactionId,
+                model: state.model,
+                provider: state.provider,
+                transport: state.transport,
+                endpoint: state.endpoint,
+                billing: state.billing,
+                pricingStatus: state.pricingStatus,
+                state: state.kind,
+                money: state.effectiveMoney,
+                createdAt: state.updatedAt,
+                needsAttention: state.needsAttention
+            )
+        }.sorted {
+            if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
+            return $0.id < $1.id
+        }
         return ProjectSpendSnapshot(
             verifiedEur: total,
+            chargedEur: chargedTotal,
+            openReservationEur: reservationTotal,
             isComplete: unpricedTransactionCount == 0
                 && legacyGenerationCount == 0,
             activeReservationCount: activeReservationCount,
             unpricedTransactionCount: unpricedTransactionCount,
-            legacyGenerationCount: legacyGenerationCount
+            legacyGenerationCount: legacyGenerationCount,
+            lineItems: lineItems
         )
     }
 
@@ -375,6 +441,10 @@ enum GenerationBudgetGuard {
         var kind: GenerationSpendEvent.Kind
         var reservedMoney: GenerationMoney?
         var chargedMoney: GenerationMoney?
+        var billing: BillingMode?
+        var pricingStatus: GenerationPricingStatus
+        var updatedAt: Date
+        var needsAttention: Bool
 
         init(_ event: GenerationSpendEvent) {
             model = event.model
@@ -384,11 +454,32 @@ enum GenerationBudgetGuard {
             kind = event.kind
             reservedMoney = event.money
             chargedMoney = nil
+            billing = event.billing
+            pricingStatus = event.pricingStatus
+                ?? (event.money != nil
+                    ? .priced
+                    : event.billing == .subscription ? .subscriptionCredits : .priceUnavailable)
+            updatedAt = event.createdAt
+            needsAttention = event.note != nil
         }
 
         var effectiveMoney: GenerationMoney? { chargedMoney ?? reservedMoney }
 
         mutating func apply(_ event: GenerationSpendEvent) throws {
+            if let billing, let eventBilling = event.billing, billing != eventBilling {
+                throw GenerationBudgetGuard.corrupt(
+                    "transaction \(event.transactionId) changes its billing mode"
+                )
+            }
+            billing = billing ?? event.billing
+            if let eventPricingStatus = event.pricingStatus,
+               eventPricingStatus != pricingStatus {
+                throw GenerationBudgetGuard.corrupt(
+                    "transaction \(event.transactionId) changes its pricing status"
+                )
+            }
+            updatedAt = max(updatedAt, event.createdAt)
+            needsAttention = needsAttention || event.note != nil
             switch (kind, event.kind) {
             case (_, .reserved):
                 throw GenerationBudgetGuard.corrupt(
@@ -494,6 +585,14 @@ enum LiveGenerationPricing {
     }
 }
 
+private struct GenerationCurrencyUnavailableError: LocalizedError, Sendable {
+    let code: String
+
+    var errorDescription: String? {
+        "ECB has no current EUR reference rate for \(code)."
+    }
+}
+
 actor ProviderMoneyClient {
     static let shared = ProviderMoneyClient()
 
@@ -573,9 +672,7 @@ actor ProviderMoneyClient {
             guard let unitsPerEuro = rates.unitsPerEuro[code],
                   unitsPerEuro.isFinite,
                   unitsPerEuro > 0 else {
-                throw GenerationBudgetError.blocked(
-                    "ECB has no current EUR reference rate for \(code)."
-                )
+                throw GenerationCurrencyUnavailableError(code: code)
             }
             eurPerUnit = 1 / unitsPerEuro
         }

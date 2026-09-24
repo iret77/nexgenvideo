@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import NexGenEngine
 
 @MainActor
 enum WorkspaceUIAcceptance {
@@ -76,6 +77,7 @@ enum WorkspaceUIAcceptance {
                     && visiblePanelIDs(in: host) == expectedPanels(for: .media)
                     && defaultPanelWidthsAreValid(workspace: .media, frames: frames)
                     && previewTimecodeIsSingleLine(in: window, scale: scale)
+                    && statusControlsAreContained(in: window)
             }) else {
                 fail("could not prepare large media layout", scale: scale)
             }
@@ -95,6 +97,7 @@ enum WorkspaceUIAcceptance {
                     && defaultPanelWidthsAreValid(workspace: .production, frames: frames)
                     && previewTimecodeIsSingleLine(in: window, scale: scale)
                     && agentControlsAreContained(in: window)
+                    && statusControlsAreContained(in: window)
             }) else {
                 fail("could not prepare large production layout", scale: scale)
             }
@@ -138,6 +141,7 @@ enum WorkspaceUIAcceptance {
                         && visiblePanelIDs(in: host) == expectedPanels(for: workspace)
                         && defaultPanelWidthsAreValid(workspace: workspace, frames: frames)
                         && previewTimecodeIsSingleLine(in: window, scale: scale)
+                        && statusControlsAreContained(in: window)
                         && (workspace != .production || agentControlsAreContained(in: window))
                 }) else {
                     let diagnosticName = "scale-\(scaleLabel(scale))-\(workspace.rawValue)-failed"
@@ -177,8 +181,26 @@ enum WorkspaceUIAcceptance {
                       visiblePanelFrames(in: host) == renderedFrames,
                       defaultPanelWidthsAreValid(workspace: workspace, frames: renderedFrames),
                       previewTimecodeIsSingleLine(in: window, scale: scale),
+                      statusControlsAreContained(in: window),
                       workspace != .production || agentControlsAreContained(in: window) else {
                     fail("workspace layout did not settle for \(workspace.rawValue)", scale: scale)
+                }
+                guard click(identifier: "editor.status.budget", in: window) == nil,
+                      await waitUntil(timeout: .seconds(5), {
+                          probeState(identifier: "editor.status.budget", in: window) == true
+                              && probeExistsAnywhere(
+                                  identifier: "editor.status.budget.close",
+                                  preferredWindow: window
+                              )
+                      }),
+                      clickAnywhere(
+                          identifier: "editor.status.budget.close",
+                          preferredWindow: window
+                      ) == nil,
+                      await waitUntil(timeout: .seconds(5), {
+                          probeState(identifier: "editor.status.budget", in: window) == false
+                      }) else {
+                    fail("budget details were not clickable in \(workspace.rawValue)", scale: scale)
                 }
                 let visiblePanels = visiblePanelIDs(in: host)
                 if workspace == .edit { initialEditFrames = renderedFrames }
@@ -194,6 +216,8 @@ enum WorkspaceUIAcceptance {
                         "screenshot": "\(name).png",
                         "panels": visiblePanels.sorted(),
                         "frames": renderedFrames.mapValues { frameDescription($0) },
+                        "statusContext": probeValue(identifier: "editor.statusBar", in: window) ?? "",
+                        "statusFrames": statusControlFrames(in: window),
                     ]
                 )
             }
@@ -315,6 +339,7 @@ enum WorkspaceUIAcceptance {
                     && narrowProductionWidthsAreValid(frames)
                     && previewTimecodeIsSingleLine(in: window, scale: scale)
                     && agentControlsAreContained(in: window)
+                    && statusControlsAreContained(in: window)
             }) else {
                 fail("narrow production controls did not fit", scale: scale)
             }
@@ -332,6 +357,8 @@ enum WorkspaceUIAcceptance {
                 fields: [
                     "screenshot": "\(narrowName).png",
                     "frames": narrowFrames.mapValues { frameDescription($0) },
+                    "statusContext": probeValue(identifier: "editor.statusBar", in: window) ?? "",
+                    "statusFrames": statusControlFrames(in: window),
                     "window": windowDiagnostics(window, contentView: host),
                 ]
             )
@@ -357,6 +384,74 @@ enum WorkspaceUIAcceptance {
                 scale: scale,
                 fields: ["screenshot": "\(pinnedName).png"]
             )
+            guard let projectRoot = editor.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }),
+                  let mutationID = editor.pipelinePhaseRunCoordinator.beginMutation(
+                      projectRoot: projectRoot,
+                      label: "A deliberately long production status for compact-layout acceptance"
+                  ),
+                  await waitUntil(timeout: .seconds(5), {
+                      probeValue(identifier: "editor.status.aiJobs", in: window) == "active"
+                  }),
+                  click(identifier: "editor.status.aiJobs", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      probeState(identifier: "editor.status.aiJobs", in: window) == true
+                          && probeExistsAnywhere(
+                              identifier: "editor.status.aiJobs.close",
+                              preferredWindow: window
+                          )
+                  }),
+                  clickAnywhere(
+                      identifier: "editor.status.aiJobs.close",
+                      preferredWindow: window
+                  ) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      probeState(identifier: "editor.status.aiJobs", in: window) == false
+                  }) else {
+                fail("AI job status was not reachable while active", scale: scale)
+            }
+            editor.pipelinePhaseRunCoordinator.endMutation(
+                projectRoot: projectRoot,
+                id: mutationID
+            )
+            guard await waitUntil(timeout: .seconds(5), {
+                      probeValue(identifier: "editor.status.aiJobs", in: window) == "idle"
+                  }), ExportCoordinator.beginExportIfIdle(),
+                  await waitUntil(timeout: .seconds(5), {
+                      probeValue(identifier: "editor.status.exportJobs", in: window) == "active"
+                  }),
+                  click(identifier: "editor.status.exportJobs", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      probeState(identifier: "editor.status.exportJobs", in: window) == true
+                          && probeExistsAnywhere(
+                              identifier: "editor.status.exportJobs.close",
+                              preferredWindow: window
+                          )
+                  }),
+                  clickAnywhere(
+                      identifier: "editor.status.exportJobs.close",
+                      preferredWindow: window
+                  ) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      probeState(identifier: "editor.status.exportJobs", in: window) == false
+                  }) else {
+                fail("export job status was not reachable while active", scale: scale)
+            }
+            ExportCoordinator.endExport()
+            guard await waitUntil(timeout: .seconds(5), {
+                probeValue(identifier: "editor.status.exportJobs", in: window) == "idle"
+            }) else {
+                fail("export job status did not return to idle", scale: scale)
+            }
+            emit(
+                "background-status",
+                scale: scale,
+                fields: [
+                    "aiActiveObserved": true,
+                    "controlsClicked": true,
+                    "exportActiveObserved": true,
+                    "statusFrames": statusControlFrames(in: window),
+                ]
+            )
             guard editor.timeline == originalTimeline,
                   editor.mediaManifest == originalManifest,
                   editor.generationLog == originalGenerationLog,
@@ -378,12 +473,545 @@ enum WorkspaceUIAcceptance {
                     "workingCopyUnchanged": true,
                 ]
             )
+            await captureBudgetCases(
+                editor: editor,
+                window: window,
+                host: host,
+                projectURL: projectURL,
+                evidenceURL: evidenceURL,
+                scale: scale
+            )
             emit("completed", scale: scale)
             window.orderOut(nil)
             exit(0)
         }
         app.run()
         exit(1)
+    }
+
+    private struct BudgetAcceptanceCase {
+        let name: String
+        let log: GenerationLog
+        let charged: Double
+        let reserved: Double
+        let active: Int
+        let unpriced: Int
+        let complete: Bool
+        let items: Int
+    }
+
+    private static func captureBudgetCases(
+        editor: EditorViewModel,
+        window: NSWindow,
+        host: NSView,
+        projectURL: URL,
+        evidenceURL: URL,
+        scale: Double
+    ) async {
+        guard let workingRoot = editor.workingRoot else {
+            fail("budget acceptance had no working copy", scale: scale)
+        }
+        await editor.refreshProjectState()
+        guard editor.projectState?.budgetEur == 10,
+              editor.projectState?.budgetStopEur == 12 else {
+            fail("budget acceptance did not load project limits", scale: scale)
+        }
+
+        for item in budgetAcceptanceCases() {
+            do {
+                try installBudgetLog(item.log, in: workingRoot, editor: editor)
+            } catch {
+                fail("could not install budget case \(item.name): \(error.localizedDescription)", scale: scale)
+            }
+            let snapshot: ProjectSpendSnapshot
+            do {
+                snapshot = try GenerationBudgetGuard.spendSnapshot(
+                    log: item.log,
+                    generatedInputs: editor.mediaAssets.compactMap(\.generationInput)
+                )
+            } catch {
+                fail("budget case \(item.name) was rejected by the guard", scale: scale)
+            }
+            guard snapshot.chargedEur == item.charged,
+                  snapshot.openReservationEur == item.reserved,
+                  snapshot.verifiedEur == item.charged + item.reserved,
+                  snapshot.activeReservationCount == item.active,
+                  snapshot.unpricedTransactionCount == item.unpriced,
+                  snapshot.isComplete == item.complete,
+                  snapshot.lineItems.count == item.items else {
+                fail("budget case \(item.name) did not match guard truth", scale: scale)
+            }
+            let expectedPresentation = ProjectBudgetPresentation.make(
+                log: item.log,
+                generatedInputs: editor.mediaAssets.compactMap(\.generationInput),
+                projectState: editor.projectState,
+                hasProductionPipeline: editor.hasProductionPipeline
+            )
+            guard await waitUntil(timeout: .seconds(5), {
+                host.layoutSubtreeIfNeeded()
+                return probeValue(identifier: "editor.status.budget", in: window)
+                    == expectedPresentation.acceptanceValue
+                    && statusControlsAreContained(in: window)
+            }) else {
+                fail("budget case \(item.name) did not reach the status bar", scale: scale)
+            }
+
+            let beforeLog = editor.generationLog
+            let beforeApproval = editor.agentService.pendingSpendApproval?.id
+            let logURL = workingRoot.appendingPathComponent(Project.generationLogFilename)
+            guard let beforeBytes = try? Data(contentsOf: logURL),
+                  click(identifier: "editor.status.budget", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      probeState(identifier: "editor.status.budget", in: window) == true
+                          && probeExistsAnywhere(
+                              identifier: "editor.status.budget.close",
+                              preferredWindow: window
+                          )
+                  }),
+                  let (popoverWindow, _) = probeWindow(
+                      identifier: "editor.status.budget.close",
+                      preferredWindow: window
+                  ), let popoverContent = popoverWindow.contentView else {
+                fail("budget case \(item.name) did not open its detail popover", scale: scale)
+            }
+            popoverContent.layoutSubtreeIfNeeded()
+            let popoverName = "scale-\(scaleLabel(scale))-budget-\(item.name).png"
+            guard popoverContent.bounds.width > 0,
+                  popoverContent.bounds.height > 0,
+                  snapshot(popoverContent, at: evidenceURL.appendingPathComponent(popoverName)) else {
+                fail("budget case \(item.name) popover geometry was unavailable", scale: scale)
+            }
+
+            if item.name == "reserved" {
+                let refreshToken = editor.budgetStatusLoadToken
+                guard clickAnywhere(
+                    identifier: "editor.status.budget.refresh",
+                    preferredWindow: window
+                ) == nil,
+                await waitUntil(timeout: .seconds(5), {
+                    editor.budgetStatusLoadToken > refreshToken
+                        && probeStateAnywhere(
+                            identifier: "editor.status.budget.refresh",
+                            preferredWindow: window
+                        ) == false
+                        && probeValue(identifier: "editor.status.budget", in: window)
+                            == expectedPresentation.acceptanceValue
+                }) else {
+                    fail("budget refresh did not complete", scale: scale)
+                }
+            }
+
+            guard clickAnywhere(
+                identifier: "editor.status.budget.close",
+                preferredWindow: window
+            ) == nil,
+            await waitUntil(timeout: .seconds(5), {
+                probeState(identifier: "editor.status.budget", in: window) == false
+            }), editor.generationLog == beforeLog,
+            editor.agentService.pendingSpendApproval?.id == beforeApproval,
+            (try? Data(contentsOf: logURL)) == beforeBytes else {
+                fail("budget case \(item.name) changed consent or cost records", scale: scale)
+            }
+            emit(
+                "budget",
+                scale: scale,
+                fields: [
+                    "case": item.name,
+                    "charged": snapshot.chargedEur,
+                    "complete": snapshot.isComplete,
+                    "items": snapshot.lineItems.count,
+                    "popoverFrame": frameDescription(popoverContent.bounds),
+                    "reserved": snapshot.openReservationEur,
+                    "screenshot": popoverName,
+                    "statusValue": expectedPresentation.acceptanceValue,
+                ]
+            )
+        }
+
+        await captureBudgetProjectSwitch(
+            editor: editor,
+            window: window,
+            host: host,
+            projectURL: projectURL,
+            evidenceURL: evidenceURL,
+            scale: scale
+        )
+    }
+
+    private static func budgetAcceptanceCases() -> [BudgetAcceptanceCase] {
+        let zero = money(0)
+        let low = money(9.25)
+        let exceeded = money(12.5)
+        let reserved = money(3.25)
+        let submitted = money(4)
+        let released = money(5)
+        return [
+            BudgetAcceptanceCase(
+                name: "empty",
+                log: budgetLog([]),
+                charged: 0,
+                reserved: 0,
+                active: 0,
+                unpriced: 0,
+                complete: true,
+                items: 0
+            ),
+            BudgetAcceptanceCase(
+                name: "zero",
+                log: budgetLog(transactionEvents(id: "zero", money: zero, final: .charged)),
+                charged: 0,
+                reserved: 0,
+                active: 0,
+                unpriced: 0,
+                complete: true,
+                items: 1
+            ),
+            BudgetAcceptanceCase(
+                name: "low",
+                log: budgetLog(transactionEvents(id: "low", money: low, final: .charged)),
+                charged: 9.25,
+                reserved: 0,
+                active: 0,
+                unpriced: 0,
+                complete: true,
+                items: 1
+            ),
+            BudgetAcceptanceCase(
+                name: "exceeded",
+                log: budgetLog(transactionEvents(id: "exceeded", money: exceeded, final: .charged)),
+                charged: 12.5,
+                reserved: 0,
+                active: 0,
+                unpriced: 0,
+                complete: true,
+                items: 1
+            ),
+            BudgetAcceptanceCase(
+                name: "unknown-price",
+                log: budgetLog(transactionEvents(
+                    id: "unknown-price",
+                    money: nil,
+                    final: .reserved,
+                    note: "Provider price was unavailable.",
+                    pricingStatus: .priceUnavailable
+                )),
+                charged: 0,
+                reserved: 0,
+                active: 1,
+                unpriced: 1,
+                complete: false,
+                items: 1
+            ),
+            BudgetAcceptanceCase(
+                name: "unknown-currency",
+                log: budgetLog(transactionEvents(
+                    id: "unknown-currency",
+                    money: nil,
+                    final: .reserved,
+                    note: "Currency conversion was unavailable.",
+                    pricingStatus: .currencyUnavailable
+                )),
+                charged: 0,
+                reserved: 0,
+                active: 1,
+                unpriced: 1,
+                complete: false,
+                items: 1
+            ),
+            BudgetAcceptanceCase(
+                name: "subscription-credits",
+                log: budgetLog(transactionEvents(
+                    id: "subscription-credits",
+                    money: nil,
+                    final: .reserved,
+                    transport: .mcp,
+                    billing: .subscription,
+                    note: "Subscription credits have no verified project monetary cost.",
+                    pricingStatus: .subscriptionCredits
+                )),
+                charged: 0,
+                reserved: 0,
+                active: 1,
+                unpriced: 1,
+                complete: false,
+                items: 1
+            ),
+            BudgetAcceptanceCase(
+                name: "reserved",
+                log: budgetLog(transactionEvents(id: "reserved", money: reserved, final: .reserved)),
+                charged: 0,
+                reserved: 3.25,
+                active: 1,
+                unpriced: 0,
+                complete: true,
+                items: 1
+            ),
+            BudgetAcceptanceCase(
+                name: "submitted-failure",
+                log: budgetLog(transactionEvents(
+                    id: "submitted-failure",
+                    money: submitted,
+                    final: .submitted,
+                    note: "The provider accepted the request; status reconciliation is pending."
+                )),
+                charged: 0,
+                reserved: 4,
+                active: 1,
+                unpriced: 0,
+                complete: true,
+                items: 1
+            ),
+            BudgetAcceptanceCase(
+                name: "released",
+                log: budgetLog(transactionEvents(
+                    id: "released",
+                    money: released,
+                    final: .released,
+                    note: "Released before provider submission."
+                )),
+                charged: 0,
+                reserved: 0,
+                active: 0,
+                unpriced: 0,
+                complete: true,
+                items: 1
+            ),
+        ]
+    }
+
+    private static func transactionEvents(
+        id: String,
+        money: GenerationMoney?,
+        final: GenerationSpendEvent.Kind,
+        transport: ProviderTransport = .api,
+        billing: BillingMode = .perCall,
+        note: String? = nil,
+        pricingStatus: GenerationPricingStatus? = nil
+    ) -> [GenerationSpendEvent] {
+        let endpoint = transport == .mcp ? "generate_video" : "video/generate"
+        let pricingStatus = pricingStatus
+            ?? (money != nil ? .priced : billing == .subscription ? .subscriptionCredits : .priceUnavailable)
+        var events = [GenerationSpendEvent(
+            id: "\(id)-reserved",
+            transactionId: id,
+            kind: .reserved,
+            model: "higgsfield/acceptance-video",
+            provider: .higgsfield,
+            transport: transport,
+            endpoint: endpoint,
+            money: money,
+            note: final == .reserved ? note : nil,
+            createdAt: Date(timeIntervalSince1970: 1),
+            billing: billing,
+            pricingStatus: pricingStatus
+        )]
+        if final == .submitted || final == .charged {
+            events.append(GenerationSpendEvent(
+                id: "\(id)-submitted",
+                transactionId: id,
+                kind: .submitted,
+                model: "higgsfield/acceptance-video",
+                provider: .higgsfield,
+                transport: transport,
+                endpoint: endpoint,
+                providerRequestId: "acceptance-request",
+                providerRequestResumable: true,
+                money: money,
+                note: final == .submitted ? note : nil,
+                createdAt: Date(timeIntervalSince1970: 2),
+                billing: billing
+            ))
+        }
+        if final == .charged {
+            events.append(GenerationSpendEvent(
+                id: "\(id)-charged",
+                transactionId: id,
+                kind: .charged,
+                model: "higgsfield/acceptance-video",
+                provider: .higgsfield,
+                transport: transport,
+                endpoint: endpoint,
+                money: money,
+                note: note,
+                createdAt: Date(timeIntervalSince1970: 3),
+                billing: billing
+            ))
+        } else if final == .released {
+            events.append(GenerationSpendEvent(
+                id: "\(id)-released",
+                transactionId: id,
+                kind: .released,
+                model: "higgsfield/acceptance-video",
+                provider: .higgsfield,
+                transport: transport,
+                endpoint: endpoint,
+                note: note,
+                createdAt: Date(timeIntervalSince1970: 2),
+                billing: billing
+            ))
+        }
+        return events
+    }
+
+    private static func budgetLog(_ events: [GenerationSpendEvent]) -> GenerationLog {
+        var log = GenerationLog()
+        log.spendEvents = events
+        return log
+    }
+
+    private static func money(_ eur: Double) -> GenerationMoney {
+        GenerationMoney(
+            nativeAmount: eur * 1.2,
+            nativeCurrency: "USD",
+            eurAmount: eur,
+            eurPerNativeUnit: 1 / 1.2,
+            exchangeRateDate: "2026-09-24",
+            pricingSource: "https://provider.example/pricing",
+            exchangeRateSource: "https://www.ecb.europa.eu/"
+        )
+    }
+
+    private static func installBudgetLog(
+        _ log: GenerationLog,
+        in workingRoot: URL,
+        editor: EditorViewModel
+    ) throws {
+        guard editor.workingRoot?.standardizedFileURL.resolvingSymlinksInPath()
+                == workingRoot.standardizedFileURL.resolvingSymlinksInPath() else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        _ = try GenerationBudgetGuard.spendSnapshot(
+            log: log,
+            generatedInputs: editor.mediaAssets.compactMap(\.generationInput)
+        )
+        editor.generationLog = log
+        try editor.persistGenerationLog()
+    }
+
+    private static func captureBudgetProjectSwitch(
+        editor: EditorViewModel,
+        window: NSWindow,
+        host: NSView,
+        projectURL: URL,
+        evidenceURL: URL,
+        scale: Double
+    ) async {
+        let priorLog = editor.generationLog
+        let priorPackage = try? projectSnapshot(at: projectURL)
+        let secondary: URL
+        do {
+            secondary = try makeBareProjectFixture(scale: scale)
+        } catch {
+            fail("could not create the project-switch fixture", scale: scale)
+        }
+        let secondaryKey = ProjectIdentity.existingKey(for: secondary)
+        let secondaryBefore = try? projectSnapshot(at: secondary)
+        editor.projectURL = secondary
+        guard editor.generationLog == GenerationLog(), editor.projectState == nil else {
+            fail("project switch retained stale budget state", scale: scale)
+        }
+        do {
+            try await editor.refreshBudgetStatus()
+        } catch {
+            fail("could not refresh the switched project budget", scale: scale)
+        }
+        let emptyPresentation = ProjectBudgetPresentation.make(
+            log: GenerationLog(),
+            generatedInputs: editor.mediaAssets.compactMap(\.generationInput),
+            projectState: nil,
+            hasProductionPipeline: false
+        )
+        guard await waitUntil(timeout: .seconds(5), {
+            host.layoutSubtreeIfNeeded()
+            return editor.projectURL == secondary
+                && editor.hasProductionPipeline == false
+                && probeValue(identifier: "editor.status.budget", in: window)
+                    == emptyPresentation.acceptanceValue
+                && statusControlsAreContained(in: window)
+        }) else {
+            fail("switched project did not show its own empty budget", scale: scale)
+        }
+        let secondaryStatusContext = probeValue(
+            identifier: "editor.statusBar",
+            in: window
+        ) ?? ""
+        let secondaryLogURL = editor.workingRoot?.appendingPathComponent(
+            Project.generationLogFilename
+        )
+        let secondaryLogBytes = secondaryLogURL.flatMap { try? Data(contentsOf: $0) }
+        let approvalBefore = editor.agentService.pendingSpendApproval?.id
+        guard click(identifier: "editor.status.budget", in: window) == nil,
+              await waitUntil(timeout: .seconds(5), {
+                  probeExistsAnywhere(
+                      identifier: "editor.status.budget.close",
+                      preferredWindow: window
+                  )
+              }),
+              let (popoverWindow, _) = probeWindow(
+                  identifier: "editor.status.budget.close",
+                  preferredWindow: window
+              ), let content = popoverWindow.contentView else {
+            fail("switched project budget details did not open", scale: scale)
+        }
+        content.layoutSubtreeIfNeeded()
+        let screenshotName = "scale-\(scaleLabel(scale))-budget-project-switch.png"
+        let refreshToken = editor.budgetStatusLoadToken
+        guard snapshot(content, at: evidenceURL.appendingPathComponent(screenshotName)),
+              clickAnywhere(
+                  identifier: "editor.status.budget.refresh",
+                  preferredWindow: window
+              ) == nil,
+              await waitUntil(timeout: .seconds(5), {
+                  editor.budgetStatusLoadToken > refreshToken
+                      && probeStateAnywhere(
+                          identifier: "editor.status.budget.refresh",
+                          preferredWindow: window
+                      ) == false
+              }),
+              clickAnywhere(
+                  identifier: "editor.status.budget.close",
+                  preferredWindow: window
+              ) == nil,
+              await waitUntil(timeout: .seconds(5), {
+                  probeState(identifier: "editor.status.budget", in: window) == false
+              }), editor.agentService.pendingSpendApproval?.id == approvalBefore,
+              secondaryLogURL.flatMap({ try? Data(contentsOf: $0) }) == secondaryLogBytes,
+              (try? projectSnapshot(at: secondary)) == secondaryBefore else {
+            fail("switched project controls changed consent or cost records", scale: scale)
+        }
+
+        editor.projectURL = projectURL
+        editor.recoveredUnsavedWork = false
+        do {
+            try await editor.refreshBudgetStatus()
+        } catch {
+            fail("could not restore the original project budget", scale: scale)
+        }
+        let restoredPresentation = ProjectBudgetPresentation.make(
+            log: priorLog,
+            generatedInputs: editor.mediaAssets.compactMap(\.generationInput),
+            projectState: editor.projectState,
+            hasProductionPipeline: editor.hasProductionPipeline
+        )
+        guard editor.generationLog == priorLog,
+              probeValue(identifier: "editor.status.budget", in: window)
+                == restoredPresentation.acceptanceValue,
+              (try? projectSnapshot(at: projectURL)) == priorPackage else {
+            fail("original project budget did not restore after switching", scale: scale)
+        }
+        emit(
+            "budget-project-switch",
+            scale: scale,
+            fields: [
+                "emptyValue": emptyPresentation.acceptanceValue,
+                "restoredValue": restoredPresentation.acceptanceValue,
+                "screenshot": screenshotName,
+                "statusContext": secondaryStatusContext,
+                "statusFrames": statusControlFrames(in: window),
+            ]
+        )
+        if let secondaryKey { ProjectWorkingCopy.discard(key: secondaryKey) }
+        try? FileManager.default.removeItem(at: secondary)
     }
 
     private static func captureInspectorCases(
@@ -646,6 +1274,51 @@ enum WorkspaceUIAcceptance {
             to: projectURL.appendingPathComponent(Project.generationLogFilename),
             options: .atomic
         )
+        let dataRoot = try ProjectScaffold.initProject(
+            home: projectURL,
+            name: title,
+            mode: .beat,
+            budgetEur: 10,
+            today: { "2026-09-24" }
+        )
+        let brief = try Brief(
+            project: title,
+            generated: "2026-09-24",
+            mission: .demo,
+            targetPlatform: "web",
+            aspectRatio: .landscape16x9,
+            projectMode: "beat",
+            budgetEur: 10,
+            budgetStopEur: 12,
+            conceptType: .abstract,
+            visualMedium: .liveActionRealistic,
+            figures: .none,
+            lyricsIntegration: .ignored
+        )
+        try YAMLArtifactStore(dataRoot: dataRoot).save(brief, to: PipelineLayout.briefFile)
+        _ = try ProjectIdentity.uuid(for: projectURL)
+        return projectURL
+    }
+
+    private static func makeBareProjectFixture(scale: Double) throws -> URL {
+        let title = "A second project with an exceptionally long status name \(scaleLabel(scale))"
+        let projectURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "\(title)-\(UUID().uuidString).ngv",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: projectURL, withIntermediateDirectories: true)
+        try JSONEncoder().encode(Timeline()).write(
+            to: projectURL.appendingPathComponent(Project.timelineFilename),
+            options: .atomic
+        )
+        try JSONEncoder().encode(MediaManifest()).write(
+            to: projectURL.appendingPathComponent(Project.manifestFilename),
+            options: .atomic
+        )
+        try JSONEncoder().encode(GenerationLog()).write(
+            to: projectURL.appendingPathComponent(Project.generationLogFilename),
+            options: .atomic
+        )
         _ = try ProjectIdentity.uuid(for: projectURL)
         return projectURL
     }
@@ -840,6 +1513,47 @@ enum WorkspaceUIAcceptance {
             includeLatest: true,
             requiredState: true
         )
+    }
+
+    private static let statusControlIdentifiers = [
+        "editor.status.budget",
+        "editor.status.aiJobs",
+        "editor.status.exportJobs",
+    ]
+
+    private static func statusControlsAreContained(in window: NSWindow) -> Bool {
+        guard let root = window.contentView,
+              let status = findProbe(in: root, identifier: "editor.statusBar") else {
+            return false
+        }
+        let statusFrame = status.convert(status.bounds, to: root)
+        guard status.window === window,
+              !status.isHiddenOrHasHiddenAncestor,
+              statusFrame.width > 0,
+              statusFrame.height >= AppTheme.Layout.statusBarHeight,
+              root.bounds.insetBy(
+                  dx: -AppTheme.BorderWidth.thin,
+                  dy: -AppTheme.BorderWidth.thin
+              ).contains(statusFrame) else {
+            return false
+        }
+        let bounds = statusFrame.insetBy(
+            dx: -AppTheme.BorderWidth.thin,
+            dy: -AppTheme.BorderWidth.thin
+        )
+        return statusControlIdentifiers.allSatisfy {
+            visibleProbe(identifier: $0, in: window, containedBy: bounds)
+        }
+    }
+
+    private static func statusControlFrames(in window: NSWindow) -> [String: [String: Double]] {
+        guard let root = window.contentView else { return [:] }
+        return Dictionary(uniqueKeysWithValues: (["editor.statusBar"] + statusControlIdentifiers)
+            .compactMap { identifier in
+                findProbe(in: root, identifier: identifier).map {
+                    (identifier, frameDescription($0.convert($0.bounds, to: root)))
+                }
+            })
     }
 
     private static func visibleProbe(
@@ -1310,6 +2024,88 @@ enum WorkspaceUIAcceptance {
         return nil
     }
 
+    private static func clickAnywhere(
+        identifier: String,
+        preferredWindow: NSWindow
+    ) -> String? {
+        guard let (window, probe) = probeWindow(
+            identifier: identifier,
+            preferredWindow: preferredWindow
+        ), let root = window.contentView else {
+            return "control geometry unavailable"
+        }
+        let frame = probe.bounds
+        guard frame.width.isFinite, frame.height.isFinite, frame.width > 0, frame.height > 0 else {
+            return "control has no finite frame"
+        }
+        let location = probe.convert(NSPoint(x: frame.midX, y: frame.midY), to: nil)
+        guard root.bounds.contains(root.convert(location, from: nil)) else {
+            return "control is outside the window"
+        }
+        let timestamp = ProcessInfo.processInfo.systemUptime
+        guard let down = NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: location,
+            modifierFlags: [],
+            timestamp: timestamp,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 1,
+            pressure: 1
+        ), let up = NSEvent.mouseEvent(
+            with: .leftMouseUp,
+            location: location,
+            modifierFlags: [],
+            timestamp: timestamp + 0.001,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 1,
+            pressure: 0
+        ) else {
+            return "AppKit could not create mouse events"
+        }
+        NSApp.postEvent(down, atStart: false)
+        NSApp.postEvent(up, atStart: false)
+        return nil
+    }
+
+    private static func probeExistsAnywhere(
+        identifier: String,
+        preferredWindow: NSWindow
+    ) -> Bool {
+        probeWindow(identifier: identifier, preferredWindow: preferredWindow) != nil
+    }
+
+    private static func probeStateAnywhere(
+        identifier: String,
+        preferredWindow: NSWindow
+    ) -> Bool? {
+        guard let (_, probe) = probeWindow(
+            identifier: identifier,
+            preferredWindow: preferredWindow
+        ) else { return nil }
+        return (probe as? AppRelaunchClickProbeView)?.acceptanceState
+    }
+
+    private static func probeWindow(
+        identifier: String,
+        preferredWindow: NSWindow
+    ) -> (NSWindow, NSView)? {
+        let candidates = [preferredWindow] + NSApp.windows.filter { $0 !== preferredWindow }
+        for window in candidates where window.isVisible && !window.ignoresMouseEvents {
+            guard let root = window.contentView,
+                  let probe = findProbe(in: root, identifier: identifier),
+                  probe.window === window,
+                  !probe.isHiddenOrHasHiddenAncestor else {
+                continue
+            }
+            return (window, probe)
+        }
+        return nil
+    }
+
     private static func findProbe(in view: NSView, identifier: String) -> NSView? {
         if view is AppRelaunchClickProbeView, view.identifier?.rawValue == identifier {
             return view
@@ -1325,6 +2121,13 @@ enum WorkspaceUIAcceptance {
               let probe = findProbe(in: root, identifier: identifier)
                 as? AppRelaunchClickProbeView else { return nil }
         return probe.acceptanceState
+    }
+
+    private static func probeValue(identifier: String, in window: NSWindow) -> String? {
+        guard let root = window.contentView,
+              let probe = findProbe(in: root, identifier: identifier)
+                as? AppRelaunchClickProbeView else { return nil }
+        return probe.acceptanceValue
     }
 
     private static func waitUntil(

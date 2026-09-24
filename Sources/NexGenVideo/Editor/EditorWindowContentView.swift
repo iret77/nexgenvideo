@@ -28,6 +28,9 @@ struct EditorWindowContentView: View {
                         .allowsHitTesting(false)
                 }
             }
+            if !editor.theaterActive {
+                EditorStatusBar()
+            }
         }
         .sheet(isPresented: $editor.showExportDialog) {
             ExportView().environment(editor)

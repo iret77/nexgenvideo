@@ -277,6 +277,10 @@ final class EditorViewModel {
                 && workingCopyHome != nil
                 && activeWorkingCopyKey != nil
             if !keepsLiveDeclaration {
+                projectStateLoadToken += 1
+                budgetStatusLoadToken &+= 1
+                projectState = nil
+                generationLog = GenerationLog()
                 capturePluginDeclaration(from: projectURL)
             }
             pipelineAgentHarness.reset()
@@ -958,14 +962,18 @@ final class EditorViewModel {
     @ObservationIgnored private var projectStateLoadToken = 0
 
     func refreshProjectState() async {
+        projectStateLoadToken += 1
+        let token = projectStateLoadToken
         guard let dir = workingRoot else {
             projectState = nil
             return
         }
-        projectStateLoadToken += 1
-        let token = projectStateLoadToken
+        let requestedRoot = dir.standardizedFileURL.resolvingSymlinksInPath()
         let result = await CockpitDataService.projectState(projectDir: dir)
-        guard token == projectStateLoadToken else { return }
+        guard token == projectStateLoadToken,
+              workingRoot?.standardizedFileURL.resolvingSymlinksInPath() == requestedRoot else {
+            return
+        }
         projectState = (try? result.get()) ?? nil
     }
 
@@ -1522,5 +1530,6 @@ final class EditorViewModel {
 
     private var workspacePresentationStates = EditorViewModel.initialWorkspacePresentations()
     @ObservationIgnored private var isRestoringWorkspacePresentation = false
+    @ObservationIgnored var budgetStatusLoadToken: UInt64 = 0
 
 }

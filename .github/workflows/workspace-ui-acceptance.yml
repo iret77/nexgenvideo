@@ -8,12 +8,20 @@ on:
       - 'Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift'
       - 'Sources/NexGenVideo/App/main.swift'
       - 'Sources/NexGenVideo/Agent/AgentService.swift'
+      - 'Sources/NexGenVideo/Editor/BudgetStatusView.swift'
+      - 'Sources/NexGenVideo/Editor/EditorWindowContentView.swift'
+      - 'Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Cost.swift'
+      - 'Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift'
       - 'Sources/NexGenVideo/Editor/TitleBarView.swift'
+      - 'Sources/NexGenVideo/Export/ExportCoordinator.swift'
+      - 'Sources/NexGenVideo/Generation/GenerationBudgetGuard.swift'
+      - 'Sources/NexGenVideo/Generation/GenerationTypes.swift'
       - 'Sources/NexGenVideo/Inspector/**'
       - 'Sources/NexGenVideo/MediaPanel/CaptionsTab/CaptionTab.swift'
       - 'Sources/NexGenVideo/MediaPanel/MediaPanelView.swift'
       - 'Sources/NexGenVideo/UI/AppTheme.swift'
       - 'Sources/NexGenVideo/UI/SegmentedTabBar.swift'
+      - 'Tests/NexGenVideoTests/Editor/BudgetStatusTests.swift'
 
 concurrency:
   group: workspace-ui-acceptance-${{ github.ref }}

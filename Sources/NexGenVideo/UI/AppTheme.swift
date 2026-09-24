@@ -352,6 +352,9 @@ enum AppTheme {
         static let projectActivityWidth: CGFloat = 340
         static let projectActivityMaxHeight: CGFloat = 420
         static let projectActivityCostWidth: CGFloat = 68
+        static let budgetPopoverWidth: CGFloat = 420
+        static let budgetPopoverMaxHeight: CGFloat = 520
+        static let backgroundJobsPopoverWidth: CGFloat = 280
         static let tourStageHeight: CGFloat = 300
         static let exportSidebarWidth: CGFloat = 360
         static let exportWindow = CGSize(width: 860, height: 560)
@@ -453,6 +456,7 @@ enum AppTheme {
         static let workspaceHeaderHeight: CGFloat = 40
         static let toolbarHeight: CGFloat = 38
         static let titleBarChromeHeight: CGFloat = 36
+        static let statusBarHeight: CGFloat = 32
         static let trafficLightInset: CGFloat = 70
         static let titleBarProjectNameMaxWidth: CGFloat = 180
         static let titleBarFormatStatusMaxWidth: CGFloat = 150
