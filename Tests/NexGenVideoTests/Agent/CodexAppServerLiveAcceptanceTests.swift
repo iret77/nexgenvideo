@@ -426,10 +426,24 @@ struct CodexAppServerLiveAcceptanceTests {
         #expect(service.streamError == nil)
         let dialog = try #require(service.pendingDialog)
         #expect(dialog.title == "Choose")
+        let choiceSection = try #require(dialog.sections.first { section in
+            guard case .choices(let options, let multiSelect) = section.kind else { return false }
+            return !multiSelect && options.contains {
+                $0.label.localizedCaseInsensitiveCompare("Continue") == .orderedSame
+            }
+        })
+        let continueChoice = try #require({ () -> AgentDialog.Choice? in
+            guard case .choices(let options, _) = choiceSection.kind else { return nil }
+            return options.first {
+                $0.label.localizedCaseInsensitiveCompare("Continue") == .orderedSame
+            }
+        }())
+        service.dialogChoiceSelections[choiceSection.id] = [continueChoice.id]
+        let dialogSubmissionMessageStart = service.messages.endIndex
         service.submitDialog(
             dialog,
             result: AgentDialogResult(
-                selectedLabels: ["choice": ["Continue"]],
+                selectedLabels: [choiceSection.id: [continueChoice.label]],
                 toggles: [:],
                 direction: ""
             )
@@ -440,7 +454,22 @@ struct CodexAppServerLiveAcceptanceTests {
             guard case .toolUse(_, let name, _) = $0 else { return false }
             return name == ToolName.showDialog.rawValue
         }
-        let dialogueFollowUpSucceeded = dialogToolUses.count == 1
+        let hostDialogResponseCarriedSelection = service.messages
+            .dropFirst(dialogSubmissionMessageStart)
+            .contains { message in
+                guard message.role == .user else { return false }
+                let modelTextHasSelection = message.blocks.contains {
+                    guard case .text(let value) = $0 else { return false }
+                    return value.contains("\(choiceSection.label): \(continueChoice.label)")
+                }
+                let presentationHasSelection = message.userPresentation?.choiceRecord?.selections.contains {
+                    $0.label == choiceSection.shortLabel && $0.values == [continueChoice.shortLabel]
+                } == true
+                return modelTextHasSelection && presentationHasSelection
+            }
+        #expect(hostDialogResponseCarriedSelection)
+        let dialogueFollowUpSucceeded = hostDialogResponseCarriedSelection
+            && dialogToolUses.count == 1
             && service.messages.contains { message in
                 message.role == .assistant && message.blocks.contains {
                     guard case .text(let value) = $0 else { return false }
@@ -465,7 +494,15 @@ struct CodexAppServerLiveAcceptanceTests {
         let receivedFirstTimeline = transcriptContainsTimeline(service.messages, totalFrames: 73)
         #expect(usedTimeline)
         #expect(receivedFirstTimeline)
-        let staleSession = try #require(productAdapters.first?.latestSession)
+        let firstProjectSession = try #require(productAdapters.last?.latestSession)
+        let firstProjectCallbackResult = await firstProjectSession.executeTool(
+            "first-project-call",
+            ToolName.getTimeline.rawValue,
+            "{}"
+        )
+        let firstProjectCallbackSucceeded = !firstProjectCallbackResult.isError
+            && timelineContentContains(firstProjectCallbackResult.content, totalFrames: 73)
+        #expect(firstProjectCallbackSucceeded)
         let driverCountBeforeProjectSwitch = productDrivers.count
 
         let secondEditor = EditorViewModel(agentService: service)
@@ -478,7 +515,7 @@ struct CodexAppServerLiveAcceptanceTests {
         #expect(secondChatID != firstChatID)
         #expect(firstEditor !== secondEditor)
         #expect(firstRoot.standardizedFileURL != secondRoot.standardizedFileURL)
-        let staleResult = await staleSession.executeTool(
+        let staleResult = await firstProjectSession.executeTool(
             "stale-project-call",
             ToolName.getTimeline.rawValue,
             "{}"
@@ -510,6 +547,7 @@ struct CodexAppServerLiveAcceptanceTests {
             && firstEditor !== secondEditor
             && firstRoot.standardizedFileURL != secondRoot.standardizedFileURL
             && receivedFirstTimeline
+            && firstProjectCallbackSucceeded
             && receivedSecondTimeline
             && staleGenerationWasRejected
             && firstChatWasNotInjected
@@ -522,7 +560,8 @@ struct CodexAppServerLiveAcceptanceTests {
                 "real_tool_executor_exercised": receivedFirstTimeline && receivedSecondTimeline,
                 "dialog_consumer_follow_up": dialogueFollowUpSucceeded,
                 "distinct_project_roots_and_editors": crossedChatAndProjectBoundary,
-                "stale_project_generation_rejected": staleGenerationWasRejected,
+                "stale_project_generation_rejected": firstProjectCallbackSucceeded
+                    && staleGenerationWasRejected,
                 "first_chat_not_injected_into_second_project": firstChatWasNotInjected,
             ], at: evidencePath)
         }
@@ -663,14 +702,21 @@ private func transcriptContainsTimeline(
             guard case .toolResult(_, let content, let isError) = block, !isError else {
                 return false
             }
-            return content.contains { resultBlock in
-                guard case .text(let value) = resultBlock,
-                      let data = value.data(using: .utf8),
-                      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-                else { return false }
-                return (object["totalFrames"] as? NSNumber)?.intValue == totalFrames
-            }
+            return timelineContentContains(content, totalFrames: totalFrames)
         }
+    }
+}
+
+private func timelineContentContains(
+    _ content: [ToolResult.Block],
+    totalFrames: Int
+) -> Bool {
+    content.contains { resultBlock in
+        guard case .text(let value) = resultBlock,
+              let data = value.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        return (object["totalFrames"] as? NSNumber)?.intValue == totalFrames
     }
 }
 
