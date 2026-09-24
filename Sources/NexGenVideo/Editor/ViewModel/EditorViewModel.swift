@@ -25,6 +25,48 @@ struct MediaImportProgress: Equatable {
     let currentName: String?
 }
 
+enum WorkingCopyReloadError: LocalizedError {
+    case unavailable
+    case projectChanged
+    case resetHandlerUnavailable
+    case workingCopyChanged
+    case editorUnavailable
+    case documentUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .unavailable:
+            "The project working copy is unavailable. Reopen the project before discarding Recovery changes."
+        case .projectChanged:
+            "The project changed before Recovery changes could be discarded."
+        case .resetHandlerUnavailable:
+            "The project document cannot reload the restored working copy. Reopen the project."
+        case .workingCopyChanged:
+            "The working copy changed before the restored project could be reloaded."
+        case .editorUnavailable:
+            "The project editor closed before the restored working copy could be reloaded."
+        case .documentUnavailable:
+            "The project document closed before the restored working copy could be reloaded."
+        }
+    }
+}
+
+@MainActor
+final class WorkingCopyReloadOperation {
+    let id = UUID()
+    private var completion: ((Result<Void, Error>) -> Void)?
+
+    init(completion: ((Result<Void, Error>) -> Void)?) {
+        self.completion = completion
+    }
+
+    func finish(_ result: Result<Void, Error>) {
+        guard let completion else { return }
+        self.completion = nil
+        completion(result)
+    }
+}
+
 @Observable
 @MainActor
 final class EditorViewModel {
@@ -276,7 +318,7 @@ final class EditorViewModel {
     /// Marks the document edited when the pipeline changes (so the user is prompted to save, which
     /// persists the working copy into the package). Set by the owning document.
     var onPipelineChanged: (() -> Void)?
-    var onWorkingCopyReset: ((URL) -> Void)?
+    var onWorkingCopyReset: ((URL, WorkingCopyReloadOperation) -> Void)?
 
     /// Stable store key derived once when `projectURL` changes. It never re-reads a package mid-save.
     var workingCopyKey: String? { projectId.map { "p-" + $0 } }
@@ -389,8 +431,14 @@ final class EditorViewModel {
     }
 
     /// Throw away the recovered working copy and start from the last saved project state.
-    func discardRecoveredWork() {
-        guard let projectURL, let key = activeWorkingCopyKey else { return }
+    func discardRecoveredWork(
+        completion: ((Result<Void, Error>) -> Void)? = nil
+    ) {
+        let operation = WorkingCopyReloadOperation(completion: completion)
+        guard let projectURL, let key = activeWorkingCopyKey else {
+            operation.finish(.failure(WorkingCopyReloadError.unavailable))
+            return
+        }
         recoveredUnsavedWork = false
         Task { [weak self] in
             let result = await Task.detached {
@@ -401,7 +449,14 @@ final class EditorViewModel {
                     )
                 }
             }.value
-            guard let self, self.projectURL == projectURL else { return }
+            guard let self else {
+                operation.finish(.failure(WorkingCopyReloadError.editorUnavailable))
+                return
+            }
+            guard self.projectURL == projectURL else {
+                operation.finish(.failure(WorkingCopyReloadError.projectChanged))
+                return
+            }
             guard case .success(let home) = result else {
                 if case .failure(let error) = result {
                     Log.project.error(
@@ -410,13 +465,19 @@ final class EditorViewModel {
                     self.mediaPanelToast = MediaPanelToast(
                         message: error.localizedDescription
                     )
+                    operation.finish(.failure(error))
                 }
                 self.recoveredUnsavedWork = true
                 return
             }
             self.workingCopyHome = home
             self.capturePluginDeclaration(from: projectURL)
-            self.onWorkingCopyReset?(home)
+            guard let onWorkingCopyReset = self.onWorkingCopyReset else {
+                self.recoveredUnsavedWork = true
+                operation.finish(.failure(WorkingCopyReloadError.resetHandlerUnavailable))
+                return
+            }
+            onWorkingCopyReset(home, operation)
             self.rebindProjectMediaURLs()
             self.refreshProductionPipelineMarker()
             self.verifyPackWiring()
@@ -1333,6 +1394,5 @@ final class EditorViewModel {
     var availableCockpitPackSurfaces: [CockpitSurfaceData] = []
     var mireloSpendRecoveryMessage: String?
     @ObservationIgnored var mireloSpendRecoveryNoticeFingerprint: String?
-    @ObservationIgnored var onWorkingCopyReloadCompleted: ((Result<Void, Error>) -> Void)?
 
 }

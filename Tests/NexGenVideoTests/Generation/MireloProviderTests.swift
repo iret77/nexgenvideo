@@ -5,6 +5,44 @@ import Testing
 
 @Suite("Mirelo provider contracts", .serialized)
 struct MireloProviderTests {
+    private struct ReloadTimeoutError: LocalizedError {
+        var errorDescription: String? {
+            "The restored working copy did not finish reloading within 5 seconds."
+        }
+    }
+
+    @MainActor
+    private final class ReloadAwaiter {
+        private var continuation: CheckedContinuation<Void, Error>?
+        private var timeoutTask: Task<Void, Never>?
+
+        func wait(for editor: EditorViewModel) async throws {
+            try await withCheckedThrowingContinuation { continuation in
+                self.continuation = continuation
+                let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+                timeoutTask = Task { @MainActor [weak self] in
+                    do {
+                        try await ContinuousClock().sleep(until: deadline)
+                    } catch {
+                        return
+                    }
+                    self?.finish(.failure(ReloadTimeoutError()))
+                }
+                editor.discardRecoveredWork { [weak self] result in
+                    self?.finish(result)
+                }
+            }
+        }
+
+        private func finish(_ result: Result<Void, Error>) {
+            guard let continuation else { return }
+            self.continuation = nil
+            timeoutTask?.cancel()
+            timeoutTask = nil
+            continuation.resume(with: result)
+        }
+    }
+
     private actor FixtureGate {
         private var opened = false
         private var started = false
@@ -396,13 +434,7 @@ struct MireloProviderTests {
 
     @MainActor
     private func discardAndAwaitReload(_ editor: EditorViewModel) async throws {
-        try await withCheckedThrowingContinuation { continuation in
-            editor.onWorkingCopyReloadCompleted = { result in
-                editor.onWorkingCopyReloadCompleted = nil
-                continuation.resume(with: result)
-            }
-            editor.discardRecoveredWork()
-        }
+        try await ReloadAwaiter().wait(for: editor)
     }
 
     private func writeProjectState(
@@ -2176,6 +2208,106 @@ struct MireloProviderTests {
         _ = releaseProject(document)
     }
 
+    @Test("budget guard identifies and repairs an accepted Mirelo reservation")
+    @MainActor
+    func budgetGuardClassifiesAcceptedReservationAsRepairable() async throws {
+        let package = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mirelo-repairable-submission-\(UUID().uuidString).ngv",
+            isDirectory: true
+        )
+        try Fixtures.prepareProjectPackage(at: package)
+        let editor = EditorViewModel()
+        editor.projectURL = package
+        let workingCopyKey = try #require(editor.openWorkingCopyKey)
+        let projectKey = try #require(editor.projectId)
+        let transactionID = "25252525-2525-4525-8525-252525252525"
+        let conflictID = "26262626-2626-4626-8626-262626262626"
+        let (executionStore, storeRoot) = try store()
+        defer {
+            editor.releaseWorkingCopy()
+            ProjectWorkingCopy.discard(key: workingCopyKey)
+            try? FileManager.default.removeItem(at: package)
+            try? FileManager.default.removeItem(at: storeRoot)
+        }
+        _ = try await authorityRecord(
+            store: executionStore,
+            projectKey: projectKey,
+            logicalID: transactionID,
+            spendTransactionID: transactionID,
+            state: .accepted,
+            providerJobID: "repairable-job"
+        )
+        _ = try await authorityRecord(
+            store: executionStore,
+            projectKey: projectKey,
+            logicalID: conflictID,
+            spendTransactionID: conflictID,
+            state: .accepted,
+            providerJobID: "authority-conflict-job"
+        )
+        editor.generationLog.spendEvents = [
+            GenerationSpendEvent(
+                transactionId: transactionID,
+                kind: .reserved,
+                model: "mirelo/sfx-1.6",
+                provider: .mirelo,
+                transport: .api,
+                endpoint: MireloOperation.textToSFX.createPath
+            ),
+            GenerationSpendEvent(
+                transactionId: conflictID,
+                kind: .reserved,
+                model: "mirelo/sfx-1.6",
+                provider: .mirelo,
+                transport: .api,
+                endpoint: MireloOperation.textToSFX.createPath
+            ),
+            GenerationSpendEvent(
+                transactionId: conflictID,
+                kind: .submitted,
+                model: "mirelo/sfx-1.6",
+                provider: .mirelo,
+                transport: .api,
+                endpoint: MireloOperation.textToSFX.createPath,
+                providerRequestId: "ledger-conflict-job"
+            ),
+        ]
+        try editor.persistGenerationLog()
+        editor.generationService.mireloStoreProvider = { executionStore }
+
+        do {
+            _ = try GenerationBudgetGuard.authorizeUnknownPaidOperation(
+                modelId: "mirelo/sfx-1.6",
+                provider: .mirelo,
+                transport: .api,
+                endpoint: MireloOperation.textToSFX.createPath,
+                editor: editor
+            )
+            Issue.record("Expected the budget guard to stop for missing submitted spend")
+        } catch {
+            #expect(error.localizedDescription.contains("Reopen the project to retry repair"))
+            #expect(error.localizedDescription.contains("budget remains stopped"))
+            #expect(error.localizedDescription.contains("cannot safely repair"))
+        }
+
+        try editor.generationService.reconcileMireloAcceptedSpend(
+            editor: editor,
+            store: executionStore,
+            onlyTransactionID: transactionID
+        )
+        #expect(editor.generationLog.spendEvents.filter {
+            $0.transactionId == transactionID
+        }.map(\.kind) == [.reserved, .submitted])
+        #expect(editor.generationLog.spendEvents.first {
+            $0.transactionId == transactionID && $0.kind == .submitted
+        }?.providerRequestId == "repairable-job")
+        #expect(editor.generationLog.spendEvents.filter {
+            $0.transactionId == conflictID && $0.kind == .submitted
+        }.map(\.providerRequestId) == ["ledger-conflict-job"])
+        #expect(editor.mireloSpendRecoveryMessage?.contains("cannot safely repair") == true)
+        #expect(editor.mireloSpendRecoveryMessage?.contains("retry repair") == false)
+    }
+
     @Test("project open reconciles valid authority beside orphan and conflict")
     @MainActor
     func projectOpenClassifiesOrphanWithoutBlockingValidReconciliation() async throws {
@@ -2341,6 +2473,31 @@ struct MireloProviderTests {
             "no safe in-app recovery exists"
         ) == true)
         _ = releaseProject(document)
+    }
+
+    @Test("discard completion fails when no document reload binding exists")
+    @MainActor
+    func discardWithoutReloadBindingDoesNotHang() async throws {
+        let package = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mirelo-discard-unbound-\(UUID().uuidString).ngv",
+            isDirectory: true
+        )
+        try Fixtures.prepareProjectPackage(at: package)
+        let editor = EditorViewModel()
+        editor.projectURL = package
+        let workingCopyKey = try #require(editor.openWorkingCopyKey)
+        defer {
+            editor.releaseWorkingCopy()
+            ProjectWorkingCopy.discard(key: workingCopyKey)
+            try? FileManager.default.removeItem(at: package)
+        }
+
+        do {
+            try await discardAndAwaitReload(editor)
+            Issue.record("Expected discard to fail without a document reload binding")
+        } catch {
+            #expect(error.localizedDescription.contains("cannot reload"))
+        }
     }
 
     @Test("discard recovery reload classifies accepted authority missing from saved ledger")
@@ -2573,8 +2730,7 @@ struct MireloProviderTests {
         FixtureURLProtocol.install([
             preflightURL: [.init(data: try fixture("preflight-v3"))],
             createURL: [.init(
-                status: 202,
-                data: Data(#"{"id":"parallel-job","status":"queued"}"#.utf8),
+                error: .networkConnectionLost,
                 gate: createGate
             )],
         ])

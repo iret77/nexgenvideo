@@ -72,6 +72,7 @@ final class GenerationService {
     private enum MireloSpendRecoveryKind: String, Hashable {
         case resumable
         case acceptanceUnknown
+        case submissionRepair
         case conflict
         case orphan
     }
@@ -2106,7 +2107,15 @@ final class GenerationService {
             )
         }
         defer {
-            try? refreshMireloSpendRecovery(editor: editor, store: store)
+            do {
+                try reconcileMireloAcceptedSpend(
+                    editor: editor,
+                    store: store,
+                    onlyTransactionID: transactionID
+                )
+            } catch {
+                try? refreshMireloSpendRecovery(editor: editor, store: store)
+            }
         }
         var executionWasApproved = false
         do {
@@ -2445,7 +2454,15 @@ final class GenerationService {
             editor: editor
         )
         defer {
-            try? refreshMireloSpendRecovery(editor: editor, store: store)
+            do {
+                try reconcileMireloAcceptedSpend(
+                    editor: editor,
+                    store: store,
+                    onlyTransactionID: transactionID
+                )
+            } catch {
+                try? refreshMireloSpendRecovery(editor: editor, store: store)
+            }
         }
         guard var record = try store.load(
             projectKey: projectKey,
@@ -2609,7 +2626,8 @@ final class GenerationService {
 
     func reconcileMireloAcceptedSpend(
         editor: EditorViewModel,
-        store suppliedStore: MireloExecutionStore? = nil
+        store suppliedStore: MireloExecutionStore? = nil,
+        onlyTransactionID: String? = nil
     ) throws {
         guard let projectKey = editor.projectId,
               let workingRoot = editor.workingRoot else { return }
@@ -2633,7 +2651,8 @@ final class GenerationService {
         let records: [MireloExecutionRecord]
         do {
             records = try store.all(projectKey: projectKey).filter {
-                $0.approvedAt != nil && $0.spendTransactionID != nil
+                $0.approvedAt != nil
+                    && $0.spendTransactionID != nil
             }
         } catch {
             if !projectHasMireloEvidence { return }
@@ -2642,6 +2661,10 @@ final class GenerationService {
         let grouped = Dictionary(grouping: records) { record in
             record.spendTransactionID ?? ""
         }
+        let reconciliationRecords = records.filter {
+            onlyTransactionID == nil
+                || $0.spendTransactionID == onlyTransactionID
+        }
         let scope = try GenerationProjectMutationScope(
             projectHome: workingRoot,
             editor: editor
@@ -2649,7 +2672,7 @@ final class GenerationService {
         var submissions: [(MireloExecutionRecord, GenerationAuthorization)] = []
         var releases: [(MireloExecutionRecord, GenerationAuthorization)] = []
         var reconciliationIssues: [MireloSpendRecoveryIssue] = []
-        for record in records {
+        for record in reconciliationRecords {
             guard let transactionID = record.spendTransactionID else { continue }
             if MireloExecutionCoordinator.shared.hasActiveFlight(
                 authorityID: record.authorityID
@@ -2849,6 +2872,13 @@ final class GenerationService {
             }
             if let providerJobID = record.providerJobID {
                 let submitted = events.filter { $0.kind == .submitted }
+                if submitted.isEmpty, events.last?.kind == .reserved {
+                    issues.append(.init(
+                        kind: .submissionRepair,
+                        detail: "Authority \(record.logicalJobID) accepted provider job \(providerJobID), but reservation \(transactionID) is still awaiting its submitted spend event."
+                    ))
+                    continue
+                }
                 guard submitted.count == 1,
                       submitted[0].providerRequestId == providerJobID,
                       events.last?.kind != .released else {
@@ -2960,6 +2990,14 @@ final class GenerationService {
         if acceptanceUnknown > 0 {
             guidance.append(
                 "Mirelo acceptance is unknown for \(acceptanceUnknown) non-idempotent \(acceptanceUnknown == 1 ? "job" : "jobs"). Check Mirelo usage; NexGenVideo cannot safely retry or release this authority."
+            )
+        }
+        let submissionRepairs = issues.filter {
+            $0.kind == .submissionRepair
+        }.count
+        if submissionRepairs > 0 {
+            guidance.append(
+                "\(submissionRepairs) accepted Mirelo \(submissionRepairs == 1 ? "job is" : "jobs are") missing the submitted spend event. Reopen the project to retry repair; the budget remains stopped until it succeeds."
             )
         }
         let conflicts = issues.filter { $0.kind == .conflict }.count

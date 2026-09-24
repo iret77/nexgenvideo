@@ -1058,10 +1058,19 @@ extension ToolExecutor {
         workingCopyKey: String
     ) async throws -> ToolResult {
         defer {
-            try? editor.generationService.refreshMireloSpendRecovery(
-                editor: editor,
-                store: store
-            )
+            do {
+                try editor.generationService.reconcileMireloAcceptedSpend(
+                    editor: editor,
+                    store: store,
+                    onlyTransactionID: record.spendTransactionID
+                        ?? record.logicalJobID
+                )
+            } catch {
+                try? editor.generationService.refreshMireloSpendRecovery(
+                    editor: editor,
+                    store: store
+                )
+            }
         }
         do {
             try authorization.projectMutationScope?.requireCurrent(editor: editor)

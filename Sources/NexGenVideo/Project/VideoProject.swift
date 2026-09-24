@@ -675,8 +675,12 @@ final class VideoProject: NSDocument {
             editorViewModel.projectURL = fileURL
         }
         editorViewModel.agentService.loadSessions(from: editorViewModel.workingCopyHome)
-        editorViewModel.onWorkingCopyReset = { [weak self] home in
-            self?.reloadEditableContents(from: home)
+        editorViewModel.onWorkingCopyReset = { [weak self] home, operation in
+            guard let self else {
+                operation.finish(.failure(WorkingCopyReloadError.documentUnavailable))
+                return
+            }
+            self.reloadEditableContents(from: home, operation: operation)
         }
         editorViewModel.agentService.onSessionsChanged = { [weak self] in
             self?.updateChangeCount(.changeDone)
@@ -763,27 +767,42 @@ final class VideoProject: NSDocument {
         }
     }
 
-    private func reloadEditableContents(from home: URL) {
-        Task { [weak self] in
+    private func reloadEditableContents(
+        from home: URL,
+        operation: WorkingCopyReloadOperation
+    ) {
+        let editor = editorViewModel
+        Task { [weak self, weak editor] in
             let result = await Task.detached(priority: .userInitiated) {
                 Result { try Self.readEditableContents(at: home) }
             }.value
-            guard let self, self.editorViewModel.workingCopyHome == home else { return }
+            guard let editor else {
+                operation.finish(.failure(WorkingCopyReloadError.editorUnavailable))
+                return
+            }
+            guard let self else {
+                operation.finish(.failure(WorkingCopyReloadError.documentUnavailable))
+                return
+            }
+            guard editor.workingCopyHome == home else {
+                operation.finish(.failure(WorkingCopyReloadError.workingCopyChanged))
+                return
+            }
             switch result {
             case .success(let contents):
-                self.editorViewModel.timeline = contents.timeline
-                self.editorViewModel.mediaManifest = contents.manifest ?? MediaManifest()
-                self.editorViewModel.generationLog = contents.generationLog ?? GenerationLog()
+                editor.timeline = contents.timeline
+                editor.mediaManifest = contents.manifest ?? MediaManifest()
+                editor.generationLog = contents.generationLog ?? GenerationLog()
                 self.cachedThumbnail = contents.thumbnail
-                self.editorViewModel.agentService.loadSessions(from: home)
-                self.editorViewModel.mediaAssets.removeAll()
+                editor.agentService.loadSessions(from: home)
+                editor.mediaAssets.removeAll()
                 self.restoreAssetsFromManifest()
-                self.editorViewModel.onWorkingCopyReloadCompleted?(.success(()))
+                operation.finish(.success(()))
             case .failure(let error):
                 Log.project.error(
                     "discard recovery reload failed: \(error.localizedDescription)"
                 )
-                self.editorViewModel.onWorkingCopyReloadCompleted?(.failure(error))
+                operation.finish(.failure(error))
                 self.presentError(error)
             }
         }
