@@ -29,7 +29,11 @@ enum CodexAppServerContract {
     ]
 
     static var isolatedConfig: String {
-        """
+        let featureConfiguration = disabledFeatures
+            .map { "\($0) = false" }
+            .joined(separator: "\n")
+        return [
+            """
     cli_auth_credentials_store = "keyring"
     mcp_oauth_credentials_store = "keyring"
     model_provider = "openai"
@@ -62,7 +66,16 @@ enum CodexAppServerContract {
     open_world_enabled = false
 
     [features]
-    """ + disabledFeatures.map { "\($0) = false" }.joined(separator: "\n") + "\n"
+    """,
+            featureConfiguration,
+            """
+    [skills]
+    include_instructions = false
+
+    [skills.bundled]
+    enabled = false
+    """,
+        ].joined(separator: "\n") + "\n"
     }
 
     static var isolatedConfigurationLayer: [String: Any] {
@@ -94,6 +107,10 @@ enum CodexAppServerContract {
                 ],
             ],
             "features": Dictionary(uniqueKeysWithValues: disabledFeatures.map { ($0, false) }),
+            "skills": [
+                "include_instructions": false,
+                "bundled": ["enabled": false],
+            ] as [String: Any],
         ]
     }
 
@@ -174,6 +191,10 @@ enum CodexAppServerContract {
               effective["sandbox_mode"] as? String == "read-only",
               effective["web_search"] as? String == "disabled",
               effective["model_provider"] as? String == "openai",
+              let skills = effective["skills"] as? [String: Any],
+              skills["include_instructions"] as? Bool == false,
+              let bundledSkills = skills["bundled"] as? [String: Any],
+              bundledSkills["enabled"] as? Bool == false,
               isAbsentOrNull(effective["model"]),
               isAbsentOrNull(effective["instructions"]),
               isAbsentOrNull(effective["developer_instructions"]),

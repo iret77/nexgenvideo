@@ -127,9 +127,14 @@ struct CodexAppServerRuntimeAdapterTests {
             "send_message_to_user_async = false",
             "current_time_reminder = false",
             "unbounded_connection_retries = false",
+            "[skills]",
+            "include_instructions = false",
+            "[skills.bundled]",
+            "enabled = false",
         ] {
             #expect(config.contains(required))
         }
+        #expect(config.contains("[features]\nshell_tool = false"))
         #expect(!config.contains("mcp_servers."))
         #expect(CodexAppServerContract.cliVersion == "0.156.0")
         #expect(CodexAppServerContract.protocolRevision == "rust-v0.156.0")
@@ -187,6 +192,10 @@ struct CodexAppServerRuntimeAdapterTests {
                 "sandbox_mode": "read-only",
                 "web_search": "disabled",
                 "model_provider": "openai",
+                "skills": [
+                    "include_instructions": false,
+                    "bundled": ["enabled": false],
+                ] as [String: Any],
             ],
             "origins": [
                 "approval_policy": [

@@ -2,6 +2,30 @@ name: Bundle .app
 
 on:
   workflow_dispatch:
+    inputs:
+      evidence_mode:
+        description: Exact work to run
+        required: true
+        default: bundle
+        type: choice
+        options:
+          - bundle
+          - codex-app-server-acceptance
+      source_sha:
+        description: Exact 40-character commit for Codex acceptance
+        required: false
+        default: ""
+        type: string
+      run_paid_llm_smoke:
+        description: Run the separately approved paid Codex LLM smoke
+        required: false
+        default: false
+        type: boolean
+      approval:
+        description: Enter APPROVE-CODEX-LLM-SMOKE for Codex acceptance
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -9,4 +33,17 @@ permissions:
 
 jobs:
   validate:
+    if: inputs.evidence_mode == 'bundle'
     uses: ./.github/workflows/ci.yml
+
+  codex-app-server-acceptance:
+    if: inputs.evidence_mode == 'codex-app-server-acceptance'
+    uses: ./.github/workflows/codex-app-server-acceptance.yml
+    with:
+      source_sha: ${{ inputs.source_sha }}
+      source_ref: ${{ github.ref }}
+      gateway_workflow_ref: ${{ github.workflow_ref }}
+      run_paid_llm_smoke: ${{ inputs.run_paid_llm_smoke }}
+      approval: ${{ inputs.approval }}
+    secrets:
+      CODEX_ACCEPTANCE_API_KEY: ${{ secrets.CODEX_ACCEPTANCE_API_KEY }}

@@ -5,6 +5,40 @@ import Testing
 @MainActor
 @Suite("Codex App Server live acceptance", .serialized)
 struct CodexAppServerLiveAcceptanceTests {
+    @Test("emitted isolated configuration starts with empty MCP and skill inventories")
+    func isolatedConfigurationStartsCleanRuntime() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard CodexAppServerContract.isAcceptanceRun,
+              environment["NGV_CODEX_CLEAN_CONFIGURATION"] == "1" else { return }
+        let home = URL(fileURLWithPath: try #require(environment["CODEX_HOME"]), isDirectory: true)
+        let scratch = URL(
+            fileURLWithPath: try #require(environment["RUNNER_TEMP"]),
+            isDirectory: true
+        ).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let driver = CodexAppServerJSONRPCDriver()
+        defer { driver.stop() }
+        try await driver.start(home: home, scratch: scratch)
+
+        let configIndex = try #require(driver.requestedMethods.firstIndex(of: "config/read"))
+        let requirementsIndex = try #require(
+            driver.requestedMethods.firstIndex(of: "configRequirements/read")
+        )
+        let mcpIndex = try #require(driver.requestedMethods.firstIndex(of: "mcpServerStatus/list"))
+        let skillsIndex = try #require(driver.requestedMethods.firstIndex(of: "skills/list"))
+        let accountIndex = try #require(driver.requestedMethods.firstIndex(of: "account/read"))
+        #expect(configIndex < mcpIndex)
+        #expect(requirementsIndex < mcpIndex)
+        #expect(mcpIndex < accountIndex)
+        #expect(skillsIndex < accountIndex)
+        #expect(!driver.requestedMethods.contains("thread/start"))
+        #expect(driver.accountStatus == .init(billing: .apiKey))
+
+        driver.stop()
+        await driver.waitForTermination()
+        #expect(driver.terminationConfirmed)
+        #expect(!FileManager.default.fileExists(atPath: scratch.path))
+    }
+
     @Test("active system configuration is rejected before account or thread work")
     func hostileSystemConfigurationFailsBeforeSideEffects() async throws {
         let environment = ProcessInfo.processInfo.environment

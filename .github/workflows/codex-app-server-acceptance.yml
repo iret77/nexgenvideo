@@ -1,10 +1,22 @@
 name: Codex App Server Acceptance
 
-# ci-lint: allow-CI008 Manual workflow_dispatch is required because this includes a paid LLM smoke.
+# ci-lint: allow-CI008 The registered bundle workflow is the only manual gateway to this paid smoke.
 # ci-lint: allow-CI007 No push or pull_request event may start this workflow.
 on:
-  workflow_dispatch:
+  workflow_call:
     inputs:
+      source_sha:
+        description: Exact source and reusable-workflow commit
+        type: string
+        required: true
+      source_ref:
+        description: Exact manually selected source ref
+        type: string
+        required: true
+      gateway_workflow_ref:
+        description: Exact registered bundle workflow ref
+        type: string
+        required: true
       run_paid_llm_smoke:
         description: "Run the separately approved paid Codex LLM smoke"
         type: boolean
@@ -14,6 +26,10 @@ on:
         description: "Enter APPROVE-CODEX-LLM-SMOKE"
         type: string
         required: true
+    secrets:
+      CODEX_ACCEPTANCE_API_KEY:
+        description: Dedicated OpenAI API key for the approved Codex acceptance run
+        required: false
 
 permissions:
   contents: read
@@ -23,8 +39,71 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require manual approval, exact workflow identity, and credential
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.source_sha }}
+          EXPECTED_SOURCE_REF: ${{ inputs.source_ref }}
+          EXPECTED_GATEWAY_WORKFLOW_REF: ${{ inputs.gateway_workflow_ref }}
+          ACTUAL_SOURCE_SHA: ${{ github.sha }}
+          ACTUAL_SOURCE_REF: ${{ github.ref }}
+          ACTUAL_GATEWAY_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          ACTUAL_GATEWAY_WORKFLOW_REF: ${{ github.workflow_ref }}
+          ACTUAL_ACCEPTANCE_WORKFLOW_SHA: ${{ job.workflow_sha }}
+          ACTUAL_ACCEPTANCE_WORKFLOW_REF: ${{ job.workflow_ref }}
+          ACTUAL_ACCEPTANCE_WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          ACTUAL_ACCEPTANCE_WORKFLOW_PATH: ${{ job.workflow_file_path }}
+          EVENT_NAME: ${{ github.event_name }}
+          ACTOR: ${{ github.actor }}
+          REPOSITORY: ${{ github.repository }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          RUN_PAID_LLM_SMOKE: ${{ inputs.run_paid_llm_smoke }}
+          APPROVAL: ${{ inputs.approval }}
+          CODEX_ACCEPTANCE_API_KEY: ${{ secrets.CODEX_ACCEPTANCE_API_KEY }}
+        run: |
+          set -euo pipefail
+          if test "$EVENT_NAME" != workflow_dispatch; then
+            echo "::error::Codex acceptance must originate from a manual workflow_dispatch." >&2
+            exit 1
+          fi
+          if test "$ACTOR" != "$REPOSITORY_OWNER"; then
+            echo "::error::Only the repository owner may approve Codex acceptance spend." >&2
+            exit 1
+          fi
+          if test "$RUN_PAID_LLM_SMOKE" != true || test "$APPROVAL" != APPROVE-CODEX-LLM-SMOKE; then
+            echo "::error::Codex acceptance requires separate owner approval for paid LLM spend." >&2
+            exit 1
+          fi
+          if ! [[ "$EXPECTED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::source_sha must be an exact 40-character lowercase commit SHA." >&2
+            exit 1
+          fi
+          expected_gateway_ref="$REPOSITORY/.github/workflows/bundle.yml@$EXPECTED_SOURCE_REF"
+          expected_acceptance_ref="$REPOSITORY/.github/workflows/codex-app-server-acceptance.yml@$EXPECTED_SOURCE_REF"
+          if [[ "$EXPECTED_SOURCE_REF" != refs/heads/* ]] \
+              || test "$ACTUAL_SOURCE_REF" != "$EXPECTED_SOURCE_REF" \
+              || test "$ACTUAL_SOURCE_SHA" != "$EXPECTED_SOURCE_SHA" \
+              || test "$ACTUAL_GATEWAY_WORKFLOW_SHA" != "$EXPECTED_SOURCE_SHA" \
+              || test "$ACTUAL_ACCEPTANCE_WORKFLOW_SHA" != "$EXPECTED_SOURCE_SHA" \
+              || test "$EXPECTED_GATEWAY_WORKFLOW_REF" != "$expected_gateway_ref" \
+              || test "$ACTUAL_GATEWAY_WORKFLOW_REF" != "$expected_gateway_ref" \
+              || test "$ACTUAL_ACCEPTANCE_WORKFLOW_REF" != "$expected_acceptance_ref" \
+              || test "$ACTUAL_ACCEPTANCE_WORKFLOW_REPOSITORY" != "$REPOSITORY" \
+              || test "$ACTUAL_ACCEPTANCE_WORKFLOW_PATH" != .github/workflows/codex-app-server-acceptance.yml; then
+            echo "::error::Codex acceptance workflow, source SHA, and ref are not bound to the same reviewed commit." >&2
+            exit 1
+          fi
+          if test -z "$CODEX_ACCEPTANCE_API_KEY"; then
+            echo "::error::Missing required Actions secret CODEX_ACCEPTANCE_API_KEY; provision it before an owner-approved Codex acceptance run." >&2
+            exit 1
+          fi
+
   acceptance:
-    if: inputs.run_paid_llm_smoke && inputs.approval == 'APPROVE-CODEX-LLM-SMOKE'
+    needs: gate
     runs-on: xcode-27
     timeout-minutes: 25
     env:
@@ -33,19 +112,22 @@ jobs:
       NGV_CODEX_ACCEPTANCE_EVIDENCE: ${{ runner.temp }}/codex-app-server-evidence.json
       NGV_CODEX_HOSTILE_MCP_MARKER: ${{ runner.temp }}/foreign-mcp-started
     steps:
+
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+
+      - name: Verify checked-out source identity
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
 
       - uses: ./.github/actions/setup-xcode-27
 
       - uses: ./.github/actions/cache-swiftpm-dependencies
-
-      - name: Require isolated acceptance credential
-        shell: bash
-        env:
-          CODEX_ACCEPTANCE_API_KEY: ${{ secrets.CODEX_ACCEPTANCE_API_KEY }}
-        run: |
-          set -euo pipefail
-          test -n "$CODEX_ACCEPTANCE_API_KEY"
 
       - name: Install pinned Codex CLI
         shell: bash
@@ -62,7 +144,13 @@ jobs:
           set -euo pipefail
           mkdir -p "$CODEX_HOME"
           chmod 700 "$CODEX_HOME"
-          printf '%s\n' 'cli_auth_credentials_store = "keyring"' > "$CODEX_HOME/config.toml"
+          printf '%s\n' \
+            'cli_auth_credentials_store = "keyring"' \
+            '[skills]' \
+            'include_instructions = false' \
+            '[skills.bundled]' \
+            'enabled = false' \
+            > "$CODEX_HOME/config.toml"
           chmod 600 "$CODEX_HOME/config.toml"
           printf '%s' "$CODEX_ACCEPTANCE_API_KEY" | codex login --with-api-key
 
@@ -88,23 +176,61 @@ jobs:
             --skip-build \
             --filter productConsumer
 
+      - name: Prove emitted configuration parses and starts a clean App Server
+        shell: bash
+        env:
+          NGV_CODEX_CLEAN_CONFIGURATION: "1"
+        run: |
+          set -euo pipefail
+          swift test \
+            --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
+            --skip-build \
+            --filter isolatedConfigurationStartsCleanRuntime
+          python3 - "$CODEX_HOME/config.toml" <<'PY'
+          from pathlib import Path
+          import sys
+          import tomllib
+
+          raw = Path(sys.argv[1]).read_bytes()
+          assert b"[features]\nshell_tool = false" in raw
+          config = tomllib.loads(raw.decode("utf-8"))
+          assert config["skills"] == {
+              "include_instructions": False,
+              "bundled": {"enabled": False},
+          }
+          assert config["features"]
+          assert all(value is False for value in config["features"].values())
+          assert "mcp_servers" not in config
+          PY
+
       - name: Install adversarial system configuration fixture
         shell: bash
         run: |
           set -euo pipefail
-          test ! -e /etc/codex/config.toml
+          fixture="$RUNNER_TEMP/ngv-codex-hostile-system-config.toml"
+          ownership="$RUNNER_TEMP/ngv-codex-hostile-system-config.sha256"
+          fixture_id="nexgenvideo-codex-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          printf '%s\n' \
+            "# $fixture_id" \
+            'model_provider = "foreign"' \
+            '[mcp_servers.foreign]' \
+            'command = "/usr/bin/touch"' \
+            "args = [\"$NGV_CODEX_HOSTILE_MCP_MARKER\"]" \
+            > "$fixture"
+          shasum -a 256 "$fixture" | cut -d' ' -f1 > "$ownership"
+          if test -e /etc/codex/config.toml; then
+            echo "::error::Runner already has /etc/codex/config.toml; refusing to overwrite it." >&2
+            exit 1
+          fi
           if test -d /etc/codex; then
             printf '%s\n' existing > "$RUNNER_TEMP/ngv-codex-system-dir-state"
           else
             printf '%s\n' created > "$RUNNER_TEMP/ngv-codex-system-dir-state"
           fi
           sudo mkdir -p /etc/codex
-          printf '%s\n' \
-            'model_provider = "foreign"' \
-            '[mcp_servers.foreign]' \
-            'command = "/usr/bin/touch"' \
-            "args = [\"$NGV_CODEX_HOSTILE_MCP_MARKER\"]" \
-            | sudo tee /etc/codex/config.toml >/dev/null
+          sudo bash -c 'set -o noclobber; cat "$1" > "$2"' \
+            _ "$fixture" /etc/codex/config.toml
+          sudo cmp -s "$fixture" /etc/codex/config.toml
 
       - name: Prove hostile system configuration is rejected before side effects
         env:
@@ -118,8 +244,23 @@ jobs:
 
       - name: Remove adversarial system configuration fixture
         if: always()
+        shell: bash
         run: |
-          sudo rm -f /etc/codex/config.toml
+          set -euo pipefail
+          ownership="$RUNNER_TEMP/ngv-codex-hostile-system-config.sha256"
+          if test -e /etc/codex/config.toml; then
+            if test ! -s "$ownership"; then
+              echo "::error::Preserving unowned /etc/codex/config.toml." >&2
+              exit 1
+            fi
+            expected="$(cat "$ownership")"
+            actual="$(sudo shasum -a 256 /etc/codex/config.toml | cut -d' ' -f1)"
+            if test "$actual" != "$expected"; then
+              echo "::error::Preserving /etc/codex/config.toml because it is not the exact owned fixture." >&2
+              exit 1
+            fi
+            sudo rm -f /etc/codex/config.toml
+          fi
           if test "$(cat "$RUNNER_TEMP/ngv-codex-system-dir-state" 2>/dev/null || true)" = created; then
             sudo rmdir /etc/codex
           fi
