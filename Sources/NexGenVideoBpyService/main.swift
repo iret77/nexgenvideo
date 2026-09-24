@@ -202,7 +202,9 @@ private let attributePackInvalid: UInt64 = 0x0000_0008
 private let vnodeTypeRegular: UInt32 = 1
 private let vnodeTypeDirectory: UInt32 = 2
 private let bulkAttributeBufferSize = 64 * 1_024
-private let bulkAttributeFixedSize = 84
+private let bulkAttributeCommonFixedSize = 60
+private let bulkAttributeDirectoryFixedSize = 68
+private let bulkAttributeFileFixedSize = 76
 
 private func vnodeIdentity(_ status: stat) -> VnodeIdentity {
     .init(
@@ -376,12 +378,12 @@ private func directorySnapshot(
                 if entryCount == 0 { break }
                 var offset = 0
                 for _ in 0..<entryCount {
-                    guard offset <= bulkAttributeBufferSize - bulkAttributeFixedSize else {
+                    guard offset <= bulkAttributeBufferSize - bulkAttributeCommonFixedSize else {
                         throw CocoaError(.fileReadCorruptFile)
                     }
                     let entry = UnsafeRawPointer(buffer.advanced(by: offset))
                     let length = Int(entry.loadUnaligned(as: UInt32.self))
-                    guard length >= bulkAttributeFixedSize,
+                    guard length >= bulkAttributeCommonFixedSize,
                           length <= bulkAttributeBufferSize - offset else {
                         throw CocoaError(.fileReadCorruptFile)
                     }
@@ -401,9 +403,21 @@ private func directorySnapshot(
                         fromByteOffset: 24,
                         as: UInt32.self
                     )
-                    guard returnedCommon & requestedCommon == requestedCommon,
-                          entryError == 0 else {
+                    guard entryError == 0 else {
                         throw POSIXError(.init(rawValue: Int32(entryError)) ?? .EIO)
+                    }
+                    guard returnedCommon & requestedCommon == requestedCommon else {
+                        throw CocoaError(.fileReadCorruptFile)
+                    }
+                    let objectType = entry.loadUnaligned(
+                        fromByteOffset: 48,
+                        as: UInt32.self
+                    )
+                    let fixedSize = objectType == vnodeTypeDirectory
+                        ? bulkAttributeDirectoryFixedSize
+                        : bulkAttributeFileFixedSize
+                    guard length >= fixedSize else {
+                        throw CocoaError(.fileReadCorruptFile)
                     }
                     let nameOffset = Int(entry.loadUnaligned(
                         fromByteOffset: 28,
@@ -413,7 +427,7 @@ private func directorySnapshot(
                         fromByteOffset: 32,
                         as: UInt32.self
                     ))
-                    guard nameOffset >= bulkAttributeFixedSize,
+                    guard nameOffset >= fixedSize,
                           nameLength > 0,
                           nameOffset <= length - nameLength,
                           entry.loadUnaligned(
@@ -426,10 +440,6 @@ private func directorySnapshot(
                     let fileSystem = DarwinFSID(
                         first: entry.loadUnaligned(fromByteOffset: 40, as: Int32.self),
                         second: entry.loadUnaligned(fromByteOffset: 44, as: Int32.self)
-                    )
-                    let objectType = entry.loadUnaligned(
-                        fromByteOffset: 48,
-                        as: UInt32.self
                     )
                     let identity = VnodeIdentity(
                         device: UInt64(UInt32(bitPattern: device)),
@@ -446,8 +456,8 @@ private func directorySnapshot(
                     } else if returnedFile
                         & (attributeFileTotalSize | attributeFileAllocationSize)
                         == (attributeFileTotalSize | attributeFileAllocationSize) {
-                        let logical = entry.loadUnaligned(fromByteOffset: 68, as: Int64.self)
-                        let allocated = entry.loadUnaligned(fromByteOffset: 76, as: Int64.self)
+                        let logical = entry.loadUnaligned(fromByteOffset: 60, as: Int64.self)
+                        let allocated = entry.loadUnaligned(fromByteOffset: 68, as: Int64.self)
                         guard logical >= 0, allocated >= 0 else {
                             throw CocoaError(.fileReadCorruptFile)
                         }
