@@ -1,9 +1,16 @@
 import AppKit
+import AVFoundation
+import CoreVideo
 import NexGenEngine
 import SwiftUI
 
 @MainActor
 enum WorkspaceUIAcceptance {
+    private enum NativeControlState: Equatable {
+        case enabled
+        case disabled
+    }
+
     private static var editorSizeProbes: [[String: String]] = []
     static let agentPinnedAwayNotification = Notification.Name(
         "WorkspaceUIAcceptance.agentPinnedAway"
@@ -40,7 +47,7 @@ enum WorkspaceUIAcceptance {
             let projectURL: URL
             let originalProject: [String: Data]
             do {
-                projectURL = try makeProjectFixture(scale: scale)
+                projectURL = try await makeProjectFixture(scale: scale)
                 originalProject = try projectSnapshot(at: projectURL)
                 document = try await VideoProject.load(from: projectURL)
                 document.makeWindowControllers()
@@ -323,6 +330,7 @@ enum WorkspaceUIAcceptance {
                     && narrowProductionWidthsAreValid(frames)
                     && previewTimecodeIsSingleLine(in: window, scale: scale)
                     && agentControlsAreContained(in: window)
+                    && productionLayoutEvidence(in: window, frames: frames) != nil
             }) else {
                 fail("narrow production controls did not fit", scale: scale)
             }
@@ -331,6 +339,10 @@ enum WorkspaceUIAcceptance {
             host.layoutSubtreeIfNeeded()
             let narrowName = "scale-\(scaleLabel(scale))-production-narrow"
             guard visiblePanelFrames(in: host) == narrowFrames,
+                  let productionLayout = productionLayoutEvidence(
+                      in: window,
+                      frames: narrowFrames
+                  ),
                   snapshot(host, at: evidenceURL.appendingPathComponent("\(narrowName).png")) else {
                 fail("narrow production layout did not settle", scale: scale)
             }
@@ -340,6 +352,7 @@ enum WorkspaceUIAcceptance {
                 fields: [
                     "screenshot": "\(narrowName).png",
                     "frames": narrowFrames.mapValues { frameDescription($0) },
+                    "productionLayout": productionLayout,
                     "window": windowDiagnostics(window, contentView: host),
                 ]
             )
@@ -624,15 +637,26 @@ enum WorkspaceUIAcceptance {
             guard clickRevealing(identifier: phaseID, in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
                       host.layoutSubtreeIfNeeded()
+                      let artifactID = probeValue(
+                          identifier: "production.artifact.\(destination.artifact)",
+                          in: window
+                      )
                       return editor.workspaceFocus == .production
                           && editor.viewedPipelinePhaseID == destination.phase
                           && probeState(identifier: phaseID, in: window) == true
-                          && probeState(
-                              identifier: "production.surface.\(destination.artifact)",
-                              in: window
-                          ) == (destination.phase == "frames")
+                          && validProductionArtifactID(
+                              artifactID,
+                              phase: destination.phase,
+                              project: editor.projectState?.project
+                          )
                   }) else {
                 fail("production phase did not open \(destination.artifact)", scale: scale)
+            }
+            guard let artifactID = probeValue(
+                identifier: "production.artifact.\(destination.artifact)",
+                in: window
+            ) else {
+                fail("production artifact identity was unavailable for \(destination.artifact)", scale: scale)
             }
             let name = "scale-\(scaleLabel(scale))-production-\(destination.artifact).png"
             guard snapshot(host, at: evidenceURL.appendingPathComponent(name)) else {
@@ -643,6 +667,7 @@ enum WorkspaceUIAcceptance {
                 scale: scale,
                 fields: [
                     "artifact": destination.artifact,
+                    "artifactID": artifactID,
                     "focusedWorkspace": editor.workspaceFocus.rawValue,
                     "phase": destination.phase,
                     "screenshot": name,
@@ -731,22 +756,63 @@ enum WorkspaceUIAcceptance {
         guard snapshot(host, at: evidenceURL.appendingPathComponent(rewindName)) else {
             fail("could not capture rewind consequences", scale: scale)
         }
+        guard let home = editor.workingRoot,
+              let root = DataRootResolver.dataRoot(of: home),
+              let rewindLease = editor.pipelinePhaseRunCoordinator.beginMutation(
+                  projectRoot: root,
+                  label: "Acceptance readiness transition"
+              ) else {
+            fail("rewind readiness transition could not start", scale: scale)
+        }
+        guard await waitUntil(timeout: .seconds(5), {
+            probeValue(identifier: "production.rewind.confirmation", in: window) == nil
+                && editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root)
+                    == "Acceptance readiness transition"
+        }) else {
+            editor.pipelinePhaseRunCoordinator.endMutation(projectRoot: root, id: rewindLease)
+            fail("rewind confirmation remained open after editing became unavailable", scale: scale)
+        }
+        editor.pipelinePhaseRunCoordinator.endMutation(projectRoot: root, id: rewindLease)
         emit(
             "production-rewind",
             scale: scale,
-            fields: ["phase": "brief", "screenshot": rewindName]
+            fields: [
+                "closedOnReadinessChange": true,
+                "phase": "brief",
+                "screenshot": rewindName,
+            ]
         )
-        pressKey(keyCode: 53, characters: "\u{1b}")
         guard await waitUntil(timeout: .seconds(5), {
-            probeValue(identifier: "production.rewind.confirmation", in: window) == nil
+            editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) == nil
         }) else {
-            fail("rewind confirmation did not cancel", scale: scale)
+            fail("rewind readiness transition did not settle", scale: scale)
         }
-
-        guard let home = editor.workingRoot,
-              let root = DataRootResolver.dataRoot(of: home) else {
-            fail("production working root was unavailable", scale: scale)
+        guard clickRevealing(identifier: "production.phase.frames", in: window) == nil,
+              await waitUntil(timeout: .seconds(5), {
+                  host.layoutSubtreeIfNeeded()
+                  return editor.viewedPipelinePhaseID == "frames"
+                      && probeState(identifier: "production.surface.frames", in: window) == true
+                      && nativeControlState(
+                          identifier: "production.frames.redo.acceptance-shot.acceptance-01-start.png",
+                          in: window
+                      ) == .enabled
+              }), clickControlRevealing(
+                  identifier: "production.frames.redo.acceptance-shot.acceptance-01-start.png",
+                  in: window
+              ) == nil,
+              await waitUntil(timeout: .seconds(5), {
+                  probeState(identifier: "production.frames.redo-open", in: window) == true
+              }) else {
+            fail("the real Frames mutation popover was unavailable before the phase run", scale: scale)
         }
+        guard let lockedProjectURL = editor.projectURL,
+              let beforeLockedProject = try? projectSnapshot(at: lockedProjectURL),
+              let beforeLockedWorkingCopy = try? treeSnapshot(at: home) else {
+            fail("read-only production snapshots were unavailable", scale: scale)
+        }
+        let beforeLockedMessages = editor.agentService.messages
+        let beforeLockedCanUndo = window.undoManager?.canUndo ?? false
+        let beforeLockedUndoName = window.undoManager?.undoActionName ?? ""
         let runnerGate = DispatchSemaphore(value: 0)
         let running = Task { @MainActor in
             await editor.pipelinePhaseRunCoordinator.run(
@@ -760,20 +826,102 @@ enum WorkspaceUIAcceptance {
         }
         guard await waitUntil(timeout: .seconds(5), {
             editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) == "frames"
-        }), clickRevealing(identifier: "production.phase.brief", in: window) == nil,
+                && probeState(identifier: "production.frames.redo-open", in: window) == false
+        }), clickRevealing(identifier: "production.phase.frames", in: window) == nil,
               await waitUntil(timeout: .seconds(5), {
                   host.layoutSubtreeIfNeeded()
-                  return editor.viewedPipelinePhaseID == "brief"
-                      && probeState(identifier: "production.surface.brief", in: window) == false
-                      && probeState(identifier: "production.story.mutations", in: window) == false
-                      && probeState(identifier: "production.phase.brief.actions", in: window) == false
+                  return editor.viewedPipelinePhaseID == "frames"
+                      && nativeControlState(
+                          identifier: "production.frames.use.acceptance-shot.acceptance-01-start.png",
+                          in: window
+                      ) == .disabled
+                      && nativeControlState(
+                          identifier: "production.phase.frames.actions.control",
+                          in: window
+                      ) == .disabled
               }) else {
             runnerGate.signal()
             _ = await running.value
-            fail("historical Brief was not inspectable and read-only during a phase run", scale: scale)
+            fail("real Frames mutation controls were not disabled during a phase run", scale: scale)
+        }
+        guard clickControlRevealing(
+            identifier: "production.frames.use.acceptance-shot.acceptance-01-start.png",
+            in: window
+        ) == nil,
+        clickControl(
+            identifier: "production.phase.frames.actions.control",
+            in: window
+        ) == nil,
+        clickControlRevealing(
+            identifier: "production.frames.inspect.acceptance-shot",
+            in: window
+        ) == nil,
+        await waitUntil(timeout: .seconds(5), {
+            editor.inspectedObject == .shot("acceptance-shot")
+        }), scrollControlToVisible(
+            identifier: "production.frames.candidate.acceptance-shot.acceptance-03-option.png",
+            in: window
+        ) else {
+            runnerGate.signal()
+            _ = await running.value
+            fail("read-only Frames inspection was not usable during the phase run", scale: scale)
+        }
+        guard clickRevealing(identifier: "production.phase.render", in: window) == nil,
+              await waitUntil(timeout: .seconds(5), {
+                  host.layoutSubtreeIfNeeded()
+                  return editor.viewedPipelinePhaseID == "render"
+                      && validProductionArtifactID(
+                          probeValue(identifier: "production.artifact.render", in: window),
+                          phase: "render",
+                          project: editor.projectState?.project
+                      )
+                      && nativeControlState(
+                          identifier: "production.render.review-takes",
+                          in: window
+                      ) == .enabled
+              }), clickControlRevealing(
+                  identifier: "production.render.review-takes",
+                  in: window
+              ) == nil,
+              await waitUntil(timeout: .seconds(5), {
+                  window.attachedSheet?.contentView.flatMap {
+                      findView(in: $0, accessibilityIdentifier: "production.render.take-picker")
+                  } != nil
+              }), let reviewWindow = window.attachedSheet,
+              nativeControlState(
+                  identifier: "production.render.take-picker",
+                  in: reviewWindow
+              ) == .enabled,
+              clickControl(identifier: "production.render.take-picker", in: reviewWindow) == nil else {
+            runnerGate.signal()
+            _ = await running.value
+            fail("the recorded Render take was not inspectable during the phase run", scale: scale)
+        }
+        try? await Task.sleep(for: .milliseconds(200))
+        pressKey(keyCode: 125, characters: "\u{f701}")
+        pressKey(keyCode: 36, characters: "\r")
+        guard await waitUntil(timeout: .seconds(5), {
+            reviewWindow.contentView.flatMap {
+                findView(in: $0, accessibilityIdentifier: "production.render.player")
+            } != nil
+        }), clickControl(
+            identifier: "production.render.references",
+            in: reviewWindow
+        ) == nil,
+        await waitUntil(timeout: .seconds(5), {
+            guard let content = reviewWindow.contentView else { return false }
+            return findProbe(
+                in: content,
+                identifier: "production.render.references.content"
+            ) != nil
+        }) else {
+            runnerGate.signal()
+            _ = await running.value
+            fail("the recorded Render take did not expose its player and references", scale: scale)
         }
         let readOnlyName = "scale-\(scaleLabel(scale))-production-read-only.png"
-        guard snapshot(host, at: evidenceURL.appendingPathComponent(readOnlyName)) else {
+        guard let reviewContent = reviewWindow.contentView,
+              snapshot(reviewContent, at: evidenceURL.appendingPathComponent(readOnlyName)) else {
             runnerGate.signal()
             _ = await running.value
             fail("could not capture running-phase read-only browsing", scale: scale)
@@ -782,11 +930,28 @@ enum WorkspaceUIAcceptance {
             "production-read-only",
             scale: scale,
             fields: [
-                "inspectedPhase": "brief",
+                "inspectedPhase": "frames,render",
+                "mutationsDisabled": true,
+                "nativeInspectionWorked": true,
+                "popoverClosedOnReadinessChange": true,
                 "runningPhase": "frames",
                 "screenshot": readOnlyName,
             ]
         )
+        guard clickControl(
+            identifier: "production.render.review-close",
+            in: reviewWindow
+        ) == nil,
+        await waitUntil(timeout: .seconds(5), { window.attachedSheet == nil }),
+        (try? projectSnapshot(at: lockedProjectURL)) == beforeLockedProject,
+        (try? treeSnapshot(at: home)) == beforeLockedWorkingCopy,
+        editor.agentService.messages == beforeLockedMessages,
+        (window.undoManager?.canUndo ?? false) == beforeLockedCanUndo,
+        (window.undoManager?.undoActionName ?? "") == beforeLockedUndoName else {
+            runnerGate.signal()
+            _ = await running.value
+            fail("blocked production controls changed project, transcript, or undo state", scale: scale)
+        }
         runnerGate.signal()
         let outcome = await running.value
         guard outcome == .completed else {
@@ -794,7 +959,7 @@ enum WorkspaceUIAcceptance {
         }
     }
 
-    private static func makeProjectFixture(scale: Double) throws -> URL {
+    private static func makeProjectFixture(scale: Double) async throws -> URL {
         let title = scale == 1.25
             ? "An exceptionally long project name for the final picture lock"
             : "Ein außergewöhnlich langes Projekt für den finalen Filmschnitt"
@@ -847,7 +1012,16 @@ enum WorkspaceUIAcceptance {
             to: projectURL.appendingPathComponent(Project.manifestFilename),
             options: .atomic
         )
-        try JSONEncoder().encode(GenerationLog()).write(
+        var generationLog = GenerationLog()
+        generationLog.entries = [
+            GenerationLogEntry(
+                id: "workspace-ui-legacy-generation",
+                model: "fixture-model",
+                costCredits: nil,
+                createdAt: Date(timeIntervalSince1970: 1_750_000_000)
+            ),
+        ]
+        try JSONEncoder().encode(generationLog).write(
             to: projectURL.appendingPathComponent(Project.generationLogFilename),
             options: .atomic
         )
@@ -868,12 +1042,33 @@ enum WorkspaceUIAcceptance {
                 aspectRatio: .landscape16x9,
                 projectMode: "beat",
                 budgetEur: 125,
+                budgetStopEur: 150,
                 conceptType: .abstract,
                 visualMedium: .liveActionRealistic,
                 figures: .none,
                 lyricsIntegration: .ignored
             ),
             to: PipelineLayout.briefFile
+        )
+        try TreatmentStore.save(
+            Treatment(
+                meta: try TreatmentMeta(
+                    project: title,
+                    version: 1,
+                    generated: "2026-09-24T00:00:00Z",
+                    origin: .agentProposal,
+                    generator: "workspace-ui-acceptance",
+                    summaryOneline: "Acceptance treatment"
+                ),
+                bodyMarkdown: "Acceptance treatment artifact."
+            ),
+            to: dataRoot
+        )
+        try prepareFramesFixture(project: title, dataRoot: dataRoot)
+        try await prepareRenderTakeFixture(
+            project: title,
+            projectURL: projectURL,
+            dataRoot: dataRoot
         )
         var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
         GatesOperations.approve(&gates, phase: "project_init")
@@ -886,6 +1081,241 @@ enum WorkspaceUIAcceptance {
         GatesOperations.approve(&gates, phase: "sanity")
         try store.save(gates, to: PipelineLayout.gatesFile)
         return projectURL
+    }
+
+    private static func prepareFramesFixture(project: String, dataRoot: URL) throws {
+        let shotID = "acceptance-shot"
+        let names = [
+            "acceptance-01-start.png",
+            "acceptance-02-option.png",
+            "acceptance-03-option.png",
+        ]
+        let colors: [(UInt8, UInt8, UInt8)] = [
+            (36, 92, 168),
+            (168, 72, 52),
+            (74, 148, 88),
+        ]
+        let directory = dataRoot
+            .appendingPathComponent(PipelineLayout.framesDir, isDirectory: true)
+            .appendingPathComponent(shotID, isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        for (name, color) in zip(names, colors) {
+            try fixturePNG(red: color.0, green: color.1, blue: color.2)
+                .write(to: directory.appendingPathComponent(name), options: .atomic)
+        }
+        let framePath = "\(PipelineLayout.framesDir)/\(shotID)/\(names[0])"
+        var render = RenderManifest(project: project, phase: "frames")
+        record(
+            &render,
+            shotId: shotID,
+            output: framePath,
+            costEur: 0,
+            phase: "frames",
+            updatedAt: "2026-09-24T00:00:00Z"
+        )
+        let frames = FramesManifest(
+            project: project,
+            generated: "2026-09-24T00:00:00Z",
+            shots: [
+                ShotFrames(
+                    shotId: shotID,
+                    keyframeStrategy: "start",
+                    frames: [
+                        FrameEntry(
+                            role: "start",
+                            path: framePath,
+                            prompt: "Acceptance frame",
+                            runwayModel: "fixture-model",
+                            providerPrompt: "Deterministic local acceptance frame."
+                        ),
+                    ]
+                ),
+            ]
+        )
+        _ = try PipelineRenderRecordWriter.publish(
+            manifest: render,
+            proof: nil,
+            routingProof: nil,
+            framesManifest: frames,
+            replacingShotID: shotID,
+            preparedLastFrame: nil,
+            expectedPublicationTransactionID: nil,
+            dataRoot: dataRoot
+        )
+    }
+
+    private static func prepareRenderTakeFixture(
+        project: String,
+        projectURL: URL,
+        dataRoot: URL
+    ) async throws {
+        let shotID = "acceptance-render-shot"
+        let outputPath = "media/acceptance-render-take.mp4"
+        let outputURL = projectURL.appendingPathComponent(outputPath)
+        try FileManager.default.createDirectory(
+            at: outputURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try await writeFixtureVideo(to: outputURL)
+        let output = RenderPublishedArtifactV1(
+            path: outputPath,
+            sha256: try FileDigest.sha256(of: outputURL)
+        )
+        var manifest = RenderManifest(project: project, phase: "final")
+        record(
+            &manifest,
+            shotId: shotID,
+            output: outputPath,
+            costEur: 0,
+            phase: "final",
+            updatedAt: "2026-09-24T00:00:00Z"
+        )
+        try saveRenderManifest(manifest, dataRoot: dataRoot)
+        guard let entry = manifest.entries[shotID] else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        var input = GenerationInput(
+            prompt: "A deterministic local acceptance take.",
+            model: "fixture-model",
+            duration: 1,
+            aspectRatio: "16:9"
+        )
+        input.promptShotId = shotID
+        input.promptShotFingerprint = String(repeating: "a", count: 64)
+        input.createdAt = Date(timeIntervalSince1970: 1_750_000_000)
+        let proof = RenderShotProvenanceProofV1(
+            project: project,
+            phase: "final",
+            shotID: shotID,
+            renderEntry: entry,
+            renderProofEntry: RenderProofEntry(
+                shotId: shotID,
+                output: outputPath,
+                outputSha256: output.sha256,
+                providerPrompt: input.prompt,
+                generationModel: input.model
+            ),
+            routingProofEntry: nil,
+            frames: nil,
+            lastFrame: nil,
+            outputs: [output]
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let proofBytes = try encoder.encode(proof)
+        let proofPath = "renders/provenance/acceptance-render-shot.v1.json"
+        let proofURL = dataRoot.appendingPathComponent(proofPath)
+        try FileManager.default.createDirectory(
+            at: proofURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try proofBytes.write(to: proofURL, options: .atomic)
+        let prepared = try PipelineRenderTakeStore.prepare(
+            completed: .init(
+                eventID: "workspace-ui-acceptance-render",
+                generationInput: input
+            ),
+            provenance: RenderPublishedArtifactV1(
+                path: proofPath,
+                sha256: FileDigest.sha256(of: proofBytes)
+            ),
+            shotProof: proof,
+            manifest: manifest,
+            shotID: shotID,
+            dataRoot: dataRoot
+        )
+        for file in prepared.files {
+            let url = dataRoot.appendingPathComponent(file.path)
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try file.data.write(to: url, options: .atomic)
+        }
+    }
+
+    private static func fixturePNG(red: UInt8, green: UInt8, blue: UInt8) throws -> Data {
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 64,
+            pixelsHigh: 64,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ), let bytes = bitmap.bitmapData else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        for pixel in 0..<(bitmap.bytesPerRow * bitmap.pixelsHigh / 4) {
+            let offset = pixel * 4
+            bytes[offset] = red
+            bytes[offset + 1] = green
+            bytes[offset + 2] = blue
+            bytes[offset + 3] = UInt8.max
+        }
+        guard let data = bitmap.representation(using: .png, properties: [:]) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        return data
+    }
+
+    private static func writeFixtureVideo(to url: URL) async throws {
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+        let input = AVAssetWriterInput(
+            mediaType: .video,
+            outputSettings: [
+                AVVideoCodecKey: AVVideoCodecType.h264,
+                AVVideoWidthKey: 320,
+                AVVideoHeightKey: 180,
+            ]
+        )
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: input,
+            sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: 320,
+                kCVPixelBufferHeightKey as String: 180,
+            ]
+        )
+        writer.add(input)
+        guard writer.startWriting() else {
+            throw writer.error ?? CocoaError(.fileWriteUnknown)
+        }
+        writer.startSession(atSourceTime: .zero)
+        for frame in 0..<12 {
+            while !input.isReadyForMoreMediaData {
+                try await Task.sleep(for: .milliseconds(5))
+            }
+            guard let buffer = adaptor.pixelBufferPool.flatMap({ pool -> CVPixelBuffer? in
+                var value: CVPixelBuffer?
+                CVPixelBufferPoolCreatePixelBuffer(nil, pool, &value)
+                return value
+            }) else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+            CVPixelBufferLockBaseAddress(buffer, [])
+            if let base = CVPixelBufferGetBaseAddress(buffer) {
+                memset(base, frame < 6 ? 48 : 112, CVPixelBufferGetDataSize(buffer))
+            }
+            CVPixelBufferUnlockBaseAddress(buffer, [])
+            guard adaptor.append(
+                buffer,
+                withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: 12)
+            ) else {
+                throw writer.error ?? CocoaError(.fileWriteUnknown)
+            }
+        }
+        input.markAsFinished()
+        await writer.finishWriting()
+        guard writer.status == .completed else {
+            throw writer.error ?? CocoaError(.fileWriteUnknown)
+        }
     }
 
     private static func projectSnapshot(at projectURL: URL) throws -> [String: Data] {
@@ -1004,6 +1434,74 @@ enum WorkspaceUIAcceptance {
             && project.width >= AppTheme.Layout.previewMinWidth - tolerance
             && preview.width >= AppTheme.Layout.produceRightColumnMinWidth - tolerance
             && inspector.width >= AppTheme.Layout.produceRightColumnMinWidth - tolerance
+    }
+
+    private static func productionLayoutEvidence(
+        in window: NSWindow,
+        frames: [String: NSRect]
+    ) -> [String: Any]? {
+        guard let project = frames["projectPanel"],
+              probeValue(identifier: "production.layout.navigation", in: window) == "compact",
+              probeValue(identifier: "production.layout.dock", in: window) == "compact",
+              let navigation = visibleProbeFrame(
+                  identifier: "production.layout.navigation",
+                  in: window
+              ),
+              let artifact = visibleProbeFrame(
+                  identifier: "production.layout.artifact",
+                  in: window
+              ),
+              let dock = visibleProbeFrame(
+                  identifier: "production.layout.dock",
+                  in: window
+              ),
+              let open = visibleProbeFrame(
+                  identifier: "production.dock.open",
+                  in: window
+              ),
+              let approve = visibleProbeFrame(
+                  identifier: "production.dock.approve",
+                  in: window
+              ) else { return nil }
+        let bounds = project.insetBy(
+            dx: -AppTheme.BorderWidth.thin,
+            dy: -AppTheme.BorderWidth.thin
+        )
+        let dockBounds = dock.insetBy(
+            dx: -AppTheme.BorderWidth.thin,
+            dy: -AppTheme.BorderWidth.thin
+        )
+        guard bounds.contains(navigation),
+              bounds.contains(artifact),
+              bounds.contains(dock),
+              artifact.width >= AppTheme.ComponentSize.productionArtifactMinWidth,
+              dockBounds.contains(open),
+              dockBounds.contains(approve) else { return nil }
+        return [
+            "approveFrame": frameDescription(approve),
+            "artifactFrame": frameDescription(artifact),
+            "artifactMinimumWidth": Double(AppTheme.ComponentSize.productionArtifactMinWidth),
+            "dockFrame": frameDescription(dock),
+            "mode": "compact",
+            "navigationFrame": frameDescription(navigation),
+            "openFrame": frameDescription(open),
+            "projectFrame": frameDescription(project),
+        ]
+    }
+
+    private static func visibleProbeFrame(
+        identifier: String,
+        in window: NSWindow
+    ) -> NSRect? {
+        guard let root = window.contentView else { return nil }
+        return probes(in: root, identifier: identifier).compactMap { probe in
+            let frame = probe.convert(probe.bounds, to: root)
+            guard probe.window === window,
+                  !probe.isHiddenOrHasHiddenAncestor,
+                  frame.width > 0,
+                  frame.height > 0 else { return nil }
+            return frame
+        }.first
     }
 
     private static func previewTimecodeIsSingleLine(in window: NSWindow, scale: Double) -> Bool {
@@ -1511,11 +2009,46 @@ enum WorkspaceUIAcceptance {
               !probe.isHiddenOrHasHiddenAncestor else {
             return "control geometry unavailable"
         }
-        let frame = probe.bounds
+        return postClick(on: probe, in: window)
+    }
+
+    private static func clickControl(identifier: String, in window: NSWindow) -> String? {
+        guard let root = window.contentView,
+              let control = identifiedNativeControl(identifier: identifier, in: root) else {
+            return "native control unavailable"
+        }
+        return postClick(on: control, in: window)
+    }
+
+    private static func clickControlRevealing(
+        identifier: String,
+        in window: NSWindow
+    ) -> String? {
+        guard let root = window.contentView,
+              let control = identifiedNativeControl(identifier: identifier, in: root) else {
+            return "native control unavailable"
+        }
+        if let scrollView = enclosingScrollView(for: control),
+           let documentView = scrollView.documentView {
+            documentView.scrollToVisible(control.convert(control.bounds, to: documentView))
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+            root.layoutSubtreeIfNeeded()
+        }
+        return postClick(on: control, in: window)
+    }
+
+    private static func postClick(on view: NSView, in window: NSWindow) -> String? {
+        guard window.isVisible, window.isKeyWindow, !window.ignoresMouseEvents,
+              view.window === window,
+              !view.isHiddenOrHasHiddenAncestor,
+              let root = window.contentView else {
+            return "control geometry unavailable"
+        }
+        let frame = view.bounds
         guard frame.width.isFinite, frame.height.isFinite, frame.width > 0, frame.height > 0 else {
             return "control has no finite frame"
         }
-        let location = probe.convert(NSPoint(x: frame.midX, y: frame.midY), to: nil)
+        let location = view.convert(NSPoint(x: frame.midX, y: frame.midY), to: nil)
         guard root.bounds.contains(root.convert(location, from: nil)) else {
             return "control is outside the window"
         }
@@ -1545,6 +2078,68 @@ enum WorkspaceUIAcceptance {
         }
         NSApp.postEvent(down, atStart: false)
         NSApp.postEvent(up, atStart: false)
+        return nil
+    }
+
+    private static func nativeControlState(
+        identifier: String,
+        in window: NSWindow
+    ) -> NativeControlState? {
+        guard let root = window.contentView,
+              let control = identifiedNativeControl(identifier: identifier, in: root) else {
+            return nil
+        }
+        let frame = control.convert(control.bounds, to: root)
+        guard control.window === window,
+              !control.isHiddenOrHasHiddenAncestor,
+              frame.width > 0,
+              frame.height > 0,
+              root.bounds.intersects(frame) else { return nil }
+        return control.isEnabled && control.accessibilityEnabled()
+            ? .enabled
+            : .disabled
+    }
+
+    private static func scrollControlToVisible(
+        identifier: String,
+        in window: NSWindow
+    ) -> Bool {
+        guard let root = window.contentView,
+              let view = findView(in: root, accessibilityIdentifier: identifier),
+              let scrollView = enclosingScrollView(for: view),
+              let documentView = scrollView.documentView else { return false }
+        documentView.scrollToVisible(view.convert(view.bounds, to: documentView))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+        root.layoutSubtreeIfNeeded()
+        let frame = view.convert(view.bounds, to: scrollView.contentView)
+        return scrollView.contentView.bounds.insetBy(
+            dx: -AppTheme.BorderWidth.thin,
+            dy: -AppTheme.BorderWidth.thin
+        ).contains(frame)
+    }
+
+    private static func identifiedNativeControl(
+        identifier: String,
+        in root: NSView
+    ) -> NSControl? {
+        guard let identified = findView(
+            in: root,
+            accessibilityIdentifier: identifier
+        ) else { return nil }
+        if let control = identified as? NSControl { return control }
+        func descendant(in view: NSView) -> NSControl? {
+            for child in view.subviews {
+                if let control = child as? NSControl { return control }
+                if let control = descendant(in: child) { return control }
+            }
+            return nil
+        }
+        if let control = descendant(in: identified) { return control }
+        var ancestor = identified.superview
+        while let view = ancestor {
+            if let control = view as? NSControl { return control }
+            ancestor = view.superview
+        }
         return nil
     }
 
@@ -1616,6 +2211,30 @@ enum WorkspaceUIAcceptance {
               let probe = findProbe(in: root, identifier: identifier)
                 as? AppRelaunchClickProbeView else { return nil }
         return probe.acceptanceValue
+    }
+
+    private static func validProductionArtifactID(
+        _ value: String?,
+        phase: String,
+        project: String?
+    ) -> Bool {
+        guard let value else { return false }
+        switch phase {
+        case "brief":
+            return project.map { value == "brief:\($0)" } == true
+        case "treatment":
+            return value == "treatment:v1:Acceptance treatment artifact."
+        case "frames":
+            return value == "frames:acceptance-shot:acceptance-01-start.png"
+        case "render":
+            let components = value.split(separator: ":", omittingEmptySubsequences: false)
+            guard components.count == 3,
+                  components[0] == "render",
+                  components[1] == "acceptance-render-shot" else { return false }
+            return components[2].count == 64 && components[2].allSatisfy(\.isHexDigit)
+        default:
+            return false
+        }
     }
 
     private static func waitUntil(

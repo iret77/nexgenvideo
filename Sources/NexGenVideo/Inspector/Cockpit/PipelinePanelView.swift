@@ -144,8 +144,15 @@ enum PipelineNextAction {
 }
 
 struct PipelineReadinessPresentation: Equatable {
+    enum ResolutionAction: Equatable {
+        case none
+        case openDecision
+        case askAgent(String)
+    }
+
     let message: String
     let diagnostic: String?
+    let action: ResolutionAction
 
     static func current(
         selector: String?,
@@ -157,23 +164,33 @@ struct PipelineReadinessPresentation: Equatable {
         if let hostDecisionRequirement {
             return Self(
                 message: hostDecisionRequirement,
-                diagnostic: "A host-owned decision is still waiting for an answer."
+                diagnostic: nil,
+                action: .openDecision
             )
         }
         if let blocker = mutations.blocker {
+            if blocker.localizedCaseInsensitiveContains("checking") {
+                return Self(
+                    message: "Checking \(phaseLabel) editing access.",
+                    diagnostic: nil,
+                    action: .none
+                )
+            }
             return Self(
                 message: userMessage(
                     for: blocker,
                     selector: selector,
                     phaseLabel: phaseLabel
                 ),
-                diagnostic: blocker
+                diagnostic: blocker,
+                action: .askAgent(blocker)
             )
         }
         if approval.isReady {
             return Self(
                 message: "The \(phaseLabel) artifact is structurally complete and ready for approval.",
-                diagnostic: nil
+                diagnostic: nil,
+                action: .none
             )
         }
         guard let blocker = approval.blocker else {
@@ -182,7 +199,15 @@ struct PipelineReadinessPresentation: Equatable {
                     for: selector,
                     phaseLabel: phaseLabel
                 ),
-                diagnostic: nil
+                diagnostic: nil,
+                action: .none
+            )
+        }
+        if blocker.localizedCaseInsensitiveContains("checking") {
+            return Self(
+                message: "Checking \(phaseLabel) approval requirements.",
+                diagnostic: nil,
+                action: .none
             )
         }
         return Self(
@@ -191,7 +216,8 @@ struct PipelineReadinessPresentation: Equatable {
                 selector: selector,
                 phaseLabel: phaseLabel
             ),
-            diagnostic: blocker
+            diagnostic: blocker,
+            action: .askAgent(blocker)
         )
     }
 
@@ -308,6 +334,13 @@ struct PipelinePanelView: View {
         return editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: dataRoot)
     }
 
+    private var gateControlsAvailable: Bool {
+        mutationReadiness.isReady
+            && !gateWriting
+            && runningPhase == nil
+            && !editor.agentService.isComposerBlocked
+    }
+
     var body: some View {
         content
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -321,6 +354,9 @@ struct PipelinePanelView: View {
             }
             .onChange(of: editor.availableCockpitPackSurfaces) { _, _ in normalizeSelection() }
             .onChange(of: runningPhase) { _, _ in refreshApprovalReadiness() }
+            .onChange(of: gateControlsAvailable) { _, available in
+                if !available { rewindPhase = nil }
+            }
             .onChange(of: editor.cockpitTab) { _, tab in
                 guard tab != .project, tab != .pipeline else { return }
                 normalizeSelection(honorRequestedSurface: true)
@@ -390,32 +426,50 @@ struct PipelinePanelView: View {
     }
 
     private func loadedBody(_ data: ProjectStateData, contract: ContractData) -> some View {
-        VStack(spacing: AppTheme.Spacing.none) {
-            HStack(spacing: AppTheme.Spacing.none) {
-                phaseNavigation(data, contract: contract)
-                    .frame(width: AppTheme.ComponentSize.productionNavigationWidth * interfaceScale)
-                AppDivider()
-                viewedPhaseSurface(data, contract: contract)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .overlay(alignment: .topTrailing) {
-                        if let reason = surfaceReadOnlyReason(data) {
-                            Label(reason, systemImage: "lock.fill")
-                                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
-                                .foregroundStyle(AppTheme.Text.secondaryColor)
-                                .padding(.horizontal, AppTheme.Spacing.sm)
-                                .padding(.vertical, AppTheme.Spacing.xs)
-                                .background(
-                                    RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                                        .fill(AppTheme.Background.prominentColor)
-                                )
-                                .padding(AppTheme.Spacing.sm)
-                                .allowsHitTesting(false)
-                        }
+        GeometryReader { proxy in
+            let compact = proxy.size.width
+                < AppTheme.ComponentSize.productionNavigationWidth * interfaceScale
+                    + AppTheme.ComponentSize.productionArtifactMinWidth
+            VStack(spacing: AppTheme.Spacing.none) {
+                if compact {
+                    compactPhaseNavigation(data, contract: contract)
+                    AppDivider()
+                    artifactSurface(data, contract: contract)
+                } else {
+                    HStack(spacing: AppTheme.Spacing.none) {
+                        phaseNavigation(data, contract: contract)
+                            .frame(width: AppTheme.ComponentSize.productionNavigationWidth * interfaceScale)
+                        AppDivider()
+                        artifactSurface(data, contract: contract)
                     }
+                }
+                AppDivider()
+                phaseDock(data, contract: contract, compact: compact)
             }
-            AppDivider()
-            phaseDock(data, contract: contract)
         }
+    }
+
+    private func artifactSurface(_ data: ProjectStateData, contract: ContractData) -> some View {
+        viewedPhaseSurface(data, contract: contract)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(
+                AppRelaunchClickProbe(identifier: "production.layout.artifact")
+            )
+            .overlay(alignment: .topTrailing) {
+                if let reason = surfaceReadOnlyReason(data, contract: contract) {
+                    Label(reason, systemImage: "lock.fill")
+                        .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                        .padding(.horizontal, AppTheme.Spacing.sm)
+                        .padding(.vertical, AppTheme.Spacing.xs)
+                        .background(
+                            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                                .fill(AppTheme.Background.prominentColor)
+                        )
+                        .padding(AppTheme.Spacing.sm)
+                        .allowsHitTesting(false)
+                }
+            }
     }
 
     private func phaseNavigation(_ data: ProjectStateData, contract: ContractData) -> some View {
@@ -430,6 +484,88 @@ struct PipelinePanelView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(AppTheme.Background.surfaceColor)
+        .overlay {
+            AppRelaunchClickProbe(
+                identifier: "production.layout.navigation",
+                acceptanceValue: "regular"
+            )
+            .allowsHitTesting(false)
+        }
+    }
+
+    private func compactPhaseNavigation(_ data: ProjectStateData, contract: ContractData) -> some View {
+        HStack(spacing: AppTheme.Spacing.sm) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: AppTheme.Spacing.xs) {
+                    ForEach(data.phases) { phase in
+                        compactPhaseButton(phase, data: data, contract: contract)
+                    }
+                }
+                .padding(.vertical, AppTheme.Spacing.sm)
+                .padding(.leading, AppTheme.Spacing.md)
+            }
+            if let phase = selectedPhase(in: data), phase.approved || phase.phase == data.nextPhaseName {
+                phaseActionsMenu(phase, data: data, contract: contract)
+                    .padding(.trailing, AppTheme.Spacing.md)
+            }
+        }
+        .background(AppTheme.Background.surfaceColor)
+        .overlay {
+            AppRelaunchClickProbe(
+                identifier: "production.layout.navigation",
+                acceptanceValue: "compact"
+            )
+            .allowsHitTesting(false)
+        }
+    }
+
+    private func compactPhaseButton(
+        _ phase: ProjectPhase,
+        data: ProjectStateData,
+        contract: ContractData
+    ) -> some View {
+        let selected = editor.viewedPipelinePhaseID == phase.phase
+        return Button {
+            selectPhase(phase.phase)
+        } label: {
+            HStack(spacing: AppTheme.Spacing.xs) {
+                phaseStatus(phase, isRunning: runningPhase == phase.phase)
+                Text(phaseLabel(phase.phase, contract: contract))
+                    .interfaceFont(
+                        size: AppTheme.Typography.ui,
+                        weight: phase.phase == data.nextPhaseName
+                            ? AppTheme.FontWeight.semibold
+                            : AppTheme.FontWeight.medium
+                    )
+                    .lineLimit(1)
+            }
+            .foregroundStyle(AppTheme.Text.primaryColor)
+            .padding(.horizontal, AppTheme.Spacing.smMd)
+            .padding(.vertical, AppTheme.Spacing.sm)
+            .background(
+                Capsule().fill(
+                    selected
+                        ? editor.projectPalette.accent.opacity(AppTheme.Opacity.subtle)
+                        : AppTheme.Background.raisedColor
+                )
+            )
+            .overlay(
+                Capsule().strokeBorder(
+                    selected
+                        ? editor.projectPalette.accent.opacity(AppTheme.Opacity.medium)
+                        : AppTheme.Border.subtleColor,
+                    lineWidth: AppTheme.BorderWidth.hairline
+                )
+            )
+        }
+        .buttonStyle(.plain)
+        .help("View \(phaseLabel(phase.phase, contract: contract))")
+        .background(
+            AppRelaunchClickProbe(
+                identifier: "production.phase.\(phase.phase)",
+                acceptanceState: selected
+            )
+        )
     }
 
     private func progressHeader(_ data: ProjectStateData) -> some View {
@@ -458,11 +594,6 @@ struct PipelinePanelView: View {
         let isSelected = editor.viewedPipelinePhaseID == phase.phase
         let isCurrent = data.nextPhaseName == phase.phase
         let isRunning = runningPhase == phase.phase
-        let isFuture = !phase.approved && !isCurrent
-        let controlsAvailable = mutationReadiness.isReady
-            && !gateWriting
-            && runningPhase == nil
-            && !editor.agentService.isComposerBlocked
         return HStack(spacing: AppTheme.Spacing.xs) {
             Button {
                 selectPhase(phase.phase)
@@ -513,36 +644,47 @@ struct PipelinePanelView: View {
             )
 
             if phase.approved || isCurrent {
-                Menu {
-                    Button("Needs revision") {
-                        markNeedsRevision(phase)
-                    }
-                    .disabled(!phase.approved || !controlsAvailable)
-                    Divider()
-                    Button("Rewind to here…", role: .destructive) {
-                        rewindPhase = phase
-                    }
-                    .disabled(isFuture || !controlsAvailable)
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .interfaceFont(size: AppTheme.Typography.ui)
-                        .foregroundStyle(AppTheme.Text.mutedColor)
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .tint(AppTheme.Text.mutedColor)
-                .fixedSize()
-                .disabled(!controlsAvailable)
-                .accessibilityLabel("Gate actions for \(phaseLabel(phase.phase, contract: contract))")
-                .help(runningPhase == nil ? "Gate actions" : "Gate actions are unavailable while a phase is running")
-                .background(
-                    AppRelaunchClickProbe(
-                        identifier: "production.phase.\(phase.phase).actions",
-                        acceptanceState: controlsAvailable
-                    )
-                )
+                phaseActionsMenu(phase, data: data, contract: contract)
             }
         }
+    }
+
+    private func phaseActionsMenu(
+        _ phase: ProjectPhase,
+        data: ProjectStateData,
+        contract: ContractData
+    ) -> some View {
+        let isCurrent = data.nextPhaseName == phase.phase
+        let isFuture = !phase.approved && !isCurrent
+        return Menu {
+            Button("Needs revision") {
+                markNeedsRevision(phase)
+            }
+            .disabled(!phase.approved || !gateControlsAvailable)
+            Divider()
+            Button("Rewind to here…", role: .destructive) {
+                rewindPhase = phase
+            }
+            .disabled(isFuture || !gateControlsAvailable)
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .interfaceFont(size: AppTheme.Typography.ui)
+                .foregroundStyle(AppTheme.Text.mutedColor)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .tint(AppTheme.Text.mutedColor)
+        .fixedSize()
+        .disabled(!gateControlsAvailable)
+        .accessibilityLabel("Gate actions for \(phaseLabel(phase.phase, contract: contract))")
+        .accessibilityIdentifier("production.phase.\(phase.phase).actions.control")
+        .help(runningPhase == nil ? "Gate actions" : "Gate actions are unavailable while a phase is running")
+        .background(
+            AppRelaunchClickProbe(
+                identifier: "production.phase.\(phase.phase).actions",
+                acceptanceState: gateControlsAvailable
+            )
+        )
     }
 
     @ViewBuilder
@@ -554,53 +696,63 @@ struct PipelinePanelView: View {
                availablePackSurfaces: editor.availableCockpitPackSurfaces
            ) {
             let allowsMutation = surfaceAllowsMutation(data)
-            switch route.destination {
-            case .story(let artifact):
-                StoryPanelView(artifact: artifact, allowsMutation: allowsMutation)
-            case .review(let artifact):
-                ReviewPanelView(artifact: artifact, allowsMutation: allowsMutation)
-            case .tab(.bible):
-                BiblePanelView()
-            case .tab(.shotlist):
-                ShotlistPanelView()
-            case .tab(_):
-                interactionSurface(
-                    phase: phase.phase,
-                    route: route,
-                    contract: contract,
-                    allowsMutation: allowsMutation
-                )
-            case .pack(let id):
-                if let surface = editor.availableCockpitPackSurfaces.first(where: { $0.id == id }) {
-                    DeclarativePackSurfaceView(surface: surface) {
-                        editor.availableCockpitPackSurfaces.removeAll { $0.id == id }
-                    }
-                } else {
+            Group {
+                switch route.destination {
+                case .story(let artifact):
+                    StoryPanelView(artifact: artifact, allowsMutation: allowsMutation)
+                case .review(let artifact):
+                    ReviewPanelView(
+                        artifact: artifact,
+                        allowsMutation: allowsMutation,
+                        readOnlyReason: surfaceReadOnlyReason(data, contract: contract)
+                    )
+                case .tab(.bible):
+                    BiblePanelView()
+                case .tab(.shotlist):
+                    ShotlistPanelView()
+                case .tab(_):
                     interactionSurface(
                         phase: phase.phase,
                         route: route,
                         contract: contract,
-                        allowsMutation: allowsMutation
+                        allowsMutation: allowsMutation,
+                        readOnlyReason: surfaceReadOnlyReason(data, contract: contract)
+                    )
+                case .pack(let id):
+                    if let surface = editor.availableCockpitPackSurfaces.first(where: { $0.id == id }) {
+                        DeclarativePackSurfaceView(surface: surface) {
+                            editor.availableCockpitPackSurfaces.removeAll { $0.id == id }
+                        }
+                    } else {
+                        interactionSurface(
+                            phase: phase.phase,
+                            route: route,
+                            contract: contract,
+                            allowsMutation: allowsMutation,
+                            readOnlyReason: surfaceReadOnlyReason(data, contract: contract)
+                        )
+                    }
+                case .storyboard:
+                    PipelineStoryboardReviewSheet(embedded: true)
+                case .productionDesign:
+                    productionDesignSurface(
+                        phase: phase.phase,
+                        route: route,
+                        contract: contract,
+                        allowsMutation: allowsMutation,
+                        readOnlyReason: surfaceReadOnlyReason(data, contract: contract)
+                    )
+                case .sanity:
+                    SanityPanelView()
+                case .interaction:
+                    interactionSurface(
+                        phase: phase.phase,
+                        route: route,
+                        contract: contract,
+                        allowsMutation: allowsMutation,
+                        readOnlyReason: surfaceReadOnlyReason(data, contract: contract)
                     )
                 }
-            case .storyboard:
-                PipelineStoryboardReviewSheet(embedded: true)
-            case .productionDesign:
-                productionDesignSurface(
-                    phase: phase.phase,
-                    route: route,
-                    contract: contract,
-                    allowsMutation: allowsMutation
-                )
-            case .sanity:
-                SanityPanelView()
-            case .interaction:
-                interactionSurface(
-                    phase: phase.phase,
-                    route: route,
-                    contract: contract,
-                    allowsMutation: allowsMutation
-                )
             }
             .overlay(alignment: .topLeading) {
                 AppRelaunchClickProbe(
@@ -623,7 +775,8 @@ struct PipelinePanelView: View {
         phase: String,
         route: PipelineSurfaceRouting.Route,
         contract: ContractData,
-        allowsMutation: Bool
+        allowsMutation: Bool,
+        readOnlyReason: String?
     ) -> some View {
         VStack(spacing: AppTheme.Spacing.none) {
             ProductionStyleReviewView(allowsMutation: false)
@@ -631,7 +784,8 @@ struct PipelinePanelView: View {
                 phase: phase,
                 route: route,
                 contract: contract,
-                allowsMutation: allowsMutation
+                allowsMutation: allowsMutation,
+                readOnlyReason: readOnlyReason
             )
                 .padding(AppTheme.Spacing.lg)
             Spacer(minLength: AppTheme.Spacing.none)
@@ -642,7 +796,8 @@ struct PipelinePanelView: View {
         phase: String,
         route: PipelineSurfaceRouting.Route,
         contract: ContractData,
-        allowsMutation: Bool
+        allowsMutation: Bool,
+        readOnlyReason: String?
     ) -> some View {
         VStack {
             Spacer(minLength: AppTheme.Spacing.lg)
@@ -650,7 +805,8 @@ struct PipelinePanelView: View {
                 phase: phase,
                 route: route,
                 contract: contract,
-                allowsMutation: allowsMutation
+                allowsMutation: allowsMutation,
+                readOnlyReason: readOnlyReason
             )
                 .frame(maxWidth: AppTheme.ComponentSize.productionInteractionMaxWidth)
             Spacer(minLength: AppTheme.Spacing.lg)
@@ -663,7 +819,8 @@ struct PipelinePanelView: View {
         phase: String,
         route: PipelineSurfaceRouting.Route,
         contract: ContractData,
-        allowsMutation: Bool
+        allowsMutation: Bool,
+        readOnlyReason: String?
     ) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.mdLg) {
             Label(phaseLabel(phase, contract: contract), systemImage: route.icon)
@@ -680,7 +837,7 @@ struct PipelinePanelView: View {
                 Button("Open Agent") { editor.agentPanelVisible = true }
                     .buttonStyle(.capsule(.prominent, size: .regular))
             } else {
-                Text("Rewind this phase before making changes.")
+                Text(readOnlyReason ?? "Editing is unavailable for this phase.")
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.mutedColor)
             }
@@ -697,8 +854,15 @@ struct PipelinePanelView: View {
         )
     }
 
-    private func phaseDock(_ data: ProjectStateData, contract: ContractData) -> some View {
-        HStack(alignment: .center, spacing: AppTheme.Spacing.mdLg) {
+    private func phaseDock(
+        _ data: ProjectStateData,
+        contract: ContractData,
+        compact: Bool
+    ) -> some View {
+        let layout = compact
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: AppTheme.Spacing.smMd))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: AppTheme.Spacing.mdLg))
+        return layout {
             if let gateError {
                 gateErrorBanner(gateError)
             } else if gateWriting {
@@ -711,7 +875,7 @@ struct PipelinePanelView: View {
                         .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                         .foregroundStyle(AppTheme.Text.primaryColor)
                 }
-                Spacer(minLength: AppTheme.Spacing.none)
+                if !compact { Spacer(minLength: AppTheme.Spacing.none) }
             } else if let runningPhase {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                     Text("RUNNING")
@@ -722,12 +886,12 @@ struct PipelinePanelView: View {
                         .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                         .foregroundStyle(AppTheme.Text.primaryColor)
                 }
-                Spacer(minLength: AppTheme.Spacing.sm)
+                if !compact { Spacer(minLength: AppTheme.Spacing.sm) }
                 Button("Show running phase") { selectPhase(runningPhase) }
                     .buttonStyle(.capsule(.secondary, size: .regular))
             } else if let current = data.nextPhaseName,
                       let phase = data.phases.first(where: { $0.phase == current }) {
-                currentPhaseDock(phase, contract: contract)
+                currentPhaseDock(phase, contract: contract, compact: compact)
             } else {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                     Text("PRODUCTION COMPLETE")
@@ -738,16 +902,27 @@ struct PipelinePanelView: View {
                         .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                         .foregroundStyle(AppTheme.Text.primaryColor)
                 }
-                Spacer(minLength: AppTheme.Spacing.none)
+                if !compact { Spacer(minLength: AppTheme.Spacing.none) }
             }
         }
         .padding(.horizontal, AppTheme.Spacing.lg)
         .padding(.vertical, AppTheme.Spacing.md)
         .frame(maxWidth: .infinity, minHeight: AppTheme.ComponentSize.phaseDockMinHeight, alignment: .leading)
         .background(AppTheme.Background.raisedColor)
+        .overlay {
+            AppRelaunchClickProbe(
+                identifier: "production.layout.dock",
+                acceptanceValue: compact ? "compact" : "regular"
+            )
+            .allowsHitTesting(false)
+        }
     }
 
-    private func currentPhaseDock(_ phase: ProjectPhase, contract: ContractData) -> some View {
+    private func currentPhaseDock(
+        _ phase: ProjectPhase,
+        contract: ContractData,
+        compact: Bool
+    ) -> some View {
         let label = phaseLabel(phase.phase, contract: contract)
         let selector = contract.phases[phase.phase]?.artifactSelector
         let route = PipelineSurfaceRouting.route(
@@ -772,7 +947,10 @@ struct PipelinePanelView: View {
                     ? "Resolve the open Agent decision before approving \(label)."
                     : nil)
         )
-        return HStack(alignment: .center, spacing: AppTheme.Spacing.mdLg) {
+        let layout = compact
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: AppTheme.Spacing.smMd))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: AppTheme.Spacing.mdLg))
+        return layout {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                 Text("CURRENT PHASE · \(label.uppercased())")
                     .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
@@ -783,7 +961,7 @@ struct PipelinePanelView: View {
                     .foregroundStyle(AppTheme.Text.primaryColor)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer(minLength: AppTheme.Spacing.sm)
+            if !compact { Spacer(minLength: AppTheme.Spacing.sm) }
             if let route {
                 Button(route.destination == .interaction ? "Open Agent" : "Open \(route.label)") {
                     open(route, phase: phase.phase)
@@ -796,7 +974,13 @@ struct PipelinePanelView: View {
                     )
                 )
             }
-            if !enabled, let diagnostic = presentation.diagnostic {
+            switch presentation.action {
+            case .none:
+                EmptyView()
+            case .openDecision:
+                Button("Open decision") { editor.agentPanelVisible = true }
+                    .buttonStyle(.capsule(.secondary, size: .regular))
+            case .askAgent(let diagnostic):
                 Button("Ask Agent") {
                     askAgentToResolveReadiness(
                         phase: phase.phase,
@@ -808,6 +992,7 @@ struct PipelinePanelView: View {
             Button("Approve") { approve(phase) }
                 .buttonStyle(.capsule(.prominent, size: .regular))
                 .disabled(!enabled)
+                .accessibilityIdentifier("production.dock.approve.control")
                 .help(enabled ? "Approve \(label)" : presentation.message)
                 .background(
                     AppRelaunchClickProbe(
@@ -852,7 +1037,10 @@ struct PipelinePanelView: View {
             && !editor.agentService.isComposerBlocked
     }
 
-    private func surfaceReadOnlyReason(_ data: ProjectStateData) -> String? {
+    private func surfaceReadOnlyReason(
+        _ data: ProjectStateData,
+        contract: ContractData
+    ) -> String? {
         guard let selected = selectedPhase(in: data) else { return nil }
         if let runningPhase {
             return "Read only while \(phaseLabel(runningPhase)) runs"
@@ -864,10 +1052,20 @@ struct PipelinePanelView: View {
             return "Read only — complete earlier phases first"
         }
         if editor.agentService.isComposerBlocked {
-            return "Read only until the open decision is resolved"
+            return editor.agentService.composerBlockerDescription
+                ?? "Resolve the open Agent decision before changing this phase."
         }
-        if gateWriting || !mutationReadiness.isReady {
-            return "Checking editing access"
+        if gateWriting {
+            return "Read only while the phase gate is being updated"
+        }
+        if !mutationReadiness.isReady {
+            return PipelineReadinessPresentation.current(
+                selector: contract.phases[selected.phase]?.artifactSelector,
+                phaseLabel: phaseLabel(selected.phase, contract: contract),
+                approval: approvalReadiness,
+                mutations: mutationReadiness,
+                hostDecisionRequirement: nil
+            ).message
         }
         return nil
     }

@@ -57,6 +57,53 @@ def matching_frame(first, second, tolerance=1):
     return all(abs(first[key] - second[key]) <= tolerance for key in first)
 
 
+def valid_production_artifact(row):
+    phase = row.get("phase")
+    value = row.get("artifactID")
+    if not isinstance(value, str):
+        return False
+    if phase == "brief":
+        return value.startswith("brief:") and len(value) > len("brief:")
+    if phase == "treatment":
+        return value == "treatment:v1:Acceptance treatment artifact."
+    if phase == "frames":
+        return value == "frames:acceptance-shot:acceptance-01-start.png"
+    if phase == "render":
+        prefix = "render:acceptance-render-shot:"
+        digest = value.removeprefix(prefix)
+        return (
+            value.startswith(prefix)
+            and len(digest) == 64
+            and all(char in "0123456789abcdef" for char in digest)
+        )
+    return False
+
+
+def valid_production_layout(row):
+    layout = row.get("productionLayout")
+    if not isinstance(layout, dict) or layout.get("mode") != "compact":
+        return False
+    project = layout.get("projectFrame")
+    navigation = layout.get("navigationFrame")
+    artifact = layout.get("artifactFrame")
+    dock = layout.get("dockFrame")
+    open_button = layout.get("openFrame")
+    approve_button = layout.get("approveFrame")
+    if not all(
+        valid_frame(frame)
+        for frame in [project, navigation, artifact, dock, open_button, approve_button]
+    ):
+        return False
+    return (
+        artifact["width"] >= 300
+        and contains_frame(project, navigation)
+        and contains_frame(project, artifact)
+        and contains_frame(project, dock)
+        and contains_frame(dock, open_button)
+        and contains_frame(dock, approve_button)
+    )
+
+
 def valid_keyframe_layout(layout, expected_mode, expected_lanes):
     inspector = layout.get("inspectorFrame")
     panel = layout.get("panelFrame")
@@ -237,18 +284,25 @@ def run_scale(executable, output, scale):
             row.get("focusedWorkspace") == "production"
             for row in production_surfaces
         )
+        and all(valid_production_artifact(row) for row in production_surfaces)
         and len(production_dock) == 1
         and production_dock[0].get("approvalEnabled") is False
         and "Frames" in production_dock[0].get("requirement", "")
         and "/" not in production_dock[0].get("requirement", "")
         and "write_" not in production_dock[0].get("requirement", "")
         and len(production_budget) == 1
-        and production_budget[0].get("status") == "€0.00|€125.00|0|None"
+        and production_budget[0].get("status")
+        == "€0.00|Unknown|€150.00|Unknown|0|1|Spend incomplete"
         and len(production_rewind) == 1
         and production_rewind[0].get("phase") == "brief"
+        and production_rewind[0].get("closedOnReadinessChange") is True
         and len(production_read_only) == 1
-        and production_read_only[0].get("inspectedPhase") == "brief"
+        and production_read_only[0].get("inspectedPhase") == "frames,render"
         and production_read_only[0].get("runningPhase") == "frames"
+        and production_read_only[0].get("mutationsDisabled") is True
+        and production_read_only[0].get("nativeInspectionWorked") is True
+        and production_read_only[0].get("popoverClosedOnReadinessChange") is True
+        and valid_production_layout(narrow[0])
         and invariants[0].get("liveStateUnchanged") is True
         and invariants[0].get("projectBytesUnchanged") is True
         and invariants[0].get("undoUnchanged") is True

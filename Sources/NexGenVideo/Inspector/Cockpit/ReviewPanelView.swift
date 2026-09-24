@@ -9,13 +9,16 @@ struct ReviewPanelView: View {
     @Environment(EditorViewModel.self) private var editor
     var artifact: PipelineReviewArtifact?
     var allowsMutation: Bool
+    var readOnlyReason: String?
 
     init(
         artifact: PipelineReviewArtifact? = nil,
-        allowsMutation: Bool = true
+        allowsMutation: Bool = true,
+        readOnlyReason: String? = nil
     ) {
         self.artifact = artifact
         self.allowsMutation = allowsMutation
+        self.readOnlyReason = readOnlyReason
     }
 
     private enum LoadState: Equatable {
@@ -61,11 +64,29 @@ struct ReviewPanelView: View {
             .onChange(of: editor.engineStateRevision) { _, _ in
                 Task { await load() }
             }
+            .onChange(of: allowsMutation) { _, available in
+                if !available {
+                    redoTarget = nil
+                    remixShot = nil
+                }
+            }
             .overlay(alignment: .topLeading) {
-                AppRelaunchClickProbe(
-                    identifier: "production.review.mutations",
-                    acceptanceState: allowsMutation
-                )
+                ZStack {
+                    AppRelaunchClickProbe(
+                        identifier: "production.review.mutations",
+                        acceptanceState: allowsMutation
+                    )
+                    if let artifactID = loadedFramesArtifactID {
+                        AppRelaunchClickProbe(
+                            identifier: "production.artifact.frames",
+                            acceptanceValue: artifactID
+                        )
+                    }
+                    AppRelaunchClickProbe(
+                        identifier: "production.frames.redo-open",
+                        acceptanceState: redoTarget != nil
+                    )
+                }
                 .frame(width: AppTheme.BorderWidth.hairline, height: AppTheme.BorderWidth.hairline)
                 .allowsHitTesting(false)
             }
@@ -90,7 +111,10 @@ struct ReviewPanelView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
                     ProductionStyleReviewView(allowsMutation: allowsMutation)
-                    TakeReviewView(allowsMutation: allowsMutation)
+                    TakeReviewView(
+                        allowsMutation: allowsMutation,
+                        readOnlyReason: readOnlyReason
+                    )
                     SequenceReviewView(allowsMutation: allowsMutation)
                 }
                 .padding(AppTheme.Spacing.md)
@@ -100,7 +124,10 @@ struct ReviewPanelView: View {
             VStack(spacing: AppTheme.Spacing.none) {
                 ProductionStyleReviewView(allowsMutation: allowsMutation)
                 FrameFindingsReviewView(allowsMutation: allowsMutation)
-                TakeReviewView(allowsMutation: allowsMutation)
+                TakeReviewView(
+                    allowsMutation: allowsMutation,
+                    readOnlyReason: readOnlyReason
+                )
                 SequenceReviewView(allowsMutation: allowsMutation)
                 content
                     .frame(minHeight: AppTheme.Spacing.none)
@@ -112,6 +139,14 @@ struct ReviewPanelView: View {
                     .frame(height: AppTheme.ComponentSize.reviewSanityStripHeight)
             }
         }
+    }
+
+    private var loadedFramesArtifactID: String? {
+        guard artifact == .frames,
+              case .loaded(.some(let data)) = state,
+              let shot = data.shots.first,
+              let frame = shot.frames.first else { return nil }
+        return "frames:\(shot.shotId):\(frame.name)"
     }
 
     @ViewBuilder
@@ -162,6 +197,7 @@ struct ReviewPanelView: View {
                         .foregroundStyle(AppTheme.Text.primaryColor)
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("production.frames.inspect.\(shot.shotId)")
                 .help("Inspect this shot")
                 if let status = shot.auditStatus, !status.isEmpty {
                     Text("audit: \(status)")
@@ -223,6 +259,7 @@ struct ReviewPanelView: View {
                 projectDir: editor.workingRoot,
                 tileHeight: 90
             )
+            .accessibilityIdentifier("production.frames.candidate.\(shotId).\(frame.name)")
             .overlay(alignment: .topTrailing) {
                 if isPicked {
                     Image(systemName: "checkmark.circle.fill")
@@ -243,6 +280,7 @@ struct ReviewPanelView: View {
                 Button("Use") { accept(frame, shotId: shotId) }
                     .controlSize(.small)
                     .disabled(!allowsMutation)
+                    .accessibilityIdentifier("production.frames.use.\(shotId).\(frame.name)")
                 Button("Redo…") {
                     redoReason = .continuity
                     redoNote = ""
@@ -250,6 +288,7 @@ struct ReviewPanelView: View {
                 }
                 .controlSize(.small)
                 .disabled(!allowsMutation)
+                .accessibilityIdentifier("production.frames.redo.\(shotId).\(frame.name)")
             }
         }
         .frame(width: AppTheme.ComponentSize.reviewThumbnailWidth)
@@ -310,6 +349,7 @@ struct ReviewPanelView: View {
                 Spacer()
                 Button("Regenerate") { regenerate(target) }
                     .keyboardShortcut(.defaultAction)
+                    .disabled(!allowsMutation)
             }
         }
         .padding(AppTheme.Spacing.mdLg)
@@ -352,7 +392,14 @@ struct ReviewPanelView: View {
                 Spacer()
                 Button("Remix") { remix(shotId, picked: picked) }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(picked.allSatisfy { (remixTakes[$0] ?? "").trimmingCharacters(in: .whitespaces).isEmpty })
+                    .disabled(
+                        !allowsMutation
+                            || picked.allSatisfy {
+                                (remixTakes[$0] ?? "")
+                                    .trimmingCharacters(in: .whitespaces)
+                                    .isEmpty
+                            }
+                    )
             }
         }
         .padding(AppTheme.Spacing.mdLg)

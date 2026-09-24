@@ -2313,6 +2313,10 @@ struct WorkflowToolsTests {
     func estimateCostReportsIncompleteMoney() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
+        let store = YAMLArtifactStore(dataRoot: dataRoot)
+        var brief = try store.load(Brief.self, at: PipelineLayout.briefFile)
+        brief.budgetStopEur = 75
+        try store.save(brief, to: PipelineLayout.briefFile)
         var log = GenerationLog()
         log.spendEvents = [GenerationSpendEvent(
             transactionId: "unpriced-render",
@@ -2343,6 +2347,8 @@ struct WorkflowToolsTests {
         #expect(cost?["unpriced_transactions"] as? Int == 1)
         #expect(state?["spend_complete"] as? Bool == false)
         #expect(state?["budget_remaining_eur"] is NSNull)
+        #expect(state?["budget_stop_eur"] as? Double == 75)
+        #expect(state?["hard_stop_remaining_eur"] is NSNull)
     }
 
     @Test("pipeline cockpit state reads the same spend journal as estimate_cost")

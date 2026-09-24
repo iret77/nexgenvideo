@@ -5,6 +5,7 @@ import NexGenEngine
 struct TakeReviewView: View {
     @Environment(EditorViewModel.self) private var editor
     var allowsMutation = true
+    var readOnlyReason: String?
     @State private var presented = false
     @State private var takes: [PipelineRenderTakeV1] = []
     @State private var selectedID = ""
@@ -23,7 +24,18 @@ struct TakeReviewView: View {
     var body: some View {
         Button("Review video takes") { presented = true }
             .buttonStyle(InlineActionButtonStyle())
+            .accessibilityIdentifier("production.render.review-takes")
             .sheet(isPresented: $presented) { reviewSheet }
+            .overlay(alignment: .topLeading) {
+                if let take = takes.first {
+                    AppRelaunchClickProbe(
+                        identifier: "production.artifact.render",
+                        acceptanceValue: "render:\(take.shotID):\(take.id)"
+                    )
+                    .frame(width: AppTheme.BorderWidth.hairline, height: AppTheme.BorderWidth.hairline)
+                    .allowsHitTesting(false)
+                }
+            }
     }
 
     private var reviewSheet: some View {
@@ -32,7 +44,9 @@ struct TakeReviewView: View {
             HStack {
                 Text("Video takes").fontWeight(AppTheme.FontWeight.semibold)
                 Spacer()
-                Button("Close") { presented = false }.buttonStyle(InlineActionButtonStyle())
+                Button("Close") { presented = false }
+                    .buttonStyle(InlineActionButtonStyle())
+                    .accessibilityIdentifier("production.render.review-close")
             }
             if takes.isEmpty { Text("No recorded video takes. Record a completed render to begin review.") }
             else {
@@ -41,9 +55,13 @@ struct TakeReviewView: View {
                     ForEach(takes, id: \.id) { take in
                         Text("\(take.shotID) · \(take.phase) · \(take.recordedAt) · \(take.id.prefix(8))").tag(take.id)
                     }
-                }.disabled(busy)
+                }
+                .disabled(busy)
+                .accessibilityIdentifier("production.render.take-picker")
                 if let snapshot {
-                    VideoPlayer(player: player).frame(minHeight: AppTheme.Layout.previewMinHeight)
+                    VideoPlayer(player: player)
+                        .frame(minHeight: AppTheme.Layout.previewMinHeight)
+                        .accessibilityIdentifier("production.render.player")
                     TakeRangeReviewView(
                         snapshot: snapshot,
                         wholeTakePlayer: player,
@@ -62,7 +80,13 @@ struct TakeReviewView: View {
                                 }
                             }
                         }.frame(maxHeight: AppTheme.ComponentSize.productionStyleReviewMaxHeight)
+                        .background(
+                            AppRelaunchClickProbe(
+                                identifier: "production.render.references.content"
+                            )
+                        )
                     }
+                    .accessibilityIdentifier("production.render.references")
                     Button("Use reviewed take") {
                         busy = true
                         Task {
@@ -127,7 +151,10 @@ struct TakeReviewView: View {
                 }
             }
             if let message { Text(message).foregroundStyle(AppTheme.Text.secondaryColor) }
-            if !canWrite || !allowsMutation { Text("Save reviews and select takes during Render. Rewind Render before changing an approved selection.").foregroundStyle(AppTheme.Text.secondaryColor) }
+            if !effectiveCanWrite {
+                Text(readOnlyReason ?? "Take changes are available only during the current Render phase.")
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+            }
         }
         .padding(AppTheme.Spacing.lg)
         }
@@ -140,10 +167,12 @@ struct TakeReviewView: View {
         .onChange(of: editor.workingRoot) { _, _ in presented = false; snapshot = nil; player?.pause(); player = nil }
     }
 
+    private var effectiveCanWrite: Bool { canWrite && allowsMutation }
+
     private func load() async {
         canWrite = false
         guard let home = editor.workingRoot, let root = DataRootResolver.dataRoot(of: home) else { return }
-        canWrite = allowsMutation && (try? PipelinePhaseAccess.requireCurrentPhaseAndIntake("render", dataRoot: root,
+        canWrite = (try? PipelinePhaseAccess.requireCurrentPhaseAndIntake("render", dataRoot: root,
             declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)) != nil
         do {
             let values = try await Task.detached(priority: .userInitiated) {

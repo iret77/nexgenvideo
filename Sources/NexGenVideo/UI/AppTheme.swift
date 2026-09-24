@@ -372,6 +372,7 @@ enum AppTheme {
         static let storyboardReviewWidth: CGFloat = 900
         static let pipelineRowMinHeight: CGFloat = 40
         static let productionNavigationWidth: CGFloat = 228
+        static let productionArtifactMinWidth: CGFloat = 300
         static let productionInteractionMaxWidth: CGFloat = 460
         static let phaseDockMinHeight: CGFloat = 88
         static let cockpitLabelWidth: CGFloat = 76

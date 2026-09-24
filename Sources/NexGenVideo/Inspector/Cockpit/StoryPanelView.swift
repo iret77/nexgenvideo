@@ -71,12 +71,35 @@ struct StoryPanelView: View {
         }
         .onChange(of: editor.brief, initial: true) { _, brief in seedBriefEdits(brief) }
         .overlay(alignment: .topLeading) {
-            AppRelaunchClickProbe(
-                identifier: "production.story.mutations",
-                acceptanceState: allowsMutation
-            )
+            ZStack {
+                AppRelaunchClickProbe(
+                    identifier: "production.story.mutations",
+                    acceptanceState: allowsMutation
+                )
+                if let artifactID = loadedArtifactID {
+                    AppRelaunchClickProbe(
+                        identifier: "production.artifact.\(artifact?.rawValue ?? "story")",
+                        acceptanceValue: artifactID
+                    )
+                }
+            }
             .frame(width: AppTheme.BorderWidth.hairline, height: AppTheme.BorderWidth.hairline)
             .allowsHitTesting(false)
+        }
+    }
+
+    private var loadedArtifactID: String? {
+        switch artifact {
+        case .some(.brief):
+            editor.brief.map { "brief:\($0.project)" }
+        case .some(.treatment):
+            if case .loaded(.some(let value)) = treatment {
+                "treatment:v\(value.version):\(value.bodyMarkdown)"
+            } else {
+                nil
+            }
+        case nil:
+            nil
         }
     }
 

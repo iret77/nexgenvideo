@@ -149,7 +149,19 @@ struct ProjectSettingsView: View {
 
     private func spendSection(_ state: ProjectStateData) -> some View {
         section("Spend") {
+            if let warning = spendWarning(state) {
+                Label(warning, systemImage: "exclamationmark.triangle.fill")
+                    .interfaceFont(
+                        size: AppTheme.Typography.metadata,
+                        weight: AppTheme.FontWeight.semibold
+                    )
+                    .foregroundStyle(AppTheme.Status.errorColor)
+            }
             plainRow("Planning budget", euro(state.budgetEur))
+            plainRow(
+                "Hard stop",
+                state.budgetStopEur.map(euro) ?? "Not configured"
+            )
             plainRow(
                 state.spendComplete ? "Verified spend" : "Verified spend at least",
                 euro(state.budgetSpentEur)
@@ -160,7 +172,7 @@ struct ProjectSettingsView: View {
             )
             plainRow(
                 "Hard-stop remaining",
-                state.hardStopRemainingEur.map(euro) ?? "No hard stop"
+                hardStopRemaining(state)
             )
             plainRow("Active reservations", String(state.activeReservations))
             plainRow(
@@ -177,8 +189,13 @@ struct ProjectSettingsView: View {
                 acceptanceValue: [
                     euro(state.budgetSpentEur),
                     state.budgetRemainingEur.map(euro) ?? "Unknown",
+                    state.budgetStopEur.map(euro) ?? "Not configured",
+                    hardStopRemaining(state),
                     String(state.activeReservations),
-                    state.spendComplete ? "None" : "Unknown",
+                    state.spendComplete
+                        ? "None"
+                        : String(state.unpricedTransactions + state.legacyGenerations),
+                    spendWarning(state) ?? "None",
                 ].joined(separator: "|")
             )
             .frame(width: AppTheme.BorderWidth.hairline, height: AppTheme.BorderWidth.hairline)
@@ -188,6 +205,20 @@ struct ProjectSettingsView: View {
 
     private func euro(_ amount: Double) -> String {
         String(format: "€%.2f", amount)
+    }
+
+    private func hardStopRemaining(_ state: ProjectStateData) -> String {
+        guard state.budgetStopEur != nil else { return "No hard stop" }
+        return state.hardStopRemainingEur.map(euro) ?? "Unknown"
+    }
+
+    private func spendWarning(_ state: ProjectStateData) -> String? {
+        if !state.spendComplete { return "Spend incomplete" }
+        if let remaining = state.hardStopRemainingEur, remaining <= 0 {
+            return "Hard stop reached"
+        }
+        guard state.budgetWarning else { return nil }
+        return (state.budgetRemainingEur ?? 0) <= 0 ? "Over budget" : "Low budget"
     }
 
     /// Exactly one plugin is active per project ("installed ≠ active"); none = the generic

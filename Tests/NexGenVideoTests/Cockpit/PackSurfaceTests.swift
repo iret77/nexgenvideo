@@ -374,6 +374,7 @@ struct PackSurfaceTests {
         #expect(!analysis.message.contains("run_phase"))
         #expect(!analysis.message.contains("/tmp"))
         #expect(analysis.diagnostic?.contains("run_phase") == true)
+        #expect(analysis.action == .askAgent("run_phase found no analysis artifact at /tmp/private/analysis.json"))
 
         let decision = PipelineReadinessPresentation.current(
             selector: "host.production_design",
@@ -383,7 +384,19 @@ struct PackSurfaceTests {
             hostDecisionRequirement: "Answer \u{201C}Choose a visual direction\u{201D} in Agent before changing the phase."
         )
         #expect(decision.message == "Answer \u{201C}Choose a visual direction\u{201D} in Agent before changing the phase.")
-        #expect(decision.diagnostic != nil)
+        #expect(decision.diagnostic == nil)
+        #expect(decision.action == .openDecision)
+
+        let checking = PipelineReadinessPresentation.current(
+            selector: "host.frames_manifest",
+            phaseLabel: "Frames",
+            approval: .blocked("Checking approval readiness."),
+            mutations: .blocked("Checking gate controls."),
+            hostDecisionRequirement: nil
+        )
+        #expect(checking.message == "Checking Frames editing access.")
+        #expect(checking.diagnostic == nil)
+        #expect(checking.action == .none)
 
         let intake = PipelineReadinessPresentation.current(
             selector: "host.project_track",
