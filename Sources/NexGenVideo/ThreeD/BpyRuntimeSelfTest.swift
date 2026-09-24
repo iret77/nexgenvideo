@@ -133,7 +133,7 @@ enum BpyRuntimeSelfTest {
         }
         let result = try JSONDecoder().decode(BpyBoundaryProbeResult.self, from: data)
         let permissionErrors = [Int32(EPERM), Int32(EACCES)]
-        guard result.schema == "nexgenvideo/bpy-boundary-probe/2",
+        guard result.schema == "nexgenvideo/bpy-boundary-probe/3",
               result.nonce == nonce,
               result.serviceProcessIdentifier > 1,
               result.supervisorProcessIdentifier > 1,
@@ -159,7 +159,8 @@ enum BpyRuntimeSelfTest {
               result.cleanupSupervisorGone,
               result.cleanupChildGone,
               result.internalLinkedWritableDeduplicated,
-              result.fileportRetentionDeniedOrAccounted,
+              permissionErrors.contains(result.fileportRetentionDeniedErrno),
+              result.fileportRetentionDenied,
               result.healthyFollowupSucceeded else {
             throw BpyRuntimeError.invalidOutput("The signed boundary probe did not prove every denial and cleanup invariant.")
         }
@@ -949,8 +950,9 @@ enum BpyRuntimeSelfTest {
             id: UUID(),
             expectedRevision: nil,
             source: """
+            from concurrent.futures import ThreadPoolExecutor
             import os
-            import threading
+            import shutil
             import time
             home = Path(os.environ['HOME'])
             def churn():
@@ -962,17 +964,23 @@ enum BpyRuntimeSelfTest {
                     source.write_bytes(b'x' * 4096)
                     os.replace(source, destination)
                     destination.unlink()
+                    tree = home / f'churn-tree-{index % 2}.part'
+                    nested = tree / 'nested'
+                    nested.mkdir(parents=True)
+                    (nested / 'payload').write_bytes(b'x' * 4096)
+                    relocated = home / f'churn-tree-{index % 2}.tmp'
+                    os.rename(tree, relocated)
+                    shutil.rmtree(relocated)
                     index += 1
-            thread = threading.Thread(target=churn)
-            thread.start()
-            thread.join()
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                executor.submit(churn).result()
             bpy.context.scene.render.resolution_x = 64
             bpy.context.scene.render.resolution_y = 64
             """
         )
         guard healthyChurn.response.state == .awaitingConfirmation,
               let healthyChurnID = healthyChurn.response.jobID else {
-            throw BpyRuntimeError.invalidOutput("Legitimate rename/delete churn failed the resource scan.")
+            throw BpyRuntimeError.invalidOutput("Legitimate nested rename/delete churn failed the resource scan.")
         }
         _ = try constrained.cancel(jobID: healthyChurnID)
         let scanError = try constrained.runJob(

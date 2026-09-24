@@ -52,7 +52,7 @@ public struct BpyBoundaryProbeResult: Codable, Sendable, Equatable {
     public let cleanupChildGone: Bool
     public let internalLinkedWritableDeduplicated: Bool
     public let fileportRetentionDeniedErrno: Int32
-    public let fileportRetentionDeniedOrAccounted: Bool
+    public let fileportRetentionDenied: Bool
     public let healthyFollowupSucceeded: Bool
 
     public init(
@@ -76,10 +76,10 @@ public struct BpyBoundaryProbeResult: Codable, Sendable, Equatable {
         cleanupChildGone: Bool,
         internalLinkedWritableDeduplicated: Bool,
         fileportRetentionDeniedErrno: Int32,
-        fileportRetentionDeniedOrAccounted: Bool,
+        fileportRetentionDenied: Bool,
         healthyFollowupSucceeded: Bool
     ) {
-        schema = "nexgenvideo/bpy-boundary-probe/2"
+        schema = "nexgenvideo/bpy-boundary-probe/3"
         self.nonce = nonce
         self.serviceProcessIdentifier = serviceProcessIdentifier
         self.serviceStartAbsoluteTime = serviceStartAbsoluteTime
@@ -100,7 +100,7 @@ public struct BpyBoundaryProbeResult: Codable, Sendable, Equatable {
         self.cleanupChildGone = cleanupChildGone
         self.internalLinkedWritableDeduplicated = internalLinkedWritableDeduplicated
         self.fileportRetentionDeniedErrno = fileportRetentionDeniedErrno
-        self.fileportRetentionDeniedOrAccounted = fileportRetentionDeniedOrAccounted
+        self.fileportRetentionDenied = fileportRetentionDenied
         self.healthyFollowupSucceeded = healthyFollowupSucceeded
     }
 }

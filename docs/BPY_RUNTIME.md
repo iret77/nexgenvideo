@@ -63,9 +63,11 @@ bound. The verifier restores scene settings and produces no image.
 These are layered, sampled controls rather than a claim of a race-free, instantaneous quota or a
 general-purpose Python sandbox. FD and mapping inspection does not establish coverage for every kernel
 object that can retain an unlinked vnode. In particular, SCM_RIGHTS in-flight messages and Mach memory
-entries remain unproven; the signed native no-bpy acceptance must prove that a fileport-retained
-unlinked vnode is denied or charged before runtime delivery. Until those retention channels have
-authorized macOS 26 evidence or an implemented accounting/denial boundary, disk-quota completeness is
+entries remain unproven. The current FD and mapping scan cannot account for a fileport after its
+descriptor closes. The signed native no-bpy acceptance therefore requires fileport creation to
+be denied with EPERM or EACCES and checks the probe's exact resource size. An allowed fileport
+blocks runtime delivery until an accounting or denial boundary is implemented and independently
+proven. Until the other retention channels have authorized macOS 26 evidence, disk-quota completeness is
 an explicit runtime and distribution blocker. The service polls at fixed intervals and terminates on
 an observed violation; it does not claim that no transient overage can exist between samples. `RLIMIT_AS` remains
 enabled because current XNU carries an address-space size limit in the VM map; acceptance records the
@@ -199,7 +201,7 @@ always consumes that app. A separate `macos-26` boundary job uses the same artif
 real signed XPC → supervisor → fixed native child ancestry, App Sandbox plus Seatbelt write/fork/
 network/signal denials, writable-FD/read-only-FD/mapping-retained unlinked-vnode quota detection,
 a linked internal writable-under-quota FD deduplicated against the directory view, a healthy linked
-external read-only control, and a native fileport-retention probe that must be denied or accounted,
+external read-only control, and a native fileport-retention probe that must be denied,
 plus exact cleanup and a healthy following job. A marker
 compiled into only this CI bundle gates the fixed child path; normal app bundles cannot
 request it. Normal dev, acceptance, and release bundles continue to require the runtime; readiness is
@@ -239,7 +241,7 @@ network and cross-container denials, disabled autorun plus isolated positive con
 geometry, package-hidden file counts, aggregate writes outside outputs, resource-scan failure/recovery,
 open-unlinked writes with a healthy following job, native no-bpy writable/read-only/mapping-retained
 unlinked resources, linked internal writable deduplication, a linked external read-only control, and
-fileport-retention denial-or-accounting, healthy concurrent rename/delete temp churn, adversarial
+fileport-retention denial, healthy concurrent nested-directory rename/delete temp churn, adversarial
 closed-file rename churn above quota,
 render-only modifier geometry, viewport-hidden renderable geometry, a second scene, and legitimate
 user mesh geometry carrying the verifier-camera name prefix, zero effective resolution, and a scene

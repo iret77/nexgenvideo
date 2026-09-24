@@ -223,7 +223,7 @@ private func vnodeBytes(logical: Int64, blocks: Int64) -> UInt64 {
 private func directoryDescriptor(
     _ reference: DirectoryReference,
     managedRoots: [String]
-) throws -> Int32 {
+) throws -> Int32? {
     for _ in 0..<4 {
         let path: String
         if let directPath = reference.path {
@@ -240,7 +240,7 @@ private func directoryDescriptor(
                 )
             }
             if length < 0 {
-                if errno == ENOENT { continue }
+                if errno == ENOENT { return nil }
                 throw POSIXError(.init(rawValue: errno) ?? .EIO)
             }
             guard length > 0, length < pathBytes.count else {
@@ -339,7 +339,10 @@ private func directorySnapshot(
     }
 
     while let reference = pending.popLast() {
-        let descriptor = try directoryDescriptor(reference, managedRoots: managedRoots)
+        guard let descriptor = try directoryDescriptor(
+            reference,
+            managedRoots: managedRoots
+        ) else { continue }
         do {
             var directoryStatus = stat()
             guard Darwin.fstat(descriptor, &directoryStatus) == 0 else {
@@ -1052,7 +1055,7 @@ private struct BoundaryRun {
     let observedRetainedBytes: UInt64
     let limitReason: String?
     let internalLinkedWritableDeduplicated: Bool
-    let retentionDeniedOrAccounted: Bool
+    let retentionDenied: Bool
 }
 
 private func waitForExit(_ process: Process, timeout: TimeInterval) -> Bool {
@@ -1170,7 +1173,7 @@ private func runBoundarySupervisor(
     var observedRetainedBytes: UInt64 = 0
     var limitReason: String?
     var internalLinkedWritableDeduplicated = false
-    var retentionDeniedOrAccounted = false
+    var retentionDenied = false
     if boundaryResourceModes.contains(mode) {
         let retainedResources = try ownedRetainedVnodes(child, roots: [writeRoot])
         observedRetainedBytes = retainedResources.values.reduce(0, +)
@@ -1202,12 +1205,8 @@ private func runBoundarySupervisor(
                 && limitReason == nil
             validResourceResult = internalLinkedWritableDeduplicated
         } else if mode == "fileport-unlinked-hold" {
-            let denied = [EPERM, EACCES].contains(report.retentionDeniedErrno)
-            let accounted = report.retentionDeniedErrno == 0
-                && observedRetainedBytes >= boundaryProbeResourceBytes
-                && limitReason == "disk"
-            retentionDeniedOrAccounted = denied || accounted
-            validResourceResult = true
+            retentionDenied = [EPERM, EACCES].contains(report.retentionDeniedErrno)
+            validResourceResult = report.resourceBytes == boundaryProbeResourceBytes
         } else {
             validResourceResult = report.resourceBytes == boundaryProbeResourceBytes
                 && observedRetainedBytes >= boundaryProbeResourceBytes
@@ -1241,7 +1240,7 @@ private func runBoundarySupervisor(
         observedRetainedBytes: observedRetainedBytes,
         limitReason: limitReason,
         internalLinkedWritableDeduplicated: internalLinkedWritableDeduplicated,
-        retentionDeniedOrAccounted: retentionDeniedOrAccounted
+        retentionDenied: retentionDenied
     )
 }
 
@@ -2623,8 +2622,7 @@ private final class BpyRuntimeService: NSObject, BpyRuntimeServiceProtocol, @unc
                 internalLinkedWritableDeduplicated: internalLinkedWritable
                     .internalLinkedWritableDeduplicated,
                 fileportRetentionDeniedErrno: fileportRetention.report.retentionDeniedErrno,
-                fileportRetentionDeniedOrAccounted: fileportRetention
-                    .retentionDeniedOrAccounted,
+                fileportRetentionDenied: fileportRetention.retentionDenied,
                 healthyFollowupSucceeded: externalReadOnly.limitReason == nil
                     && externalReadOnly.observedRetainedBytes < boundaryProbeResourceBytes
                     && followup.supervisorGone

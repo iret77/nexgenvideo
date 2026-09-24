@@ -420,7 +420,7 @@ jobs:
             "$APP/Contents/MacOS/NexGenVideo" > evidence/runtime.log 2>&1
           grep -q SELFTEST_BPY_BOUNDARY_OK evidence/runtime.log
           jq -e '
-            .schema == "nexgenvideo/bpy-boundary-probe/2"
+            .schema == "nexgenvideo/bpy-boundary-probe/3"
             and .serviceProcessIdentifier > 1
             and .supervisorProcessIdentifier > 1
             and .childProcessIdentifier > 1
@@ -437,7 +437,8 @@ jobs:
             and .cleanupSupervisorGone == true
             and .cleanupChildGone == true
             and .internalLinkedWritableDeduplicated == true
-            and .fileportRetentionDeniedOrAccounted == true
+            and (.fileportRetentionDeniedErrno == 1 or .fileportRetentionDeniedErrno == 13)
+            and .fileportRetentionDenied == true
             and .healthyFollowupSucceeded == true
           ' evidence/result.json
       - uses: actions/upload-artifact@v4
