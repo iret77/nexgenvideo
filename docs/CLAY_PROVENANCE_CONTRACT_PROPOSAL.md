@@ -1,171 +1,156 @@
 # Clay provenance contract proposal
 
 Status: **decision proposal only**. This document does not change a locked contract, authorize
-product implementation, or approve the runtime work in #541. The proposed contract becomes
-normative only after an explicit owner decision and separate edits to the affected locked specs.
+product implementation, or approve the runtime work in #541. The contract becomes normative only
+after an explicit owner decision and separate edits to the affected locked specs.
 
-Issue: #546. Runtime and scene producers: #541–#545. Review consumers: #533 and #559 / PR #577.
+Issue: #546. Runtime and scene producers: #541–#545. Possible future consumers: #533 and #559 /
+PR #577; neither is approved or incorporated here.
 
 ## TL;DR
 
-Adopt three additive Core sidecars and no new phase:
+Adopt four optional Core artifact families, expressed by five new schema IDs, and no new phase:
 
-1. Production Design owns optional, immutable `spatial-scene-manifest/v1` location revisions.
-2. Bible owns early `spatial-derivation-proof/v1` Clay stills used for composition and geometry.
-3. Shot List owns final camera/path/time decisions and publishes `shot-clay-bindings/v1` through
-   the existing `PipelineShotlistWriter` transaction.
+1. Production Design owns an opaque `spatial-scene-index/v1` plus immutable
+   `spatial-scene-manifest/v1` revisions. These artifacts do not use Bible IDs.
+2. Bible owns `bible-spatial-bindings/v1`, which maps current Bible locations/entities to a current
+   approved scene revision and inventories early Clay proofs with a typed purpose.
+3. Both early and final Clay outputs use `spatial-derivation-proof/v1`. An early proof owns its
+   inspection camera and binds `scene_rest`; a final proof binds current Shot List camera and state
+   plans.
+4. Shot List owns `shot-clay-bindings/v1` through the existing `PipelineShotlistWriter` transaction.
 
-`BlockoutProofV1`, `CameraSetupPlanV1`, `Scene3D`, `AssetProvenanceV1`, and every other existing
-public pack-facing value type keep their stored layout. A Clay output is a third, truthful Bible
-provenance class, not fake model generation and not confirmed identity. A local spatial worker can
-stage and preview in planning phases, but it never receives provider/LLM credentials, never writes
-canonical project files, and never gains `generate_image`, `generate_video`, or the Render runner.
-The host validates regular project-local files and seals proofs before a canonical writer can bind
-them.
+Every Bible and Shot spatial binding must match the exact current approved Production Design index
+entry, revision, and manifest hash. Selecting an older revision is forbidden; changing the current
+revision requires a rewind to Production Design.
 
-Clay stills carry composition/geometry only. Identity and look remain independent required roles.
-A Clay video is eligible only when the selected executable provider route exposes the exact video
-reference slot, mode, limits, and combination needed by the approved plan. There is no silent model,
-slot, modality, strategy, or source-mode substitution.
+`BlockoutProofV1`, `CameraSetupPlanV1`, `Scene3D`, `AssetProvenanceV1`,
+`BibleViewProvenanceRequirementV1`, and every other existing public pack-facing value type keep
+their stored layout. Clay outputs never occupy `location.sheets` or `scene3d.panorama`; their sole
+Bible carrier is the new typed binding/proof inventory. The local spatial worker receives neither
+provider/LLM credentials nor canonical-write or Render-runner authority.
 
 ## Decision requested
 
-Approve or reject the following contract as one decision:
+Approve or reject this contract as one decision:
 
-- **Ownership:** Production Design owns committed location scene revisions; Bible owns early Clay
-  derivations; Shot List owns final shot cameras and shot-bound Clay derivations.
-- **Representation:** add the three versioned Core artifacts below; do not revise public V1 stored
-  layouts and do not reinterpret `BlockoutProofV1`.
-- **Capabilities:** add local spatial capabilities to existing phases only. No new phase and no
-  paid render capability in a planning phase.
-- **Compatibility:** ship the Musicvideo mapping in a new pack version. Keep its current project
-  schema when the artifacts remain optional and additive. Old pinned pack versions keep their exact
-  old behavior. Any implementation that makes these artifacts mandatory instead requires a new
-  project schema and an explicit Recovery-copy migration decision.
+- **Ownership:** Production Design owns portable scene revisions and optional read-only review
+  cameras; Bible owns mappings to Bible identity, early inspection cameras, and early Clay views;
+  Shot List owns final shot cameras, state, time, and shot-bound Clay.
+- **Representation:** add the five schemas above without changing existing public stored layouts or
+  reinterpreting `BlockoutProofV1`.
+- **Capabilities:** add only the listed local spatial capabilities to existing phases. Packless
+  generic projects use a narrow Core default table and Core current-phase guards. Pack projects use
+  only the mapping and intake steps declared by their resolved manifest.
+- **Compatibility:** ship Musicvideo support in a new exact pack version while retaining
+  `musicvideo/2.0.0` if the artifacts remain optional. Every pack-version switch still uses the
+  existing transactional Recovery-copy upgrade. Old pinned packs remain installed and keep their
+  exact behavior.
 
-Approval of this proposal would not approve a build, merge, release, #533's final review phase, or
-#559's proposed phase graph and Shot List schema.
+Approval would not approve implementation, build, merge, release, #533, or #559 / PR #577.
 
-## Verified current contract
+## Verified current constraints
 
-The proposal is constrained by the current main-tree behavior, not by open proposal branches:
+This proposal is constrained by current main-tree code rather than open proposal branches:
 
-- `PipelineSpatialProductionWriter` atomically writes four Shot List-bound plans plus optional
-  `BlockoutProofV1`. The proof binds exact plan bytes, ordered setup/shape/state IDs, a QuickTime
-  clip, dimensions, rate, and duration.
-- `BlockoutProofV1` does not bind a `.blend` scene, external resources, worker/runtime closure,
-  render engine, color management, material override, evaluated frame, or renderer settings. Those
-  facts cannot be inferred from it.
-- `PipelineShotlistWriter` is the transaction owner for Shot List, execution inputs,
-  conditioning strategy, spatial plan, pack plan, production inputs, and execution plan. A failure
-  restores all snapshots.
-- `ReferencePlanV2` already binds exact asset path/hash, modality, semantic job, input slot, mode,
-  duration, route capability hashes, budgets, and all dropped optional demands. This is the correct
-  downstream planner; a second Clay-specific provider planner is unnecessary.
-- `ProjectCreativeContextV1.extensions` and `PackArtifactExtensionReferenceV1` already carry a
-  versioned extension ID, schema, path, and exact hash without changing a public value layout.
-- Bible views currently pass only with host-recorded prompt/model generation provenance or explicit
-  host-recorded character/location identity confirmation. Neither class truthfully describes a
-  local Clay render.
-- Musicvideo allows paid still generation in Production Design and Bible, no supporting tools in
-  Shot List, and paid video only in Render. Packless generic projects have the Core phase order but
-  no pack manifest from which to inherit a spatial capability mapping.
-- `Scene3D` describes a panorama and extracted POV geometry. It is not a persisted bpy scene
-  manifest. Extending it with stored properties would change a public pack-facing value layout.
+- `ProductionDesign` has no location/entity identity fields. Bible owns location and entity IDs.
+- `BibleViewProvenanceRequirementsV1.make` currently treats every `location.sheets` path and
+  `scene3d.panorama` as appearance/identity evidence. Clay cannot use either carrier truthfully.
+- `StateLadderV1` binds a Shot List hash and therefore cannot describe a pre-Shot-List Bible view.
+- `PipelineSpatialProductionWriter` writes the current Shot List-bound plans plus optional
+  `BlockoutProofV1`; that proof does not bind a `.blend`, complete resources, runtime, renderer,
+  evaluated frame, or Clay settings.
+- `PipelineShotlistWriter` already owns the atomic Shot List and execution-plan transaction.
+- `ReferencePlanV2` already binds exact asset bytes, semantic job, input slot/mode, duration, route
+  capability hashes, budgets, and dropped optional demands. No second provider planner is needed.
+- Packless `PipelinePhaseAccess.requireCurrentPhaseAndIntake` and `guardCurrentPhaseWork` currently
+  return before enforcing current phase/capabilities. Hard Steps and capability lists are otherwise
+  pack-manifest data.
+- `ProjectCreativeContextV1.extensions` and `PackArtifactExtensionReferenceV1` can carry versioned
+  sidecars without changing a public value layout.
 - Imported and AI-enhanced shots never enter Frames. AI-enhanced shots own exactly one project-local
-  `source_path` and currently accept no reference inputs. Chained frame continuation and native
-  extension have their own locked input semantics.
-
-## Decision matrix
-
-| Choice | Provenance is truthful | Preserves pack ABI | Covers early and final cameras | Reuses current planner | Decision |
-|---|---:|---:|---:|---:|---|
-| Record Clay in `PipelineAssetProof` as model output | No | Yes | No | Partly | Reject |
-| Adopt Clay as confirmed location identity | No | Yes | No | Partly | Reject |
-| Add fields to `Scene3D`, `CameraSetupV1`, `AssetProvenanceV1`, or `BlockoutProofV1` | Potentially | No | Potentially | Potentially | Reject |
-| Call every bpy clip a `BlockoutProofV1` native blockout | No; scene/runtime/settings remain unbound | Yes | Final only | No | Reject |
-| Add a mandatory 3D or Clay phase | Potentially | Potentially | Yes | Yes | Reject |
-| Add versioned scene, derivation, and shot-binding sidecars | Yes | Yes | Yes | Yes | **Recommend** |
-
-The recommended option is the only one that represents the source honestly, supports a scene before
-Bible location anchors, keeps final camera authority in Shot List, and leaves projects without 3D
-untouched.
+  `source_path` and accept no reference inputs. Frame continuation and native extension keep their
+  locked input semantics.
 
 ## Ownership and lifecycle
 
 ### Core roles
 
-The Core defines three semantic roles. A pack maps them to phases already present in its phase graph:
-
-| Core role | Generic project | Musicvideo | Canonical owner |
+| Core role | Generic default phase | Musicvideo phase | Canonical owner |
 |---|---|---|---|
-| `spatial_scene_design` | `production_design` | `production_design` | `write_production_design` transaction |
-| `spatial_bible_derivation` | `bible` | `bible` | `write_bible` and its gate |
+| `spatial_scene_design` | `production_design` | `production_design` | `write_production_design` |
+| `spatial_bible_derivation` | `bible` | `bible` | `write_bible` and independent Bible gate |
 | `spatial_shot_execution` | `shotlist` | `shotlist` | `PipelineShotlistWriter` |
 
-A future pack may map a role to a different existing phase, but must declare one owner per role and
-an acyclic order `scene design < Bible derivation < shot execution`. Omission means the optional
-feature is unavailable for that pack; it never falls back to a guessed phase. No mapping may create a
-phase or change the Musicvideo start order.
+A pack may map a role only to an existing phase and must preserve the acyclic order scene design <
+Bible derivation < shot execution. Omission disables that optional role for that exact pack version;
+it never falls back to the generic table. The generic table applies only when no pack is resolved.
 
-### Production Design owns the scene
+### Production Design owns opaque scene truth
 
-Production Design may create zero or more location scenes. A spatial worker edits only a job-local
-candidate. `write_production_design` receives an opaque host candidate ID, validates the candidate
-against the expected base revision, and commits the immutable revision plus the updated index in the
-same phase transaction as `production_design.yaml`.
+Production Design may create zero or more scenes. It assigns an opaque `scene_key` and scene-local
+`object_id`/`role` values; it does not predict or reserve Bible location/entity IDs. A spatial worker
+edits only a job-local candidate. `write_production_design` validates an expected base revision and
+atomically commits an immutable revision plus the updated index with `production_design.yaml`.
 
-Once Production Design is approved, Bible and Shot List consume the scene read-only. Correcting
-geometry or a resource requires an explicit rewind to Production Design. This avoids two canonical
-scene writers and ensures that location geometry exists before Bible derives location views from it.
+The index is the only mutable revision pointer. Once Production Design is approved, later phases
+consume the indexed revision read-only. Geometry, resources, object catalog, coordinate/time
+contract, rest frame, or index revision changes require an explicit rewind to Production Design.
 
-Inspection cameras stored with a scene revision are explicitly `inspection` cameras. They exist to
-review geometry and derive early location views. They are not Shot List setups and cannot acquire a
-shot ID, generation interval, cut decision, or final camera authority.
+A manifest may contain optional `review_cameras`. They are immutable review aids owned by the scene
+revision, never Shot List setups. Bible may copy one as an initial value, but every early derivation
+embeds and hashes its own `camera.owner = bible_inspection` snapshot. Creating a new Bible
+perspective never mutates Production Design geometry, its manifest, or its review cameras.
 
-### Bible owns early Clay derivations
+### Bible owns identity mapping, purpose, and early inspection
 
-Bible may request local Clay stills or an equirectangular Clay panorama from an approved Production
-Design scene revision and an inspection camera. The worker writes staging; the host independently
-checks the declared inputs and outputs, seals an opaque candidate in Recovery staging, and returns its
-host candidate ID. `write_bible` publishes the output and `spatial-derivation-proof/v1` beneath the
-matching Bible location in the same transaction as the Bible artifact. The supporting tool never
-writes `pipeline/` or captures lineage.
+Bible may bind one Bible location to one current approved scene revision and Bible entities to
+scene-local object IDs. `bible-spatial-bindings/v1` is the typed carrier for those mappings and for
+the inventory of early Clay outputs. It binds exact current Bible bytes, exact current scene-index
+bytes, revision/manifest bytes, proof bytes, output bytes, `purpose`, and `semantic_role`.
 
-The Bible writer accepts the new provenance class only for an explicitly declared
-`composition_geometry` view purpose. Such a view can satisfy geometry/composition demand; it cannot
-satisfy character identity, location appearance, lighting, palette, material, costume, or look.
-Those roles still require their existing generated or confirmed-identity evidence. A Clay input used
-to generate a styled location sheet is retained as a distinct bound input; the generated styled sheet
-retains its normal model provenance.
+The worker writes only staging. The host seals an opaque Recovery candidate.
+`write_bible` validates the candidate and atomically publishes Bible, the binding inventory, outputs,
+proofs, and cumulative exact-byte lineage. Failure restores every previous
+byte. The supporting tool never captures lineage or writes `pipeline/`.
 
-### Shot List owns final cameras and shot-bound Clay
+The independent Bible gate reloads all committed bytes rather than trusting writer state. It checks
+that the Bible IDs exist, mapped object IDs exist in the named manifest, the scene entry is still the
+current approved index entry, every proof and output hash matches, and every inventory purpose/role
+matches the proof. A stale, missing, ambiguous, or many-scene mapping fails closed.
 
-Only the existing Shot List transaction may decide or change final setup ID, shot ID, camera path,
-start/end state, interval, sampling, and cut ownership. `CameraSetupPlanV1`,
-`ShotGenerationCutPlanV1`, and `StateLadderV1` remain the planning sources. A new
-`shot-clay-bindings/v1` sidecar binds their exact bytes to the exact scene revision and sealed Clay
-output used by each shot.
+Clay bytes are forbidden in existing `location.sheets` and `scene3d.panorama`, even if the same path
+also appears in the new inventory. `write_bible` and the independent gate reject identical paths or
+identical hashes classified as generated appearance, confirmed identity, location panorama, or
+Clay. This preserves the existing Generated/Identity/Panorama behavior unchanged and prevents the
+reference planner from treating geometry evidence as a look anchor.
 
-Final shot previews can be rendered from an uncommitted host draft into Caches for review. They are
-not lineage and cannot be selected by the reference planner. On the final `write_shotlist` call, the
-host validates the expected draft and scene revision, renders or accepts the matching staged output,
-seals it, writes the binding sidecar, and rolls back all of those writes if the Shot List transaction
-fails. A proof from an inspection camera cannot be relabeled as a final-shot proof.
+### Shot List owns final camera, state, time, and binding
+
+Only the existing Shot List transaction may decide final setup ID, shot ID, camera path, start/end
+state, interval, sampling, and cut ownership. `CameraSetupPlanV1`, `ShotGenerationCutPlanV1`, and
+`StateLadderV1` remain the sources. A final proof uses `camera.owner = shotlist` and
+`state.kind = state_ladder`.
+
+The transaction must bind the exact current approved scene-index hash and its exact revision and
+manifest hash. It cannot choose a historical revision. On `write_shotlist`, the host validates the
+current draft and scene index, seals the matching result, and atomically writes the Shot List,
+spatial proof/output, `shot-clay-bindings/v1`, extension references, and cumulative lineage. A Bible
+proof cannot be relabeled as a final-shot proof.
 
 ## Canonical paths
 
-All paths are relative to the `pipeline/` data root. IDs are validated path segments, not user file
-names.
+All paths are relative to the `pipeline/` data root. IDs are validated path segments, not filenames.
 
 ```text
 production_design/spatial/index.v1.json
-production_design/spatial/locations/<location-id>/revisions/<revision-id>/
+production_design/spatial/scenes/<scene-key>/revisions/<revision-id>/
   manifest.v1.json
   scene.blend
   resources/<resource-id>/<original-filename>
 
-bible/<location-id>/scene3d/clay/<derivation-id>/
+bible/spatial-bindings.v1.json
+bible/spatial/<location-id>/<derivation-id>/
   output.<png|exr>
   proof.v1.json
 
@@ -175,37 +160,28 @@ execution/spatial-derivations/<shot-id>/<derivation-id>/
 execution/extensions/shot-clay-bindings.v1.json
 ```
 
-Transient candidates, interactive viewport meshes, thumbnails, unsealed frames, partial clips, and
-preview renders remain in Application Support Recovery staging, Caches, or `NSTemporaryDirectory()`
-as appropriate. They do not enter `pipeline/` until a host canonical writer commits them.
-
-Every canonical entry is a regular file. Directory symlinks, file symlinks, aliases resolving outside
-the project, traversal, sockets, devices, and missing resources are rejected. The host resolves every
-file against the real project root, hashes the bytes itself, and compares the complete dependency set
-reported by a clean auto-execution-disabled scene scan. Unlisted external dependencies fail closed.
+Transient candidates, thumbnails, unsealed frames, partial clips, and previews remain in Recovery
+staging, Caches, or `NSTemporaryDirectory()`. Every canonical entry is a regular project-local file.
+Symlinks, aliases escaping the package, traversal, sockets, devices, missing dependencies, and
+undeclared external resources fail closed.
 
 ## Versioned data contracts
 
-The examples below are normative about field presence and meaning, but the example IDs and hashes are
-illustrative.
+The examples are normative about field presence, variants, and relationships. Example IDs, hashes,
+and the explicitly named example renderer contract are illustrative.
 
 ### 1. Spatial scene index and manifest
 
-Schema IDs:
-
-- `spatial-scene-index/v1`
-- `spatial-scene-manifest/v1`
-
-The index is the only mutable pointer. Revisions are immutable after publication.
+Schema IDs: `spatial-scene-index/v1` and `spatial-scene-manifest/v1`.
 
 ```json
 {
   "schema": "spatial-scene-index/v1",
   "project_id": "example-project",
-  "locations": {
-    "loc-stage": {
+  "scenes": {
+    "pd-scene-a7f3": {
       "revision_id": "scene-rev-0007",
-      "manifest_path": "production_design/spatial/locations/loc-stage/revisions/scene-rev-0007/manifest.v1.json",
+      "manifest_path": "production_design/spatial/scenes/pd-scene-a7f3/revisions/scene-rev-0007/manifest.v1.json",
       "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     }
   }
@@ -216,7 +192,7 @@ The index is the only mutable pointer. Revisions are immutable after publication
 {
   "schema": "spatial-scene-manifest/v1",
   "project_id": "example-project",
-  "location_id": "loc-stage",
+  "scene_key": "pd-scene-a7f3",
   "revision_id": "scene-rev-0007",
   "parent_revision_id": "scene-rev-0006",
   "created_at": "2026-09-24T10:00:00Z",
@@ -234,36 +210,40 @@ The index is the only mutable pointer. Revisions are immutable after publication
     "fps_denominator": 1,
     "frame_origin": 0
   },
+  "rest_state": {
+    "contract": "scene-file-evaluated-frame/v1",
+    "evaluated_frame": 0
+  },
   "scene": {
-    "path": "production_design/spatial/locations/loc-stage/revisions/scene-rev-0007/scene.blend",
+    "path": "production_design/spatial/scenes/pd-scene-a7f3/revisions/scene-rev-0007/scene.blend",
     "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   },
   "resources": [
     {
       "id": "resource-door-mesh",
-      "path": "production_design/spatial/locations/loc-stage/revisions/scene-rev-0007/resources/resource-door-mesh/door.glb",
+      "path": "production_design/spatial/scenes/pd-scene-a7f3/revisions/scene-rev-0007/resources/resource-door-mesh/door.glb",
       "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "media_type": "model/gltf-binary"
     }
   ],
-  "entity_bindings": [
+  "objects": [
     {
-      "entity_id": "prop-door",
-      "object_ids": ["object-door-frame", "object-door-leaf"]
+      "object_id": "object-door-frame",
+      "role": "portal.frame",
+      "resource_ids": ["resource-door-mesh"]
+    },
+    {
+      "object_id": "object-door-leaf",
+      "role": "portal.movable-leaf",
+      "resource_ids": ["resource-door-mesh"]
     }
   ],
-  "inspection_cameras": [
+  "review_cameras": [
     {
-      "camera_id": "inspect-entrance",
-      "purpose": "inspection",
+      "camera_id": "review-entrance",
       "snapshot": {
         "projection": "perspective",
-        "world_transform_row_major": [
-          1, 0, 0, 2.5,
-          0, 1, 0, -4,
-          0, 0, 1, 1.6,
-          0, 0, 0, 1
-        ],
+        "world_transform_row_major": [1, 0, 0, 2.5, 0, 1, 0, -4, 0, 0, 1, 1.6, 0, 0, 0, 1],
         "sensor_fit": "horizontal",
         "sensor_width_mm": 36,
         "focal_length_mm": 35,
@@ -282,144 +262,156 @@ The index is the only mutable pointer. Revisions are immutable after publication
 }
 ```
 
-The manifest contains a complete resource closure, not merely resources the worker happened to touch.
-Packed resources are either retained inside the hashed scene bytes or unpacked into the declared
-project-local resource closure; a dependency cannot remain at an original user path.
-`resource_set_sha256` used below is the SHA-256 of canonical sorted JSON tuples
-`[id, path, sha256, media_type]`. `camera_snapshot_sha256` is the SHA-256 of canonical sorted-key JSON
-for `snapshot`, including every path keyframe and interpolation rule.
+The manifest contains the complete resource closure. `objects` are scene-local and never carry
+Bible IDs. `resource_set_sha256` used below hashes canonical sorted JSON tuples
+`[id, path, sha256, media_type]`. Snapshot hashes cover canonical sorted-key JSON.
 
-### 2. Spatial derivation proof
+### 2. Bible spatial bindings and proof inventory
+
+Schema ID: `bible-spatial-bindings/v1`. This full example is the normative early-Bible mapping and
+provenance boundary.
+
+```json
+{
+  "schema": "bible-spatial-bindings/v1",
+  "project_id": "example-project",
+  "bible_path": "bible/bible.yaml",
+  "bible_sha256": "1010101010101010101010101010101010101010101010101010101010101010",
+  "scene_index_path": "production_design/spatial/index.v1.json",
+  "scene_index_sha256": "2020202020202020202020202020202020202020202020202020202020202020",
+  "scene_bindings": [
+    {
+      "bible_location_id": "loc-stage",
+      "scene_key": "pd-scene-a7f3",
+      "revision_id": "scene-rev-0007",
+      "manifest_path": "production_design/spatial/scenes/pd-scene-a7f3/revisions/scene-rev-0007/manifest.v1.json",
+      "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "entity_object_bindings": [
+        {
+          "bible_entity_kind": "prop",
+          "bible_entity_id": "prop-door",
+          "object_ids": ["object-door-frame", "object-door-leaf"]
+        }
+      ]
+    }
+  ],
+  "derivations": [
+    {
+      "bible_location_id": "loc-stage",
+      "derivation_id": "clay-bible-loc-stage-v1",
+      "purpose": "bible_clay_still",
+      "semantic_role": "composition_geometry",
+      "proof_path": "bible/spatial/loc-stage/clay-bible-loc-stage-v1/proof.v1.json",
+      "proof_sha256": "3030303030303030303030303030303030303030303030303030303030303030",
+      "output_path": "bible/spatial/loc-stage/clay-bible-loc-stage-v1/output.png",
+      "output_sha256": "4040404040404040404040404040404040404040404040404040404040404040"
+    }
+  ]
+}
+```
+
+The sidecar owns both the Bible-to-PD binding and the typed derivation inventory. The writer and
+independent gate require every `scene_bindings` entry to equal the current approved index pointer and
+every object ID to exist in that manifest. Each derivation must resolve through its location's scene
+binding, and its purpose, role, proof, and output must match exact bytes. One Bible location cannot
+silently bind two scenes; one scene may support multiple locations only through explicit distinct
+bindings whose entity-object mappings remain unambiguous.
+
+### 3. Spatial derivation proof
 
 Schema ID: `spatial-derivation-proof/v1`.
 
-The same schema covers a Bible still, panorama, and shot-bound still or clip. Conditional fields are
-validated by `purpose` and `camera.owner`.
+The complete early-Bible proof corresponding to the inventory above is:
 
 ```json
 {
   "schema": "spatial-derivation-proof/v1",
   "project_id": "example-project",
-  "derivation_id": "clay-shot-s014-v1",
-  "location_id": "loc-stage",
-  "purpose": "clay_video",
-  "semantic_role": "composition_geometry_motion",
+  "derivation_id": "clay-bible-loc-stage-v1",
+  "bible_location_id": "loc-stage",
+  "purpose": "bible_clay_still",
+  "semantic_role": "composition_geometry",
   "scene": {
+    "scene_index_path": "production_design/spatial/index.v1.json",
+    "scene_index_sha256": "2020202020202020202020202020202020202020202020202020202020202020",
+    "scene_key": "pd-scene-a7f3",
     "revision_id": "scene-rev-0007",
-    "manifest_path": "production_design/spatial/locations/loc-stage/revisions/scene-rev-0007/manifest.v1.json",
+    "manifest_path": "production_design/spatial/scenes/pd-scene-a7f3/revisions/scene-rev-0007/manifest.v1.json",
     "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "scene_path": "production_design/spatial/locations/loc-stage/revisions/scene-rev-0007/scene.blend",
+    "scene_path": "production_design/spatial/scenes/pd-scene-a7f3/revisions/scene-rev-0007/scene.blend",
     "scene_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "resource_set_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
   },
   "camera": {
-    "owner": "shotlist",
-    "camera_id": "camera-k03",
-    "setup_id": "K03",
-    "shot_id": "s014",
-    "camera_setup_plan_path": "execution/extensions/camera-setup-plan.v1.json",
-    "camera_setup_plan_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "owner": "bible_inspection",
+    "camera_id": "bible-inspect-northwest-v1",
+    "source_review_camera": {
+      "camera_id": "review-entrance",
+      "camera_snapshot_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
     "snapshot": {
       "projection": "perspective",
-      "world_transform_row_major": [
-        1, 0, 0, 2.5,
-        0, 1, 0, -4,
-        0, 0, 1, 1.6,
-        0, 0, 0, 1
-      ],
+      "world_transform_row_major": [1, 0, 0, 3, 0, 1, 0, -3.5, 0, 0, 1, 1.8, 0, 0, 0, 1],
       "sensor_fit": "horizontal",
       "sensor_width_mm": 36,
-      "focal_length_mm": 35,
-      "horizontal_fov_degrees": 54.432,
+      "focal_length_mm": 40,
       "clip_start_meters": 0.1,
       "clip_end_meters": 1000,
-      "path": [
-        {
-          "frame": 0,
-          "world_transform_row_major": [
-            1, 0, 0, 2.5,
-            0, 1, 0, -4,
-            0, 0, 1, 1.6,
-            0, 0, 0, 1
-          ]
-        },
-        {
-          "frame": 119,
-          "world_transform_row_major": [
-            1, 0, 0, 4,
-            0, 1, 0, -2,
-            0, 0, 1, 2.2,
-            0, 0, 0, 1
-          ]
-        }
-      ],
+      "path": [],
       "path_interpolation": "linear"
     },
-    "camera_snapshot_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
-    "projection_adapter": "camera-setup-v1-to-spatial-snapshot/v1"
+    "camera_snapshot_sha256": "5050505050505050505050505050505050505050505050505050505050505050"
   },
   "state": {
-    "state_ladder_path": "execution/extensions/state-ladder.v1.json",
-    "state_ladder_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
-    "entity_state_ids": ["hero-v2", "door-open-v1"]
+    "kind": "scene_rest",
+    "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "scene_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "evaluated_frame": 0
   },
   "time": {
+    "kind": "evaluated_frame",
     "fps_numerator": 24,
     "fps_denominator": 1,
-    "start_frame": 0,
-    "end_frame_inclusive": 119,
-    "sampled_frames": 120,
+    "evaluated_frame": 0,
     "interpolation_contract": "scene-evaluated/v1"
   },
   "runtime": {
     "runtime_distribution_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-    "python_version": "3.13.7",
+    "python_version": "3.13.15",
     "bpy_version": "5.2.2",
     "worker_protocol": "ngv-spatial-worker/v1"
   },
   "renderer": {
-    "engine_id": "blender-eevee-next",
-    "device_class": "cpu",
-    "settings_schema": "ngv-clay-render-settings/v1",
+    "renderer_contract_id": "example.clay-renderer/v1",
+    "renderer_implementation_sha256": "6060606060606060606060606060606060606060606060606060606060606060",
+    "settings_schema": "example.clay-render-settings/v1",
     "settings": {
-      "samples": 64,
-      "resolution_percentage": 100,
-      "motion_blur": false,
-      "transparent_background": false
+      "quality_tier": "preview",
+      "resolution_percentage": 100
     },
-    "settings_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+    "settings_sha256": "7070707070707070707070707070707070707070707070707070707070707070",
     "material_override": {
       "contract": "neutral-clay/v1",
       "base_color_linear_rgba": [0.55, 0.55, 0.55, 1],
       "roughness": 0.8,
       "metallic": 0
     },
-    "material_override_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+    "material_override_sha256": "8080808080808080808080808080808080808080808080808080808080808080",
     "color_management": {
-      "display_device": "sRGB",
-      "view_transform": "Standard",
-      "look": "Medium High Contrast",
-      "exposure": 0,
-      "gamma": 1
+      "contract": "renderer-defined-color-management/v1",
+      "values": {}
     },
-    "color_management_sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+    "color_management_sha256": "9090909090909090909090909090909090909090909090909090909090909090"
   },
   "outputs": [
     {
       "role": "clay_color",
-      "path": "execution/spatial-derivations/s014/clay-shot-s014-v1/output.mov",
-      "sha256": "7777777777777777777777777777777777777777777777777777777777777777",
-      "media_type": "video/quicktime",
+      "path": "bible/spatial/loc-stage/clay-bible-loc-stage-v1/output.png",
+      "sha256": "4040404040404040404040404040404040404040404040404040404040404040",
+      "media_type": "image/png",
       "width": 1920,
       "height": 1080,
-      "frame_count": 120,
-      "encoder": {
-        "container": "quicktime",
-        "codec": "hevc",
-        "profile": "main",
-        "pixel_format": "yuv420p",
-        "timescale": 24000
-      }
+      "frame_count": 1
     }
   ],
   "host_validation": {
@@ -430,39 +422,72 @@ validated by `purpose` and `camera.owner`.
 }
 ```
 
-For `camera.owner = inspection`, `setup_id`, `shot_id`, and Shot List plan hashes are forbidden; the
-proof instead binds the inspection camera snapshot in the scene manifest. For `purpose = clay_still`,
-time identifies exactly one evaluated frame and the output is an image. For `purpose = clay_video`,
-start/end are inclusive and `sampled_frames` must equal the declared rational-rate sample sequence.
-The camera snapshot and renderer subobjects use canonical sorted-key JSON; their hashes bind the
-embedded values. A final camera snapshot must be the deterministic projection of its named current
-`CameraSetupPlanV1` entry, not an independently editable copy.
+The renderer contract fields are deliberately abstract: #546 requires a registered implementation
+hash and complete settings schema, not a guessed Blender engine/device combination. In particular,
+the document does not claim that EEVEE exposes or used a CPU device. Integration replaces the
+example renderer IDs/settings only with values established by the approved #545 implementation.
+The runtime example reflects the current #541 pins, Python 3.13.15 and bpy 5.2.2; it does not approve
+#541 or claim runtime evidence.
 
-Depth, normal, and object-mask outputs may be recorded only with a separately versioned pass settings
-contract declaring unit, value range, coordinate space, normalization, and object-ID mapping. Their
-existence does not make a provider able to consume them.
+#### Discriminated variants
 
-### 3. Shot Clay bindings
+| Discriminator | Required | Forbidden |
+|---|---|---|
+| `purpose = bible_clay_still` | `semantic_role = composition_geometry`; `camera.owner = bible_inspection`; `state.kind = scene_rest`; `time.kind = evaluated_frame`; one image output | Shot/setup IDs, Shot List plan hashes, `state_ladder_*`, interval fields, video output |
+| `purpose = bible_clay_panorama` | Same Bible camera/state/time variant; one equirectangular image output declared by the output contract | Same forbidden Shot List and interval fields |
+| `purpose = shot_clay_still` | `semantic_role = composition_geometry`; `camera.owner = shotlist`; `state.kind = state_ladder`; current camera/shot/state hashes; one evaluated frame and image | Bible location carrier and `scene_rest` |
+| `purpose = shot_clay_video` | `semantic_role = composition_geometry_motion`; Shot List camera/state; inclusive interval and exact rational sample sequence; video output | Bible location carrier and `scene_rest` |
 
-Schema ID: `shot-clay-bindings/v1`.
+For `camera.owner = bible_inspection`, `snapshot` and `camera_snapshot_sha256` are always required.
+`source_review_camera` is permitted only when its referenced ID/hash exists in the bound manifest;
+it records copied starting values and grants no ownership. Shot/setup fields and camera-plan hashes
+are forbidden.
 
-Path: `execution/extensions/shot-clay-bindings.v1.json`.
+For `camera.owner = shotlist`, `shot_id`, `setup_id`, `camera_setup_plan_path/hash`, complete snapshot
+and snapshot hash, and the named deterministic projection adapter are required. Bible
+`source_review_camera` is forbidden.
+
+For `state.kind = scene_rest`, `manifest_sha256`, exact `.blend` `scene_sha256`, and
+`evaluated_frame` are required and must equal the manifest rest-state declaration. State Ladder
+path/hash and entity-state IDs are forbidden. For `state.kind = state_ladder`, State Ladder
+path/hash and exact ordered entity-state IDs are required and must resolve against the current Shot
+List; `manifest_sha256`, `scene_sha256`, and the rest-frame field inside `state` are forbidden. The
+proof's `scene` object still binds the current manifest and `.blend` in both variants.
+
+No state field is optional. A proof whose discriminator-specific required/forbidden set is violated
+fails before publication. A final camera snapshot is a deterministic projection of its named
+current `CameraSetupPlanV1` entry, never an independently editable copy.
+
+Depth, normal, and object-mask outputs require a separate versioned pass-settings contract declaring
+units, range, coordinate space, normalization, and object-ID mapping. Their presence never implies
+provider support.
+
+### 4. Shot Clay bindings
+
+Schema ID: `shot-clay-bindings/v1`. Path:
+`execution/extensions/shot-clay-bindings.v1.json`.
 
 ```json
 {
   "schema": "shot-clay-bindings/v1",
   "project_id": "example-project",
   "shotlist_path": "shotlist/v12.yaml",
-  "shotlist_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+  "shotlist_sha256": "8181818181818181818181818181818181818181818181818181818181818181",
+  "bible_spatial_bindings_path": "bible/spatial-bindings.v1.json",
+  "bible_spatial_bindings_sha256": "8282828282828282828282828282828282828282828282828282828282828282",
+  "scene_index_path": "production_design/spatial/index.v1.json",
+  "scene_index_sha256": "2020202020202020202020202020202020202020202020202020202020202020",
   "camera_setup_plan_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
   "shot_generation_cut_plan_sha256": "9999999999999999999999999999999999999999999999999999999999999999",
   "state_ladder_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
   "bindings": [
     {
       "shot_id": "s014",
-      "location_id": "loc-stage",
-      "scene_revision_id": "scene-rev-0007",
       "setup_id": "K03",
+      "location_id": "loc-stage",
+      "scene_key": "pd-scene-a7f3",
+      "scene_revision_id": "scene-rev-0007",
+      "scene_manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "derivation_proof_path": "execution/spatial-derivations/s014/clay-shot-s014-v1/proof.v1.json",
       "derivation_proof_sha256": "abababababababababababababababababababababababababababababababab",
       "output_role": "clay_color",
@@ -473,345 +498,285 @@ Path: `execution/extensions/shot-clay-bindings.v1.json`.
 }
 ```
 
-Each binding must resolve to one output inside its proof. The proof must name the same project,
-location, scene revision, shot, setup, state plan, and current camera plan. The sidecar is emitted as
-a new `PackArtifactExtensionReferenceV1`; no field is appended to an existing public struct.
+Each binding resolves to one output in a `camera.owner = shotlist` proof. Sidecar, proof, plans, and
+Shot List must name identical shot/setup/state identities. Its location must resolve through the
+exact bound Bible spatial sidecar to the same `scene_key`, revision, and manifest hash, which must in
+turn equal the entry in the exact bound current approved index bytes. Historical or merely existing
+revisions are invalid. The sidecar is a new `PackArtifactExtensionReferenceV1`; no field is appended
+to an existing public struct.
 
 ## Determinism and replay
 
-“Deterministic” here means a complete origin and replay contract:
+A valid proof binds:
 
-- exact scene, complete resource closure, camera snapshot/plan, state, time/sample sequence;
-- exact worker distribution, bpy/Python versions, renderer, Clay material, color management, and
-  settings;
-- exact output bytes and host validation receipt.
+- the exact current scene index entry, manifest, `.blend`, and complete resource closure;
+- the discriminator-valid camera snapshot/plan and state variant;
+- the exact evaluated frame or time/sample sequence;
+- exact runtime distribution, Python/bpy versions, registered renderer implementation, complete
+  settings, Clay material, and color management;
+- exact output bytes and host-validation receipt.
 
-It does **not** claim that different hardware, GPU drivers, renderer builds, or codec implementations
-produce bit-identical output. Replaying a proof must use the recorded execution closure. Acceptance
-compares known geometric projections and decoded media within a declared tolerance, while the proof
-hash always binds the exact bytes actually used by the provider request.
-
-A replay on a different execution closure creates a new derivation ID and proof even if a visual
-comparison passes.
+This is a complete origin/replay contract, not a claim that different hardware, drivers, renderers,
+or codecs produce bit-identical output. Replay uses the recorded execution closure. A different
+closure creates a new derivation ID/proof. Acceptance compares independently calculated geometry and
+decoded media within declared tolerances; hashes always bind the exact bytes used downstream.
 
 ## Host sealing boundary
 
-The worker receives only:
+The worker receives only a read-only materialization of exact scene/resources, a job-local writable
+staging directory, and a schema-validated envelope containing the expected project, scene index,
+revision, camera, state, time, renderer contract, and output limits. It receives no project package
+path, canonical pipeline write access, network, Keychain, provider/LLM credential, prompt secret,
+gate state, or lineage authority.
 
-- a read-only materialization of the exact scene and declared resources;
-- a job-local writable staging directory;
-- a schema-validated job envelope with expected project, location, revision, camera, state, time,
-  renderer, and output limits.
+The host accepts a result only when:
 
-It receives no project package path, canonical pipeline write access, network access, Keychain data,
-provider key, Anthropic/OpenAI credential, prompt-engine secret, gate state, or lineage authority.
-
-The host accepts a worker result only when all of the following pass:
-
-1. the job ID and immutable request bytes match the active host job;
-2. the expected base scene revision is still current;
+1. job identity and immutable request bytes match the active host job;
+2. the bound scene index bytes are still the approved current index and the named entry still equals
+   revision plus manifest hash;
 3. a clean auto-execution-disabled scan reports exactly the manifest resource closure;
-4. every input and output is a regular file within its allowed root and independently hashed;
-5. scene, resource, camera, state, time, renderer, settings, dimensions, frame count, and codec match
-   the request and decoded result;
-6. no undeclared output or partial success is present;
-7. the relevant canonical writer is still current and holds the project phase mutation lease.
+4. all inputs and outputs are regular files under their allowed roots and independently hashed;
+5. camera, state variant, evaluated frame/time, renderer contract/settings, dimensions, frame count,
+   and codec match the request and decoded result;
+6. no undeclared output or partial success exists; and
+7. the canonical writer remains current and holds the project/phase mutation lease.
 
-Only then does the host atomically copy the result to its canonical path and encode the proof. A
-worker result is never itself a proof. Cancellation, timeout, worker crash, reconnect, duplicate job
-ID with different payload, stale base revision, or failed validation leaves only disposable staging.
+Only then may the writer copy bytes to canonical paths and encode the proof. A worker result is never
+itself a proof. Cancellation, crash, reconnect, conflicting retry, stale index/revision, or failed
+validation leaves only disposable staging.
 
 ## Phase capabilities
 
-Suggested tool names are contract names, not an implementation authorization.
+These tool names describe the contract; they do not authorize implementation.
 
-| Capability | Kind | Production Design | Bible | Shot List | Paid-provider access | Canonical write |
+| Capability | Kind | Production Design | Bible | Shot List | Paid provider | Canonical write |
 |---|---|---:|---:|---:|---:|---:|
 | `stage_spatial_scene` | supporting | Yes | No | No | No | Staging only |
 | `inspect_spatial_scene` | supporting/read | Yes | Yes | Yes | No | No |
 | `render_spatial_preview` | supporting/read | Yes | Yes | Yes | No | Cache only |
 | `derive_clay_reference` | supporting | No | Yes | No | No | Sealed Recovery candidate only |
-| `write_production_design` | existing phase writer | Commits scene candidate | — | — | Existing still rules only | Yes |
-| `write_bible` | existing phase writer | — | Binds Clay proof | — | Existing still rules only | Yes |
-| `write_shotlist` | existing phase writer | — | — | Commits final camera/binding/output transaction | No | Yes |
+| `write_production_design` spatial payload | existing writer | Yes | — | — | Existing still rules only | Atomic |
+| `write_bible` spatial payload | existing writer | — | Yes | — | Existing still rules only | Atomic |
+| `write_shotlist` spatial payload | existing writer | — | — | Yes | No | Atomic |
 
-No spatial tool calls `generate_image`, `generate_video`, `run_provider_tool`, or
-`prepare_generation_batch`. It cannot invoke `run_phase` for Render. A local renderer is a dedicated
-Core operator, not a broadened media-generation permission.
+No spatial tool calls `generate_image`, `generate_video`, `run_provider_tool`,
+`prepare_generation_batch`, or the Render runner.
 
-Musicvideo declares the tools in a new exact pack version's phase capability lists and registers the
-three Core-role mappings. Generic projects use the same host operators and the default mapping in the
-table above. The generic path must enforce current phase, prior approvals, intake completion, active
-job identity, and rewind rules itself; the current packless early return is not permission to bypass
-those checks.
+### Packless generic projects
 
-If the registration requires a new `EngineRegistry` stored property, it is appended at the end of the
-class, after the current last property `frameReferencePlanProvider`. On the reviewed base,
-`EngineContract.current` is `9` and `minimumCompatible` is `2`: integration would consume `10` and
-retain `2`. If parallel work has already consumed `10`, integration uses the next free integer rather
-than duplicating it. This conclusion must be re-evaluated if implementation changes any existing
-cross-boundary signature or stored layout.
+Core adds a `DefaultSpatialCapabilityTable` containing only the rows above, keyed by the three Core
+roles and `coreGatePhases`. It does not grant, revoke, or reinterpret any other generic tool. It adds
+no phase, card, intake step, required 3D artifact, or global default for existing tools.
 
-## Bible provenance gate
+For a packless project, the listed spatial entry points must not take the current early-return paths.
+They resolve the role through `coreGatePhases`, load gates, prove the mapped phase is exactly current,
+prove all prior phases approved/appraisable, enforce the table's phase-bound/supporting distinction,
+and acquire the same project/phase job lease as pack writers. There is no generic intake manifest,
+so there is no generic Track, Lyrics, Analysis, or other Hard Step to enforce.
 
-The Bible gate classifies each demanded path into exactly one provenance class:
+### Pack projects
 
-| Class | Required evidence | Roles it may satisfy |
+An exact pack version explicitly registers role-to-existing-phase mappings and adds only the desired
+spatial tools to that phase's capability lists. Current-phase enforcement uses the resolved pack
+order/capabilities. Intake enforcement considers only Hard Steps actually declared for that resolved
+phase in that resolved pack manifest. Musicvideo therefore keeps its existing Track/Lyrics/Analysis
+contract; none of those steps leak into generic projects.
+
+If registration needs `EngineRegistry` storage, the new stored property is appended after the
+current last property `frameReferencePlanProvider`. On the reviewed base, `EngineContract.current`
+is 9 and `minimumCompatible` is 2; integration takes the next free value and retains 2 only after an
+actual old-pack load test. No public value type receives a stored property.
+
+## Bible provenance and planner boundary
+
+The Bible gate has three evidence classes:
+
+| Class | Carrier | Roles it may satisfy |
 |---|---|---|
-| `model_generation` | existing compiled prompt, model, source media ID, exact output hash | Declared generated identity/look/composition roles |
-| `confirmed_identity` | existing host confirmation for exact current bytes and identity | Matching character/location identity only |
-| `spatial_derivation` | current sealed derivation proof and exact output hash | `composition_geometry` only |
+| `model_generation` | existing prompt/model/source/output proof | Existing declared generated roles |
+| `confirmed_identity` | existing exact-byte host confirmation | Matching character/location identity |
+| `spatial_derivation` | `bible-spatial-bindings/v1` plus current proof/output | `composition_geometry` only |
 
-The gate rejects a path present in multiple classes, an arbitrary import, a stale proof, an inspection
-proof claimed as a final-shot proof, or a Clay view assigned identity/look purpose. A
-`spatial_derivation` entry does not need or accept a fake provider prompt/model/source-media ID.
+The gate rejects any path or identical bytes in multiple classes, arbitrary import, stale scene
+binding, final proof presented as Bible proof, or Clay assigned appearance/identity/look purpose.
+`PipelineAssetProof`, generated paths, confirmed identity, and panoramas remain unchanged.
 
-`PipelineAssetProof` stays model-generation-only. A new internal classification step combines the
-existing proof, confirmed-identity manifest, and spatial proof inventory without adding a field to
-`BibleViewProvenanceRequirementV1`.
+The approved Shot List creates normal `AssetGraphV1` nodes for sealed Clay outputs. Existing
+`AssetProvenanceV1` carries `kind_id = core.spatial-derivation` and an opaque source identity formed
+from the bound `scene_key` plus revision; model/prompt fields remain absent. The appropriate Bible or
+Shot binding sidecar supplies proof path/hash and is validated with the graph.
 
-## Reference planning and compile contract
+New semantic jobs are `core.composition-geometry` for Clay stills and
+`core.composition-geometry-motion` for Clay video. The planner discovers them only through the typed
+binding inventories, never by scanning `location.sheets` or `scene3d.panorama`. Identity and look
+demands remain independently required.
 
-The approved Shot List creates normal `AssetGraphV1` nodes for sealed Clay outputs. It uses the
-existing `AssetProvenanceV1` carrier as follows, without changing its layout:
-
-- `kind_id = core.spatial-derivation`;
-- `source_asset_id = <scene revision id>`;
-- model and prompt fields are absent;
-- the separate `shot-clay-bindings/v1` extension provides the proof path/hash and is validated with
-  the graph before publication.
-
-New semantic jobs are:
-
-- `core.composition-geometry` for a Clay still;
-- `core.composition-geometry-motion` for a Clay video.
-
-They are roles, not provider capability claims. The demand still names the real route input slot and
-mode. `ReferencePlanV2` remains responsible for exact path/hash, modality, duration, slot, mode,
-capacity, mutual exclusions, route capability hashes, and deterministic failure. A chosen Clay plan
-marks its Clay demand required; unsupported combinations return `requiredInputsUnsupported` before
-spend rather than dropping the Clay input or changing strategy.
-
-The prompt compiler emits role text saying that Clay controls composition, spatial layout, occlusion,
-blocking, camera movement, and timing only. Identity sheets and look/lighting references retain their
-own roles. Provider request assembly must preserve the exact ordered `ReferencePlanV2.bindings`; an
-adapter cannot flatten a video reference to a still or relabel a role.
+`ReferencePlanV2` remains the only provider-reference planner. A selected Clay demand names a real
+route slot/mode and becomes required. Unsupported combinations fail before spend rather than
+downgrading modality, dropping Clay, or switching model/provider/strategy.
 
 ### Conditioning compatibility
 
 | Existing source/strategy | Clay still | Clay video | Rule |
 |---|---:|---:|---|
 | Imported | No provider input | No provider input | Imported media remains production truth |
-| AI-enhanced | No | No | Current exact `source_path`-only contract remains |
-| `reference_anchor` | Yes, in a genuine image-reference slot | Yes, only in a genuine video-reference slot | Exact role combination must be executable |
-| `two_state_interpolation` | Additional reference only if frames+references can coexist | Only if the route explicitly supports that combination | Never replaces start/end states |
-| explicit `first_frame` | Additional reference only | Only if independently supported | Never occupies or replaces first-frame input |
-| `frame_continuation` | No | No | Predecessor last frame remains the sole start condition |
-| `native_extension` | Only if explicitly present in its approved permitted-original-reference set | Same | Never replaces predecessor video or extension mode |
+| AI-enhanced | No | No | Exact `source_path`-only contract remains |
+| `reference_anchor` | Genuine image slot only | Genuine video slot only | Exact role combination must be executable |
+| `two_state_interpolation` | Only if frames+references coexist | Only if route declares combination | Never replaces start/end states |
+| explicit `first_frame` | Additional reference only | Independently supported only | Never replaces first-frame input |
+| `frame_continuation` | No | No | Predecessor last frame remains sole start condition |
+| `native_extension` | Only if in approved permitted-original set | Same | Never replaces predecessor video/mode |
 
-A Clay video is never an AI-enhanced `source_path`. It does not change `source_mode`, does not enter
-Frames as an imported/AI-enhanced shot, and does not create a new conditioning strategy. Depth,
-normal, or mask passes stay unavailable to the planner until a live executable provider adapter
-declares their exact slots and combinations.
+A Clay video is never an AI-enhanced `source_path`, never changes `source_mode`, and never creates a
+new conditioning strategy. Provider assembly preserves exact ordered bindings and roles.
 
 ## Mutation, rewind, and invalidation
 
-| Changed input | Required current owner | Explicit rewind when approved | Invalidated evidence |
+| Changed input | Owner | Required rewind | Invalidated evidence |
 |---|---|---|---|
-| Scene geometry, object/entity binding, resource bytes, coordinate/time contract | Production Design | To `production_design` | Scene index/revision selection, all dependent Bible Clay proofs/views, Shot List spatial/Clay extensions, route/reference/compile/review/Frames/Render proofs |
-| Inspection camera or Bible Clay output/settings | Bible | To `bible` | Matching Bible proof/view and all dependent Shot List/reference/compile/review/Frames/Render proofs |
-| Identity or look reference | Existing owning phase, normally Bible | To that phase | Existing dependent plans/proofs; spatial scene may remain current |
-| Final setup, camera path, shot interval, state IDs, scene revision selection, or shot Clay role | Shot List | To `shotlist` | Shot Clay proof/binding, execution/reference/compile/review/Sanity/Frames/Render proofs for every actual dependent |
-| Selected provider/model offering or capability snapshot | Shot List planning contract | To `shotlist` | Route and Reference Plan, compiled package, review and Render authorization |
-| Canonical output bytes at the same path | No direct mutation allowed | Rewind owning phase and republish | Proof fails immediately; downstream approval remains unusable |
-| Worker staging or Cache preview | None | None | No canonical evidence; it was never approved truth |
+| Scene geometry, object catalog/roles, resources, coordinate/time/rest contract, PD review camera, or current index revision | Production Design | `production_design` | Index/manifest consumers, Bible mappings/proofs/views, Shot spatial/Clay bindings, downstream plans/proofs |
+| Bible location/entity mapping, Bible inspection snapshot, purpose/role, Clay output, or Clay settings | Bible | `bible` | Matching Bible inventory/proof/output and actual downstream dependents |
+| Identity/look reference | Existing owning phase | That phase | Existing dependent plans/proofs; scene may remain current |
+| Final setup, camera path, shot interval, State Ladder identity, or shot Clay role | Shot List | `shotlist` | Shot proof/binding and dependent execution/reference/compile/review/Frames/Render evidence |
+| Selected provider/model/capability snapshot | Shot List planning contract | `shotlist` | Route/Reference Plan, compile/review/Render authorization |
+| Canonical bytes at same path | No direct mutation | Rewind owning phase and republish | Hash failure invalidates all actual dependents |
+| Worker staging or Cache preview | None | None | No canonical evidence existed |
 
-Invalidation follows recorded dependency edges, not an assertion that every change affects every shot.
-Nevertheless, no dependent proof remains valid merely because a filename or ID stayed the same.
-Approval, pending/needs-revision mutation, and rewind remain unavailable while the relevant host job is
-running. Retry and reconnect join the same project/phase job.
+There is no Shot List “scene revision selection.” Bible and Shot List bind only the exact current
+approved PD index entry. A different revision is a Production Design change, requires a PD rewind,
+and invalidates all downstream bindings to the old index/revision. Dependency edges determine actual
+fan-out, but an unchanged filename or ID never preserves evidence after bytes change.
+
+Approval, pending/needs-revision mutation, and rewind remain unavailable while the relevant host job
+runs. Retry and reconnect join the same project/phase job.
 
 ## Pack, schema, and old-project compatibility
 
-### Recommended additive path
-
-- Add new Core types; do not add stored properties to any existing public value type.
+- Add new Core types only; add no stored property to an existing public value type.
 - Carry execution additions through new `PackArtifactExtensionReferenceV1` entries.
 - Append any `EngineRegistry` storage at the end of the class.
-- Bump `EngineContract.current` from the reviewed base value `9` to the next unallocated value for the
-  new additive cross-pack registration surface; retain `minimumCompatible = 2` after an actual
-  old-pack load test.
-- Publish a Musicvideo pack version newer than the reviewed `0.5.8` that registers role→phase
-  mappings and capabilities; choose the exact version at integration so parallel releases cannot
-  collide.
-- Keep the current `musicvideo/2.0.0` project schema because scene/Clay artifacts are optional and older
-  projects decode without them. Moving a project to the new pack is an explicit same-schema
-  version-only upgrade; no artifact migration runs.
-- Keep old pack versions installed and loadable. An old pinned project sees no spatial tools and no
-  invented geometry. Panorama references, schematic native blockouts, imported blockout clips,
-  imported footage, AI-enhanced sources, and current conditioning plans retain their exact contracts.
+- Publish a Musicvideo pack version newer than reviewed 0.5.8 with explicit role mappings and
+  capabilities. Choose the exact version at integration to avoid parallel-release collision.
+- Retain `musicvideo/2.0.0` only while all new artifacts remain optional. Switching an existing
+  project to the new pack version is explicit and transactional through a Recovery copy even when
+  the project schema is unchanged; no spatial artifact is fabricated by that upgrade.
+- Keep old exact pack versions installed/loadable. Their pinned projects see no new spatial tools or
+  inferred geometry and keep existing Panorama, Generated, Identity, Blockout, imported,
+  AI-enhanced, and conditioning behavior.
 
-### When a schema migration becomes mandatory
+A new project schema and explicit Recovery-copy migration decision are required if implementation
+makes any spatial artifact/mapping mandatory for open, save, approval, or execution. That is outside
+this proposal. Presence of a file never opts a project into the contract; exact pack version/schema
+binding and live host engine contract do.
 
-A new pack project schema and explicit transactional Recovery-copy migration are required if an
-implementation makes a scene, Clay proof, role mapping, or new phase artifact mandatory for opening,
-approval, save, or execution of an existing project. That is outside the recommended minimal delta
-and requires another owner decision. A migration cannot fabricate geometry or provenance; it can only
-preserve old artifacts, reset the earliest affected gate, and ask for new work.
+## Smallest proposed locked-spec delta after approval
 
-No file's mere presence selects the new contract. The exact project pack version/schema binding and
-live host engine contract do.
+The six locked specs are unchanged on this branch.
 
-## Proposed locked-spec deltas
+### `docs/PIPELINE_AGENT_HARNESS.md` — required targeted delta
 
-These are the smallest proposed edits after approval. The locked files are intentionally unchanged in
-this branch.
+1. Add the four optional artifact families/five schemas to the three existing owner rows.
+2. Add the canonical-writer, independent-gate, transaction, lineage, and current-index invariants.
+3. Add the camera/state discriminators and required/forbidden fields; keep `BlockoutProofV1` intact.
+4. Replace the Bible “two classes” invariant with the three-class table and forbid Clay paths/bytes
+   in `location.sheets` and `scene3d.panorama`.
+5. Add only the four new supporting spatial tools and three existing-writer spatial payloads. For
+   packless calls, require `coreGatePhases` current-phase guards without intake; for pack calls,
+   enforce only resolved manifest Hard Steps/capabilities.
+6. Add conditioning and release evidence for stale index/revision, invalid state/camera union,
+   purpose collision, worker canonical write, phase bypass, and provider bytes differing from the
+   approved Reference Plan.
 
-### `docs/PIPELINE_AGENT_HARNESS.md` — required
+### `docs/PLUGIN_STANDARD.md` — required targeted delta
 
-1. In **Phase artifacts**, extend Production Design, Bible, and Shot List rows with the optional
-   scene index/revisions, sealed spatial derivation proofs, and shot Clay binding sidecar.
-2. After the staging paragraph, state that spatial workers write only job staging; only the current
-   canonical phase writer may commit a scene, Bible derivation, or shot binding; Bible support may
-   create only an opaque host-sealed Recovery candidate that `write_bible` validates and publishes.
-3. In the capability paragraph, add local spatial stage/inspect/preview/derivation capabilities with
-   explicit phase-role mapping and explicitly deny all provider/Render-runner authority.
-4. Replace “one of two” in the Bible provenance invariant with the three-class table above, including
-   `composition_geometry` limits.
-5. Add a new spatial-derivation invariant after the existing blockout invariant. State explicitly
-   that `BlockoutProofV1` remains the proof for its current schematic/imported clip contract and is
-   not sufficient evidence for a bpy derivation.
-6. Add the conditioning matrix constraints, including no Clay for imported, AI-enhanced, or frame
-   continuation and no substitution of first/end/source/predecessor inputs.
-7. Extend release evidence to fail for stale scene/resource/runtime/settings/output bytes, a worker
-   canonical write, invalid role combination, generic/pack phase bypass, or provider request bytes
-   differing from the approved Reference Plan.
+Add the additive spatial role-registration boundary, three role meanings, existing-phase-only rule,
+exact-pack capability declaration, and the no-fallback distinction between packed and generic
+projects. Record the engine-contract bump and compatibility evidence. Add no `Pack` protocol
+requirement and no public stored property.
 
-### `docs/PLUGIN_STANDARD.md` — required
+### `docs/PRODUCTION_PROFILES.md` — required targeted delta
 
-Add the additive `registerSpatialPhaseRole(role:phase:)` registration boundary, the three role
-meanings, and the rule that each pack version maps them only to existing phases. Record the
-`EngineContract.current` bump and unchanged compatibility floor, conditioned on old-pack load
-evidence. Add no `Pack` protocol requirement.
+Under `generative_film`, allow optional sealed geometry anchors only through the new typed inventory.
+State that Clay controls composition/geometry only, never identity/look, and Clay video eligibility is
+a verified route-capability decision rather than profile doctrine.
 
-### `docs/PRODUCTION_PROFILES.md` — required
+### No text delta
 
-Under `generative_film`, clarify that geometry anchors are optional and may use the sealed local
-spatial-derivation class; Clay controls composition/geometry only and never replaces required
-identity/look evidence. State that Clay video use is a route capability decision, not profile
-doctrine.
+- `docs/PROJECT_STORAGE.md`: existing package, Recovery, and pack-upgrade rules already apply.
+- `docs/MUSICVIDEO_START_CONTRACT.md`: Track → optional Lyrics → Project Init → approved Analysis →
+  optional existing material → story development remains unchanged; spatial work begins later.
+- `docs/PATTERN_FIT_CONTRACT.md`: Clay is production machinery, not Pattern suitability evidence.
 
-### `docs/PROJECT_STORAGE.md` — no text delta
+No new required phase, 3D obligation, intake card, or blanket generic-tool policy is proposed.
 
-Existing rules already place portable truth inside `pipeline/`, transient staging in Recovery/Caches,
-and pack upgrades in an atomic Recovery copy. The paths above comply. Do not add a storage exception.
+## Unapproved neighboring work
 
-### `docs/MUSICVIDEO_START_CONTRACT.md` — no text delta
+#559 / PR #577 is not adopted: this contract uses the current approved Shot List identity and phase
+graph and reserves none of #559's proposed IDs. If #559 is later approved, its own contract must
+transactionally preserve or rewrite exact Clay bindings; #546 needs no additional owner option now.
 
-The order remains Track → optional Lyrics → Project Init → approved Analysis → optional existing
-material → story development. Spatial scene work starts only in the existing mapped Production Design
-phase.
+#533 is not adopted: spatial proofs expose read-only structural evidence but grant no final creative
+review approval. If #533 is later approved, its own contract decides which current bindings a review
+receipt covers; #546 needs no additional owner option now.
 
-### `docs/PATTERN_FIT_CONTRACT.md` — no text delta
+## End-to-end acceptance for later implementation
 
-Clay is production machinery, not Pattern suitability evidence or a new Pattern capability score.
-
-## Integration with open proposals
-
-### #559 / PR #577 decision point
-
-This contract does not adopt `shotlist/v5`, stable sparse shot IDs, new phases, or a new host contract
-key from the unapproved #559 proposal. `shot-clay-bindings/v1` binds whichever Shot List contract the
-project's explicitly approved host/pack contract selects. If #559 is later approved, its migration
-must preserve or transactionally rewrite every Clay binding and paid-output association; this proposal
-does not reserve or duplicate any of its schema IDs.
-
-Owner decision needed at integration: either land #546 against the current Shot List identity contract,
-or first approve #559 and adapt the binding validator to that approved identity contract. Do not merge
-the two decisions by implication.
-
-### #533 decision point
-
-The proposed proofs expose read-only scene revision, camera/setup, state, time, output, and role data
-for #533's eventual visual review. They do not create `render_review`, Story/Continuity semantics,
-creative exceptions, or a new gate. Structural proof currency remains distinct from creative image
-assessment.
-
-Owner decision needed at integration: after #533's contract is approved, decide which exact current
-Clay and look/identity bindings its review receipt covers. Until then, no Clay proof can masquerade as
-final creative review approval.
-
-## End-to-end acceptance
-
-All executable evidence runs in GitHub Actions on the repository's configured runners. No local build,
-test, app start, worker execution, or paid provider probe is part of this proposal.
+All executable evidence runs in GitHub Actions. No local build, test, app start, worker run, provider
+probe, or CI dispatch is part of this proposal branch.
 
 ### Contract and storage
 
-- A generic project and a Musicvideo project use the same Core writers and schemas, with their
-  independently resolved phase mappings.
-- A project with no 3D artifacts completes normally. No new mandatory phase, card, gate, or upload is
-  visible.
-- Save, Save As, Recovery restore, move to another machine, and exact old-pack open preserve the
-  specified scene/resource/proof behavior without original external paths.
-- Scene and proof files that are symlinks, non-regular, escaped, missing, mutated, or backed by an
-  incomplete resource closure fail before approval and provider spend.
-- The actual old pinned pack is loaded against the new host binary; static symbol inspection alone is
-  insufficient.
+- Generic and Musicvideo fixtures use the same schemas but resolve capabilities through their
+  distinct Core-default or exact-pack paths.
+- A project with no 3D completes normally with no new phase/card/upload.
+- Packless spatial tools fail outside the exact current `coreGatePhases` owner while generic projects
+  receive no Musicvideo Track/Lyrics/Analysis intake obligations.
+- Save, Save As, Recovery restore, machine move, Recovery-copy pack upgrade, and exact old-pack open
+  preserve portable bytes and pin behavior.
+- Escaped, symlinked, missing, changed, or incompletely declared scene/proof bytes fail before
+  approval or provider spend.
+- The actual old pinned pack is loaded against the new host; static symbol inspection is insufficient.
 
-### Writer and job integrity
+### Writer and referential integrity
 
-- Worker success, failure, timeout, cancellation, crash, duplicate retry, reconnect, and stale base
-  revision demonstrate that only a fully validated host commit becomes project truth.
-- Concurrent UI/agent scene changes conflict on expected revision; no last-writer-wins scene loss.
-- A failed Production Design, Bible, or Shot List transaction restores every prior canonical byte and
-  removes newly published outputs.
-- A support tool cannot capture lineage, approve a gate, change gate state, or write a canonical scene,
-  binding, or proof directly.
+- Production Design proves it never writes Bible IDs; Bible mapping proves every Bible ID and
+  scene-local object ID independently.
+- Writer failure restores Bible plus inventory/proofs/outputs and Shot List plus bindings/proofs/
+  outputs. Supporting tools cannot capture lineage or mutate canonical artifacts.
+- Concurrent writes, retry, reconnect, cancellation, crash, and stale-index candidates prove one
+  project/phase execution identity and no last-writer-wins loss.
+- A PD revision change requires a PD rewind; neither Bible nor Shot List can bind a historical or
+  invalidated revision.
 
-### Geometry and media evidence
+### Camera, state, and replay
 
-- A known asymmetric scene binds all resources and produces opposing views with verified projected
-  points, occlusion, and parallax.
-- Still and clip proofs bind exact camera, state, frame/time sequence, runtime, renderer/settings, and
-  output hashes. Start/middle/end decoded frames agree with separately evaluated camera times within
-  declared tolerance.
-- Replaying on the recorded execution closure produces geometrically equivalent evidence; a different
-  closure creates a new proof rather than claiming byte identity.
-- Changing one scene resource, camera keyframe, state, render setting, or output byte makes every
-  actual dependent proof unusable.
+- A Bible-created perspective changes only its own embedded/hash-bound camera snapshot. Optional PD
+  review-camera source values remain immutable.
+- Early proofs accept only `scene_rest` bound to exact manifest, `.blend`, and evaluated frame and
+  reject every State Ladder field. Final proofs require `state_ladder` and reject rest-state fields.
+- Still/video proofs bind exact camera, state, frame/time sequence, runtime, registered renderer
+  contract/settings, and output bytes. Independent projection checks cover asymmetric geometry,
+  occlusion, and parallax.
+- Changed resource, camera, state, setting, or output bytes invalidate every recorded dependent.
 
-### Provenance and roles
+### Provenance and provider boundary
 
-- Bible accepts a current Clay view only as `spatial_derivation` with
-  `composition_geometry`; it rejects the same bytes as identity or look.
-- Generated and confirmed-identity Bible paths retain their existing behavior. An arbitrary library
-  import remains insufficient.
-- Identity/look demands remain present when Clay is selected. Reference capacity failure blocks
-  before spend instead of dropping a required role.
-
-### Provider and strategy boundary
-
-- Adapter tests compare the exact image/video bytes, ordering, roles, slots, modes, and time/duration
-  sent to the provider with the approved `ReferencePlanV2`.
-- A Clay video route is offered only from an enabled executable adapter that declares the exact video
-  input and combination. Unknown or stale capability data fails closed.
-- Unsupported combinations do not switch provider/model, turn video into a still, change strategy,
-  or omit Clay silently.
-- Imported, AI-enhanced, `first_frame`, `two_state_interpolation`, `frame_continuation`, and
-  `native_extension` fixtures prove the compatibility matrix above. A Clay clip never becomes
-  AI-enhanced `source_path`.
-- Any real paid generation remains inside a separately approved production batch. The local spatial
-  worker cannot reach provider or LLM credentials.
+- A full Bible fixture maps real Bible location/entity IDs to opaque scene/object IDs and accepts
+  Clay only through `bible-spatial-bindings/v1` as `composition_geometry`.
+- The same Clay path or bytes in `location.sheets`, `scene3d.panorama`, Generated, or Identity fail.
+- Existing Generated, Identity, and Panorama fixtures retain unchanged behavior.
+- Identity/look demands remain when Clay is selected; insufficient route capacity fails before spend.
+- Provider adapter fixtures compare exact bytes/order/roles/slots/modes against `ReferencePlanV2` and
+  prove every conditioning-matrix prohibition.
+- The worker cannot reach provider/LLM credentials or the paid Render runner.
 
 ## Implementation boundary after approval
 
-The implementation should extend the current `PipelineSpatialProductionWriter`,
-`PipelineShotlistWriter`, execution composer, production-input writer, `ReferencePlannerV2`, compile
-validation, phase capability resolver, and independent gates. It should not create a parallel scene
-engine, provider planner, prompt path, gate store, or phase runner.
+Implementation should extend the current canonical writers, lineage, execution composer,
+production-input writer, `ReferencePlannerV2`, phase resolver, and independent gates. It must not
+create a parallel scene engine, provider planner, prompt path, gate store, phase runner, or public
+struct layout change.
 
-#541 supplies no trusted runtime fact until its code is reviewed and Actions proves the shipped worker,
-resource boundary, signing, and real bpy output. #542 owns the full portable scene implementation;
-#543 owns agent modeling/inspection tools; #544 owns native UI; #545 owns the renderer/exporter. This
-proposal fixes their contract seams and does not pre-implement those features.
+#541 supplies no trusted runtime fact until reviewed code and Actions evidence prove the shipped
+worker/resource boundary and real bpy output. #542 owns portable scene production; #543 agent spatial
+tools; #544 native UI; #545 renderer/export. This proposal defines only their contract seams.
