@@ -70,8 +70,13 @@ struct AgentServiceRuntimeContractTests {
         let anthropicRequest = try #require(
             fixtures.first(where: { $0.service.backend == .anthropicAPI })?.adapter.sendRequests.first
         )
+        let codexRequest = try #require(
+            fixtures.first(where: { $0.service.backend == .codexAppServer })?.adapter.sendRequests.first
+        )
         #expect(claudeRequest.messages == anthropicRequest.messages)
         #expect(claudeRequest.currentMessage == anthropicRequest.currentMessage)
+        #expect(codexRequest.messages == anthropicRequest.messages)
+        #expect(codexRequest.currentMessage == anthropicRequest.currentMessage)
         #expect(claudeRequest.currentMessage == .init(
             role: .user,
             content: [.text("Continue")]
@@ -388,7 +393,7 @@ struct AgentServiceRuntimeContractTests {
             #expect(service.send(text: "Write the brief.", mentions: []))
             await waitUntil { adapter.sendRequests.count == 1 }
             let turn = try #require(adapter.sendRequests.first)
-            if backend == .anthropicAPI {
+            if backend != .claudeCode {
                 adapter.emit(.toolCall(
                     messageID: "writer-message",
                     id: "writer",
@@ -719,7 +724,7 @@ struct AgentServiceRuntimeContractTests {
             let first = hostRecord(state: .writeRejected, suffix: "first")
             let second = hostRecord(state: .persisted, suffix: "second")
 
-            if backend == .anthropicAPI {
+            if backend != .claudeCode {
                 let origin = ToolCallOrigin.inAppChat(sessionID: turn.sessionID)
                 service.recordHostState(second, origin: origin, toolUseID: "second")
                 service.recordHostState(first, origin: origin, toolUseID: "first")
@@ -1193,6 +1198,13 @@ struct AgentServiceRuntimeContractTests {
                     == !providerExtensions.isEmpty
             )
             #expect(!descriptor.capabilities.supports(.resumeFromTranscript))
+        case .codexAppServer:
+            #expect(descriptor.toolExecutionTransport == .hostRoundTrip)
+            #expect(!descriptor.capabilities.supports(.resumeNativeSession))
+            #expect(descriptor.capabilities.supports(.reportTokenUsage))
+            #expect(!descriptor.capabilities.supports(.reportCostUsage))
+            #expect(!descriptor.capabilities.supports(.readProjectFiles))
+            #expect(!descriptor.capabilities.supports(.externalClaudeCodePlugins))
         }
     }
 

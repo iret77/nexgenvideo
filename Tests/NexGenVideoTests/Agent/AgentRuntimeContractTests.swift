@@ -163,6 +163,7 @@ struct AgentRuntimeContractTests {
             toolNames: names,
             providerExtensions: ["mcp:ace", "claude-code-plugin:review"]
         )
+        let codex = AgentBackend.codexAppServer.runtimeDescriptor(toolNames: names)
 
         #expect(anthropic.toolExecutionTransport == .hostRoundTrip)
         #expect(anthropic.identity.backendID == .anthropicAPI)
@@ -195,6 +196,19 @@ struct AgentRuntimeContractTests {
         #expect(!claude.capabilities.supports(.resumeFromTranscript))
         #expect(!claude.capabilities.supports(.reportTokenUsage))
         #expect(!claude.capabilities.supports(.webResearch))
+
+        #expect(codex.toolExecutionTransport == .hostRoundTrip)
+        #expect(codex.identity.backendID == .codexAppServer)
+        #expect(codex.authentication == .isolatedExternalAccount(command: "codex app-server"))
+        #expect(codex.capabilities.toolNames == names)
+        #expect(codex.capabilities.providerExtensions.isEmpty)
+        #expect(codex.capabilities.supports(.executeHostTools))
+        #expect(codex.capabilities.supports(.structuredDialogs))
+        #expect(codex.capabilities.supports(.approvalSuspension))
+        #expect(!codex.capabilities.supports(.resumeNativeSession))
+        #expect(codex.capabilities.supports(.reportTokenUsage))
+        #expect(!codex.capabilities.supports(.readProjectFiles))
+        #expect(!codex.capabilities.supports(.webResearch))
     }
 }
 

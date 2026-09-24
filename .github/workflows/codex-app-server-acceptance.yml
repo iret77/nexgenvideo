@@ -1,0 +1,108 @@
+name: Codex App Server Acceptance
+
+# ci-lint: allow-CI008 Manual workflow_dispatch is required because this includes a paid LLM smoke.
+# ci-lint: allow-CI007 No push or pull_request event may start this workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      run_paid_llm_smoke:
+        description: "Run the separately approved paid Codex LLM smoke"
+        type: boolean
+        required: true
+        default: false
+      approval:
+        description: "Enter APPROVE-CODEX-LLM-SMOKE"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codex-app-server-acceptance-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  acceptance:
+    if: inputs.run_paid_llm_smoke && inputs.approval == 'APPROVE-CODEX-LLM-SMOKE'
+    runs-on: xcode-27
+    timeout-minutes: 25
+    env:
+      NGV_CODEX_APP_SERVER_ACCEPTANCE: "1"
+      CODEX_HOME: ${{ runner.temp }}/nexgenvideo-codex-home
+      NGV_CODEX_ACCEPTANCE_EVIDENCE: ${{ runner.temp }}/codex-app-server-evidence.json
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-xcode-27
+
+      - uses: ./.github/actions/cache-swiftpm-dependencies
+
+      - name: Require isolated acceptance credential
+        shell: bash
+        env:
+          CODEX_ACCEPTANCE_API_KEY: ${{ secrets.CODEX_ACCEPTANCE_API_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$CODEX_ACCEPTANCE_API_KEY"
+
+      - name: Install pinned Codex CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --global @openai/codex@0.156.0
+          test "$(codex --version)" = "codex-cli 0.156.0"
+
+      - name: Prepare isolated keyring account
+        shell: bash
+        env:
+          CODEX_ACCEPTANCE_API_KEY: ${{ secrets.CODEX_ACCEPTANCE_API_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$CODEX_HOME"
+          chmod 700 "$CODEX_HOME"
+          printf '%s\n' 'cli_auth_credentials_store = "keyring"' > "$CODEX_HOME/config.toml"
+          chmod 600 "$CODEX_HOME/config.toml"
+          printf '%s' "$CODEX_ACCEPTANCE_API_KEY" | codex login --with-api-key
+
+      - name: Export and pin protocol schemas
+        shell: bash
+        run: |
+          set -euo pipefail
+          schema_dir="$RUNNER_TEMP/codex-app-server-schema"
+          codex app-server generate-json-schema --out "$schema_dir"
+          test "$(shasum -a 256 "$schema_dir/codex_app_server_protocol.schemas.json" | cut -d' ' -f1)" = "eb1ba91bd0fab656523092f6ed7de3ea7aef278921a650f14dc871ae7dcfaf84"
+          test "$(shasum -a 256 "$schema_dir/codex_app_server_protocol.v2.schemas.json" | cut -d' ' -f1)" = "995fc3b8f8c469f6787e8fc5be4038c4f31359025edd8480b862e83355f3bf3b"
+
+      - name: Build acceptance test target
+        run: swift build --cache-path "$NGV_SWIFTPM_CACHE_PATH" --build-tests
+
+      - name: Stage test runtime inputs
+        run: scripts/stage_test_runtime.sh debug
+
+      - name: Run real Codex consumer smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift test \
+            --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
+            --skip-build \
+            --filter CodexAppServerLiveAcceptanceTests
+
+      - name: Verify redacted evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$NGV_CODEX_ACCEPTANCE_EVIDENCE"
+          if grep -Eiq 'sk-[[:alnum:]_-]{12,}|bearer[[:space:]]+[[:alnum:]_.-]+|prompt|token' "$NGV_CODEX_ACCEPTANCE_EVIDENCE"; then
+            echo "Acceptance evidence contains a forbidden sensitive field" >&2
+            exit 1
+          fi
+
+      - name: Upload redacted evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-app-server-acceptance-${{ github.run_id }}
+          path: ${{ runner.temp }}/codex-app-server-evidence.json
+          if-no-files-found: error
+          retention-days: 14

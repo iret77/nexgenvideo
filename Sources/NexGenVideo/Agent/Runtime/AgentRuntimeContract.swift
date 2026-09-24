@@ -9,6 +9,7 @@ struct AgentBackendID: RawRepresentable, Hashable, Sendable {
 
     static let claudeCode = AgentBackendID(rawValue: "claude-code")
     static let anthropicAPI = AgentBackendID(rawValue: "anthropic-api")
+    static let codexAppServer = AgentBackendID(rawValue: "codex-app-server")
 }
 
 struct AgentRuntimeIdentity: Hashable, Sendable {
@@ -19,6 +20,7 @@ struct AgentRuntimeIdentity: Hashable, Sendable {
 enum AgentRuntimeAuthentication: Hashable, Sendable {
     case apiKey(service: String)
     case externalSubscription(command: String)
+    case isolatedExternalAccount(command: String)
 }
 
 enum AgentRuntimeOperation: String, Hashable, Sendable {

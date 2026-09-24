@@ -3,6 +3,9 @@ import Foundation
 enum AgentBackend: String, CaseIterable, Identifiable, Sendable {
     case claudeCode
     case anthropicAPI
+    case codexAppServer
+
+    static let selectableCases: [AgentBackend] = [.claudeCode, .anthropicAPI]
 
     var id: String { rawValue }
 
@@ -10,6 +13,7 @@ enum AgentBackend: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .claudeCode: .claudeCode
         case .anthropicAPI: .anthropicAPI
+        case .codexAppServer: .codexAppServer
         }
     }
 
@@ -17,6 +21,7 @@ enum AgentBackend: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .claudeCode: return "Claude Code"
         case .anthropicAPI: return "Anthropic API"
+        case .codexAppServer: return "Codex"
         }
     }
 
@@ -30,6 +35,8 @@ enum AgentBackend: String, CaseIterable, Identifiable, Sendable {
             .externalSubscription(command: "claude")
         case .anthropicAPI:
             .apiKey(service: "Anthropic")
+        case .codexAppServer:
+            .isolatedExternalAccount(command: "codex app-server")
         }
     }
 
@@ -73,6 +80,9 @@ enum AgentBackend: String, CaseIterable, Identifiable, Sendable {
         case .anthropicAPI:
             operations.formUnion([.resumeFromTranscript, .reportTokenUsage])
             transport = .hostRoundTrip
+        case .codexAppServer:
+            operations.insert(.reportTokenUsage)
+            transport = .hostRoundTrip
         }
         return AgentRuntimeDescriptor(
             identity: runtimeIdentity,
@@ -101,7 +111,9 @@ enum AgentBackendPreference {
     }
 
     static func selected(in defaults: UserDefaults) -> AgentBackend {
-        if let raw = defaults.string(forKey: key), let backend = AgentBackend(rawValue: raw) {
+        if let raw = defaults.string(forKey: key),
+           let backend = AgentBackend(rawValue: raw),
+           AgentBackend.selectableCases.contains(backend) {
             return backend
         }
         if defaults.object(forKey: legacyKey) != nil {
@@ -111,7 +123,7 @@ enum AgentBackendPreference {
     }
 
     static func set(_ backend: AgentBackend) {
-        guard selected != backend else { return }
+        guard AgentBackend.selectableCases.contains(backend), selected != backend else { return }
         let defaults = UserDefaults.standard
         defaults.set(backend.rawValue, forKey: key)
         defaults.set(backend == .claudeCode, forKey: legacyKey)

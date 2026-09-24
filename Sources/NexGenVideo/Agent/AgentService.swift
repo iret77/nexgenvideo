@@ -117,6 +117,7 @@ final class AgentService {
         switch backend {
         case .anthropicAPI: return isCheckingAPIKey && !hasApiKey
         case .claudeCode: return isCheckingClaude && claudeStatus?.isAuthenticated != true
+        case .codexAppServer: return false
         }
     }
 
@@ -124,6 +125,7 @@ final class AgentService {
         switch backend {
         case .anthropicAPI: return "Checking Anthropic API key…"
         case .claudeCode: return "Checking Claude Code…"
+        case .codexAppServer: return "Checking Codex…"
         }
     }
 
@@ -140,6 +142,18 @@ final class AgentService {
             return claudeStatus?.isAuthenticated == true
                 ? nil
                 : .upstream(setupPrompt + " Agent settings.")
+        case .codexAppServer:
+            guard CodexAppServerContract.isAcceptanceRun else {
+                return .upstream(
+                    "Codex CLI \(CodexAppServerContract.cliVersion) cannot safely restore the isolated runtime."
+                )
+            }
+            return CodexAppServerLocator.executable(
+                environment: ProcessInfo.processInfo.environment,
+                fileManager: .default
+            ) == nil
+                ? .upstream("Install the supported Codex CLI in Agent settings.")
+                : nil
         }
     }
 
@@ -153,6 +167,8 @@ final class AgentService {
             return "Install Claude Code in"
         case .claudeCode:
             return "Sign in to Claude Code in"
+        case .codexAppServer:
+            return "Set up the isolated Codex account in"
         }
     }
 
@@ -164,6 +180,8 @@ final class AgentService {
             return "Install Claude Code to use the AI chat."
         case .claudeCode:
             return "Sign in to Claude Code to use the AI chat."
+        case .codexAppServer:
+            return "Set up the isolated Codex account to use the AI chat."
         }
     }
 
@@ -180,6 +198,8 @@ final class AgentService {
         case .claudeCode:
             isCheckingClaude = true
             Task { await refreshClaudeCodeStatus() }
+        case .codexAppServer:
+            isCheckingClaude = false
         }
     }
 
@@ -3134,11 +3154,17 @@ final class AgentService {
             pluginDirectories: pluginDirectories,
             externalMCPServers: externalMCPServers
         )
-        let providerConfiguration = backend == .anthropicAPI
-            ? "\(effectiveModel.rawValue):\(apiKeyGeneration)"
-            : externalMCPServers.keys.sorted().map {
+        let providerConfiguration: String
+        switch backend {
+        case .anthropicAPI:
+            providerConfiguration = "\(effectiveModel.rawValue):\(apiKeyGeneration)"
+        case .codexAppServer:
+            providerConfiguration = CodexAppServerContract.cliVersion
+        case .claudeCode:
+            providerConfiguration = externalMCPServers.keys.sorted().map {
                 "\($0)=\(externalMCPServers[$0] ?? "")"
             }.joined(separator: ",")
+        }
         let signature = [
             backend.runtimeID.rawValue,
             providerConfiguration,
@@ -3167,10 +3193,22 @@ final class AgentService {
                     throw AgentRuntimeContractError.sessionNotStarted
                 }
                 adapter = AnthropicRuntimeAdapter(client: client)
+            case .codexAppServer:
+                adapter = CodexAppServerRuntimeAdapter()
             }
         }
-        let providerSessionID = sessions.first { $0.id == sessionID }?.claudeSessionId
+        let providerSessionID: String?
+        switch backend {
+        case .claudeCode:
+            providerSessionID = sessions.first { $0.id == sessionID }?.claudeSessionId
+        case .codexAppServer:
+            providerSessionID = nil
+        case .anthropicAPI:
+            providerSessionID = nil
+        }
         let generationID = UUID()
+        let projectID = projectGenerationID
+        let runtimeBackendID = adapter.descriptor.identity.backendID
         let request = AgentRuntimeSessionRequest(
             sessionID: sessionID,
             runtimeGenerationID: generationID,
@@ -3182,7 +3220,11 @@ final class AgentService {
             providerExtensions: providerExtensions,
             mcpPort: Int(MCPService.port),
             executeTool: { [weak self] id, name, inputJSON in
-                guard let self, self.currentSessionId == sessionID else {
+                guard let self,
+                      self.currentSessionId == sessionID,
+                      self.runtimeGenerationID == generationID,
+                      self.projectGenerationID == projectID,
+                      self.backend.runtimeID == runtimeBackendID else {
                     return .error("The originating chat session is no longer active.")
                 }
                 guard let executor = self.toolExecutor else {
@@ -3226,9 +3268,19 @@ final class AgentService {
     ) {
         switch event {
         case .providerSessionStarted(let providerID):
-            storeClaudeSessionId(providerID, for: sessionID)
+            switch backend {
+            case .claudeCode, .anthropicAPI:
+                storeClaudeSessionId(providerID, for: sessionID)
+            case .codexAppServer:
+                break
+            }
         case .providerSessionInvalidated:
-            clearClaudeSessionId(for: sessionID)
+            switch backend {
+            case .claudeCode, .anthropicAPI:
+                clearClaudeSessionId(for: sessionID)
+            case .codexAppServer:
+                runtimeContextSignature = nil
+            }
         case .text(let messageID, let value, _):
             let id = assistantID(
                 providerMessageID: messageID,
@@ -3264,8 +3316,13 @@ final class AgentService {
         case .usage(let usage):
             lastRuntimeUsage = lastRuntimeUsage?.merging(usage) ?? usage
         case .error(let failure):
-            if failure.kind == .authenticationRequired, backend == .claudeCode {
-                requireClaudeAuthentication(for: sessionID)
+            if failure.kind == .authenticationRequired {
+                if backend == .claudeCode {
+                    requireClaudeAuthentication(for: sessionID)
+                } else {
+                    streamError = .authenticationRequired
+                    runtimeContextSignature = nil
+                }
             } else {
                 streamError = .upstream(failure.message)
             }
