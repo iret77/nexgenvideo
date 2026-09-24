@@ -421,6 +421,34 @@ struct PackSurfaceTests {
         #expect(intake.message == "Complete the Track card before approving Project Init.")
     }
 
+    @Test("spend status distinguishes unset limits and verified lower-bound crossings")
+    func spendWarningPresentation() throws {
+        func warning(
+            budget: Double?, stop: Double?, spent: Double,
+            complete: Bool, remaining: Double? = nil
+        ) throws -> String? {
+            var payload: [String: Any] = [
+                "project": "fixture",
+                "budget_spent_eur": spent,
+                "spend_complete": complete,
+            ]
+            if let budget { payload["budget_eur"] = budget }
+            if let stop { payload["budget_stop_eur"] = stop }
+            if let remaining { payload["budget_remaining_eur"] = remaining }
+            let data = try JSONSerialization.data(withJSONObject: payload)
+            return try JSONDecoder().decode(ProjectStateData.self, from: data).spendWarning
+        }
+
+        #expect(try warning(budget: nil, stop: nil, spent: 0, complete: true) == nil)
+        #expect(try warning(budget: 0, stop: 0, spent: 0, complete: true) == nil)
+        #expect(try warning(budget: nil, stop: nil, spent: 0, complete: false) == "Spend incomplete")
+        #expect(try warning(budget: 125, stop: 150, spent: 150, complete: true) == "Hard stop reached")
+        #expect(try warning(budget: 125, stop: 150, spent: 150, complete: false) == "Hard stop reached · Spend incomplete")
+        #expect(try warning(budget: 125, stop: nil, spent: 126, complete: false) == "Over budget · Spend incomplete")
+        #expect(try warning(budget: 125, stop: nil, spent: 10, complete: false) == "Spend incomplete")
+        #expect(try warning(budget: 125, stop: nil, spent: 118, complete: true, remaining: 7) == "Low budget")
+    }
+
     @Test("navigation validation rejects stale state and selection keeps browsing separate from execution")
     func validatesNavigationAndSelection() throws {
         let contract = try JSONDecoder().decode(

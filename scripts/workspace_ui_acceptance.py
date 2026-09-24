@@ -229,6 +229,12 @@ def run_scale(executable, output, scale):
     production_read_only = [
         row for row in rows if row.get("event") == "production-read-only"
     ]
+    production_take_reload = [
+        row for row in rows if row.get("event") == "production-take-reload"
+    ]
+    production_render_lock = [
+        row for row in rows if row.get("event") == "production-render-running-lock"
+    ]
     open_keyframes = [row for row in inspector if row.get("keyframes") == "open"]
     screenshots = [
         row.get("screenshot")
@@ -303,6 +309,15 @@ def run_scale(executable, output, scale):
         and production_read_only[0].get("nativeInspectionWorked") is True
         and production_read_only[0].get("playerAdvancedAfterNativeInput") is True
         and production_read_only[0].get("popoverClosedOnReadinessChange") is True
+        and len(production_take_reload) == 1
+        and production_take_reload[0].get("playerRetained") is True
+        and production_take_reload[0].get("realStoreRefreshes") == 2
+        and len(production_render_lock) == 1
+        and production_render_lock[0].get("editableBeforeRun") is True
+        and production_render_lock[0].get("observationDisabledDuringRun") is True
+        and production_render_lock[0].get("nativeEditIgnored") is True
+        and production_render_lock[0].get("findingsUnchanged") is True
+        and production_render_lock[0].get("projectAndUndoUnchanged") is True
         and valid_production_layout(narrow[0])
         and invariants[0].get("liveStateUnchanged") is True
         and invariants[0].get("projectBytesUnchanged") is True

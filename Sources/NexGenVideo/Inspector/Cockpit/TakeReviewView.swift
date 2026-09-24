@@ -2,12 +2,19 @@ import AVKit
 import SwiftUI
 import NexGenEngine
 
+private struct TakeLoadKey: Hashable {
+    let home: URL?
+    let revision: Int
+}
+
 struct TakeReviewView: View {
     @Environment(EditorViewModel.self) private var editor
     var allowsMutation = true
     var readOnlyReason: String?
     @State private var presented = false
     @State private var takes: [PipelineRenderTakeV1] = []
+    @State private var loadToken = 0
+    @State private var loadError: String?
     @State private var selectedID = ""
     @State private var snapshot: TakeReview.Snapshot?
     @State private var player: AVPlayer?
@@ -27,15 +34,19 @@ struct TakeReviewView: View {
             .buttonStyle(InlineActionButtonStyle())
             .accessibilityIdentifier("production.render.review-takes")
             .sheet(isPresented: $presented) { reviewSheet }
-            .task(id: editor.engineStateRevision) { await load() }
+            .task(id: TakeLoadKey(home: editor.workingRoot, revision: editor.engineStateRevision)) {
+                await load()
+            }
             .onChange(of: editor.workingRoot) { _, _ in
+                loadToken += 1
                 presented = false
                 takes = []
+                loadError = nil
+                canWrite = false
                 selectedID = ""
                 snapshot = nil
                 player?.pause()
                 player = nil
-                Task { await load() }
             }
             .overlay(alignment: .topLeading) {
                 if let take = takes.first {
@@ -59,8 +70,11 @@ struct TakeReviewView: View {
                     .buttonStyle(InlineActionButtonStyle())
                     .accessibilityIdentifier("production.render.review-close")
             }
-            if takes.isEmpty { Text("No recorded video takes. Record a completed render to begin review.") }
-            else {
+            if takes.isEmpty {
+                if loadError == nil {
+                    Text("No recorded video takes. Record a completed render to begin review.")
+                }
+            } else {
                 Picker("Take", selection: $selectedID) {
                     Text("Choose a take").tag("")
                     ForEach(takes, id: \.id) { take in
@@ -73,12 +87,20 @@ struct TakeReviewView: View {
                     VideoPlayer(player: player)
                         .frame(minHeight: AppTheme.Layout.previewMinHeight)
                         .accessibilityIdentifier("production.render.player")
-                    AppRelaunchClickProbe(
-                        identifier: "production.render.playback-seconds",
-                        acceptanceValue: String(format: "%.3f", playbackSeconds)
-                    )
-                    .frame(width: AppTheme.BorderWidth.hairline, height: AppTheme.BorderWidth.hairline)
-                    .allowsHitTesting(false)
+                        .overlay(alignment: .topLeading) {
+                            if WorkspaceUIAcceptance.isRequested {
+                                AppRelaunchClickProbe(
+                                    identifier: "production.render.playback-seconds",
+                                    acceptanceValue: String(format: "%.3f", playbackSeconds)
+                                )
+                                .frame(width: AppTheme.BorderWidth.hairline, height: AppTheme.BorderWidth.hairline)
+                                .allowsHitTesting(false)
+                            }
+                        }
+                    Button("Play take") { player?.play() }
+                        .buttonStyle(InlineActionButtonStyle())
+                        .disabled(player == nil)
+                        .accessibilityIdentifier("production.render.play-take")
                     TakeRangeReviewView(
                         snapshot: snapshot,
                         wholeTakePlayer: player,
@@ -131,8 +153,20 @@ struct TakeReviewView: View {
                             if pass != .identity { Text("Not applicable — explain").tag(TakeReview.Verdict.notApplicable) }
                         }
                         .disabled(!allowsMutation)
+                        .accessibilityIdentifier("production.render.finding")
                         TextField("Describe what you observed in this take", text: $observation)
                             .disabled(!allowsMutation)
+                            .accessibilityIdentifier("production.render.observation")
+                            .background {
+                                if WorkspaceUIAcceptance.isRequested {
+                                    AppRelaunchClickProbe(
+                                        identifier: "production.render.findings-count",
+                                        acceptanceValue: String(findings.count)
+                                    )
+                                    .frame(width: AppTheme.BorderWidth.hairline, height: AppTheme.BorderWidth.hairline)
+                                    .allowsHitTesting(false)
+                                }
+                            }
                         HStack {
                             TextField("Start seconds", value: $start, format: .number)
                             TextField("End seconds", value: $end, format: .number)
@@ -170,6 +204,7 @@ struct TakeReviewView: View {
                     }
                 }
             }
+            if let loadError { Text(loadError).foregroundStyle(AppTheme.Text.secondaryColor) }
             if let message { Text(message).foregroundStyle(AppTheme.Text.secondaryColor) }
             if !effectiveCanWrite {
                 Text(readOnlyReason ?? "Take changes are available only during the current Render phase.")
@@ -196,23 +231,59 @@ struct TakeReviewView: View {
     private var effectiveCanWrite: Bool { canWrite && allowsMutation }
 
     private func load() async {
-        takes = []
-        canWrite = false
-        guard let home = editor.workingRoot, let root = DataRootResolver.dataRoot(of: home) else { return }
-        canWrite = (try? PipelinePhaseAccess.requireCurrentPhaseAndIntake("render", dataRoot: root,
-            declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)) != nil
-        do {
-            let values = try await Task.detached(priority: .userInitiated) {
-                let project = try YAMLArtifactStore(dataRoot: root).load(ProjectMeta.self, at: PipelineLayout.projectFile).project
-                return try ["preview", "final"].flatMap { phase in
-                    try PipelineRenderTakeStore.load(dataRoot: root, project: project, phase: phase).takeIDs.map {
-                        try PipelineRenderTakeStore.take(id: $0, dataRoot: root)
-                    }
+        loadToken += 1
+        let token = loadToken
+        let revision = editor.engineStateRevision
+        loadError = nil
+        guard let home = editor.workingRoot,
+              let root = DataRootResolver.dataRoot(of: home) else {
+            canWrite = false
+            takes = []
+            selectedID = ""
+            snapshot = nil
+            player?.pause()
+            player = nil
+            return
+        }
+        let writeAllowed = (try? PipelinePhaseAccess.requireCurrentPhaseAndIntake(
+            "render", dataRoot: root,
+            declaredPack: editor.declaredPluginName,
+            declaredBinding: editor.declaredPluginBinding
+        )) != nil
+        canWrite = writeAllowed
+        let worker = Task.detached(priority: .userInitiated) {
+            try Task.checkCancellation()
+            let project = try YAMLArtifactStore(dataRoot: root)
+                .load(ProjectMeta.self, at: PipelineLayout.projectFile).project
+            let values = try ["preview", "final"].flatMap { phase in
+                try PipelineRenderTakeStore.load(dataRoot: root, project: project, phase: phase).takeIDs.map { id in
+                    try Task.checkCancellation()
+                    return try PipelineRenderTakeStore.take(id: id, dataRoot: root)
                 }
-            }.value
-            guard editor.workingRoot == home else { return }
+            }
+            try Task.checkCancellation()
+            return values
+        }
+        do {
+            let values = try await withTaskCancellationHandler {
+                try await worker.value
+            } onCancel: {
+                worker.cancel()
+            }
+            guard !Task.isCancelled, loadToken == token,
+                  editor.workingRoot == home,
+                  editor.engineStateRevision == revision else { return }
             takes = values.sorted { $0.recordedAt > $1.recordedAt }
-        } catch { if editor.workingRoot == home { message = error.localizedDescription } }
+            if !selectedID.isEmpty && !takes.contains(where: { $0.id == selectedID }) {
+                selectedID = ""
+            }
+        } catch {
+            guard !Task.isCancelled, loadToken == token,
+                  editor.workingRoot == home,
+                  editor.engineStateRevision == revision else { return }
+            canWrite = false
+            loadError = error.localizedDescription
+        }
     }
 
     private func select() async {

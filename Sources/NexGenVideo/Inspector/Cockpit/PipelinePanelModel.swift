@@ -74,6 +74,20 @@ struct ProjectStateData: Codable, Sendable, Equatable {
         return budgetRemainingEur <= 0 || budgetRemainingEur < budgetEur * 0.1
     }
 
+    var spendWarning: String? {
+        let incomplete = !spendComplete
+        if let stop = budgetStopEur, stop.isFinite, stop > 0,
+           budgetSpentEur >= stop {
+            return incomplete ? "Hard stop reached · Spend incomplete" : "Hard stop reached"
+        }
+        if budgetEur.isFinite, budgetEur > 0, budgetSpentEur >= budgetEur {
+            return incomplete ? "Over budget · Spend incomplete" : "Over budget"
+        }
+        if incomplete { return "Spend incomplete" }
+        guard budgetEur.isFinite, budgetEur > 0, budgetWarning else { return nil }
+        return "Low budget"
+    }
+
     /// Spent as a fraction of budget, clamped to 0…1 for a bar fill.
     var spentFraction: Double {
         guard budgetEur > 0 else { return budgetSpentEur > 0 ? 1 : 0 }

@@ -12,6 +12,7 @@ enum WorkspaceUIAcceptance {
     }
 
     private static var editorSizeProbes: [[String: String]] = []
+    private static var axDiagnosticKeys = Set<String>()
     static let agentPinnedAwayNotification = Notification.Name(
         "WorkspaceUIAcceptance.agentPinnedAway"
     )
@@ -34,6 +35,7 @@ enum WorkspaceUIAcceptance {
         }
 
         editorSizeProbes = []
+        axDiagnosticKeys = []
         resetWorkspaceDefaults(scale: scale)
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
@@ -939,35 +941,53 @@ enum WorkspaceUIAcceptance {
         guard let initialPlayback = Double(probeValue(
             identifier: "production.render.playback-seconds",
             in: reviewWindow
-        ) ?? ""), clickControlRevealing(
-            identifier: "production.render.player",
+        ) ?? ""), scrollControlToVisible(
+            identifier: "production.render.play-take",
+            in: reviewWindow
+        ), nativeControlState(
+            identifier: "production.render.play-take",
+            in: reviewWindow
+        ) == .enabled, clickControl(
+            identifier: "production.render.play-take",
             in: reviewWindow
         ) == nil else {
             runnerGate.signal()
             _ = await running.value
-            fail("the recorded Render player could not receive a native click", scale: scale)
+            fail("the recorded Render Play control was unavailable", scale: scale)
         }
-        let progressedAfterClick = await waitUntil(timeout: .seconds(2), {
+        guard await waitUntil(timeout: .seconds(5), {
             guard let current = Double(probeValue(
                 identifier: "production.render.playback-seconds",
                 in: reviewWindow
             ) ?? "") else { return false }
             return current > initialPlayback + 0.15
-        })
-        if !progressedAfterClick {
-            pressKey(keyCode: 49, characters: " ")
-            guard await waitUntil(timeout: .seconds(5), {
-                guard let current = Double(probeValue(
-                    identifier: "production.render.playback-seconds",
-                    in: reviewWindow
-                ) ?? "") else { return false }
-                return current > initialPlayback + 0.15
-            }) else {
-                runnerGate.signal()
-                _ = await running.value
-                fail("the recorded Render player did not advance after native Play input", scale: scale)
-            }
+        }) else {
+            runnerGate.signal()
+            _ = await running.value
+            fail("the recorded Render player did not advance after Play", scale: scale)
         }
+        let firstRefresh = Task { @MainActor in await editor.refreshEngineState() }
+        let secondRefresh = Task { @MainActor in await editor.refreshEngineState() }
+        var playerRetainedDuringReload = true
+        for _ in 0..<250 {
+            if findAccessibilityElement(identifier: "production.render.player", in: reviewWindow) == nil {
+                playerRetainedDuringReload = false
+            }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        await firstRefresh.value
+        await secondRefresh.value
+        guard playerRetainedDuringReload,
+              findAccessibilityElement(identifier: "production.render.player", in: reviewWindow) != nil,
+              findAccessibilityElement(identifier: "production.render.take-picker", in: reviewWindow) != nil else {
+            runnerGate.signal()
+            _ = await running.value
+            fail("the selected Render take disappeared during concurrent real-store refreshes", scale: scale)
+        }
+        emit("production-take-reload", scale: scale, fields: [
+            "playerRetained": true,
+            "realStoreRefreshes": 2,
+        ])
         let readOnlyName = "scale-\(scaleLabel(scale))-production-read-only.png"
         guard let reviewContent = reviewWindow.contentView,
               snapshot(reviewContent, at: evidenceURL.appendingPathComponent(readOnlyName)) else {
@@ -1006,6 +1026,113 @@ enum WorkspaceUIAcceptance {
         let outcome = await running.value
         guard outcome == .completed else {
             fail("acceptance phase coordinator did not settle", scale: scale)
+        }
+
+        do {
+            let store = YAMLArtifactStore(dataRoot: root)
+            var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+            GatesOperations.approve(&gates, phase: "frames")
+            try store.save(gates, to: PipelineLayout.gatesFile)
+        } catch {
+            fail("could not advance the acceptance fixture to Render: \(error.localizedDescription)", scale: scale)
+        }
+        await editor.refreshEngineState()
+        guard await waitUntil(timeout: .seconds(5), {
+            editor.projectState?.nextPhaseName == "render"
+        }), clickRevealing(identifier: "production.phase.render", in: window) == nil,
+        await waitUntil(timeout: .seconds(5), {
+            validProductionArtifactID(
+                probeValue(identifier: "production.artifact.render", in: window),
+                phase: "render", project: editor.projectState?.project
+            ) && nativeControlState(
+                identifier: "production.render.review-takes", in: window
+            ) == .enabled
+        }), clickControlRevealing(
+            identifier: "production.render.review-takes", in: window
+        ) == nil,
+        await waitUntil(timeout: .seconds(5), {
+            window.attachedSheet.flatMap {
+                findAccessibilityElement(identifier: "production.render.take-picker", in: $0)
+            } != nil
+        }), let writableWindow = window.attachedSheet,
+        clickControl(identifier: "production.render.take-picker", in: writableWindow) == nil else {
+            fail("the current Render take was not available for the running-lock check", scale: scale)
+        }
+        try? await Task.sleep(for: .milliseconds(200))
+        pressKey(keyCode: 125, characters: "\u{f701}")
+        pressKey(keyCode: 36, characters: "\r")
+        guard await waitUntil(timeout: .seconds(5), {
+            scrollControlToVisible(identifier: "production.render.observation", in: writableWindow)
+                && nativeControlState(identifier: "production.render.observation", in: writableWindow) == .enabled
+                && nativeControlState(identifier: "production.render.finding", in: writableWindow) == .enabled
+                && probeValue(identifier: "production.render.findings-count", in: writableWindow) == "0"
+        }), clickControl(identifier: "production.render.observation", in: writableWindow) == nil else {
+            fail("the current Render observation was not natively editable before the run", scale: scale)
+        }
+        pressKey(keyCode: 7, characters: "x")
+        guard await waitUntil(timeout: .seconds(5), {
+            nativeControlValue(identifier: "production.render.observation", in: writableWindow) == "x"
+        }), let renderProjectBefore = try? projectSnapshot(at: lockedProjectURL),
+        let renderWorkingCopyBefore = try? treeSnapshot(at: home) else {
+            fail("the current Render observation did not accept native input", scale: scale)
+        }
+        let renderMessagesBefore = editor.agentService.messages
+        let renderCanUndoBefore = window.undoManager?.canUndo ?? false
+        let renderUndoNameBefore = window.undoManager?.undoActionName ?? ""
+        let renderGate = DispatchSemaphore(value: 0)
+        let renderRun = Task { @MainActor in
+            await editor.pipelinePhaseRunCoordinator.run(
+                projectRoot: root,
+                phase: "render",
+                sourceFilename: nil,
+                runner: { _ in renderGate.wait() },
+                progressRunner: nil,
+                state: editor.pipelinePhaseExecution
+            )
+        }
+        guard await waitUntil(timeout: .seconds(5), {
+            editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) == "render"
+                && scrollControlToVisible(identifier: "production.render.observation", in: writableWindow)
+                && nativeControlState(identifier: "production.render.observation", in: writableWindow) == .disabled
+                && nativeControlState(identifier: "production.render.finding", in: writableWindow) == .disabled
+                && nativeControlValue(identifier: "production.render.observation", in: writableWindow) == "x"
+        }), clickControl(identifier: "production.render.observation", in: writableWindow) == nil else {
+            renderGate.signal()
+            _ = await renderRun.value
+            fail("the Render observation did not lock during its phase run", scale: scale)
+        }
+        pressKey(keyCode: 16, characters: "y")
+        try? await Task.sleep(for: .milliseconds(200))
+        guard nativeControlValue(identifier: "production.render.observation", in: writableWindow) == "x",
+              probeValue(identifier: "production.render.findings-count", in: writableWindow) == "0",
+              (try? projectSnapshot(at: lockedProjectURL)) == renderProjectBefore,
+              (try? treeSnapshot(at: home)) == renderWorkingCopyBefore,
+              editor.agentService.messages == renderMessagesBefore,
+              (window.undoManager?.canUndo ?? false) == renderCanUndoBefore,
+              (window.undoManager?.undoActionName ?? "") == renderUndoNameBefore else {
+            renderGate.signal()
+            _ = await renderRun.value
+            fail("the locked Render observation changed review or project state", scale: scale)
+        }
+        emit("production-render-running-lock", scale: scale, fields: [
+            "editableBeforeRun": true,
+            "observationDisabledDuringRun": true,
+            "nativeEditIgnored": true,
+            "findingsUnchanged": true,
+            "projectAndUndoUnchanged": true,
+        ])
+        guard clickControlRevealing(
+            identifier: "production.render.review-close", in: writableWindow
+        ) == nil,
+        await waitUntil(timeout: .seconds(5), { window.attachedSheet == nil }) else {
+            renderGate.signal()
+            _ = await renderRun.value
+            fail("the locked Render review sheet did not close", scale: scale)
+        }
+        renderGate.signal()
+        let renderOutcome = await renderRun.value
+        guard renderOutcome == .completed else {
+            fail("acceptance Render coordinator did not settle", scale: scale)
         }
     }
 
@@ -2130,6 +2257,15 @@ enum WorkspaceUIAcceptance {
         return element.isAccessibilityEnabled() ? .enabled : .disabled
     }
 
+    private static func nativeControlValue(
+        identifier: String,
+        in window: NSWindow
+    ) -> String? {
+        guard let element = findAccessibilityElement(identifier: identifier, in: window),
+              visibleAccessibilityFrame(of: element, in: window) != nil else { return nil }
+        return element.accessibilityValue() as? String
+    }
+
     private static func scrollControlToVisible(
         identifier: String,
         in window: NSWindow
@@ -2142,6 +2278,46 @@ enum WorkspaceUIAcceptance {
         return visibleAccessibilityFrame(of: element, in: window) != nil
     }
 
+    private static func axDescriptor(_ element: any NSAccessibilityProtocol) -> String {
+        let role = String(describing: element.accessibilityRole())
+        let rawIdentifier = element.accessibilityIdentifier() ?? ""
+        let identifier = rawIdentifier.hasPrefix("production.")
+            ? String(rawIdentifier.prefix(80))
+            : (rawIdentifier.isEmpty ? "-" : "<other>")
+        return "\(role):\(identifier)"
+    }
+
+    private static func axParentChain(_ element: any NSAccessibilityProtocol) -> [String] {
+        var result: [String] = []
+        var parent = element.accessibilityParent()
+        var visited = Set<ObjectIdentifier>()
+        while let accessible = parent as? any NSAccessibilityProtocol, result.count < 8 {
+            guard visited.insert(ObjectIdentifier(accessible)).inserted else { break }
+            result.append(axDescriptor(accessible))
+            parent = accessible.accessibilityParent()
+        }
+        return result
+    }
+
+    private static func emitAXDiagnostic(
+        identifier: String,
+        in window: NSWindow,
+        reason: String,
+        matchCount: Int,
+        paths: [String]
+    ) {
+        let key = "\(window.windowNumber):\(identifier):\(reason)"
+        guard axDiagnosticKeys.count < 16,
+              axDiagnosticKeys.insert(key).inserted,
+              let scale = Double(ProcessInfo.processInfo.environment["NGV_WORKSPACE_UI_SCALE"] ?? "") else { return }
+        emit("ax-diagnostic", scale: scale, fields: [
+            "identifier": identifier,
+            "reason": reason,
+            "matchCount": matchCount,
+            "roleIdentifierPaths": Array(paths.prefix(48)),
+        ])
+    }
+
     private static func findAccessibilityElement(
         identifier: String,
         in window: NSWindow
@@ -2149,16 +2325,33 @@ enum WorkspaceUIAcceptance {
         guard let root = window.contentView else { return nil }
         var visited = Set<ObjectIdentifier>()
         var matches: [any NSAccessibilityProtocol] = []
-        func visit(_ element: any NSAccessibilityProtocol) {
+        var samples: [String] = []
+        func visit(_ element: any NSAccessibilityProtocol, path: [String]) {
             guard visited.insert(ObjectIdentifier(element)).inserted else { return }
+            let descriptor = axDescriptor(element)
+            let currentPath = Array((path + [descriptor]).suffix(8))
+            if samples.count < 48,
+               (element.accessibilityIdentifier() != nil || samples.count < 8) {
+                samples.append(currentPath.joined(separator: " > "))
+            }
             if element.isAccessibilityElement(), element.accessibilityIdentifier() == identifier {
                 matches.append(element)
             }
             for child in element.accessibilityChildren() ?? [] {
-                if let accessible = child as? any NSAccessibilityProtocol { visit(accessible) }
+                if let accessible = child as? any NSAccessibilityProtocol {
+                    visit(accessible, path: currentPath)
+                }
             }
         }
-        visit(root)
+        visit(root, path: [])
+        if matches.count != 1 {
+            let chains = matches.prefix(2).map { axParentChain($0).joined(separator: " > ") }
+            emitAXDiagnostic(
+                identifier: identifier, in: window,
+                reason: matches.isEmpty ? "missing" : "ambiguous",
+                matchCount: matches.count, paths: samples + chains
+            )
+        }
         return matches.count == 1 ? matches[0] : nil
     }
 
@@ -2166,31 +2359,53 @@ enum WorkspaceUIAcceptance {
         of element: any NSAccessibilityProtocol,
         in window: NSWindow
     ) -> NSRect? {
+        let identifier = element.accessibilityIdentifier() ?? "-"
+        let path = [axDescriptor(element)] + axParentChain(element)
         guard window.isVisible, window.isKeyWindow, !window.ignoresMouseEvents,
               (element.accessibilityWindow() as? NSWindow) === window,
-              let root = window.contentView else { return nil }
+              let root = window.contentView else {
+            emitAXDiagnostic(identifier: identifier, in: window, reason: "window", matchCount: 1, paths: path)
+            return nil
+        }
         if let view = element as? NSView,
            (view.window !== window || view.isHiddenOrHasHiddenAncestor) { return nil }
         let frame = element.accessibilityFrame()
         guard frame.origin.x.isFinite, frame.origin.y.isFinite,
               frame.width.isFinite, frame.height.isFinite,
-              frame.width > 0, frame.height > 0 else { return nil }
+              frame.width > 0, frame.height > 0 else {
+            emitAXDiagnostic(identifier: identifier, in: window, reason: "frame", matchCount: 1, paths: path)
+            return nil
+        }
         var visible = frame.intersection(window.convertToScreen(root.convert(root.bounds, to: nil)))
         var ancestor = element.accessibilityParent()
         var visited = Set<ObjectIdentifier>()
+        var nearestView = element as? NSView
+        var sawScroll = false
         while let accessible = ancestor as? any NSAccessibilityProtocol {
             guard visited.insert(ObjectIdentifier(accessible)).inserted else { return nil }
-            if let view = accessible as? NSView,
-               (view.window !== window || view.isHiddenOrHasHiddenAncestor) { return nil }
+            if let view = accessible as? NSView {
+                if view.window !== window || view.isHiddenOrHasHiddenAncestor { return nil }
+                if nearestView == nil { nearestView = view }
+            }
             if let scrollView = accessible as? NSScrollView {
                 let clip = scrollView.contentView
                 visible = visible.intersection(window.convertToScreen(clip.convert(clip.bounds, to: nil)))
+                sawScroll = true
             }
             ancestor = accessible.accessibilityParent()
         }
+        if !sawScroll, let nearestView,
+           let scrollView = enclosingScrollView(for: nearestView),
+           scrollView.window === window {
+            let clip = scrollView.contentView
+            visible = visible.intersection(window.convertToScreen(clip.convert(clip.bounds, to: nil)))
+        }
         guard visible.origin.x.isFinite, visible.origin.y.isFinite,
               visible.width.isFinite, visible.height.isFinite,
-              visible.width > 0, visible.height > 0 else { return nil }
+              visible.width > 0, visible.height > 0 else {
+            emitAXDiagnostic(identifier: identifier, in: window, reason: "clipped", matchCount: 1, paths: path)
+            return nil
+        }
         return visible
     }
 
@@ -2218,18 +2433,29 @@ enum WorkspaceUIAcceptance {
         in window: NSWindow
     ) {
         let screenFrame = element.accessibilityFrame()
+        func reveal(in scrollView: NSScrollView) {
+            guard let documentView = scrollView.documentView,
+                  scrollView.window === window else { return }
+            let target = documentView.convert(window.convertFromScreen(screenFrame), from: nil)
+            documentView.scrollToVisible(target)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
         var ancestor = element.accessibilityParent()
         var visited = Set<ObjectIdentifier>()
+        var nearestView = element as? NSView
+        var sawScroll = false
         while let accessible = ancestor as? any NSAccessibilityProtocol {
             guard visited.insert(ObjectIdentifier(accessible)).inserted else { return }
-            if let scrollView = accessible as? NSScrollView,
-               let documentView = scrollView.documentView,
-               scrollView.window === window {
-                let target = documentView.convert(window.convertFromScreen(screenFrame), from: nil)
-                documentView.scrollToVisible(target)
-                scrollView.reflectScrolledClipView(scrollView.contentView)
+            if nearestView == nil, let view = accessible as? NSView { nearestView = view }
+            if let scrollView = accessible as? NSScrollView {
+                reveal(in: scrollView)
+                sawScroll = true
             }
             ancestor = accessible.accessibilityParent()
+        }
+        if !sawScroll, let nearestView,
+           let scrollView = enclosingScrollView(for: nearestView) {
+            reveal(in: scrollView)
         }
     }
 

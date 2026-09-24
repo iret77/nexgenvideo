@@ -149,7 +149,7 @@ struct ProjectSettingsView: View {
 
     private func spendSection(_ state: ProjectStateData) -> some View {
         section("Spend") {
-            if let warning = spendWarning(state) {
+            if let warning = state.spendWarning {
                 Label(warning, systemImage: "exclamationmark.triangle.fill")
                     .interfaceFont(
                         size: AppTheme.Typography.metadata,
@@ -195,7 +195,7 @@ struct ProjectSettingsView: View {
                     state.spendComplete
                         ? "None"
                         : String(state.unpricedTransactions + state.legacyGenerations),
-                    spendWarning(state) ?? "None",
+                    state.spendWarning ?? "None",
                 ].joined(separator: "|")
             )
             .frame(width: AppTheme.BorderWidth.hairline, height: AppTheme.BorderWidth.hairline)
@@ -210,19 +210,6 @@ struct ProjectSettingsView: View {
     private func hardStopRemaining(_ state: ProjectStateData) -> String {
         guard state.budgetStopEur != nil else { return "No hard stop" }
         return state.hardStopRemainingEur.map(euro) ?? "Unknown"
-    }
-
-    private func spendWarning(_ state: ProjectStateData) -> String? {
-        let incomplete = !state.spendComplete
-        if let stop = state.budgetStopEur, state.budgetSpentEur >= stop {
-            return incomplete ? "Hard stop reached · Spend incomplete" : "Hard stop reached"
-        }
-        if state.budgetSpentEur >= state.budgetEur {
-            return incomplete ? "Over budget · Spend incomplete" : "Over budget"
-        }
-        if incomplete { return "Spend incomplete" }
-        guard state.budgetWarning else { return nil }
-        return "Low budget"
     }
 
     /// Exactly one plugin is active per project ("installed ≠ active"); none = the generic
