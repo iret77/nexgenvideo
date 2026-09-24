@@ -392,11 +392,24 @@ struct PackSurfaceTests {
             phaseLabel: "Frames",
             approval: .blocked("Checking approval readiness."),
             mutations: .blocked("Checking gate controls."),
-            hostDecisionRequirement: nil
+            hostDecisionRequirement: nil,
+            checking: true
         )
         #expect(checking.message == "Checking Frames editing access.")
         #expect(checking.diagnostic == nil)
         #expect(checking.action == .none)
+
+        let substantive = "Checking frame findings requires an accepted observation."
+        let actualBlocker = PipelineReadinessPresentation.current(
+            selector: "host.frames_manifest",
+            phaseLabel: "Frames",
+            approval: .blocked(substantive),
+            mutations: .ready,
+            hostDecisionRequirement: nil
+        )
+        #expect(actualBlocker.message == "Resolve or explicitly accept the current frame findings before approval.")
+        #expect(actualBlocker.diagnostic == substantive)
+        #expect(actualBlocker.action == .askAgent(substantive))
 
         let intake = PipelineReadinessPresentation.current(
             selector: "host.project_track",

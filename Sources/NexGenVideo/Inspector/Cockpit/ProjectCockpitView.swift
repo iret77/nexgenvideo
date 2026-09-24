@@ -213,12 +213,16 @@ struct ProjectSettingsView: View {
     }
 
     private func spendWarning(_ state: ProjectStateData) -> String? {
-        if !state.spendComplete { return "Spend incomplete" }
-        if let remaining = state.hardStopRemainingEur, remaining <= 0 {
-            return "Hard stop reached"
+        let incomplete = !state.spendComplete
+        if let stop = state.budgetStopEur, state.budgetSpentEur >= stop {
+            return incomplete ? "Hard stop reached · Spend incomplete" : "Hard stop reached"
         }
+        if state.budgetSpentEur >= state.budgetEur {
+            return incomplete ? "Over budget · Spend incomplete" : "Over budget"
+        }
+        if incomplete { return "Spend incomplete" }
         guard state.budgetWarning else { return nil }
-        return (state.budgetRemainingEur ?? 0) <= 0 ? "Over budget" : "Low budget"
+        return "Low budget"
     }
 
     /// Exactly one plugin is active per project ("installed ≠ active"); none = the generic

@@ -884,8 +884,8 @@ enum WorkspaceUIAcceptance {
                   in: window
               ) == nil,
               await waitUntil(timeout: .seconds(5), {
-                  window.attachedSheet?.contentView.flatMap {
-                      findView(in: $0, accessibilityIdentifier: "production.render.take-picker")
+                  window.attachedSheet.flatMap {
+                      findAccessibilityElement(identifier: "production.render.take-picker", in: $0)
                   } != nil
               }), let reviewWindow = window.attachedSheet,
               nativeControlState(
@@ -901,10 +901,27 @@ enum WorkspaceUIAcceptance {
         pressKey(keyCode: 125, characters: "\u{f701}")
         pressKey(keyCode: 36, characters: "\r")
         guard await waitUntil(timeout: .seconds(5), {
-            reviewWindow.contentView.flatMap {
-                findView(in: $0, accessibilityIdentifier: "production.render.player")
-            } != nil
-        }), clickControl(
+            findAccessibilityElement(identifier: "production.render.player", in: reviewWindow) != nil
+                && Double(probeValue(identifier: "production.render.playback-seconds", in: reviewWindow) ?? "") != nil
+        }), scrollControlToVisible(
+            identifier: "production.render.use-take",
+            in: reviewWindow
+        ), nativeControlState(
+            identifier: "production.render.use-take",
+            in: reviewWindow
+        ) == .disabled, clickControl(
+            identifier: "production.render.use-take",
+            in: reviewWindow
+        ) == nil, scrollControlToVisible(
+            identifier: "production.render.record-pass",
+            in: reviewWindow
+        ), nativeControlState(
+            identifier: "production.render.record-pass",
+            in: reviewWindow
+        ) == .disabled, clickControl(
+            identifier: "production.render.record-pass",
+            in: reviewWindow
+        ) == nil, clickControlRevealing(
             identifier: "production.render.references",
             in: reviewWindow
         ) == nil,
@@ -918,6 +935,38 @@ enum WorkspaceUIAcceptance {
             runnerGate.signal()
             _ = await running.value
             fail("the recorded Render take did not expose its player and references", scale: scale)
+        }
+        guard let initialPlayback = Double(probeValue(
+            identifier: "production.render.playback-seconds",
+            in: reviewWindow
+        ) ?? ""), clickControlRevealing(
+            identifier: "production.render.player",
+            in: reviewWindow
+        ) == nil else {
+            runnerGate.signal()
+            _ = await running.value
+            fail("the recorded Render player could not receive a native click", scale: scale)
+        }
+        let progressedAfterClick = await waitUntil(timeout: .seconds(2), {
+            guard let current = Double(probeValue(
+                identifier: "production.render.playback-seconds",
+                in: reviewWindow
+            ) ?? "") else { return false }
+            return current > initialPlayback + 0.15
+        })
+        if !progressedAfterClick {
+            pressKey(keyCode: 49, characters: " ")
+            guard await waitUntil(timeout: .seconds(5), {
+                guard let current = Double(probeValue(
+                    identifier: "production.render.playback-seconds",
+                    in: reviewWindow
+                ) ?? "") else { return false }
+                return current > initialPlayback + 0.15
+            }) else {
+                runnerGate.signal()
+                _ = await running.value
+                fail("the recorded Render player did not advance after native Play input", scale: scale)
+            }
         }
         let readOnlyName = "scale-\(scaleLabel(scale))-production-read-only.png"
         guard let reviewContent = reviewWindow.contentView,
@@ -933,12 +982,13 @@ enum WorkspaceUIAcceptance {
                 "inspectedPhase": "frames,render",
                 "mutationsDisabled": true,
                 "nativeInspectionWorked": true,
+                "playerAdvancedAfterNativeInput": true,
                 "popoverClosedOnReadinessChange": true,
                 "runningPhase": "frames",
                 "screenshot": readOnlyName,
             ]
         )
-        guard clickControl(
+        guard clickControlRevealing(
             identifier: "production.render.review-close",
             in: reviewWindow
         ) == nil,
@@ -2013,28 +2063,14 @@ enum WorkspaceUIAcceptance {
     }
 
     private static func clickControl(identifier: String, in window: NSWindow) -> String? {
-        guard let root = window.contentView,
-              let control = identifiedNativeControl(identifier: identifier, in: root) else {
-            return "native control unavailable"
-        }
-        return postClick(on: control, in: window)
+        postClick(onAccessibilityElement: identifier, in: window, revealing: false)
     }
 
     private static func clickControlRevealing(
         identifier: String,
         in window: NSWindow
     ) -> String? {
-        guard let root = window.contentView,
-              let control = identifiedNativeControl(identifier: identifier, in: root) else {
-            return "native control unavailable"
-        }
-        if let scrollView = enclosingScrollView(for: control),
-           let documentView = scrollView.documentView {
-            documentView.scrollToVisible(control.convert(control.bounds, to: documentView))
-            scrollView.reflectScrolledClipView(scrollView.contentView)
-            root.layoutSubtreeIfNeeded()
-        }
-        return postClick(on: control, in: window)
+        postClick(onAccessibilityElement: identifier, in: window, revealing: true)
     }
 
     private static func postClick(on view: NSView, in window: NSWindow) -> String? {
@@ -2052,6 +2088,10 @@ enum WorkspaceUIAcceptance {
         guard root.bounds.contains(root.convert(location, from: nil)) else {
             return "control is outside the window"
         }
+        return postClick(at: location, in: window)
+    }
+
+    private static func postClick(at location: NSPoint, in window: NSWindow) -> String? {
         let timestamp = ProcessInfo.processInfo.systemUptime
         guard let down = NSEvent.mouseEvent(
             with: .leftMouseDown,
@@ -2085,62 +2125,112 @@ enum WorkspaceUIAcceptance {
         identifier: String,
         in window: NSWindow
     ) -> NativeControlState? {
-        guard let root = window.contentView,
-              let control = identifiedNativeControl(identifier: identifier, in: root) else {
-            return nil
-        }
-        let frame = control.convert(control.bounds, to: root)
-        guard control.window === window,
-              !control.isHiddenOrHasHiddenAncestor,
-              frame.width > 0,
-              frame.height > 0,
-              root.bounds.intersects(frame) else { return nil }
-        return control.isEnabled && control.accessibilityEnabled()
-            ? .enabled
-            : .disabled
+        guard let element = findAccessibilityElement(identifier: identifier, in: window),
+              visibleAccessibilityFrame(of: element, in: window) != nil else { return nil }
+        return element.isAccessibilityEnabled() ? .enabled : .disabled
     }
 
     private static func scrollControlToVisible(
         identifier: String,
         in window: NSWindow
     ) -> Bool {
-        guard let root = window.contentView,
-              let view = findView(in: root, accessibilityIdentifier: identifier),
-              let scrollView = enclosingScrollView(for: view),
-              let documentView = scrollView.documentView else { return false }
-        documentView.scrollToVisible(view.convert(view.bounds, to: documentView))
-        scrollView.reflectScrolledClipView(scrollView.contentView)
-        root.layoutSubtreeIfNeeded()
-        let frame = view.convert(view.bounds, to: scrollView.contentView)
-        return scrollView.contentView.bounds.insetBy(
-            dx: -AppTheme.BorderWidth.thin,
-            dy: -AppTheme.BorderWidth.thin
-        ).contains(frame)
+        guard let element = findAccessibilityElement(identifier: identifier, in: window) else {
+            return false
+        }
+        revealAccessibilityElement(element, in: window)
+        window.contentView?.layoutSubtreeIfNeeded()
+        return visibleAccessibilityFrame(of: element, in: window) != nil
     }
 
-    private static func identifiedNativeControl(
+    private static func findAccessibilityElement(
         identifier: String,
-        in root: NSView
-    ) -> NSControl? {
-        guard let identified = findView(
-            in: root,
-            accessibilityIdentifier: identifier
-        ) else { return nil }
-        if let control = identified as? NSControl { return control }
-        func descendant(in view: NSView) -> NSControl? {
-            for child in view.subviews {
-                if let control = child as? NSControl { return control }
-                if let control = descendant(in: child) { return control }
+        in window: NSWindow
+    ) -> (any NSAccessibilityProtocol)? {
+        guard let root = window.contentView else { return nil }
+        var visited = Set<ObjectIdentifier>()
+        var matches: [any NSAccessibilityProtocol] = []
+        func visit(_ element: any NSAccessibilityProtocol) {
+            guard visited.insert(ObjectIdentifier(element)).inserted else { return }
+            if element.isAccessibilityElement(), element.accessibilityIdentifier() == identifier {
+                matches.append(element)
             }
-            return nil
+            for child in element.accessibilityChildren() ?? [] {
+                if let accessible = child as? any NSAccessibilityProtocol { visit(accessible) }
+            }
         }
-        if let control = descendant(in: identified) { return control }
-        var ancestor = identified.superview
-        while let view = ancestor {
-            if let control = view as? NSControl { return control }
-            ancestor = view.superview
+        visit(root)
+        return matches.count == 1 ? matches[0] : nil
+    }
+
+    private static func visibleAccessibilityFrame(
+        of element: any NSAccessibilityProtocol,
+        in window: NSWindow
+    ) -> NSRect? {
+        guard window.isVisible, window.isKeyWindow, !window.ignoresMouseEvents,
+              (element.accessibilityWindow() as? NSWindow) === window,
+              let root = window.contentView else { return nil }
+        if let view = element as? NSView,
+           (view.window !== window || view.isHiddenOrHasHiddenAncestor) { return nil }
+        let frame = element.accessibilityFrame()
+        guard frame.origin.x.isFinite, frame.origin.y.isFinite,
+              frame.width.isFinite, frame.height.isFinite,
+              frame.width > 0, frame.height > 0 else { return nil }
+        var visible = frame.intersection(window.convertToScreen(root.convert(root.bounds, to: nil)))
+        var ancestor = element.accessibilityParent()
+        var visited = Set<ObjectIdentifier>()
+        while let accessible = ancestor as? any NSAccessibilityProtocol {
+            guard visited.insert(ObjectIdentifier(accessible)).inserted else { return nil }
+            if let view = accessible as? NSView,
+               (view.window !== window || view.isHiddenOrHasHiddenAncestor) { return nil }
+            if let scrollView = accessible as? NSScrollView {
+                let clip = scrollView.contentView
+                visible = visible.intersection(window.convertToScreen(clip.convert(clip.bounds, to: nil)))
+            }
+            ancestor = accessible.accessibilityParent()
         }
-        return nil
+        guard visible.origin.x.isFinite, visible.origin.y.isFinite,
+              visible.width.isFinite, visible.height.isFinite,
+              visible.width > 0, visible.height > 0 else { return nil }
+        return visible
+    }
+
+    private static func postClick(
+        onAccessibilityElement identifier: String,
+        in window: NSWindow,
+        revealing: Bool
+    ) -> String? {
+        guard let element = findAccessibilityElement(identifier: identifier, in: window) else {
+            return "native accessibility element unavailable"
+        }
+        if revealing {
+            revealAccessibilityElement(element, in: window)
+            window.contentView?.layoutSubtreeIfNeeded()
+        }
+        guard let frame = visibleAccessibilityFrame(of: element, in: window) else {
+            return "native accessibility element is outside the visible window"
+        }
+        let point = window.convertFromScreen(NSRect(x: frame.midX, y: frame.midY, width: 0, height: 0)).origin
+        return postClick(at: point, in: window)
+    }
+
+    private static func revealAccessibilityElement(
+        _ element: any NSAccessibilityProtocol,
+        in window: NSWindow
+    ) {
+        let screenFrame = element.accessibilityFrame()
+        var ancestor = element.accessibilityParent()
+        var visited = Set<ObjectIdentifier>()
+        while let accessible = ancestor as? any NSAccessibilityProtocol {
+            guard visited.insert(ObjectIdentifier(accessible)).inserted else { return }
+            if let scrollView = accessible as? NSScrollView,
+               let documentView = scrollView.documentView,
+               scrollView.window === window {
+                let target = documentView.convert(window.convertFromScreen(screenFrame), from: nil)
+                documentView.scrollToVisible(target)
+                scrollView.reflectScrolledClipView(scrollView.contentView)
+            }
+            ancestor = accessible.accessibilityParent()
+        }
     }
 
     private static func clickRevealing(

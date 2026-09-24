@@ -11,6 +11,7 @@ struct TakeReviewView: View {
     @State private var selectedID = ""
     @State private var snapshot: TakeReview.Snapshot?
     @State private var player: AVPlayer?
+    @State private var playbackSeconds = 0.0
     @State private var findings: [TakeReview.Finding] = []
     @State private var verdict = TakeReview.Verdict.conforms
     @State private var observation = ""
@@ -26,6 +27,16 @@ struct TakeReviewView: View {
             .buttonStyle(InlineActionButtonStyle())
             .accessibilityIdentifier("production.render.review-takes")
             .sheet(isPresented: $presented) { reviewSheet }
+            .task(id: editor.engineStateRevision) { await load() }
+            .onChange(of: editor.workingRoot) { _, _ in
+                presented = false
+                takes = []
+                selectedID = ""
+                snapshot = nil
+                player?.pause()
+                player = nil
+                Task { await load() }
+            }
             .overlay(alignment: .topLeading) {
                 if let take = takes.first {
                     AppRelaunchClickProbe(
@@ -62,6 +73,12 @@ struct TakeReviewView: View {
                     VideoPlayer(player: player)
                         .frame(minHeight: AppTheme.Layout.previewMinHeight)
                         .accessibilityIdentifier("production.render.player")
+                    AppRelaunchClickProbe(
+                        identifier: "production.render.playback-seconds",
+                        acceptanceValue: String(format: "%.3f", playbackSeconds)
+                    )
+                    .frame(width: AppTheme.BorderWidth.hairline, height: AppTheme.BorderWidth.hairline)
+                    .allowsHitTesting(false)
                     TakeRangeReviewView(
                         snapshot: snapshot,
                         wholeTakePlayer: player,
@@ -99,6 +116,7 @@ struct TakeReviewView: View {
                     }
                     .buttonStyle(InlineActionButtonStyle(variant: .approval))
                     .disabled(busy || !canSelect || !canWrite || !allowsMutation)
+                    .accessibilityIdentifier("production.render.use-take")
                     if findings.count < TakeReview.Pass.allCases.count && findings.last?.verdict != .rejected {
                         let pass = TakeReview.Pass.allCases[findings.count]
                         Text("\(findings.count + 1) of 6 · \(pass.label)").fontWeight(AppTheme.FontWeight.semibold)
@@ -127,6 +145,7 @@ struct TakeReviewView: View {
                         .buttonStyle(InlineActionButtonStyle(variant: .approval))
                         .disabled(!allowsMutation || busy || observation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                             || !start.isFinite || !end.isFinite || start < 0 || end <= start || end > snapshot.durationSeconds)
+                        .accessibilityIdentifier("production.render.record-pass")
                     } else {
                         ForEach(findings, id: \.pass) { finding in
                             Text("\(finding.pass.label): \(finding.verdict.rawValue) — \(finding.observation)")
@@ -144,6 +163,7 @@ struct TakeReviewView: View {
                         }
                         .buttonStyle(InlineActionButtonStyle(variant: .approval))
                         .disabled(busy || !canWrite || !allowsMutation)
+                        .accessibilityIdentifier("production.render.save-review")
                         Button("Review again") { findings = []; observation = ""; verdict = .conforms; start = 0; end = snapshot.durationSeconds; canSelect = false }
                             .buttonStyle(InlineActionButtonStyle())
                             .disabled(busy || !allowsMutation)
@@ -161,15 +181,22 @@ struct TakeReviewView: View {
         .frame(minWidth: AppTheme.Layout.takeReviewWidth)
         .frame(maxHeight: AppTheme.Layout.takeReviewMaxHeight)
         .interfaceFont(size: AppTheme.Typography.ui)
-        .task(id: editor.engineStateRevision) { await load() }
-        .task(id: selectedID) { await select() }
+        .task(id: selectedID) {
+            await select()
+            guard WorkspaceUIAcceptance.isRequested else { return }
+            while !Task.isCancelled {
+                let seconds = player?.currentTime().seconds ?? 0
+                playbackSeconds = seconds.isFinite ? seconds : 0
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+        }
         .onDisappear { player?.pause() }
-        .onChange(of: editor.workingRoot) { _, _ in presented = false; snapshot = nil; player?.pause(); player = nil }
     }
 
     private var effectiveCanWrite: Bool { canWrite && allowsMutation }
 
     private func load() async {
+        takes = []
         canWrite = false
         guard let home = editor.workingRoot, let root = DataRootResolver.dataRoot(of: home) else { return }
         canWrite = (try? PipelinePhaseAccess.requireCurrentPhaseAndIntake("render", dataRoot: root,
@@ -189,7 +216,7 @@ struct TakeReviewView: View {
     }
 
     private func select() async {
-        player?.pause(); player = nil; snapshot = nil; findings = []; observation = ""; message = nil; canSelect = false
+        player?.pause(); player = nil; playbackSeconds = 0; snapshot = nil; findings = []; observation = ""; message = nil; canSelect = false
         guard !selectedID.isEmpty, let home = editor.workingRoot else { return }
         let id = selectedID
         busy = true

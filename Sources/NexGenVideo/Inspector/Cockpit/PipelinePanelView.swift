@@ -159,7 +159,8 @@ struct PipelineReadinessPresentation: Equatable {
         phaseLabel: String,
         approval: NativeGateApprovalReadiness,
         mutations: NativeGateApprovalReadiness,
-        hostDecisionRequirement: String?
+        hostDecisionRequirement: String?,
+        checking: Bool = false
     ) -> Self {
         if let hostDecisionRequirement {
             return Self(
@@ -168,14 +169,14 @@ struct PipelineReadinessPresentation: Equatable {
                 action: .openDecision
             )
         }
+        if checking {
+            return Self(
+                message: "Checking \(phaseLabel) editing access.",
+                diagnostic: nil,
+                action: .none
+            )
+        }
         if let blocker = mutations.blocker {
-            if blocker.localizedCaseInsensitiveContains("checking") {
-                return Self(
-                    message: "Checking \(phaseLabel) editing access.",
-                    diagnostic: nil,
-                    action: .none
-                )
-            }
             return Self(
                 message: userMessage(
                     for: blocker,
@@ -203,13 +204,6 @@ struct PipelineReadinessPresentation: Equatable {
                 action: .none
             )
         }
-        if blocker.localizedCaseInsensitiveContains("checking") {
-            return Self(
-                message: "Checking \(phaseLabel) approval requirements.",
-                diagnostic: nil,
-                action: .none
-            )
-        }
         return Self(
             message: userMessage(
                 for: blocker,
@@ -227,9 +221,6 @@ struct PipelineReadinessPresentation: Equatable {
         phaseLabel: String
     ) -> String {
         let lower = blocker.lowercased()
-        if lower.contains("checking") {
-            return "Checking \(phaseLabel) approval requirements."
-        }
         if let card = hostOwnedCard(in: blocker) {
             return "Complete the \(card) card before approving \(phaseLabel)."
         }
@@ -314,6 +305,7 @@ struct PipelinePanelView: View {
     @State private var readinessToken = 0
     @State private var readinessTask: Task<Void, Never>?
     @State private var readinessRefreshQueued = false
+    @State private var readinessChecking = false
     @State private var approvalPhase: String?
     @State private var approvalReadiness = NativeGateApprovalReadiness.blocked(
         "The pipeline state is unavailable."
@@ -945,7 +937,8 @@ struct PipelinePanelView: View {
             hostDecisionRequirement: editor.agentService.composerBlockerDescription
                 ?? (editor.agentService.isComposerBlocked
                     ? "Resolve the open Agent decision before approving \(label)."
-                    : nil)
+                    : nil),
+            checking: readinessChecking
         )
         let layout = compact
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: AppTheme.Spacing.smMd))
@@ -1064,7 +1057,8 @@ struct PipelinePanelView: View {
                 phaseLabel: phaseLabel(selected.phase, contract: contract),
                 approval: approvalReadiness,
                 mutations: mutationReadiness,
-                hostDecisionRequirement: nil
+                hostDecisionRequirement: nil,
+                checking: readinessChecking
             ).message
         }
         return nil
@@ -1217,11 +1211,13 @@ struct PipelinePanelView: View {
               let data = navigation.state,
               editor.workingRoot != nil else {
             approvalPhase = nil
+            readinessChecking = false
             approvalReadiness = .blocked("The pipeline state is unavailable.")
             mutationReadiness = .blocked("The pipeline state is unavailable.")
             return
         }
         approvalPhase = data.nextPhaseName
+        readinessChecking = true
         approvalReadiness = .blocked("Checking approval readiness.")
         mutationReadiness = .blocked("Checking gate controls.")
         readinessRefreshQueued = true
@@ -1246,6 +1242,7 @@ struct PipelinePanelView: View {
                       editor.workingRoot == currentDir else { continue }
                 mutationReadiness = readiness.mutations
                 approvalReadiness = readiness.approval
+                readinessChecking = false
             } while readinessRefreshQueued
             readinessTask = nil
         }
@@ -1283,6 +1280,7 @@ struct PipelinePanelView: View {
             refreshApprovalReadiness()
         case .failure(let error):
             approvalPhase = nil
+            readinessChecking = false
             approvalReadiness = .blocked("The pipeline state is unavailable.")
             mutationReadiness = .blocked("The pipeline state is unavailable.")
             state = .failed(error)

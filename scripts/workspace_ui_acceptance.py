@@ -301,6 +301,7 @@ def run_scale(executable, output, scale):
         and production_read_only[0].get("runningPhase") == "frames"
         and production_read_only[0].get("mutationsDisabled") is True
         and production_read_only[0].get("nativeInspectionWorked") is True
+        and production_read_only[0].get("playerAdvancedAfterNativeInput") is True
         and production_read_only[0].get("popoverClosedOnReadinessChange") is True
         and valid_production_layout(narrow[0])
         and invariants[0].get("liveStateUnchanged") is True
