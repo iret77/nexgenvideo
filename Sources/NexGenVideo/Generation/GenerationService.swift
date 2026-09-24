@@ -2744,10 +2744,9 @@ final class GenerationService {
                     refreshRecovery: false
                 )
             } catch {
-                reconciliationIssues.append(.init(
-                    kind: .conflict,
-                    detail: "Authority \(record.logicalJobID) could not persist its accepted provider job: \(error.localizedDescription)"
-                ))
+                Log.generation.error(
+                    "Mirelo submission repair failed for authority \(record.logicalJobID): \(error.localizedDescription)"
+                )
             }
         }
         for (record, authorization) in releases {

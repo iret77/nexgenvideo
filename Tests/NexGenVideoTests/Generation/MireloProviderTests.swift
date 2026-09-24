@@ -2221,6 +2221,7 @@ struct MireloProviderTests {
         let workingCopyKey = try #require(editor.openWorkingCopyKey)
         let projectKey = try #require(editor.projectId)
         let transactionID = "25252525-2525-4525-8525-252525252525"
+        let independentRepairID = "27272727-2727-4727-8727-272727272727"
         let conflictID = "26262626-2626-4626-8626-262626262626"
         let (executionStore, storeRoot) = try store()
         defer {
@@ -2240,6 +2241,14 @@ struct MireloProviderTests {
         _ = try await authorityRecord(
             store: executionStore,
             projectKey: projectKey,
+            logicalID: independentRepairID,
+            spendTransactionID: independentRepairID,
+            state: .accepted,
+            providerJobID: "independent-repairable-job"
+        )
+        _ = try await authorityRecord(
+            store: executionStore,
+            projectKey: projectKey,
             logicalID: conflictID,
             spendTransactionID: conflictID,
             state: .accepted,
@@ -2248,6 +2257,14 @@ struct MireloProviderTests {
         editor.generationLog.spendEvents = [
             GenerationSpendEvent(
                 transactionId: transactionID,
+                kind: .reserved,
+                model: "mirelo/sfx-1.6",
+                provider: .mirelo,
+                transport: .api,
+                endpoint: MireloOperation.textToSFX.createPath
+            ),
+            GenerationSpendEvent(
+                transactionId: independentRepairID,
                 kind: .reserved,
                 model: "mirelo/sfx-1.6",
                 provider: .mirelo,
@@ -2302,10 +2319,72 @@ struct MireloProviderTests {
             $0.transactionId == transactionID && $0.kind == .submitted
         }?.providerRequestId == "repairable-job")
         #expect(editor.generationLog.spendEvents.filter {
+            $0.transactionId == independentRepairID
+        }.map(\.kind) == [.reserved])
+        #expect(editor.generationLog.spendEvents.filter {
             $0.transactionId == conflictID && $0.kind == .submitted
         }.map(\.providerRequestId) == ["ledger-conflict-job"])
         #expect(editor.mireloSpendRecoveryMessage?.contains("cannot safely repair") == true)
-        #expect(editor.mireloSpendRecoveryMessage?.contains("retry repair") == false)
+        #expect(editor.mireloSpendRecoveryMessage?.contains("1 accepted Mirelo job is") == true)
+        #expect(editor.mireloSpendRecoveryMessage?.contains("retry repair") == true)
+    }
+
+    @Test("failed accepted Mirelo submission repair remains repairable")
+    @MainActor
+    func failedAcceptedSubmissionRepairDoesNotBecomeConflict() async throws {
+        let package = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mirelo-failed-submission-repair-\(UUID().uuidString).ngv",
+            isDirectory: true
+        )
+        try Fixtures.prepareProjectPackage(at: package)
+        let editor = EditorViewModel()
+        editor.projectURL = package
+        let workingCopyKey = try #require(editor.openWorkingCopyKey)
+        let projectKey = try #require(editor.projectId)
+        let workingRoot = try #require(editor.workingRoot)
+        let transactionID = "29292929-2929-4929-8929-292929292929"
+        let (executionStore, storeRoot) = try store()
+        defer {
+            editor.releaseWorkingCopy()
+            ProjectWorkingCopy.discard(key: workingCopyKey)
+            try? FileManager.default.removeItem(at: package)
+            try? FileManager.default.removeItem(at: storeRoot)
+        }
+        _ = try await authorityRecord(
+            store: executionStore,
+            projectKey: projectKey,
+            logicalID: transactionID,
+            spendTransactionID: transactionID,
+            state: .accepted,
+            providerJobID: "repair-write-failure-job"
+        )
+        editor.generationLog.spendEvents = [
+            GenerationSpendEvent(
+                transactionId: transactionID,
+                kind: .reserved,
+                model: "mirelo/sfx-1.6",
+                provider: .mirelo,
+                transport: .api,
+                endpoint: MireloOperation.textToSFX.createPath
+            ),
+        ]
+        try editor.persistGenerationLog()
+        let logURL = workingRoot.appendingPathComponent(Project.generationLogFilename)
+        try FileManager.default.removeItem(at: logURL)
+        try FileManager.default.createDirectory(at: logURL, withIntermediateDirectories: false)
+
+        try editor.generationService.reconcileMireloAcceptedSpend(
+            editor: editor,
+            store: executionStore,
+            onlyTransactionID: transactionID
+        )
+
+        #expect(editor.generationLog.spendEvents.filter {
+            $0.transactionId == transactionID
+        }.map(\.kind) == [.reserved])
+        #expect(editor.mireloSpendRecoveryMessage?.contains("Reopen the project to retry repair") == true)
+        #expect(editor.mireloSpendRecoveryMessage?.contains("budget remains stopped") == true)
+        #expect(editor.mireloSpendRecoveryMessage?.contains("cannot safely repair") == false)
     }
 
     @Test("project open reconciles valid authority beside orphan and conflict")
