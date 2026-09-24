@@ -81,7 +81,7 @@ enum AgentBackend: String, CaseIterable, Identifiable, Sendable {
             operations.formUnion([.resumeFromTranscript, .reportTokenUsage])
             transport = .hostRoundTrip
         case .codexAppServer:
-            operations.insert(.reportTokenUsage)
+            operations.formUnion([.resumeFromTranscript, .reportTokenUsage])
             transport = .hostRoundTrip
         }
         return AgentRuntimeDescriptor(

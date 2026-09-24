@@ -206,6 +206,7 @@ struct AgentRuntimeContractTests {
         #expect(codex.capabilities.supports(.structuredDialogs))
         #expect(codex.capabilities.supports(.approvalSuspension))
         #expect(!codex.capabilities.supports(.resumeNativeSession))
+        #expect(codex.capabilities.supports(.resumeFromTranscript))
         #expect(codex.capabilities.supports(.reportTokenUsage))
         #expect(!codex.capabilities.supports(.readProjectFiles))
         #expect(!codex.capabilities.supports(.webResearch))

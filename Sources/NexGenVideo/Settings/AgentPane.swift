@@ -231,13 +231,13 @@ struct AgentPane: View {
         VStack(spacing: AppTheme.Spacing.none) {
             SettingsRow(
                 title: "Codex App Server \(CodexAppServerContract.cliVersion)",
-                subtitle: "Cold resume cannot preserve the isolated tool surface. Personal Codex settings and chats are not loaded."
+                subtitle: "Uses a dedicated credential home and transcript replay. Personal Codex settings and chats are not loaded."
             ) {
                 SettingsStatusBadge(text: "Incompatible", tone: .warning)
             }
             SettingsDivider()
             SettingsNotice(
-                text: "Codex remains unavailable until a pinned CLI can preserve isolation across resume and its model-visible tools pass approved Actions acceptance.",
+                text: "Codex remains unavailable until configuration isolation, transcript replay, and its model-visible tools pass approved Actions acceptance. Account setup is not available in Settings.",
                 systemImage: "lock.shield",
                 tone: .neutral
             )

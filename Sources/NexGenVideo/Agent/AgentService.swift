@@ -145,14 +145,14 @@ final class AgentService {
         case .codexAppServer:
             guard CodexAppServerContract.isAcceptanceRun else {
                 return .upstream(
-                    "Codex CLI \(CodexAppServerContract.cliVersion) cannot safely restore the isolated runtime."
+                    "Codex remains unavailable until isolation and transcript replay pass approved Actions acceptance."
                 )
             }
             return CodexAppServerLocator.executable(
                 environment: ProcessInfo.processInfo.environment,
                 fileManager: .default
             ) == nil
-                ? .upstream("Install the supported Codex CLI in Agent settings.")
+                ? .upstream("Install Codex CLI \(CodexAppServerContract.cliVersion) before running the approved acceptance workflow.")
                 : nil
         }
     }
@@ -168,7 +168,7 @@ final class AgentService {
         case .claudeCode:
             return "Sign in to Claude Code in"
         case .codexAppServer:
-            return "Set up the isolated Codex account in"
+            return "Codex is not available in"
         }
     }
 
@@ -181,7 +181,7 @@ final class AgentService {
         case .claudeCode:
             return "Sign in to Claude Code to use the AI chat."
         case .codexAppServer:
-            return "Set up the isolated Codex account to use the AI chat."
+            return "Codex is not available until its isolated runtime passes approved Actions acceptance."
         }
     }
 
@@ -3317,11 +3317,14 @@ final class AgentService {
             lastRuntimeUsage = lastRuntimeUsage?.merging(usage) ?? usage
         case .error(let failure):
             if failure.kind == .authenticationRequired {
-                if backend == .claudeCode {
+                switch backend {
+                case .claudeCode:
                     requireClaudeAuthentication(for: sessionID)
-                } else {
-                    streamError = .authenticationRequired
+                case .codexAppServer:
+                    streamError = .upstream(failure.message)
                     runtimeContextSignature = nil
+                case .anthropicAPI:
+                    streamError = .upstream(failure.message)
                 }
             } else {
                 streamError = .upstream(failure.message)

@@ -31,6 +31,7 @@ jobs:
       NGV_CODEX_APP_SERVER_ACCEPTANCE: "1"
       CODEX_HOME: ${{ runner.temp }}/nexgenvideo-codex-home
       NGV_CODEX_ACCEPTANCE_EVIDENCE: ${{ runner.temp }}/codex-app-server-evidence.json
+      NGV_CODEX_HOSTILE_MCP_MARKER: ${{ runner.temp }}/foreign-mcp-started
     steps:
       - uses: actions/checkout@v4
 
@@ -80,6 +81,49 @@ jobs:
       - name: Stage test runtime inputs
         run: scripts/stage_test_runtime.sh debug
 
+      - name: Exercise real dialog and spend consumers deterministically
+        run: |
+          swift test \
+            --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
+            --skip-build \
+            --filter productConsumer
+
+      - name: Install adversarial system configuration fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e /etc/codex/config.toml
+          if test -d /etc/codex; then
+            printf '%s\n' existing > "$RUNNER_TEMP/ngv-codex-system-dir-state"
+          else
+            printf '%s\n' created > "$RUNNER_TEMP/ngv-codex-system-dir-state"
+          fi
+          sudo mkdir -p /etc/codex
+          printf '%s\n' \
+            'model_provider = "foreign"' \
+            '[mcp_servers.foreign]' \
+            'command = "/usr/bin/touch"' \
+            "args = [\"$NGV_CODEX_HOSTILE_MCP_MARKER\"]" \
+            | sudo tee /etc/codex/config.toml >/dev/null
+
+      - name: Prove hostile system configuration is rejected before side effects
+        env:
+          NGV_CODEX_HOSTILE_SYSTEM_CONFIG: "1"
+        run: |
+          swift test \
+            --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
+            --skip-build \
+            --filter hostileSystemConfigurationFailsBeforeSideEffects
+          test ! -e "$NGV_CODEX_HOSTILE_MCP_MARKER"
+
+      - name: Remove adversarial system configuration fixture
+        if: always()
+        run: |
+          sudo rm -f /etc/codex/config.toml
+          if test "$(cat "$RUNNER_TEMP/ngv-codex-system-dir-state" 2>/dev/null || true)" = created; then
+            sudo rmdir /etc/codex
+          fi
+
       - name: Run real Codex consumer smoke
         shell: bash
         run: |
@@ -98,6 +142,27 @@ jobs:
             echo "Acceptance evidence contains a forbidden sensitive field" >&2
             exit 1
           fi
+          jq -e '
+            .configuration_inventory_checks >= 2 and
+            .account_verified_before_thread == true and
+            .text == true and
+            .image_input == true and
+            .typed_image_tool_result == true and
+            .nexgen_tool_round_trip == true and
+            .warm_dialogue == true and
+            .cancel_turn_started == true and
+            .cancel_interrupted == true and
+            .process_termination_confirmed == true and
+            .scratch_removed == true and
+            .cold_resume_rejected == true and
+            .host_transcript_replay == true and
+            .phase_and_language_refresh == true and
+            .default_model_has_text_and_image == true and
+            .agent_service_consumer_exercised == true and
+            .real_tool_executor_exercised == true and
+            .two_chats_and_project_boundary == true and
+            .evidence_payload_redacted == true
+          ' "$NGV_CODEX_ACCEPTANCE_EVIDENCE" >/dev/null
 
       - name: Upload redacted evidence
         uses: actions/upload-artifact@v4

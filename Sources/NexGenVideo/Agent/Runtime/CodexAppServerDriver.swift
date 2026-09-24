@@ -13,9 +13,26 @@ enum CodexAppServerContract {
         ProcessInfo.processInfo.environment["NGV_CODEX_APP_SERVER_ACCEPTANCE"] == "1"
     }
 
-    static let isolatedConfig = """
+    static let disabledFeatures = [
+        "shell_tool", "view_image", "sleep_tool", "unified_exec", "unified_exec_tty",
+        "shell_snapshot", "unbounded_connection_retries", "deferred_executor",
+        "request_permissions_tool", "standalone_web_search", "hooks", "code_mode_host",
+        "worktrees", "multi_agent", "multi_agent_v2", "apps", "enable_mcp_apps",
+        "tool_suggest", "recommended_plugins", "plugins", "executor_capability_discovery",
+        "in_app_browser", "in_app_chat", "in_app_dictation", "in_app_local_automation",
+        "in_app_updates", "browser_use", "browser_use_full_cdp_access",
+        "browser_use_external", "computer_use", "remote_plugin", "plugin_sharing",
+        "image_generation", "send_message_to_user_async", "token_budget",
+        "current_time_reminder", "realtime_conversation", "auth_elicitation",
+        "tool_call_mcp_elicitation", "artifact", "memories", "skill_mcp_dependency_install",
+        "skill_search", "guardian_approval", "goals",
+    ]
+
+    static var isolatedConfig: String {
+        """
     cli_auth_credentials_store = "keyring"
     mcp_oauth_credentials_store = "keyring"
+    model_provider = "openai"
     approval_policy = "never"
     sandbox_mode = "read-only"
     web_search = "disabled"
@@ -45,52 +62,166 @@ enum CodexAppServerContract {
     open_world_enabled = false
 
     [features]
-    shell_tool = false
-    view_image = false
-    sleep_tool = false
-    unified_exec = false
-    unified_exec_tty = false
-    shell_snapshot = false
-    unbounded_connection_retries = false
-    deferred_executor = false
-    request_permissions_tool = false
-    standalone_web_search = false
-    hooks = false
-    code_mode_host = false
-    worktrees = false
-    multi_agent = false
-    multi_agent_v2 = false
-    apps = false
-    enable_mcp_apps = false
-    tool_suggest = false
-    recommended_plugins = false
-    plugins = false
-    executor_capability_discovery = false
-    in_app_browser = false
-    in_app_chat = false
-    in_app_dictation = false
-    in_app_local_automation = false
-    in_app_updates = false
-    browser_use = false
-    browser_use_full_cdp_access = false
-    browser_use_external = false
-    computer_use = false
-    remote_plugin = false
-    plugin_sharing = false
-    image_generation = false
-    send_message_to_user_async = false
-    token_budget = false
-    current_time_reminder = false
-    realtime_conversation = false
-    auth_elicitation = false
-    tool_call_mcp_elicitation = false
-    artifact = false
-    memories = false
-    skill_mcp_dependency_install = false
-    skill_search = false
-    guardian_approval = false
-    goals = false
-    """
+    """ + disabledFeatures.map { "\($0) = false" }.joined(separator: "\n") + "\n"
+    }
+
+    static var isolatedConfigurationLayer: [String: Any] {
+        [
+            "cli_auth_credentials_store": "keyring",
+            "mcp_oauth_credentials_store": "keyring",
+            "model_provider": "openai",
+            "approval_policy": "never",
+            "sandbox_mode": "read-only",
+            "web_search": "disabled",
+            "check_for_update_on_startup": false,
+            "analytics": ["enabled": false],
+            "feedback": ["enabled": false],
+            "otel": [
+                "log_user_prompt": false,
+                "exporter": "none",
+                "trace_exporter": "none",
+                "metrics_exporter": "none",
+            ],
+            "tools": [
+                "update_plan": ["enabled": false],
+                "experimental_request_user_input": ["enabled": false],
+            ],
+            "apps": [
+                "_default": [
+                    "enabled": false,
+                    "destructive_enabled": false,
+                    "open_world_enabled": false,
+                ],
+            ],
+            "features": Dictionary(uniqueKeysWithValues: disabledFeatures.map { ($0, false) }),
+        ]
+    }
+
+    static func validateIsolation(
+        configResponse: [String: Any],
+        requirementsResponse: [String: Any],
+        mcpResponse: [String: Any],
+        skillsResponse: [String: Any],
+        home: URL,
+        scratch: URL
+    ) throws {
+        try validateConfiguration(
+            configResponse: configResponse,
+            requirementsResponse: requirementsResponse,
+            home: home
+        )
+        try validateToolInventory(
+            mcpResponse: mcpResponse,
+            skillsResponse: skillsResponse,
+            scratch: scratch
+        )
+    }
+
+    static func validateConfiguration(
+        configResponse: [String: Any],
+        requirementsResponse: [String: Any],
+        home: URL
+    ) throws {
+        guard let layers = configResponse["layers"] as? [[String: Any]],
+              let effective = configResponse["config"] as? [String: Any],
+              let origins = configResponse["origins"] as? [String: Any] else {
+            throw CodexAppServerError.isolationViolation("Codex did not expose complete configuration layers")
+        }
+
+        let expectedConfig = home.appendingPathComponent("config.toml").standardizedFileURL
+        var userLayers = 0
+        for layer in layers {
+            guard let source = layer["name"] as? [String: Any],
+                  let type = source["type"] as? String,
+                  let raw = layer["config"] as? [String: Any] else {
+                throw CodexAppServerError.isolationViolation("Codex returned an unreadable configuration layer")
+            }
+            switch type {
+            case "packagedDefaults":
+                break
+            case "system":
+                guard raw.isEmpty else {
+                    throw CodexAppServerError.isolationViolation("System Codex configuration is active")
+                }
+            case "user":
+                userLayers += 1
+                guard source["profile"] == nil || source["profile"] is NSNull,
+                      let file = source["file"] as? String,
+                      URL(fileURLWithPath: file).standardizedFileURL == expectedConfig,
+                      equalJSON(raw, isolatedConfigurationLayer) else {
+                    throw CodexAppServerError.isolationViolation("The isolated Codex configuration was not preserved")
+                }
+            default:
+                guard raw.isEmpty else {
+                    throw CodexAppServerError.isolationViolation("Forbidden Codex configuration layer: \(type)")
+                }
+            }
+        }
+        guard userLayers == 1 else {
+            throw CodexAppServerError.isolationViolation("The isolated Codex user layer is missing")
+        }
+        for value in origins.values {
+            guard let metadata = value as? [String: Any],
+                  let source = metadata["name"] as? [String: Any],
+                  let type = source["type"] as? String else {
+                throw CodexAppServerError.isolationViolation("Codex returned unreadable configuration origins")
+            }
+            guard ["packagedDefaults", "system", "user"].contains(type) else {
+                throw CodexAppServerError.isolationViolation("Forbidden Codex configuration origin: \(type)")
+            }
+        }
+        guard effective["approval_policy"] as? String == "never",
+              effective["sandbox_mode"] as? String == "read-only",
+              effective["web_search"] as? String == "disabled",
+              effective["model_provider"] as? String == "openai",
+              isAbsentOrNull(effective["model"]),
+              isAbsentOrNull(effective["instructions"]),
+              isAbsentOrNull(effective["developer_instructions"]),
+              isAbsentOrNull(effective["browser_use"]),
+              isAbsentOrNull(effective["computer_use"]) else {
+            throw CodexAppServerError.isolationViolation(
+                "The effective Codex configuration changed the provider or capability boundary"
+            )
+        }
+        guard requirementsResponse["requirements"] == nil
+                || requirementsResponse["requirements"] is NSNull else {
+            throw CodexAppServerError.isolationViolation("Managed Codex requirements are active")
+        }
+    }
+
+    static func validateToolInventory(
+        mcpResponse: [String: Any],
+        skillsResponse: [String: Any],
+        scratch: URL
+    ) throws {
+        guard let mcpServers = mcpResponse["data"] as? [Any], mcpServers.isEmpty,
+              mcpResponse["nextCursor"] == nil || mcpResponse["nextCursor"] is NSNull else {
+            throw CodexAppServerError.isolationViolation("A foreign Codex MCP server is configured")
+        }
+        guard let skillEntries = skillsResponse["data"] as? [[String: Any]],
+              skillEntries.count == 1,
+              skillEntries.allSatisfy({ entry in
+                  entry["cwd"] as? String == scratch.path
+                      && (entry["skills"] as? [Any])?.isEmpty == true
+                      && (entry["errors"] as? [Any])?.isEmpty == true
+              }) else {
+            throw CodexAppServerError.isolationViolation("Codex skills are present or could not be enumerated")
+        }
+    }
+
+    private static func isAbsentOrNull(_ value: Any?) -> Bool {
+        value == nil || value is NSNull
+    }
+
+    private static func equalJSON(_ lhs: Any, _ rhs: Any) -> Bool {
+        guard JSONSerialization.isValidJSONObject(lhs),
+              JSONSerialization.isValidJSONObject(rhs),
+              let left = try? JSONSerialization.data(withJSONObject: lhs, options: [.sortedKeys]),
+              let right = try? JSONSerialization.data(withJSONObject: rhs, options: [.sortedKeys]) else {
+            return false
+        }
+        return left == right
+    }
 
     static func accepts(userAgent: String) -> Bool {
         userAgent.split(whereSeparator: { !$0.isNumber && $0 != "." })
@@ -123,8 +254,10 @@ enum CodexAppServerError: LocalizedError, Equatable {
     case executableUnavailable
     case incompatibleVersion(String)
     case isolatedHomeMismatch
+    case isolationViolation(String)
     case authenticationRequired
     case resumeIsolationUnavailable
+    case transcriptReplayUnavailable(String)
     case malformedMessage
     case remote(code: Int, message: String)
     case requestTimedOut(String)
@@ -139,10 +272,14 @@ enum CodexAppServerError: LocalizedError, Equatable {
             "Codex CLI \(value) is incompatible; version \(CodexAppServerContract.cliVersion) is required."
         case .isolatedHomeMismatch:
             "Codex did not honor the isolated runtime home."
+        case .isolationViolation(let detail):
+            "Codex isolation is incompatible: \(detail)."
         case .authenticationRequired:
             "Sign in to the isolated NexGenVideo Codex account before starting a turn."
         case .resumeIsolationUnavailable:
             "Codex CLI \(CodexAppServerContract.cliVersion) cannot safely restore the isolated tool surface."
+        case .transcriptReplayUnavailable(let detail):
+            "Codex cannot safely replay this chat: \(detail)."
         case .malformedMessage:
             "Codex App Server returned an invalid protocol message."
         case .remote(_, let message):
@@ -167,7 +304,6 @@ struct CodexAppServerAccountStatus: Equatable, Sendable {
     enum Billing: Equatable, Sendable {
         case apiKey
         case chatGPT(plan: String)
-        case amazonBedrock(managedCredentials: Bool)
     }
 
     let billing: Billing
@@ -179,6 +315,7 @@ protocol CodexAppServerDriving: AnyObject {
     var accountStatus: CodexAppServerAccountStatus? { get }
 
     func start(home: URL, scratch: URL) async throws
+    func verifyIsolation(home: URL, scratch: URL) async throws
     func request(method: String, params: [String: Any]) async throws -> [String: Any]
     func respond(id: Any, result: [String: Any]) throws
     func respond(id: Any, errorCode: Int, message: String) throws
@@ -207,6 +344,14 @@ final class CodexAppServerJSONRPCDriver: CodexAppServerDriving {
     private var pending: [Int: Pending] = [:]
     private var nextRequestID = 1
     private var didClose = false
+    private var ownedScratch: URL?
+    private var terminationOwner: CodexAppServerJSONRPCDriver?
+    private var terminationWaiters: [CheckedContinuation<Void, Never>] = []
+    private(set) var requestedMethods: [String] = []
+    private(set) var observedTurnStartedIDs: Set<String> = []
+    private(set) var observedInterruptedTurnIDs: Set<String> = []
+    private(set) var sentTypedImageToolResult = false
+    private(set) var terminationConfirmed = false
 
     init(
         fileManager: FileManager = .default,
@@ -244,8 +389,8 @@ final class CodexAppServerJSONRPCDriver: CodexAppServerDriving {
             home: home,
             scratch: scratch
         )
-        process.terminationHandler = { [weak self] _ in
-            Task { @MainActor in self?.transportClosed() }
+        process.terminationHandler = { [weak self] process in
+            Task { @MainActor in self?.processDidTerminate(process) }
         }
         output.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
@@ -254,11 +399,14 @@ final class CodexAppServerJSONRPCDriver: CodexAppServerDriving {
         errors.fileHandleForReading.readabilityHandler = { handle in
             _ = handle.availableData
         }
+        terminationOwner = self
         do {
             try process.run()
         } catch {
+            terminationOwner = nil
             output.fileHandleForReading.readabilityHandler = nil
             errors.fileHandleForReading.readabilityHandler = nil
+            cleanupScratch()
             throw CodexAppServerError.launchFailed(error.localizedDescription)
         }
         self.process = process
@@ -266,48 +414,77 @@ final class CodexAppServerJSONRPCDriver: CodexAppServerDriving {
         stdout = output.fileHandleForReading
         stderr = errors.fileHandleForReading
 
-        let initialize = try await request(method: "initialize", params: [
-            "clientInfo": ["name": "NexGenVideo", "version": "1"],
-            "capabilities": ["experimentalApi": true],
-        ])
-        guard let userAgent = initialize["userAgent"] as? String else {
-            throw CodexAppServerError.malformedMessage
-        }
-        guard CodexAppServerContract.accepts(userAgent: userAgent) else {
-            throw CodexAppServerError.incompatibleVersion(userAgent)
-        }
-        guard let reportedHome = initialize["codexHome"] as? String,
-              URL(fileURLWithPath: reportedHome).standardizedFileURL == home.standardizedFileURL else {
-            throw CodexAppServerError.isolatedHomeMismatch
-        }
-        try send(["method": "initialized", "params": [:]])
-
-        let account = try await request(method: "account/read", params: ["refreshToken": false])
-        if account["requiresOpenaiAuth"] as? Bool == true, account["account"] is NSNull {
-            throw CodexAppServerError.authenticationRequired
-        }
-        guard let details = account["account"] as? [String: Any],
-              let type = details["type"] as? String else {
-            throw CodexAppServerError.authenticationRequired
-        }
-        switch type {
-        case "apiKey":
-            accountStatus = .init(billing: .apiKey)
-        case "chatgpt":
-            guard let plan = details["planType"] as? String else {
+        do {
+            let initialize = try await request(method: "initialize", params: [
+                "clientInfo": ["name": "NexGenVideo", "version": "1"],
+                "capabilities": ["experimentalApi": true],
+            ])
+            guard let userAgent = initialize["userAgent"] as? String else {
                 throw CodexAppServerError.malformedMessage
             }
-            accountStatus = .init(billing: .chatGPT(plan: plan))
-        case "amazonBedrock":
-            accountStatus = .init(billing: .amazonBedrock(
-                managedCredentials: details["usesCodexManagedCredentials"] as? Bool ?? false
-            ))
-        default:
-            throw CodexAppServerError.malformedMessage
+            guard CodexAppServerContract.accepts(userAgent: userAgent) else {
+                throw CodexAppServerError.incompatibleVersion(userAgent)
+            }
+            guard let reportedHome = initialize["codexHome"] as? String,
+                  URL(fileURLWithPath: reportedHome).standardizedFileURL == home.standardizedFileURL else {
+                throw CodexAppServerError.isolatedHomeMismatch
+            }
+            try send(["method": "initialized", "params": [:]])
+            try await verifyIsolation(home: home, scratch: scratch)
+
+            let account = try await request(method: "account/read", params: ["refreshToken": false])
+            if account["requiresOpenaiAuth"] as? Bool == true, account["account"] is NSNull {
+                throw CodexAppServerError.authenticationRequired
+            }
+            guard let details = account["account"] as? [String: Any],
+                  let type = details["type"] as? String else {
+                throw CodexAppServerError.authenticationRequired
+            }
+            switch type {
+            case "apiKey":
+                accountStatus = .init(billing: .apiKey)
+            case "chatgpt":
+                guard let plan = details["planType"] as? String else {
+                    throw CodexAppServerError.malformedMessage
+                }
+                accountStatus = .init(billing: .chatGPT(plan: plan))
+            default:
+                throw CodexAppServerError.isolationViolation("The account selected a non-OpenAI provider")
+            }
+        } catch {
+            stop()
+            throw error
         }
     }
 
+    func verifyIsolation(home: URL, scratch: URL) async throws {
+        let config = try await request(method: "config/read", params: [
+            "cwd": scratch.path,
+            "includeLayers": true,
+        ])
+        let requirements = try await request(method: "configRequirements/read", params: [:])
+        try CodexAppServerContract.validateConfiguration(
+            configResponse: config,
+            requirementsResponse: requirements,
+            home: home
+        )
+        let mcp = try await request(method: "mcpServerStatus/list", params: [
+            "detail": "toolsAndAuthOnly",
+            "limit": 100,
+        ])
+        let skills = try await request(method: "skills/list", params: [
+            "cwds": [scratch.path],
+            "forceReload": true,
+        ])
+        try CodexAppServerContract.validateToolInventory(
+            mcpResponse: mcp,
+            skillsResponse: skills,
+            scratch: scratch
+        )
+    }
+
     func request(method: String, params: [String: Any]) async throws -> [String: Any] {
+        requestedMethods.append(method)
         let id = nextRequestID
         nextRequestID += 1
         return try await withCheckedThrowingContinuation { continuation in
@@ -327,6 +504,10 @@ final class CodexAppServerJSONRPCDriver: CodexAppServerDriving {
     }
 
     func respond(id: Any, result: [String: Any]) throws {
+        if let content = result["contentItems"] as? [[String: Any]],
+           content.contains(where: { $0["type"] as? String == "inputImage" }) {
+            sentTypedImageToolResult = true
+        }
         try send(["id": id, "result": result])
     }
 
@@ -347,20 +528,38 @@ final class CodexAppServerJSONRPCDriver: CodexAppServerDriving {
             finishPending(with: CodexAppServerError.transportClosed)
             eventContinuation.finish()
         }
-        process = nil
         stdin = nil
         stdout = nil
         stderr = nil
+        if process?.isRunning != true {
+            finalizeTermination()
+        }
+    }
+
+    func waitForTermination() async {
+        if terminationConfirmed || process == nil { return }
+        await withCheckedContinuation { continuation in
+            terminationWaiters.append(continuation)
+        }
     }
 
     private func prepare(home: URL, scratch: URL) throws {
-        try fileManager.createDirectory(at: home, withIntermediateDirectories: true)
-        try fileManager.createDirectory(at: scratch, withIntermediateDirectories: true)
-        let config = home.appendingPathComponent("config.toml")
-        try Data(CodexAppServerContract.isolatedConfig.utf8).write(to: config, options: .atomic)
-        try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: home.path)
-        try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: scratch.path)
-        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: config.path)
+        guard !fileManager.fileExists(atPath: scratch.path) else {
+            throw CodexAppServerError.launchFailed("The runtime scratch directory already exists")
+        }
+        do {
+            try fileManager.createDirectory(at: home, withIntermediateDirectories: true)
+            try fileManager.createDirectory(at: scratch, withIntermediateDirectories: true)
+            ownedScratch = scratch
+            let config = home.appendingPathComponent("config.toml")
+            try Data(CodexAppServerContract.isolatedConfig.utf8).write(to: config, options: .atomic)
+            try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: home.path)
+            try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: scratch.path)
+            try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: config.path)
+        } catch {
+            cleanupScratch()
+            throw error
+        }
     }
 
     private func receive(_ data: Data) {
@@ -415,6 +614,16 @@ final class CodexAppServerJSONRPCDriver: CodexAppServerDriving {
             throw CodexAppServerError.malformedMessage
         }
         let params = object["params"] as? [String: Any] ?? [:]
+        if method == "turn/started",
+           let turn = params["turn"] as? [String: Any],
+           let turnID = turn["id"] as? String {
+            observedTurnStartedIDs.insert(turnID)
+        } else if method == "turn/completed",
+                  let turn = params["turn"] as? [String: Any],
+                  turn["status"] as? String == "interrupted",
+                  let turnID = turn["id"] as? String {
+            observedInterruptedTurnIDs.insert(turnID)
+        }
         if let id = object["id"] {
             eventContinuation.yield(.request(id: id, method: method, params: params))
         } else {
@@ -451,10 +660,38 @@ final class CodexAppServerJSONRPCDriver: CodexAppServerDriving {
         finishPending(with: CodexAppServerError.transportClosed)
         eventContinuation.yield(.closed(.transportClosed))
         eventContinuation.finish()
-        process = nil
         stdin = nil
         stdout = nil
         stderr = nil
+        if process?.isRunning != true {
+            finalizeTermination()
+        }
+    }
+
+    private func processDidTerminate(_ terminatedProcess: Process) {
+        if process === terminatedProcess {
+            process = nil
+        }
+        if !didClose {
+            transportClosed()
+        }
+        finalizeTermination()
+    }
+
+    private func finalizeTermination() {
+        guard !terminationConfirmed else { return }
+        terminationConfirmed = true
+        cleanupScratch()
+        let waiters = terminationWaiters
+        terminationWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+        terminationOwner = nil
+    }
+
+    private func cleanupScratch() {
+        guard let scratch = ownedScratch else { return }
+        ownedScratch = nil
+        try? fileManager.removeItem(at: scratch)
     }
 
     private func finishPending(with error: Error) {
@@ -468,10 +705,12 @@ final class CodexAppServerJSONRPCDriver: CodexAppServerDriving {
 
     private static func terminate(_ process: Process) {
         process.terminate()
-        Task { @MainActor [weak process] in
+        Task { @MainActor [process] in
             try? await Task.sleep(for: .seconds(2))
-            guard let process, process.isRunning else { return }
-            kill(process.processIdentifier, SIGKILL)
+            guard process.isRunning else { return }
+            let pid = process.processIdentifier
+            guard pid > 1 else { return }
+            kill(pid, SIGKILL)
         }
     }
 }

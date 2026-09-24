@@ -348,6 +348,25 @@ struct AgentServiceRuntimeContractTests {
         #expect(service.streamError == nil)
     }
 
+    @Test("Anthropic API authentication failures preserve the API error")
+    func anthropicAuthenticationFailureIsNotRelabeledAsClaudeCode() async throws {
+        let adapter = FakeRuntimeAdapter(backend: .anthropicAPI)
+        let service = makeService(backend: .anthropicAPI, adapter: adapter)
+
+        #expect(service.send(text: "Start", mentions: []))
+        await waitUntil { adapter.sendRequests.count == 1 }
+        let turn = try #require(adapter.sendRequests.first)
+        adapter.emit(.error(.init(
+            kind: .authenticationRequired,
+            message: "Anthropic API rejected the configured key."
+        )), for: turn)
+        adapter.emit(.terminal(.failed), for: turn)
+        adapter.finish(turn)
+        await waitUntil { !service.isStreaming }
+
+        #expect(service.streamError?.errorDescription == "Anthropic API rejected the configured key.")
+    }
+
     @Test("writer host state preserves one tool result and rich follow-up on both backends")
     func writerHostStateKeepsCanonicalHistory() async throws {
         for backend in AgentBackend.allCases {
@@ -1201,6 +1220,7 @@ struct AgentServiceRuntimeContractTests {
         case .codexAppServer:
             #expect(descriptor.toolExecutionTransport == .hostRoundTrip)
             #expect(!descriptor.capabilities.supports(.resumeNativeSession))
+            #expect(descriptor.capabilities.supports(.resumeFromTranscript))
             #expect(descriptor.capabilities.supports(.reportTokenUsage))
             #expect(!descriptor.capabilities.supports(.reportCostUsage))
             #expect(!descriptor.capabilities.supports(.readProjectFiles))
