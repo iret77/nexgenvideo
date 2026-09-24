@@ -1788,6 +1788,7 @@ enum MusicvideoGateChecks {
     /// `brief`: a schema-valid brief.yaml (decode enforces the whole Brief contract, incl. budget and
     /// visual-medium-notes rules) plus a concrete target platform.
     static func requireRealBrief(dataRoot: URL) throws {
+        try MusicAffectEvidenceV1.requireCurrent(dataRoot: dataRoot)
         let brief: Brief
         do {
             brief = try YAMLArtifactStore(dataRoot: dataRoot).load(Brief.self, at: PipelineLayout.briefFile)
@@ -2290,6 +2291,7 @@ enum MusicvideoGateChecks {
         guard !treatment.meta.summaryOneline.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw GateBlocked("Can't approve \"treatment\": its one-line summary is empty.")
         }
+        try MusicAffectEvidenceV1.requireTreatment(treatment.bodyMarkdown, dataRoot: dataRoot)
         guard !treatment.bodyMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw GateBlocked("Can't approve \"treatment\": the treatment body is empty — write it.")
         }

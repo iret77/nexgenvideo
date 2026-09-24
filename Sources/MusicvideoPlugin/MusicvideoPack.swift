@@ -33,7 +33,7 @@ public struct MusicDurationPolicy: DurationPolicy {
 
 public struct MusicvideoPack: Pack, PackResourceRootProviding {
     public let name = "musicvideo"
-    public let version = "0.5.8"
+    public let version = "0.6.0"
 
     static let productionProfiles: [ProductionProfile] = [
         StandardProductionProfiles.generativeFilm,

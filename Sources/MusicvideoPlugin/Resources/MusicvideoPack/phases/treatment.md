@@ -1,5 +1,15 @@
 # Phase K3 — Treatment
 
+Read the approved Brief's section affect evidence through `show_artifact(gate="brief")`.
+Develop a concrete visual decision from each section's `visual_direction`, including for
+abstract concepts. Desired video affect (explicit user override) wins; keep detected song
+affect, supporting/conflicting signals and uncertainty visible. `write_treatment` adds the
+current exact evidence block to the canonical treatment; implement those decisions in the
+body, not merely in a mood label. Do not invent section timing, normalize raw RMS, or treat
+this structural record as a subjective creative-quality PASS. Record an attributed creative
+review separately in the treatment prose. A changed choice needs an explicit Brief rewind;
+no downstream tool rewrites affect. Legacy projects without the extension remain readable.
+
 `write_treatment` requires `causality_plan`, indexed by stable beat/scene IDs and exact excerpts of `body_markdown`. Separate presentation order from story chronology. Link visible causes, state changes, introduced elements and payoffs; record all eight attributed change-review answers and affected downstream beats. Unresolved canon alternatives may remain in a draft but block approval. Use the approved concept type: abstract and performance work need not invent a causal plot. Read the complete causal-change procedure through `get_production_knowledge`; do not replace it with a three-act template or another startup interview.
 
 > **Orchestrator instruction (main-session context).** Never spawn this

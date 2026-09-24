@@ -6,7 +6,7 @@ struct ProductionProfileTests {
     @Test("engine feature version reflects production profiles")
     func engineVersion() {
         #expect(NexGenEngine.version == "0.3.0")
-        #expect(EngineContract.current == 9)
+        #expect(EngineContract.current == 10)
         #expect(EngineContract.minimumCompatible == 2)
     }
 

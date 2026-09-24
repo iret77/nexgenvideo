@@ -40,6 +40,7 @@ enum PipelineMusicvideoProductionWriter {
             )
         }
         try MusicvideoProductionValidatorV1.validate(draft)
+        try MusicAffectEvidenceV1.requireVisualArc(draft.visualArc, shotlist: shotlist, dataRoot: dataRoot)
         let shotIDs = Set(shotlist.shots.map(\.id))
         let sectionIDs = Set(shotlist.shots.compactMap(\.section))
         let inputs = Dictionary(uniqueKeysWithValues: executionInputs.map { ($0.id, $0) })
@@ -218,6 +219,7 @@ enum PipelineMusicvideoProductionWriter {
             coverage: coverage.items
         )
         try MusicvideoProductionValidatorV1.validate(draft)
+        try MusicAffectEvidenceV1.requireVisualArc(draft.visualArc, shotlist: shotlist, dataRoot: dataRoot)
         for segment in performance.segments {
             let url = try ProjectLocalFile.requireHash(
                 segment.segmentSHA256,

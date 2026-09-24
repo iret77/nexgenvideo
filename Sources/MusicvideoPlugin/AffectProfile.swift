@@ -24,7 +24,7 @@ public struct AffectProfile: Codable, Sendable, Equatable {
     /// One line on what drove the detection (the audio + lyric evidence), so a later reader can see why
     /// the pattern selection came out as it did.
     public var rationale: String
-    /// `measured` when the read leans on the DSP analysis, `inferred` when it leans on the lyrics/context.
+    /// Emotional meaning is inferred; legacy basis values remain readable without reclassifying source signals.
     public var basis: EvidenceBasis
 
     public init(
@@ -72,6 +72,18 @@ public struct AffectProfile: Codable, Sendable, Equatable {
     }
 
     public func save(dataRoot: URL) throws {
+        let url = PipelineLayout.url(Self.file, in: dataRoot)
+        if FileManager.default.fileExists(atPath: url.path) {
+            let data = try Data(contentsOf: ProjectLocalFile.resolve(Self.file, dataRoot: dataRoot))
+            if let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+               object[MusicAffectEvidenceV1.key] != nil {
+                guard try JSONDecoder().decode(Self.self, from: data) == self else {
+                    throw GateBlocked("Use record_affect to change versioned affect evidence and its user override.")
+                }
+                try MusicAffectEvidenceV1.validateProfile(object, dataRoot: dataRoot)
+                return
+            }
+        }
         try JSONArtifactStore(dataRoot: dataRoot).save(self, to: Self.file)
     }
 }

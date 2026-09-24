@@ -287,10 +287,15 @@ extension ToolExecutor {
         } catch {
             throw ToolError("Treatment rejected: \(error)")
         }
-        let body = try args.requireString("body_markdown")
+        var body = try args.requireString("body_markdown")
         guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ToolError("Treatment rejected: body_markdown is empty.")
         }
+        try MusicAffectEvidenceV1.requireCurrent(dataRoot: root)
+        if let affect = try MusicAffectEvidenceV1.presentation(dataRoot: root) {
+            if !body.contains(affect) { body += "\n\n" + affect }
+        }
+        try MusicAffectEvidenceV1.requireTreatment(body, dataRoot: root)
         let treatment = Treatment(meta: meta, bodyMarkdown: body)
         let url: URL
         do {

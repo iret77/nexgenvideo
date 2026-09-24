@@ -44,9 +44,27 @@ public struct MusicvideoPatternProvider: PatternProviding {
         let options = (try? JSONDecoder().decode(Options.self, from: optionsJSON))
             ?? Options(projectProfile: nil, perceivedBpm: nil, matchMode: nil, excludedPatternIds: nil, maxResults: nil)
         let brief = try? JSONDecoder().decode(Brief.self, from: briefJSON)
+        var projectOverride = options.projectProfile
+        if projectOverride == nil, let brief,
+           let wire = try? JSONSerialization.jsonObject(with: optionsJSON) as? [String: Any],
+           let profile = wire["affect_profile"] as? [String: Any],
+           let confidence = MusicAffectEvidenceV1.confidence(profile) {
+            var project = ProjectProfileAssembler.assemble(
+                brief: brief, perceivedBpm: options.perceivedBpm,
+                matchMode: options.matchMode ?? .balanced,
+                excludedPatternIds: options.excludedPatternIds ?? [], affectProfile: options.affectProfile)
+            if options.affectProfile?.isOverridden != true {
+                if options.affectProfile?.effective.isEmpty != false {
+                    project.creative.affects = nil
+                } else {
+                    project.creative.affects?.confidence = min(0.7, max(0, confidence))
+                }
+            }
+            projectOverride = project
+        }
         do {
             let (set, coverage) = try PatternFitLibrary.recommend(
-                brief: brief, projectOverride: options.projectProfile, perceivedBpm: options.perceivedBpm,
+                brief: brief, projectOverride: projectOverride, perceivedBpm: options.perceivedBpm,
                 matchMode: options.matchMode ?? .balanced, excludedPatternIds: options.excludedPatternIds ?? [],
                 maxResults: options.maxResults, affectProfile: options.affectProfile)
             return try rankedEnvelope(set: set, coverage: coverage)

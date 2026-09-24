@@ -343,10 +343,38 @@ explain the affected approvals and use an explicit rewind before rewriting it.
        (if present). Do NOT match trigger words over the tone tags —
        that keyword heuristic is exactly what the deterministic
        pattern-fit contract retired. Record it with
-       `record_affect(detected=[{tag, weight}, …], rationale=…)`; it
-       answers the `affect_energy` axis for the ranking. If the user
+       `record_affect` with `detected`, `rationale` and the versioned
+       `harmonic_evidence` envelope; it answers the `affect_energy` axis.
+       First read `show_artifact(gate="analysis")`: its section evidence
+       names exact approved indices/bounds and available signal families.
+       Cover every measured section. Compare local chord progression and
+       derived change rate with perceived tempo, beats, raw dynamics and
+       any reliable aligned lyrics; cite approved interpretation as
+       `context`, never as an independent measurement. Do not infer
+       instrumentation from stem names or onset density from BPM. Missing
+       provider evidence is normal; Mirelo is optional, never a prerequisite.
+       Interpret tension, resolution and suspected modulation explicitly as
+       inference, preserving unreliable key estimates and disagreements.
+       Major does not imply happy; minor does not imply sad. Correlated
+       signals do not increase certainty. Confidence is at most 0.7.
+       Each section records detected tags, support/conflicts, harmonic
+       interpretation, uncertainty and a concrete `visual_direction`.
+       With insufficient evidence use no tags, confidence zero and an
+       `abstention_reason`; a wholly undetermined track has no detected
+       tags and zero summary confidence. No lyrics-derived time boundaries.
+       Begin each visual direction with its effective desired tags in order
+       (comma-separated) and `: `, then describe a concrete image/motion/
+       color decision. Without an override use that section's detected tags,
+       or `undetermined: ` when abstaining. With an override use its tags
+       for every section while retaining the original detected interpretation.
+       Inspect the returned source facts; explain supports, conflicts and
+       uncertainty through the existing native result surface. The creative
+       quality needs an attributed review, not a deterministic quality score.
+       If the user
        wants a **deliberately contrary mood** (a happy song cut dark)
-       or the read is wrong, record it as `override` and show them
+       or the read is wrong, use `override_action="set"` with `override`
+       and `override_reason`. Omission preserves a prior override; clearing
+       it requires `override_action="clear"` and the user's reason. Show them
        "detected X → set Y". Then **generate suggestions** from the
        pattern library, scored by the brief context: `visual_medium`,
        the recorded affect, perceived BPM (from analysis), concept type,

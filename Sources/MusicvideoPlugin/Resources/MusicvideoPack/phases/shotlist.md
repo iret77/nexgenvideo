@@ -1,5 +1,15 @@
 # Phase K7 — Shotlist
 
+When the approved affect record carries harmonic evidence, each Visual Arc section's
+`visual_function` must include verbatim the `visual_direction` for every measured affect
+section overlapped by its shots. This carries the effective desired affect and a concrete
+visual decision into the prompt compiler, including abstract motion/light/color decisions.
+Keep detected song mood distinct from an explicit contrary user intent; do not replace the
+latter with the former. Use the existing approved shot/section timing, never new mood timing.
+The host writer and independent gate reject omitted, changed or stale decisions. Missing
+optional instrumentation/onset/provider evidence stays missing. Legacy projects without the
+affect extension keep their existing contract; they are not silently rewritten.
+
 For a causality-bound Storyboard, every `execution_shots` item names its approved `storyboard_step_ids`. Preserve complete step coverage across the Shot List, including imported sources. The host binds exact Treatment/Storyboard causality bytes to the execution plan and independently rechecks coverage before approval. Mapping an ID does not prove that an image depicts the intended action; actual take and sequence review remain necessary.
 
 > **Orchestrator instruction (main-session context).** Never spawn this

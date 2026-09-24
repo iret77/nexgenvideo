@@ -264,12 +264,8 @@ extension ToolExecutor {
         if let mode = args["match_mode"] as? String { options["match_mode"] = mode }
         if let excluded = args["excluded_pattern_ids"] as? [String] { options["excluded_pattern_ids"] = excluded }
         if let top = args["top"] as? Int { options["max_results"] = top }
-        // #214: forward the recorded affect detection/override so the affect axis comes from audio +
-        // lyrics, not the brief tone-tag map. Pure passthrough — the host never interprets the affect
-        // vocabulary (a pack concern); it hands the pack the bytes it wrote. Absent → assembler falls back.
-        if let affectData = try? Data(contentsOf: PipelineLayout.url(Self.affectFile, in: root)),
-           let affectObj = try? JSONSerialization.jsonObject(with: affectData) {
-            options["affect_profile"] = affectObj
+        if let profile = try MusicAffectEvidenceV1.read(dataRoot: root) {
+            options["affect_profile"] = profile
         }
         let optionsJSON = try JSONSerialization.data(withJSONObject: options)
         let data = try provider.recommend(briefJSON: briefJSON, optionsJSON: optionsJSON)
@@ -281,59 +277,18 @@ extension ToolExecutor {
     /// the pack. Kept next to `analysis/` the pack owns.
     static let affectFile = "analysis/affect.json"
 
-    /// #214 — persist the affect the agent read from the audio analysis + lyrics, so the pattern-fit
-    /// `affect_energy` axis comes from the signal and the text, not the brief's tone-tag lookup. `detected`
-    /// is the automatic read; `override` is the user's deliberate correction (kept alongside, never erasing
-    /// the detection — a deliberately contrary mood is a legitimate directing choice). The agent does the
-    /// inference; this tool only records it, schema-validated against the affect vocabulary.
     func recordAffectTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
-
-        // A tag carries signal only with a positive weight (the affect axis is a weighted mean), so a
-        // zero/negative-weight entry is rejected rather than persisted — it would otherwise count as a
-        // present-but-unscorable affect and shadow the tone-tag fallback.
-        func weighted(_ key: String) throws -> [[String: Any]] {
-            guard let raw = args[key] as? [[String: Any]] else { return [] }
-            var out: [[String: Any]] = []
-            for entry in raw {
-                guard let tag = entry["tag"] as? String, !tag.isEmpty else {
-                    throw ToolError("Each \(key) entry needs a 'tag' (an affect from the enum).")
-                }
-                let weight = (entry["weight"] as? Double) ?? (entry["weight"] as? Int).map(Double.init) ?? 1.0
-                guard weight > 0 else {
-                    throw ToolError("\(key) tag '\(tag)' has weight \(weight) — weights must be positive (they are relative strengths).")
-                }
-                out.append(["value": tag, "weight": weight])
-            }
-            return out
-        }
-
-        let detected = try weighted("detected")
-        guard !detected.isEmpty else {
-            throw ToolError("record_affect needs at least one 'detected' affect {tag, weight}.")
-        }
-        var profile: [String: Any] = [
-            "detected": detected,
-            "rationale": args.string("rationale") ?? "",
-            "basis": args.string("basis") ?? "inferred",
-        ]
-        // An empty override is not a correction — omit it so it never reads as one.
-        let override = try weighted("override")
-        if !override.isEmpty { profile["override"] = override }
-
-        let data = try JSONSerialization.data(withJSONObject: profile, options: [.prettyPrinted, .sortedKeys])
-        let url = PipelineLayout.url(Self.affectFile, in: root)
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try data.write(to: url, options: .atomic)
-
-        let overrode = profile["override"] != nil
-        return try jsonResult([
+        let profile = try PipelineAffectWriter.write(args, dataRoot: root)
+        var result: [String: Any] = [
             "recorded": true,
-            "overridden": overrode,
-            "note": overrode
-                ? "Override recorded — pattern-fit will use the set affect, not the detected one. Show the user 'detected X → set Y' so the choice stays legible."
-                : "Detection recorded — it answers the affect_energy axis for suggest_patterns. The user can override it.",
-        ])
+            "overridden": profile["override"] != nil,
+            "profile": profile,
+        ]
+        if let presentation = try MusicAffectEvidenceV1.presentation(dataRoot: root) {
+            result["review"] = presentation
+        }
+        return try jsonResult(result)
     }
 
     /// #247 — write `brief.yaml` through the real engine `Brief` decoder + `validate()`, not freeform

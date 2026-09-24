@@ -1158,43 +1158,8 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .recordAffect,
-            description: "Record the track's emotional register (affect) that YOU read from the audio analysis (BPM, key/mode, energy curve, section dynamics — already computed) plus the lyrics. This answers the pattern-fit `affect_energy` axis from the signal and the text, NOT from a keyword table — so do the reading yourself, don't match trigger words. `detected` is your automatic read; pass `override` ONLY to record a deliberate user correction, including a purposely contrary mood (a happy song cut dark) — a legitimate directing choice the detection can't anticipate. When you set an override, show the user 'detected X → set Y' so the choice stays legible. Call this once affect is knowable (after analysis, with lyrics if present) and before suggest_patterns, which consumes it. WRITES.",
-            inputSchema: objectSchema(
-                properties: [
-                    "detected": [
-                        "type": "array",
-                        "minItems": 1,
-                        "description": "Weighted affect tags you inferred from audio + lyrics. Weights need not sum to 1; they are relative.",
-                        "items": [
-                            "type": "object",
-                            "additionalProperties": false,
-                            "properties": [
-                                "tag": ["type": "string", "enum": AffectTagVocabulary.all,
-                                        "description": "One affect from the fixed vocabulary."],
-                                "weight": ["type": "number", "description": "Relative strength of this affect (default 1)."],
-                            ],
-                            "required": ["tag"],
-                        ],
-                    ],
-                    "override": [
-                        "type": "array",
-                        "description": "The user's deliberate override, same shape as detected. Omit unless the user corrected or deliberately contradicted the detection.",
-                        "items": [
-                            "type": "object",
-                            "additionalProperties": false,
-                            "properties": [
-                                "tag": ["type": "string", "enum": AffectTagVocabulary.all],
-                                "weight": ["type": "number"],
-                            ],
-                            "required": ["tag"],
-                        ],
-                    ],
-                    "rationale": ["type": "string", "description": "One line on the audio + lyric evidence behind the read (kept for later legibility)."],
-                    "basis": ["type": "string", "enum": ["measured", "documented", "inferred"], "description": "measured when the read leans on the DSP analysis, inferred when on lyrics/context (default inferred)."],
-                    "project_dir": ["type": "string", "description": "Optional pipeline data root; omit to use the open project."],
-                ],
-                required: ["detected"]
-            )
+            description: "Record bounded emotional inference from the approved local analysis, section by section. The host binds exact source bytes and measured section bounds; cite only available harmony/key/rhythm/energy/aligned-lyrics signals. Missing instrumentation, onset or provider evidence must stay unavailable. Compare progression and tension with dynamics; no major=happy/minor=sad rule or normalized raw RMS. Empty detected plus abstention_reason permits abstention. Each inference confidence is at most 0.7; agreement of correlated signals is not independent certainty. harmonic_evidence keeps support, conflicts, uncertainty and a concrete visual_direction for Treatment/Visual Arc. Keep detected song mood distinct from desired video mood. override_action=set/clear requires an explicit user choice; omission preserves prior override. Show detected → desired with the reason. WRITES only in Brief before suggest_patterns.",
+            inputSchema: AffectEvidenceWriteContract.schema
         ),
         AgentTool(
             name: .getPattern,

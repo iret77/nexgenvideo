@@ -334,6 +334,7 @@ enum MusicvideoProductionGate {
                 coverage: coverage.items
             )
             try MusicvideoProductionValidatorV1.validate(draft)
+            try MusicAffectEvidenceV1.requireVisualArc(draft.visualArc, shotlist: shotlist, dataRoot: dataRoot)
             let executionByID = Dictionary(uniqueKeysWithValues:
                 executionPlan.shots.map { ($0.id, $0) }
             )

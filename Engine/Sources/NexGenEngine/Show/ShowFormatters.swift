@@ -78,6 +78,9 @@ enum ShowFormatters {
             lines.append("**Notes:**")
             lines.append(notes.trimmingCharacters(in: .whitespacesAndNewlines))
         }
+        if let affect = try MusicAffectEvidenceV1.presentation(dataRoot: dataRoot) {
+            lines += ["", affect]
+        }
         return lines.joined(separator: "\n")
     }
 
@@ -367,11 +370,8 @@ enum ShowFormatters {
         guard FileManager.default.fileExists(atPath: anaDir.path, isDirectory: &isDir), isDir.boolValue else {
             return "_No analysis/ directory exists — analysis has not run._"
         }
-        let entries = (try? FileManager.default.contentsOfDirectory(at: anaDir, includingPropertiesForKeys: nil)) ?? []
-        let candidates = entries
-            .filter { $0.pathExtension == "json" && !$0.lastPathComponent.hasPrefix("_") }
-            .sorted { $0.lastPathComponent < $1.lastPathComponent }
-        guard let first = candidates.first else {
+        guard let expected = AudioProjectLayout.expectedAnalysisArtifactURL(dataRoot: dataRoot),
+              let first = try? ProjectLocalFile.resolve("analysis/" + expected.lastPathComponent, dataRoot: dataRoot) else {
             return "_No analysis/<song>.json exists — run audio analysis._"
         }
         guard let raw = try? Data(contentsOf: first),
@@ -488,6 +488,13 @@ enum ShowFormatters {
             lines.append("")
         }
 
+        do {
+            let source = try MusicAffectEvidenceV1.sourceSnapshot(dataRoot: dataRoot)
+            let json = String(decoding: try MusicAffectEvidenceV1.canonical(source), as: UTF8.self)
+            lines += ["### Section evidence for affect interpretation", "", "```json", json, "```", ""]
+        } catch {
+            lines += ["Section affect evidence unavailable: \(error)", ""]
+        }
         return lines.joined(separator: "\n")
     }
 
