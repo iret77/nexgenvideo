@@ -60,10 +60,17 @@ struct ProvidersPane: View {
         SettingsCard {
             providerHeader(provider)
             SettingsDivider()
-            switch primaryStyle(provider) {
-            case .oauth: oauthControl(provider)
-            case .localApp: localAppControl(provider)
-            case .apiKey: keyField(provider)
+            if provider == .higgsfield {
+                SettingsRow(title: "API", subtitle: "Separate API balance. Enter KEY_ID:KEY_SECRET.") {}
+                keyField(provider)
+                SettingsDivider()
+                oauthControl(provider)
+            } else {
+                switch primaryStyle(provider) {
+                case .oauth: oauthControl(provider)
+                case .localApp: localAppControl(provider)
+                case .apiKey: keyField(provider)
+                }
             }
             if let err = errorText[provider.id] {
                 SettingsDivider()
@@ -82,6 +89,7 @@ struct ProvidersPane: View {
     }
 
     private func isReady(_ p: GenerationProvider) -> Bool {
+        if p == .higgsfield { return connectionState(p).hasKey || connectionState(p).oauthConnected }
         switch primaryStyle(p) {
         case .oauth:
             switch catalog.providerDiscovery[p] {
@@ -108,7 +116,7 @@ struct ProvidersPane: View {
     private func linkButton(_ provider: GenerationProvider) -> some View {
         Button(action: { NSWorkspace.shared.open(provider.keysURL) }) {
             HStack(spacing: AppTheme.Spacing.xxs) {
-                Text(primaryStyle(provider) == .apiKey ? "Get key" : "Website")
+                Text(provider.supportsDirectAPI ? "Get key" : "Website")
                 Image(systemName: "arrow.up.right").interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
             }
             .interfaceFont(size: AppTheme.Typography.ui)
@@ -122,31 +130,42 @@ struct ProvidersPane: View {
         let ready = isReady(provider)
         let label: String
         let tone: SettingsTone
-        switch primaryStyle(provider) {
-        case .oauth:
+        if provider == .higgsfield {
             switch catalog.providerDiscovery[provider] {
             case .checking: (label, tone) = ("Checking…", .neutral)
-            case .actionRequired: (label, tone) = ("Sign in again", .warning)
-            case .unavailable: (label, tone) = ("Connection failed", .error)
+            case .ready: (label, tone) = ("Connected", .success)
             case .stale: (label, tone) = ("Refresh pending", .warning)
-            case .ready: (label, tone) = ("Signed in", .success)
-            case .inactive, .none:
-                (label, tone) = ready ? ("Signed in", .success) : ("Not configured", .neutral)
+            case .actionRequired: (label, tone) = ("Check credentials", .warning)
+            case .unavailable: (label, tone) = ("Connection failed", .error)
+            case .inactive, .none: (label, tone) = ready ? ("Not verified", .warning) : ("Not configured", .neutral)
             }
-        case .localApp:
-            (label, tone) = ready ? ("Enabled", .success) : ("Disabled", .neutral)
-        case .apiKey:
-            switch catalog.providerDiscovery[provider] {
-            case .checking where connectionState(provider).hasKey:
-                (label, tone) = ("Checking…", .neutral)
-            case .unavailable where connectionState(provider).hasKey:
-                (label, tone) = ("Connection failed", .error)
-            case .actionRequired where connectionState(provider).hasKey:
-                (label, tone) = ("Key rejected", .error)
-            case .stale where connectionState(provider).hasKey:
-                (label, tone) = ("Refresh pending", .warning)
-            default:
-                (label, tone) = ready ? ("Key saved", .success) : ("Not configured", .neutral)
+        } else {
+            switch primaryStyle(provider) {
+            case .oauth:
+                switch catalog.providerDiscovery[provider] {
+                case .checking: (label, tone) = ("Checking…", .neutral)
+                case .actionRequired: (label, tone) = ("Sign in again", .warning)
+                case .unavailable: (label, tone) = ("Connection failed", .error)
+                case .stale: (label, tone) = ("Refresh pending", .warning)
+                case .ready: (label, tone) = ("Signed in", .success)
+                case .inactive, .none:
+                    (label, tone) = ready ? ("Signed in", .success) : ("Not configured", .neutral)
+                }
+            case .localApp:
+                (label, tone) = ready ? ("Enabled", .success) : ("Disabled", .neutral)
+            case .apiKey:
+                switch catalog.providerDiscovery[provider] {
+                case .checking where connectionState(provider).hasKey:
+                    (label, tone) = ("Checking…", .neutral)
+                case .unavailable where connectionState(provider).hasKey:
+                    (label, tone) = ("Connection failed", .error)
+                case .actionRequired where connectionState(provider).hasKey:
+                    (label, tone) = ("Key rejected", .error)
+                case .stale where connectionState(provider).hasKey:
+                    (label, tone) = ("Refresh pending", .warning)
+                default:
+                    (label, tone) = ready ? ("Key saved", .success) : ("Not configured", .neutral)
+                }
             }
         }
         return SettingsStatusBadge(text: label, tone: tone)
@@ -155,7 +174,7 @@ struct ProvidersPane: View {
     @ViewBuilder
     private func oauthControl(_ provider: GenerationProvider) -> some View {
         let connected = connectionState(provider).oauthConnected
-        let discovery = catalog.providerDiscovery[provider]
+        let discovery = provider == .higgsfield ? catalog.mcpProviderDiscovery[provider] : catalog.providerDiscovery[provider]
         SettingsRow(title: "Account", subtitle: provider.mcpCapability?.note) {
             if signingIn == provider.id {
                 ProgressView().controlSize(.small)
@@ -217,7 +236,7 @@ struct ProvidersPane: View {
                 trailingControl(provider)
             }
             if connectionState(provider).hasKey,
-               let message = discoveryMessage(catalog.providerDiscovery[provider]) {
+               let message = discoveryMessage(provider == .higgsfield ? catalog.directProviderDiscovery[provider] : catalog.providerDiscovery[provider]) {
                 Text(message)
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Status.errorColor)
@@ -232,6 +251,7 @@ struct ProvidersPane: View {
         let trimmed = (draft[provider.id] ?? "").trimmingCharacters(in: .whitespaces)
         if !trimmed.isEmpty {
             Button("Save") { save(provider) }.buttonStyle(.capsule(.prominent, size: .regular)).controlSize(.small)
+                .disabled(provider == .higgsfield && (try? HiggsfieldCredentials(trimmed)) == nil)
         } else if connectionState(provider).hasKey {
             Button("Remove", systemImage: "trash") { remove(provider) }
                 .buttonStyle(.capsule(.secondary, size: .regular))
@@ -267,7 +287,7 @@ struct ProvidersPane: View {
 
     private func placeholder(_ provider: GenerationProvider) -> String {
         let state = connectionState(provider)
-        return state.hasKey ? state.maskedKey : "Paste API key…"
+        return state.hasKey ? state.maskedKey : (provider == .higgsfield ? "KEY_ID:KEY_SECRET" : "Paste API key…")
     }
 
     private func draftBinding(_ provider: GenerationProvider) -> Binding<String> {
@@ -292,6 +312,11 @@ struct ProvidersPane: View {
     private func save(_ provider: GenerationProvider) {
         let key = (draft[provider.id] ?? "").trimmingCharacters(in: .whitespaces)
         guard !key.isEmpty else { return }
+        if provider == .higgsfield {
+            do { _ = try HiggsfieldCredentials(key) }
+            catch { errorText[provider.id] = error.localizedDescription; return }
+        }
+        errorText[provider.id] = nil
         ProviderKeychain.save(key, for: provider)
         draft[provider.id] = ""
         focusedProvider = nil

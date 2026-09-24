@@ -33,6 +33,7 @@ enum ReferenceHosting: Equatable {
     case inline
     /// Runway hosts its own, on the user's Runway key.
     case runway
+    case higgsfield
     /// The provider MCP uploads and owns its reference media.
     case mcp
     /// fal storage — for fal-hosted models.
@@ -43,7 +44,7 @@ enum ReferenceHosting: Equatable {
     /// would break the self-contained `.ngv` the moment the project moves machines — while also
     /// claiming a hosted URL that never existed. Hosted refs are a cache with a TTL either way; the
     /// durable record of what was referenced is `imageURLAssetIds`.
-    var persistsHostedURLs: Bool { self == .runway || self == .fal }
+    var persistsHostedURLs: Bool { self == .runway || self == .fal || self == .higgsfield }
 }
 
 @MainActor
@@ -205,6 +206,14 @@ final class GenerationService {
                         // touches fal — exactly the dependency the direct providers exist to remove.
                         // Local paths, purely so the direct client can read the bytes off disk.
                         uploaded = urlsToUpload.map(\.path)
+                    case .higgsfield:
+                        guard let key = ProviderKeychain.load(.higgsfield) else {
+                            throw GenerationBackendError.transport("Add Higgsfield API credentials in Settings.")
+                        }
+                        let client = try HiggsfieldClient(apiKey: key)
+                        var results: [String] = []
+                        for url in urlsToUpload { results.append(try await client.uploadReference(fileURL: url)) }
+                        uploaded = results
                     case .runway:
                         uploaded = try await uploadReferencesToRunway(at: urlsToUpload, types: refTypes)
                     case .fal:
@@ -342,7 +351,7 @@ final class GenerationService {
         try scope.requireCurrent(editor: editor)
         let completedIDs = Set(receipts.map(\.asset.id))
         let target = specification.package.payload.target
-        guard target.transport == .api, [.fal, .runway, .marble].contains(target.provider) else {
+        guard target.transport == .api, [.fal, .runway, .marble, .higgsfield].contains(target.provider) else {
             throw GenerationRequestError.gate("This provider request cannot yet resume status retrieval.")
         }
         var placeholders: [MediaAsset] = []
@@ -397,6 +406,15 @@ final class GenerationService {
                         let data = try await FalClient(apiKey: key).result(endpoint: target.endpoint, requestId: requestID)
                         let shape: CatalogEntry.ResponseShape = specification.package.payload.modality == "image" ? .images : .video
                         urls = FalOutput.urls(from: data, shape: shape)
+                    case .higgsfield:
+                        guard let receipt = editor.generationLog.spendEvents.first(where: {
+                            $0.transactionId == execution.transactionID && $0.providerRequestId == requestID
+                                && $0.providerReceipt != nil
+                        })?.providerReceipt else {
+                            throw GenerationRequestError.gate("The saved Higgsfield job receipt is missing. Check the API console; do not resubmit.")
+                        }
+                        let shape: CatalogEntry.ResponseShape = specification.package.payload.modality == "image" ? .images : .video
+                        urls = try await HiggsfieldClient(apiKey: key).output(receipt: receipt, shape: shape)
                     case .runway: urls = try await RunwayClient(apiKey: key).output(taskId: requestID)
                     case .marble: urls = MarbleOutput.urls(from: try await MarbleClient(apiKey: key).result(operationId: requestID))
                     default: throw GenerationRequestError.gate("The saved provider route has no status adapter.")
@@ -416,7 +434,9 @@ final class GenerationService {
                         if let billed = try? await ProviderMoneyClient.shared.falCharge(requestId: requestID, endpoint: target.endpoint, apiKey: key) {
                             self.markCharged(authorization: recoveredAuthorization, money: billed, editor: editor)
                         }
-                    } else { self.markCharged(authorization: recoveredAuthorization, editor: editor) }
+                    } else if target.provider != .higgsfield {
+                        self.markCharged(authorization: recoveredAuthorization, editor: editor)
+                    }
                 }
             } catch {
                 self.failJob(placeholders, error.localizedDescription, nil)
@@ -912,7 +932,11 @@ final class GenerationService {
                     onComplete: onComplete, onFailure: onFailure)
                 return
             }
-        case .higgsfield, .openart, .ace:
+        case .higgsfield:
+            await runHiggsfieldJob(endpoint: endpoint, params: params, placeholders: placeholders,
+                editor: editor, authorization: authorization, onComplete: onComplete, onFailure: onFailure)
+            return
+        case .openart, .ace:
             // MCP-only providers: a resolved `.mcp` binding was handled above. Reaching here means the
             // provider isn't signed in (no `.mcp` binding, no direct-API path) — its models were never
             // offered (usable-only), so this is the guidance for a stale id.
@@ -1028,28 +1052,33 @@ final class GenerationService {
         failJob(placeholders, message, onFailure)
     }
 
+    @discardableResult
     private func markSubmitted(
         authorization: GenerationAuthorization,
         providerRequestId: String,
         resumable: Bool = false,
+        providerReceipt: HiggsfieldJobReceipt? = nil,
         editor: EditorViewModel
-    ) {
+    ) -> Bool {
         do {
             try editor.recordSpendEvent(
                 authorization: authorization,
                 kind: .submitted,
                 providerRequestId: providerRequestId,
                 providerRequestResumable: resumable,
+                providerReceipt: providerReceipt,
                 money: authorization.estimate
             )
             if let transactionID = authorization.transactionId {
                 try authorization.batchItem?.recordProviderRequest(transactionID: transactionID,
                     requestID: providerRequestId, resumable: resumable, editor: editor)
             }
+            return true
         } catch {
             Log.generation.error(
                 "could not record provider request \(providerRequestId): \(error.localizedDescription)"
             )
+            return false
         }
     }
 
@@ -1350,6 +1379,60 @@ final class GenerationService {
         return tools.count == 1 ? tools.first : nil
     }
 
+    private func runHiggsfieldJob(
+        endpoint: String, params: BackendGenerationParams, placeholders: [MediaAsset],
+        editor: EditorViewModel, authorization: GenerationAuthorization,
+        onComplete: (@MainActor (MediaAsset) -> Void)?, onFailure: (@MainActor () -> Void)?
+    ) async {
+        guard let key = ProviderKeychain.load(.higgsfield),
+              let model = HiggsfieldModelRegistry.model(for: endpoint) else {
+            return failBeforeSubmission(placeholders, "Connect the Higgsfield API and refresh its models in Settings.",
+                authorization: authorization, editor: editor, onFailure: onFailure)
+        }
+        var receipt: HiggsfieldJobReceipt?
+        do {
+            let client = try HiggsfieldClient(apiKey: key)
+            let body = try HiggsfieldInputBuilder.body(model: model, params: params)
+            let usd = try await client.estimate(endpoint: model.endpoint, body: body)
+            let money = try await ProviderMoneyClient.shared.normalize(nativeAmount: usd, currency: "USD",
+                pricingSource: HiggsfieldClient.endpointURL(model.endpoint, estimate: true).absoluteString)
+            if let ceiling = authorization.estimate, money.eurAmount > ceiling.eurAmount {
+                throw GenerationBudgetError.blocked("The Higgsfield price exceeds the approved estimate. Review the generation again.")
+            }
+            try Task.checkCancellation()
+            let submitted = try await client.submit(endpoint: model.endpoint, body: body)
+            receipt = submitted
+            guard markSubmitted(authorization: authorization, providerRequestId: submitted.requestID,
+                resumable: true, providerReceipt: submitted, editor: editor) else {
+                throw GenerationBackendError.transport("Higgsfield accepted request \(submitted.requestID), but its recovery record could not be saved. Check the API console before retrying.")
+            }
+            let urls = try await client.output(receipt: submitted, shape: model.entry.responseShape)
+            await finalizeSuccess(job: .init(_id: submitted.requestID, status: .succeeded, resultUrls: urls,
+                errorMessage: nil, costCredits: nil, completedAt: nil), placeholders: placeholders,
+                editor: editor, mutationScope: authorization.projectMutationScope, batchItem: authorization.batchItem,
+                onComplete: onComplete, onFailure: onFailure)
+        } catch let error as HiggsfieldClient.SubmissionUncertain {
+            markSubmitted(authorization: authorization, providerRequestId: error.requestID, editor: editor)
+            failJob(placeholders, error.localizedDescription, onFailure)
+        } catch is CancellationError {
+            if let receipt {
+                let cancellation = Task.detached { try await HiggsfieldClient(apiKey: key).cancel(receipt: receipt) }
+                do {
+                    try await cancellation.value
+                    failJob(placeholders, "Higgsfield cancelled the queued request.", onFailure)
+                } catch {
+                    failJob(placeholders, "Higgsfield could not cancel the request. It may still run and incur charges. Resume its recorded job or check the API console.", onFailure)
+                }
+            } else {
+                failBeforeSubmission(placeholders, "Generation cancelled.", authorization: authorization, editor: editor, onFailure: onFailure)
+            }
+        } catch {
+            if receipt == nil {
+                failBeforeSubmission(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
+            } else { failJob(placeholders, error.localizedDescription, onFailure) }
+        }
+    }
+
     private func runRunwayJob(
         endpoint: String,
         params: BackendGenerationParams,
@@ -1489,6 +1572,7 @@ final class GenerationService {
         // then got persisted as if it were a hosted URL.
         case .google, .marble: return .inline
         case .runway: return .runway
+        case .higgsfield: return .higgsfield
         default: return .fal
         }
     }
