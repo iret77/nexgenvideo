@@ -6,11 +6,84 @@ enum AgentBackend: String, CaseIterable, Identifiable, Sendable {
 
     var id: String { rawValue }
 
+    var runtimeID: AgentBackendID {
+        switch self {
+        case .claudeCode: .claudeCode
+        case .anthropicAPI: .anthropicAPI
+        }
+    }
+
     var displayName: String {
         switch self {
         case .claudeCode: return "Claude Code"
         case .anthropicAPI: return "Anthropic API"
         }
+    }
+
+    var runtimeIdentity: AgentRuntimeIdentity {
+        AgentRuntimeIdentity(backendID: runtimeID, displayName: displayName)
+    }
+
+    var authentication: AgentRuntimeAuthentication {
+        switch self {
+        case .claudeCode:
+            .externalSubscription(command: "claude")
+        case .anthropicAPI:
+            .apiKey(service: "Anthropic")
+        }
+    }
+
+    func runtimeDescriptor(
+        toolNames: Set<String>,
+        providerExtensions: Set<String> = []
+    ) -> AgentRuntimeDescriptor {
+        let activeProviderExtensions = self == .claudeCode ? providerExtensions : []
+        var operations: Set<AgentRuntimeOperation> = [
+            .streamText,
+            .submitImages,
+            .hiddenMessages,
+            .localizedInstructions,
+            .phaseInstructions,
+        ]
+        if !toolNames.isEmpty {
+            operations.insert(.executeHostTools)
+        }
+        if toolNames.contains(ToolName.showDialog.rawValue) {
+            operations.insert(.structuredDialogs)
+        }
+        let approvalTools: Set<String> = [
+            ToolName.approveGate.rawValue,
+            ToolName.setGateState.rawValue,
+            ToolName.generateVideo.rawValue,
+            ToolName.generateImage.rawValue,
+            ToolName.generateAudio.rawValue,
+            ToolName.upscaleMedia.rawValue,
+        ]
+        if !toolNames.isDisjoint(with: approvalTools) {
+            operations.insert(.approvalSuspension)
+        }
+        let transport: AgentToolExecutionTransport
+        switch self {
+        case .claudeCode:
+            operations.formUnion([.resumeNativeSession, .reportCostUsage, .readProjectFiles])
+            if !activeProviderExtensions.isEmpty {
+                operations.insert(.externalClaudeCodePlugins)
+            }
+            transport = .providerManagedMCP
+        case .anthropicAPI:
+            operations.formUnion([.resumeFromTranscript, .reportTokenUsage])
+            transport = .hostRoundTrip
+        }
+        return AgentRuntimeDescriptor(
+            identity: runtimeIdentity,
+            authentication: authentication,
+            capabilities: .init(
+                operations: operations,
+                toolNames: toolNames,
+                providerExtensions: activeProviderExtensions
+            ),
+            toolExecutionTransport: transport
+        )
     }
 }
 

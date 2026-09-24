@@ -158,6 +158,12 @@ enum PipelinePhaseAccess {
 
 @MainActor
 final class PipelineAgentHarness {
+    struct RuntimeContext: Equatable, Sendable {
+        let packID: String?
+        let currentPhase: String?
+        let instructions: String?
+    }
+
     struct Reconciliation {
         let isReady: Bool
         let agentPrompt: String?
@@ -177,21 +183,29 @@ final class PipelineAgentHarness {
         var phase: String? { snapshot.nextPhase }
 
         func agentPrompt() throws -> String? {
+            try assembledPrompt(includeStarter: true)
+        }
+
+        func runtimeInstructions() throws -> String? {
+            try assembledPrompt(includeStarter: false)
+        }
+
+        private func assembledPrompt(includeStarter: Bool) throws -> String? {
             let progress = PackProgress(
                 nextPhase: snapshot.nextPhase,
                 approvedPhases: snapshot.phases.filter(\.approved).count,
                 totalPhases: snapshot.phases.count
             )
-            var prompt = pack.starters(for: progress).first?.prompt
+            var prompt = includeStarter ? pack.starters(for: progress).first?.prompt : nil
             guard let phase = snapshot.nextPhase else { return prompt }
-            let instructions = try contract.instructions(for: phase)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let phaseDocument = try contract.instructions(for: phase)
+            let instructions = phaseDocument.trimmingCharacters(in: .whitespacesAndNewlines)
             if let existing = prompt {
                 if !instructions.isEmpty, !existing.contains(instructions) {
                     prompt = "\(existing)\n\nFollow these packaged instructions for the current phase:\n\n\(instructions)"
                 }
             } else if !instructions.isEmpty {
-                prompt = instructions
+                prompt = includeStarter ? instructions : phaseDocument
             }
             guard var prompt else { return nil }
             if let causality = StoryCausalityContext.prompt(dataRoot: dataRoot, phase: phase) {
@@ -672,6 +686,31 @@ final class PipelineAgentHarness {
             dataRoot: dataRoot,
             packName: packName
         ).agentPrompt()
+    }
+
+    func runtimeContext(
+        dataRoot: URL,
+        declaredPack: String?,
+        declaredBinding: ProjectPackBinding?
+    ) throws -> RuntimeContext {
+        guard let packName = try resolvedPack(
+            dataRoot: dataRoot,
+            declaredPack: declaredPack,
+            declaredBinding: declaredBinding,
+            requireMutationBinding: true
+        ) else {
+            return RuntimeContext(
+                packID: nil,
+                currentPhase: nil,
+                instructions: try genericStylePrompt(dataRoot: dataRoot)
+            )
+        }
+        let context = try loadContext(dataRoot: dataRoot, packName: packName)
+        return RuntimeContext(
+            packID: packName,
+            currentPhase: context.phase,
+            instructions: try context.runtimeInstructions()
+        )
     }
 
     private func genericStylePrompt(dataRoot: URL) throws -> String? {
