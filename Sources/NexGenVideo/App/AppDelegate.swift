@@ -55,6 +55,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } catch {
                 Log.export.error("publish recovery failed: \(error.localizedDescription)")
             }
+            do {
+                try ExportRuntimeRecoveryStore.recoverAll()
+            } catch {
+                Log.export.error("render recovery failed: \(error.localizedDescription)")
+            }
             Project.ensureStorageDirectory()
             ProjectStorageMigration.cleanUpProjectsFolder()
             // Retire idle working copies + caches (frees both stores). Open docs and still-present

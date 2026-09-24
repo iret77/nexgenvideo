@@ -46,6 +46,9 @@ def main() -> int:
         "revealedPath",
         "cancelStatus",
         "retryStatus",
+        "finalActionChecks",
+        "disabledActionChecks",
+        "finderWindowReacquired",
     }
     if set(evidence) != required:
         raise SystemExit(f"unexpected native export evidence keys: {sorted(evidence)}")
@@ -53,6 +56,10 @@ def main() -> int:
         raise SystemExit(f"native export action states are wrong: {evidence}")
     if evidence["retriedFromJobID"] != evidence["cancelledJobID"]:
         raise SystemExit(f"native retry was not bound to the cancelled job: {evidence}")
+    if evidence["finalActionChecks"] != 9 or evidence["disabledActionChecks"] != 6:
+        raise SystemExit(f"native control coverage is incomplete: {evidence}")
+    if evidence["finderWindowReacquired"] is not True:
+        raise SystemExit(f"export window did not reacquire key status: {evidence}")
     job_ids = [
         evidence["completedJobID"],
         evidence["cancelledJobID"],

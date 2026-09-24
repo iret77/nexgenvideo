@@ -35,6 +35,7 @@ enum ExportPublishRecoveryStore {
 
     struct Result: Sendable {
         let publications: [Publication]
+        let cleanupWarning: String?
 
         func state(for url: URL) -> ExportQueue.PathState {
             publications.first {
@@ -92,6 +93,7 @@ enum ExportPublishRecoveryStore {
 
     static func recoverAll(
         root: URL = defaultRoot,
+        overlapping requestedURLs: [URL] = [],
         failCommittedCleanupAfterBackupRemovalForTesting: Int? = nil,
         failCommittedJournalRemovalForTesting: Bool = false
     ) throws {
@@ -99,6 +101,7 @@ enum ExportPublishRecoveryStore {
         defer { lock.unlock() }
         try recoverAllLocked(
             root: root,
+            overlapping: requestedURLs,
             failCommittedCleanupAfterBackupRemovalForTesting:
                 failCommittedCleanupAfterBackupRemovalForTesting,
             failCommittedJournalRemovalForTesting:
@@ -169,7 +172,10 @@ enum ExportPublishRecoveryStore {
 
         lock.lock()
         defer { lock.unlock() }
-        try recoverAllLocked(root: root)
+        try recoverAllLocked(
+            root: root,
+            overlapping: publications.map(\.targetURL)
+        )
         if isCancelled() { throw CancellationError() }
         try ensureRoot(root)
         let journalURL = root.appendingPathComponent("\(transactionID).json")
@@ -241,19 +247,42 @@ enum ExportPublishRecoveryStore {
         }
 
         journal.phase = .committed
-        try write(journal, to: journalURL)
-        try recoverCommitted(
-            journal,
-            journalURL: journalURL,
-            failAfterBackupRemovalForTesting:
-                failCommittedCleanupAfterBackupRemovalForTesting,
-            failJournalRemovalForTesting: failCommittedJournalRemovalForTesting
-        )
-        return Result(publications: publications)
+        do {
+            try write(journal, to: journalURL)
+        } catch {
+            let commitError = error
+            do {
+                journal.phase = .prepared
+                try recoverPrepared(journal, journalURL: journalURL)
+            } catch {
+                throw ToolError(
+                    "Export commit recording failed and recovery is incomplete: "
+                        + error.localizedDescription
+                )
+            }
+            throw commitError
+        }
+        let cleanupWarning: String?
+        do {
+            try recoverCommitted(
+                journal,
+                journalURL: journalURL,
+                failAfterBackupRemovalForTesting:
+                    failCommittedCleanupAfterBackupRemovalForTesting,
+                failJournalRemovalForTesting: failCommittedJournalRemovalForTesting
+            )
+            cleanupWarning = nil
+        } catch {
+            let warning = "Export completed, but publication cleanup is pending. Recovery record: \(journalURL.path). \(error.localizedDescription)"
+            cleanupWarning = warning
+            Log.export.warning("\(warning)")
+        }
+        return Result(publications: publications, cleanupWarning: cleanupWarning)
     }
 
     private static func recoverAllLocked(
         root: URL,
+        overlapping requestedURLs: [URL] = [],
         failCommittedCleanupAfterBackupRemovalForTesting: Int? = nil,
         failCommittedJournalRemovalForTesting: Bool = false
     ) throws {
@@ -264,31 +293,59 @@ enum ExportPublishRecoveryStore {
             at: root,
             includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey]
         ).filter { $0.pathExtension == "json" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+        let requested = requestedURLs.map { $0.standardizedFileURL.path }
+        var blockingFailures: [String] = []
         for url in files {
-            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
-            guard values.isRegularFile == true, values.isSymbolicLink != true else {
-                throw ToolError("An export recovery record is not a regular file.")
-            }
-            let journal = try JSONDecoder().decode(Journal.self, from: Data(contentsOf: url))
-            try validate(journal, journalURL: url, root: root)
-            switch journal.phase {
-            case .prepared:
-                try recoverPrepared(journal, journalURL: url)
-            case .committed:
-                try recoverCommitted(
-                    journal,
-                    journalURL: url,
-                    failAfterBackupRemovalForTesting:
-                        failCommittedCleanupAfterBackupRemovalForTesting,
-                    failJournalRemovalForTesting: failCommittedJournalRemovalForTesting
+            let journal: Journal
+            do {
+                let values = try url.resourceValues(
+                    forKeys: [.isRegularFileKey, .isSymbolicLinkKey]
                 )
+                guard values.isRegularFile == true, values.isSymbolicLink != true else {
+                    throw ToolError("An export recovery record is not a regular file.")
+                }
+                journal = try JSONDecoder().decode(Journal.self, from: Data(contentsOf: url))
+                try validate(journal, journalURL: url, root: root)
+            } catch {
+                let quarantined = quarantineInvalidRecord(url, root: root)
+                Log.export.error(
+                    "invalid publish recovery record isolated at \(quarantined.path): \(error.localizedDescription)"
+                )
+                continue
             }
+            do {
+                switch journal.phase {
+                case .prepared:
+                    try recoverPrepared(journal, journalURL: url)
+                case .committed:
+                    try recoverCommitted(
+                        journal,
+                        journalURL: url,
+                        failAfterBackupRemovalForTesting:
+                            failCommittedCleanupAfterBackupRemovalForTesting,
+                        failJournalRemovalForTesting: failCommittedJournalRemovalForTesting
+                    )
+                }
+            } catch {
+                let overlaps = journal.targets.contains { target in
+                    requested.contains { requestedPath in
+                        pathsOverlap(requestedPath, target.targetPath)
+                    }
+                }
+                let message = "Export recovery remains pending. Recovery record: \(url.path). \(error.localizedDescription)"
+                Log.export.warning("\(message)")
+                if overlaps { blockingFailures.append(message) }
+            }
+        }
+        if !blockingFailures.isEmpty {
+            throw ToolError(blockingFailures.joined(separator: " "))
         }
     }
 
     private static func recoverPrepared(_ journal: Journal, journalURL: URL) throws {
         let fm = FileManager.default
         var failures: [String] = []
+        var conflictPaths: [String] = []
         for target in journal.targets.reversed() {
             do {
                 let targetURL = URL(fileURLWithPath: target.targetPath)
@@ -314,14 +371,20 @@ enum ExportPublishRecoveryStore {
 
                 if target.initialState.exists {
                     if backupState.exists, !backupIsInitial {
-                        try preserveConflict(backupURL, transactionID: journal.transactionID)
+                        if let preserved = try preserveConflict(
+                            backupURL,
+                            transactionID: journal.transactionID
+                        ) { conflictPaths.append(preserved.path) }
                     }
                     if !targetIsInitial {
                         if targetState.exists {
                             if targetIsPublished {
                                 try fm.removeItem(at: targetURL)
                             } else {
-                                try preserveConflict(targetURL, transactionID: journal.transactionID)
+                                if let preserved = try preserveConflict(
+                                    targetURL,
+                                    transactionID: journal.transactionID
+                                ) { conflictPaths.append(preserved.path) }
                             }
                             targetState = .absent
                         }
@@ -343,10 +406,16 @@ enum ExportPublishRecoveryStore {
                     if targetIsPublished {
                         try fm.removeItem(at: targetURL)
                     } else if targetState.exists {
-                        try preserveConflict(targetURL, transactionID: journal.transactionID)
+                        if let preserved = try preserveConflict(
+                            targetURL,
+                            transactionID: journal.transactionID
+                        ) { conflictPaths.append(preserved.path) }
                     }
                     if backupState.exists {
-                        try preserveConflict(backupURL, transactionID: journal.transactionID)
+                        if let preserved = try preserveConflict(
+                            backupURL,
+                            transactionID: journal.transactionID
+                        ) { conflictPaths.append(preserved.path) }
                     }
                 }
 
@@ -358,14 +427,20 @@ enum ExportPublishRecoveryStore {
                 ) {
                     try fm.removeItem(at: temporaryURL)
                 } else if temporaryState.exists {
-                    try preserveConflict(temporaryURL, transactionID: journal.transactionID)
+                    if let preserved = try preserveConflict(
+                        temporaryURL,
+                        transactionID: journal.transactionID
+                    ) { conflictPaths.append(preserved.path) }
                 }
             } catch {
                 failures.append(error.localizedDescription)
             }
         }
         guard failures.isEmpty else {
-            throw ToolError(failures.joined(separator: " "))
+            let preserved = conflictPaths.isEmpty
+                ? ""
+                : " Recovered conflicts: \(conflictPaths.joined(separator: ", "))."
+            throw ToolError(failures.joined(separator: " ") + preserved)
         }
         try fm.removeItem(at: journalURL)
     }
@@ -377,19 +452,12 @@ enum ExportPublishRecoveryStore {
         failJournalRemovalForTesting: Bool = false
     ) throws {
         let fm = FileManager.default
-        for target in journal.targets {
-            let targetURL = URL(fileURLWithPath: target.targetPath)
-            guard try matches(
-                targetURL,
-                state: target.publishedState,
-                identity: target.publishedIdentity
-            ) else {
-                throw ToolError("A committed export changed before publish recovery completed.")
-            }
-        }
         var removedBackupCount = 0
         for target in journal.targets {
             let backupURL = URL(fileURLWithPath: target.backupPath)
+            guard fm.fileExists(atPath: backupURL.deletingLastPathComponent().path) else {
+                throw ToolError("The committed export volume is unavailable.")
+            }
             let backupState = try ExportQueue.PathState.capture(backupURL)
             if try matches(
                 backupURL,
@@ -401,10 +469,11 @@ enum ExportPublishRecoveryStore {
                 if removedBackupCount == failAfterBackupRemovalForTesting {
                     throw SimulatedCommittedCleanupFailure()
                 }
-            } else if backupState.exists {
-                try preserveConflict(backupURL, transactionID: journal.transactionID)
             }
             let temporaryURL = URL(fileURLWithPath: target.temporaryPath)
+            guard fm.fileExists(atPath: temporaryURL.deletingLastPathComponent().path) else {
+                throw ToolError("The committed export volume is unavailable.")
+            }
             let temporaryState = try ExportQueue.PathState.capture(temporaryURL)
             if try matches(
                 temporaryURL,
@@ -412,8 +481,6 @@ enum ExportPublishRecoveryStore {
                 identity: target.publishedIdentity
             ) {
                 try fm.removeItem(at: temporaryURL)
-            } else if temporaryState.exists {
-                try preserveConflict(temporaryURL, transactionID: journal.transactionID)
             }
         }
         if failJournalRemovalForTesting {
@@ -475,9 +542,9 @@ enum ExportPublishRecoveryStore {
         )
     }
 
-    private static func preserveConflict(_ url: URL, transactionID: String) throws {
+    private static func preserveConflict(_ url: URL, transactionID: String) throws -> URL? {
         let fm = FileManager.default
-        guard fm.fileExists(atPath: url.path) else { return }
+        guard fm.fileExists(atPath: url.path) else { return nil }
         let parent = url.deletingLastPathComponent()
         let ext = url.pathExtension
         let base = url.deletingPathExtension().lastPathComponent
@@ -491,10 +558,33 @@ enum ExportPublishRecoveryStore {
             let destination = parent.appendingPathComponent(name)
             if !fm.fileExists(atPath: destination.path) {
                 try fm.moveItem(at: url, to: destination)
-                return
+                return destination
             }
             index += 1
         }
+    }
+
+    private static func quarantineInvalidRecord(_ url: URL, root: URL) -> URL {
+        let fm = FileManager.default
+        let directory = root.appendingPathComponent("Invalid Records", isDirectory: true)
+        let destination = directory.appendingPathComponent(url.lastPathComponent)
+        do {
+            try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+            if fm.fileExists(atPath: destination.path) {
+                return url
+            }
+            try fm.moveItem(at: url, to: destination)
+            return destination
+        } catch {
+            Log.export.error(
+                "could not isolate invalid publish recovery record \(url.path): \(error.localizedDescription)"
+            )
+            return url
+        }
+    }
+
+    private static func pathsOverlap(_ lhs: String, _ rhs: String) -> Bool {
+        lhs == rhs || lhs.hasPrefix(rhs + "/") || rhs.hasPrefix(lhs + "/")
     }
 
     private static func matches(

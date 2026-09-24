@@ -462,6 +462,7 @@ enum PipelineDeliveryStore {
         outputURL: URL,
         evidence: OutputEvidence,
         publishedState: ExportQueue.PathState,
+        warnings: [String] = [],
         selectIfCurrent: Bool
     ) throws -> FinishResult {
         guard case .file(let sha256, let byteCount) = publishedState,
@@ -478,6 +479,7 @@ enum PipelineDeliveryStore {
             outputSHA256: evidence.sha256,
             outputByteCount: evidence.byteCount,
             probeQC: evidence.probeQC,
+            warnings: attempt.warnings + warnings,
             completedAt: currentTimestamp()
         )
         try DeliveryValidatorV1.validateSuccessfulAttempt(
@@ -993,6 +995,7 @@ enum PipelineDeliveryStore {
         outputSHA256: String? = nil,
         outputByteCount: Int64? = nil,
         probeQC: DeliveryProbeQCV1? = nil,
+        warnings: [String]? = nil,
         failures: [String]? = nil,
         completedAt: String? = nil
     ) -> DeliveryAttemptV1 {
@@ -1006,7 +1009,7 @@ enum PipelineDeliveryStore {
             outputSHA256: outputSHA256 ?? attempt.outputSHA256,
             outputByteCount: outputByteCount ?? attempt.outputByteCount,
             probeQC: probeQC ?? attempt.probeQC,
-            warnings: attempt.warnings,
+            warnings: warnings ?? attempt.warnings,
             failures: failures ?? attempt.failures,
             createdAt: attempt.createdAt,
             completedAt: completedAt ?? attempt.completedAt

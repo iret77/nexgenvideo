@@ -266,7 +266,8 @@ enum AppRelaunchSelfTest {
 
     static func postMouseClick(
         identifier: String,
-        in window: NSWindow?
+        in window: NSWindow?,
+        expectedEnabled: Bool? = nil
     ) -> String? {
         guard let window else { return "the Home window was unavailable" }
         guard window.isVisible else { return "the Home window was not visible" }
@@ -276,7 +277,13 @@ enum AppRelaunchSelfTest {
               let probe = findClickProbe(in: root, identifier: identifier) else {
             return "the control geometry probe was absent"
         }
-        guard let location = clickLocation(for: probe, in: root, window: window) else {
+        guard let location = clickLocation(
+            for: probe,
+            identifier: identifier,
+            in: root,
+            window: window,
+            expectedEnabled: expectedEnabled
+        ) else {
             return "the control was clipped or had no native hit target"
         }
         let timestamp = ProcessInfo.processInfo.systemUptime
@@ -321,7 +328,11 @@ enum AppRelaunchSelfTest {
         return nil
     }
 
-    static func isClickProbeReady(identifier: String, in window: NSWindow?) -> Bool {
+    static func isClickProbeReady(
+        identifier: String,
+        in window: NSWindow?,
+        expectedEnabled: Bool? = nil
+    ) -> Bool {
         guard let window,
               window.isVisible,
               window.isKeyWindow,
@@ -330,13 +341,21 @@ enum AppRelaunchSelfTest {
               let probe = findClickProbe(in: root, identifier: identifier),
               probe.window === window,
               !probe.isHiddenOrHasHiddenAncestor else { return false }
-        return clickLocation(for: probe, in: root, window: window) != nil
+        return clickLocation(
+            for: probe,
+            identifier: identifier,
+            in: root,
+            window: window,
+            expectedEnabled: expectedEnabled
+        ) != nil
     }
 
     private static func clickLocation(
         for probe: NSView,
+        identifier: String,
         in root: NSView,
-        window: NSWindow
+        window: NSWindow,
+        expectedEnabled: Bool?
     ) -> NSPoint? {
         let frame = probe.bounds
         guard frame.width.isFinite, frame.height.isFinite,
@@ -352,12 +371,37 @@ enum AppRelaunchSelfTest {
             ancestor = current.superview
         }
         let location = probe.convert(NSPoint(x: frame.midX, y: frame.midY), to: nil)
-        let contentPoint = root.convert(location, from: nil)
-        guard root.bounds.contains(contentPoint),
-              let hitTarget = root.hitTest(contentPoint),
+        let rootPoint = root.convert(location, from: nil)
+        let hitTestPoint = root.superview?.convert(location, from: nil) ?? rootPoint
+        guard root.bounds.contains(rootPoint),
+              let hitTarget = root.hitTest(hitTestPoint),
               hitTarget.window === window,
               !hitTarget.isHiddenOrHasHiddenAncestor else { return nil }
+        let controls = findAccessibilityControls(in: root, identifier: identifier)
+        guard controls.count == 1, let control = controls.first,
+              control.window === window,
+              control.bounds.contains(control.convert(location, from: nil)),
+              hitTarget === control || hitTarget.isDescendant(of: control) else { return nil }
+        if let expectedEnabled, control.isEnabled != expectedEnabled { return nil }
         return location
+    }
+
+    private static func findAccessibilityControls(
+        in view: NSView,
+        identifier: String
+    ) -> [NSControl] {
+        var matches: [NSControl] = []
+        if let control = view as? NSControl,
+           control.accessibilityIdentifier() == identifier {
+            matches.append(control)
+        }
+        for child in view.subviews {
+            matches.append(contentsOf: findAccessibilityControls(
+                in: child,
+                identifier: identifier
+            ))
+        }
+        return matches
     }
 
     private static func isClickProbeAbsent(identifier: String, in window: NSWindow?) -> Bool {

@@ -56,6 +56,7 @@ enum XMLExporter {
         timeline: Timeline,
         resolver: MediaResolver,
         outputURL: URL,
+        preserveOutputIdentity: Bool = false,
         isCancelled: @Sendable () -> Bool = { false }
     ) throws {
         if isCancelled() { throw CancellationError() }
@@ -64,7 +65,15 @@ enum XMLExporter {
         let data = try serializedData(xml, target: outputURL)
         if isCancelled() { throw CancellationError() }
         do {
-            try data.write(to: outputURL, options: .atomic)
+            if preserveOutputIdentity {
+                let handle = try FileHandle(forWritingTo: outputURL)
+                defer { try? handle.close() }
+                try handle.truncate(atOffset: 0)
+                try handle.write(contentsOf: data)
+                try handle.synchronize()
+            } else {
+                try data.write(to: outputURL, options: .atomic)
+            }
             if isCancelled() { throw CancellationError() }
             guard try Data(contentsOf: outputURL) == data else {
                 throw ExportError.writeFailed(target: outputURL)

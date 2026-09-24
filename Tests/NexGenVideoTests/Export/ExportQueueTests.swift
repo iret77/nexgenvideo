@@ -581,6 +581,115 @@ struct ExportQueueTests {
         #expect(completed?.status == .completed)
     }
 
+    @Test("preparation belongs to the queue while callers independently join and cancel")
+    func preparationSurvivesFirstCallerCancellation() async throws {
+        let fixture = try await makeDeliveryFixture(
+            name: "PreparationJoin",
+            durationFrames: 30,
+            extensionBytes: 32 * 1_048_576
+        )
+        defer { fixture.remove() }
+        let queue = ExportQueue()
+        let output = fixture.root.appendingPathComponent("joined.mp4")
+        let requestID = UUID().uuidString.lowercased()
+        let first = Task {
+            try await queue.enqueueDelivery(
+                editor: fixture.editor,
+                spec: fixture.spec,
+                format: .h264,
+                resolution: .r720p,
+                outputURL: output,
+                requestID: requestID
+            )
+        }
+        let ownerKey = try #require(fixture.editor.openWorkingCopyKey)
+        var preparing: ExportJob?
+        for _ in 0..<1_000 {
+            preparing = queue.jobs(ownerKey: ownerKey).first
+            if preparing?.status == .preparing { break }
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        let registered = try #require(preparing)
+        let second = Task {
+            try await queue.enqueueDelivery(
+                editor: fixture.editor,
+                spec: fixture.spec,
+                format: .h264,
+                resolution: .r720p,
+                outputURL: output,
+                requestID: requestID
+            )
+        }
+        first.cancel()
+        do {
+            _ = try await first.value
+            #expect(Bool(false), "The cancelled preparation caller unexpectedly completed its wait.")
+        } catch is CancellationError {
+        }
+        let joined = try await second.value
+
+        #expect(joined === registered)
+        #expect(joined.id == requestID)
+        #expect(queue.jobs(ownerKey: ownerKey).filter { $0.id == requestID }.count == 1)
+        #expect([.pending, .preparing, .exporting, .completed].contains(joined.status))
+
+        queue.cancel(jobID: joined.id)
+        _ = await queue.waitForCompletion(jobID: joined.id)
+        #expect(joined.status == .cancelled)
+    }
+
+    @Test("preparation continues without callers until an explicit job cancellation")
+    func preparationWithoutJoinersRemainsQueueOwned() async throws {
+        let fixture = try await makeDeliveryFixture(
+            name: "PreparationNoJoiner",
+            durationFrames: 30,
+            extensionBytes: 16 * 1_048_576
+        )
+        defer { fixture.remove() }
+        let queue = ExportQueue()
+        await ExportCoordinator.acquireExport()
+        var gateHeld = true
+        defer {
+            if gateHeld { ExportCoordinator.endExport() }
+        }
+        let requestID = UUID().uuidString.lowercased()
+        let enqueue = Task {
+            try await queue.enqueueDelivery(
+                editor: fixture.editor,
+                spec: fixture.spec,
+                format: .h264,
+                resolution: .r720p,
+                outputURL: fixture.root.appendingPathComponent("no-joiner.mp4"),
+                requestID: requestID
+            )
+        }
+        let ownerKey = try #require(fixture.editor.openWorkingCopyKey)
+        var job: ExportJob?
+        for _ in 0..<1_000 {
+            job = queue.jobs(ownerKey: ownerKey).first { $0.id == requestID }
+            if job?.status == .preparing { break }
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        let registered = try #require(job)
+        enqueue.cancel()
+        do {
+            _ = try await enqueue.value
+            #expect(Bool(false), "The cancelled caller unexpectedly retained preparation ownership.")
+        } catch is CancellationError {
+        }
+        guard await waitUntil(timeout: .seconds(10), {
+            registered.status == .pending
+        }) else {
+            throw ToolError("Queue-owned preparation did not finish after its only caller left.")
+        }
+        #expect(queue.jobs(ownerKey: ownerKey).filter { $0.id == requestID }.count == 1)
+        queue.cancel(jobID: requestID)
+        _ = await queue.waitForCompletion(jobID: requestID)
+        #expect(registered.status == .cancelled)
+        ExportCoordinator.endExport()
+        gateHeld = false
+    }
+
     @Test("publish recovery rolls an interrupted FCPXML group back as one generation")
     func publishRecoveryRestoresGroupAndPreservesForeignChanges() throws {
         let root = FileManager.default.temporaryDirectory
@@ -744,13 +853,12 @@ struct ExportQueueTests {
             let fixture = try makePublishRecoveryFixture(
                 root: root.appendingPathComponent("backup-\(failureIndex)", isDirectory: true)
             )
-            #expect(throws: (any Error).self) {
-                _ = try ExportPublishRecoveryStore.publish(
-                    fixture.publications,
-                    root: fixture.recovery,
-                    failCommittedCleanupAfterBackupRemovalForTesting: failureIndex
-                )
-            }
+            let result = try ExportPublishRecoveryStore.publish(
+                fixture.publications,
+                root: fixture.recovery,
+                failCommittedCleanupAfterBackupRemovalForTesting: failureIndex
+            )
+            #expect(result.cleanupWarning?.contains("cleanup is pending") == true)
             try expectPublishedRecoveryFixture(fixture)
 
             try ExportPublishRecoveryStore.recoverAll(root: fixture.recovery)
@@ -762,22 +870,19 @@ struct ExportQueueTests {
         let journalFixture = try makePublishRecoveryFixture(
             root: root.appendingPathComponent("journal", isDirectory: true)
         )
-        #expect(throws: (any Error).self) {
-            _ = try ExportPublishRecoveryStore.publish(
-                journalFixture.publications,
-                root: journalFixture.recovery,
-                failCommittedJournalRemovalForTesting: true
-            )
-        }
+        let journalResult = try ExportPublishRecoveryStore.publish(
+            journalFixture.publications,
+            root: journalFixture.recovery,
+            failCommittedJournalRemovalForTesting: true
+        )
+        #expect(journalResult.cleanupWarning?.contains("cleanup is pending") == true)
         try expectPublishedRecoveryFixture(journalFixture)
 
         for _ in 0..<2 {
-            #expect(throws: (any Error).self) {
-                try ExportPublishRecoveryStore.recoverAll(
-                    root: journalFixture.recovery,
-                    failCommittedJournalRemovalForTesting: true
-                )
-            }
+            try ExportPublishRecoveryStore.recoverAll(
+                root: journalFixture.recovery,
+                failCommittedJournalRemovalForTesting: true
+            )
             try expectPublishedRecoveryFixture(journalFixture)
         }
         try ExportPublishRecoveryStore.recoverAll(root: journalFixture.recovery)
@@ -786,6 +891,336 @@ struct ExportQueueTests {
         #expect(
             try FileManager.default.contentsOfDirectory(atPath: journalFixture.recovery.path).isEmpty
         )
+    }
+
+    @Test("queue reports committed FCPXML as completed when backup cleanup is pending")
+    func queueTreatsCommittedBackupCleanupAsSuccess() async throws {
+        for failureIndex in [1, 2] {
+            let fixture = try await makeDeliveryFixture(
+                name: "CommittedBackup\(failureIndex)",
+                durationFrames: 30,
+                projectMedia: true
+            )
+            defer { fixture.remove() }
+            let output = fixture.root.appendingPathComponent("timeline-\(failureIndex).fcpxml")
+            let media = FCPXMLExporter.mediaDirectory(for: output)
+            try Data("old-document".utf8).write(to: output)
+            try FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
+            try Data("old-media".utf8).write(to: media.appendingPathComponent("old.mov"))
+            let recovery = fixture.root.appendingPathComponent("publish-recovery", isDirectory: true)
+            let runtime = fixture.root.appendingPathComponent("runtime-recovery", isDirectory: true)
+            let queue = ExportQueue(
+                publishRecoveryRoot: recovery,
+                runtimeRecoveryRoot: runtime,
+                committedCleanupFailureIndexForTesting: failureIndex
+            )
+            let job = try await queue.enqueueInterchange(
+                editor: fixture.editor,
+                format: .fcpxml,
+                outputURL: output,
+                projectName: "Committed"
+            )
+            _ = await queue.waitForCompletion(jobID: job.id)
+
+            #expect(job.status == .completed)
+            #expect(job.outputSHA256 == (try FileDigest.sha256(of: output)))
+            #expect(job.outputByteCount == Int64(try Data(contentsOf: output).count))
+            #expect(job.warnings.contains { $0.contains("cleanup is pending") })
+            #expect(FileManager.default.fileExists(atPath: media.appendingPathComponent("source.mov").path))
+
+            try Data("user-edited-after-commit".utf8).write(to: output, options: .atomic)
+            try ExportPublishRecoveryStore.recoverAll(root: recovery)
+            try ExportPublishRecoveryStore.recoverAll(root: recovery)
+            #expect(try Data(contentsOf: output) == Data("user-edited-after-commit".utf8))
+            #expect(try FileManager.default.contentsOfDirectory(atPath: recovery.path).isEmpty)
+        }
+    }
+
+    @Test("delivery receipt remains succeeded when committed journal cleanup is pending")
+    func deliveryReceiptSucceedsWithPendingCleanupWarning() async throws {
+        let fixture = try await makeDeliveryFixture(
+            name: "CommittedReceipt",
+            durationFrames: 30
+        )
+        defer { fixture.remove() }
+        let output = fixture.root.appendingPathComponent("delivery.mp4")
+        try Data("old-output".utf8).write(to: output)
+        let recovery = fixture.root.appendingPathComponent("publish-recovery", isDirectory: true)
+        let queue = ExportQueue(
+            publishRecoveryRoot: recovery,
+            runtimeRecoveryRoot: fixture.root.appendingPathComponent(
+                "runtime-recovery",
+                isDirectory: true
+            ),
+            committedJournalFailureForTesting: true
+        )
+        let job = try await queue.enqueueDelivery(
+            editor: fixture.editor,
+            spec: fixture.spec,
+            format: .h264,
+            resolution: .r720p,
+            outputURL: output
+        )
+        _ = await queue.waitForCompletion(jobID: job.id)
+        let attempt = try PipelineDeliveryStore.loadAttempt(
+            id: job.id,
+            dataRoot: fixture.dataRoot
+        )
+
+        #expect(job.status == .completed)
+        #expect(attempt.status == .succeeded)
+        #expect(attempt.outputSHA256 == (try FileDigest.sha256(of: output)))
+        #expect(attempt.outputByteCount == Int64(try Data(contentsOf: output).count))
+        #expect(attempt.warnings.contains { $0.contains("cleanup is pending") })
+        #expect(job.warnings.contains { $0.contains("cleanup is pending") })
+
+        try ExportPublishRecoveryStore.recoverAll(root: recovery)
+        try ExportPublishRecoveryStore.recoverAll(root: recovery)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: recovery.path).isEmpty)
+    }
+
+    @Test("recovery isolates corrupt offline and changed journals by destination")
+    func recoveryIsolationAndLaterPreparedRecovery() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "export-recovery-isolation-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recovery = root.appendingPathComponent("recovery", isDirectory: true)
+        let volume = root.appendingPathComponent("volume", isDirectory: true)
+        try FileManager.default.createDirectory(at: volume, withIntermediateDirectories: true)
+        let target = volume.appendingPathComponent("blocked.xml")
+        try Data("old".utf8).write(to: target)
+        let jobID = UUID().uuidString.lowercased()
+        let temporary = ExportQueue.DestinationBinding.makeTemporaryURL(url: target, jobID: jobID)
+        try Data("new".utf8).write(to: temporary)
+        let publication = try ExportPublishRecoveryStore.Publication(
+            targetURL: target,
+            temporaryURL: temporary,
+            initialState: ExportQueue.PathState.capture(target),
+            initialIdentity: ExportFileIdentity.capture(target),
+            publishedState: ExportQueue.PathState.capture(temporary),
+            publishedIdentity: ExportFileIdentity.capture(temporary),
+            jobID: jobID,
+            expectsDirectory: false
+        )
+        #expect(throws: (any Error).self) {
+            _ = try ExportPublishRecoveryStore.publish(
+                [publication],
+                root: recovery,
+                crashAfterMutationForTesting: 1
+            )
+        }
+        let offline = root.appendingPathComponent("offline-volume", isDirectory: true)
+        try FileManager.default.moveItem(at: volume, to: offline)
+
+        let independent = root.appendingPathComponent("independent.xml")
+        let independentJobID = UUID().uuidString.lowercased()
+        let independentTemporary = ExportQueue.DestinationBinding.makeTemporaryURL(
+            url: independent,
+            jobID: independentJobID
+        )
+        try Data("independent".utf8).write(to: independentTemporary)
+        let independentPublication = try ExportPublishRecoveryStore.Publication(
+            targetURL: independent,
+            temporaryURL: independentTemporary,
+            initialState: .absent,
+            initialIdentity: nil,
+            publishedState: ExportQueue.PathState.capture(independentTemporary),
+            publishedIdentity: ExportFileIdentity.capture(independentTemporary),
+            jobID: independentJobID,
+            expectsDirectory: false
+        )
+        _ = try ExportPublishRecoveryStore.publish(
+            [independentPublication],
+            root: recovery
+        )
+        #expect(try Data(contentsOf: independent) == Data("independent".utf8))
+        do {
+            try ExportPublishRecoveryStore.recoverAll(
+                root: recovery,
+                overlapping: [target]
+            )
+            #expect(Bool(false), "Overlapping recovery unexpectedly ignored its unavailable target.")
+        } catch {
+            #expect(error.localizedDescription.contains("Recovery record:"))
+            #expect(error.localizedDescription.contains(recovery.path))
+        }
+
+        try FileManager.default.moveItem(at: offline, to: volume)
+        try ExportPublishRecoveryStore.recoverAll(root: recovery)
+        #expect(try Data(contentsOf: target) == Data("old".utf8))
+
+        try FileManager.default.createDirectory(at: recovery, withIntermediateDirectories: true)
+        try Data("not-json".utf8).write(to: recovery.appendingPathComponent("broken.json"))
+        try ExportPublishRecoveryStore.recoverAll(root: recovery)
+        #expect(FileManager.default.fileExists(
+            atPath: recovery.appendingPathComponent("Invalid Records/broken.json").path
+        ))
+        let afterCorrupt = root.appendingPathComponent("after-corrupt.xml")
+        let afterCorruptID = UUID().uuidString.lowercased()
+        let afterCorruptTemporary = ExportQueue.DestinationBinding.makeTemporaryURL(
+            url: afterCorrupt,
+            jobID: afterCorruptID
+        )
+        try Data("after-corrupt".utf8).write(to: afterCorruptTemporary)
+        _ = try ExportPublishRecoveryStore.publish(
+            [try .init(
+                targetURL: afterCorrupt,
+                temporaryURL: afterCorruptTemporary,
+                initialState: .absent,
+                initialIdentity: nil,
+                publishedState: ExportQueue.PathState.capture(afterCorruptTemporary),
+                publishedIdentity: ExportFileIdentity.capture(afterCorruptTemporary),
+                jobID: afterCorruptID,
+                expectsDirectory: false
+            )],
+            root: recovery
+        )
+        #expect(try Data(contentsOf: afterCorrupt) == Data("after-corrupt".utf8))
+
+        let committed = try makePublishRecoveryFixture(
+            root: root.appendingPathComponent("committed", isDirectory: true)
+        )
+        let result = try ExportPublishRecoveryStore.publish(
+            committed.publications,
+            root: committed.recovery,
+            failCommittedJournalRemovalForTesting: true
+        )
+        #expect(result.cleanupWarning != nil)
+        try Data("user-owned-change".utf8).write(to: committed.document, options: .atomic)
+        let unrelated = root.appendingPathComponent("unrelated.xml")
+        let unrelatedID = UUID().uuidString.lowercased()
+        let unrelatedTemporary = ExportQueue.DestinationBinding.makeTemporaryURL(
+            url: unrelated,
+            jobID: unrelatedID
+        )
+        try Data("unrelated".utf8).write(to: unrelatedTemporary)
+        _ = try ExportPublishRecoveryStore.publish(
+            [try .init(
+                targetURL: unrelated,
+                temporaryURL: unrelatedTemporary,
+                initialState: .absent,
+                initialIdentity: nil,
+                publishedState: ExportQueue.PathState.capture(unrelatedTemporary),
+                publishedIdentity: ExportFileIdentity.capture(unrelatedTemporary),
+                jobID: unrelatedID,
+                expectsDirectory: false
+            )],
+            root: committed.recovery
+        )
+        #expect(try Data(contentsOf: committed.document) == Data("user-owned-change".utf8))
+        #expect(try Data(contentsOf: unrelated) == Data("unrelated".utf8))
+    }
+
+    @Test("runtime recovery removes only exact inactive job scratch identities")
+    func runtimeRecoveryOwnsExactScratchIdentities() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "export-runtime-recovery-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let recovery = root.appendingPathComponent("runtime", isDirectory: true)
+
+        let replacedID = UUID().uuidString.lowercased()
+        let replacedTarget = root.appendingPathComponent("replaced.xml")
+        let replacedSnapshot = ExportQueue.SourceBinding.snapshotRoot(jobID: replacedID)
+        try FileManager.default.createDirectory(
+            at: replacedSnapshot,
+            withIntermediateDirectories: true
+        )
+        let replacedBinding = try ExportQueue.DestinationBinding(
+            url: replacedTarget,
+            jobID: replacedID,
+            expectsDirectory: false
+        )
+        _ = try ExportRuntimeRecoveryStore.begin(
+            jobID: replacedID,
+            kind: .xml,
+            snapshotURL: replacedSnapshot,
+            destination: replacedBinding,
+            companion: nil,
+            root: recovery
+        )
+        try FileManager.default.removeItem(at: replacedBinding.temporaryURL)
+        try Data("external replacement".utf8).write(to: replacedBinding.temporaryURL)
+        try ExportRuntimeRecoveryStore.recoverAll(root: recovery)
+        #expect(try Data(contentsOf: replacedBinding.temporaryURL) == Data("external replacement".utf8))
+        #expect(!FileManager.default.fileExists(atPath: replacedSnapshot.path))
+
+        let activeID = UUID().uuidString.lowercased()
+        let activeTarget = root.appendingPathComponent("Active.ngv", isDirectory: true)
+        let activeSnapshot = ExportQueue.SourceBinding.snapshotRoot(jobID: activeID)
+        try FileManager.default.createDirectory(at: activeSnapshot, withIntermediateDirectories: true)
+        let activeBinding = try ExportQueue.DestinationBinding(
+            url: activeTarget,
+            jobID: activeID,
+            expectsDirectory: true
+        )
+        let lease = try ExportRuntimeRecoveryStore.begin(
+            jobID: activeID,
+            kind: .project,
+            snapshotURL: activeSnapshot,
+            destination: activeBinding,
+            companion: nil,
+            root: recovery
+        )
+        let neighbor = root.appendingPathComponent(
+            ".Active.ngv.\(activeID).rendering-neighbor",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: neighbor, withIntermediateDirectories: true)
+        try ExportRuntimeRecoveryStore.recoverAll(
+            excludingJobIDs: [activeID],
+            root: recovery
+        )
+        #expect(FileManager.default.fileExists(atPath: lease.packageStagingURL!.path))
+        #expect(FileManager.default.fileExists(atPath: activeSnapshot.path))
+
+        try FileManager.default.moveItem(
+            at: lease.packageStagingURL!,
+            to: activeBinding.temporaryURL
+        )
+        try ExportRuntimeRecoveryStore.recoverAll(root: recovery)
+        #expect(!FileManager.default.fileExists(atPath: activeBinding.temporaryURL.path))
+        #expect(!FileManager.default.fileExists(atPath: activeSnapshot.path))
+        #expect(FileManager.default.fileExists(atPath: neighbor.path))
+
+        let symlinkID = UUID().uuidString.lowercased()
+        let symlinkTarget = root.appendingPathComponent("linked.fcpxml")
+        let symlinkMedia = FCPXMLExporter.mediaDirectory(for: symlinkTarget)
+        let symlinkSnapshot = ExportQueue.SourceBinding.snapshotRoot(jobID: symlinkID)
+        try FileManager.default.createDirectory(at: symlinkSnapshot, withIntermediateDirectories: true)
+        let documentBinding = try ExportQueue.DestinationBinding(
+            url: symlinkTarget,
+            jobID: symlinkID,
+            expectsDirectory: false
+        )
+        let mediaBinding = try ExportQueue.DestinationBinding(
+            url: symlinkMedia,
+            jobID: symlinkID,
+            expectsDirectory: true
+        )
+        _ = try ExportRuntimeRecoveryStore.begin(
+            jobID: symlinkID,
+            kind: .fcpxml,
+            snapshotURL: symlinkSnapshot,
+            destination: documentBinding,
+            companion: mediaBinding,
+            root: recovery
+        )
+        let external = root.appendingPathComponent("external", isDirectory: true)
+        try FileManager.default.createDirectory(at: external, withIntermediateDirectories: true)
+        try Data("keep".utf8).write(to: external.appendingPathComponent("keep.txt"))
+        try FileManager.default.removeItem(at: mediaBinding.temporaryURL)
+        try FileManager.default.createSymbolicLink(
+            at: mediaBinding.temporaryURL,
+            withDestinationURL: external
+        )
+        try ExportRuntimeRecoveryStore.recoverAll(root: recovery)
+        #expect(try Data(contentsOf: external.appendingPathComponent("keep.txt")) == Data("keep".utf8))
+        #expect(FileManager.default.fileExists(atPath: mediaBinding.temporaryURL.path))
     }
 
     private struct PublishRecoveryFixture {
@@ -982,5 +1417,18 @@ struct ExportQueueTests {
             try? await Task.sleep(for: .milliseconds(2))
         }
         return false
+    }
+
+    private func waitUntil(
+        timeout: Duration,
+        _ predicate: () -> Bool
+    ) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while clock.now < deadline {
+            if predicate() { return true }
+            try? await Task.sleep(for: .milliseconds(2))
+        }
+        return predicate()
     }
 }

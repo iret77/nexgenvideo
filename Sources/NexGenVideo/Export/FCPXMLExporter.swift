@@ -92,6 +92,8 @@ enum FCPXMLExporter {
         target: FCPXMLTarget = .default,
         outputURL: URL,
         publishedOutputURL: URL? = nil,
+        stagedMediaDirectoryURL: URL? = nil,
+        preserveOutputIdentity: Bool = false,
         isCancelled: @escaping @MainActor @Sendable () -> Bool = { Task.isCancelled },
         progress: @escaping @MainActor @Sendable (Double) -> Void = { _ in }
     ) async throws -> FCPXMLExportReport {
@@ -108,7 +110,7 @@ enum FCPXMLExporter {
         let staged = try await stageProjectMedia(
             mediaRefs: mediaRefs,
             resolver: resolver,
-            outputURL: outputURL,
+            directory: stagedMediaDirectoryURL ?? mediaDirectory(for: outputURL),
             isCancelled: isCancelled,
             progress: { value in progress(0.08 + value * 0.37) }
         )
@@ -156,6 +158,7 @@ enum FCPXMLExporter {
                 document.data,
                 version: version,
                 outputURL: outputURL,
+                preserveOutputIdentity: preserveOutputIdentity,
                 isCancelled: isCancelled
             )
             await progress(1)
@@ -222,9 +225,26 @@ enum FCPXMLExporter {
         _ data: Data,
         version: FCPXMLVersion,
         outputURL: URL,
+        preserveOutputIdentity: Bool = false,
         isCancelled: @escaping @MainActor @Sendable () -> Bool = { Task.isCancelled }
     ) async throws -> (data: Data, validation: FCPXMLValidationReport, byteCount: Int) {
         try validateOutputDestination(outputURL)
+        if preserveOutputIdentity {
+            let validation = try FCPXMLSchemaValidator.validate(data, version: version)
+            try await checkCancellation(isCancelled)
+            let handle = try FileHandle(forWritingTo: outputURL)
+            defer { try? handle.close() }
+            try handle.truncate(atOffset: 0)
+            try handle.write(contentsOf: data)
+            try handle.synchronize()
+            guard try Data(contentsOf: outputURL) == data else {
+                throw ExportError.xmlWriteFailed(
+                    destination: outputURL,
+                    reason: "The destination bytes did not match the validated export."
+                )
+            }
+            return (data, validation, data.count)
+        }
         let temporaryOutput = outputURL.deletingLastPathComponent().appendingPathComponent(
             ".fcpxml-\(UUID().uuidString).tmp"
         )
@@ -249,6 +269,12 @@ enum FCPXMLExporter {
         }
         try await checkCancellation(isCancelled)
         try commit(temporaryOutput: temporaryOutput, to: outputURL)
+        guard try Data(contentsOf: outputURL) == persisted else {
+            throw ExportError.xmlWriteFailed(
+                destination: outputURL,
+                reason: "The destination bytes did not match the validated export."
+            )
+        }
         return (persisted, validation, byteCount)
     }
 
@@ -287,7 +313,7 @@ enum FCPXMLExporter {
     private static func stageProjectMedia(
         mediaRefs: Set<String>,
         resolver: MediaResolver,
-        outputURL: URL,
+        directory: URL,
         isCancelled: @escaping @MainActor @Sendable () -> Bool,
         progress: @escaping @MainActor @Sendable (Double) -> Void
     ) async throws -> StagedMedia {
@@ -307,7 +333,6 @@ enum FCPXMLExporter {
             )
         }
 
-        let directory = mediaDirectory(for: outputURL)
         let directoryExisted = FileManager.default.fileExists(atPath: directory.path)
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

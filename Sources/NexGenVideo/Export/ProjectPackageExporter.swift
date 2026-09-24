@@ -24,6 +24,7 @@ enum ProjectPackageExporter {
         generationLog: GenerationLog,
         sourceProjectURL: URL?,
         to destURL: URL,
+        stagingURL: URL? = nil,
         isCancelled: (@Sendable () -> Bool)? = nil,
         progress: (@Sendable (Double) -> Void)? = nil
     ) throws -> Report {
@@ -31,7 +32,7 @@ enum ProjectPackageExporter {
         let fm = FileManager.default
         let parent = destURL.deletingLastPathComponent()
         try fm.createDirectory(at: parent, withIntermediateDirectories: true)
-        let staging = parent.appendingPathComponent(
+        let staging = stagingURL ?? parent.appendingPathComponent(
             ".\(destURL.lastPathComponent).export-\(UUID().uuidString)",
             isDirectory: true
         )

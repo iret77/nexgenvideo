@@ -140,7 +140,7 @@ extension ToolExecutor {
         )
         try await requireCompleted(job)
         return try jsonResult([
-            "status": "exported",
+            "status": job.warnings.isEmpty ? "exported" : "exportedWithWarnings",
             "jobID": job.id,
             "mode": ExportProjectMode.xml.rawValue,
             "path": outputURL.path,
@@ -152,7 +152,7 @@ extension ToolExecutor {
             "fps": job.fps ?? timeline.fps,
             "outputSha256": job.outputSHA256 ?? "",
             "outputByteCount": job.outputByteCount ?? 0,
-            "warnings": [],
+            "warnings": job.warnings,
         ])
     }
 
@@ -177,11 +177,14 @@ extension ToolExecutor {
         guard let report = job.fcpxmlReport else {
             throw ToolError("export_project: FCPXML evidence is unavailable")
         }
-        let warnings = report.warnings.map { warning -> [String: Any] in
+        var warnings = report.warnings.map { warning -> [String: Any] in
             var value: [String: Any] = ["code": warning.code, "message": warning.message]
             if let clipID = warning.clipID { value["clipId"] = clipID }
             return value
         }
+        warnings.append(contentsOf: job.warnings
+            .filter { message in !report.warnings.contains { $0.message == message } }
+            .map { ["code": "publication_cleanup_pending", "message": $0] })
         let bindings = report.mediaBindings.map { binding -> [String: Any] in
             var value: [String: Any] = [
                 "assetId": binding.assetID,
@@ -249,9 +252,10 @@ extension ToolExecutor {
         }
 
         let missing = report.missing.map { ["id": $0.id, "name": $0.name] }
-        let warnings = missing.isEmpty
+        var warnings = missing.isEmpty
             ? []
             : ["Exported, but \(missing.count) media file\(missing.count == 1 ? "" : "s") were missing and could not be included."]
+        warnings.append(contentsOf: job.warnings.filter { !warnings.contains($0) })
 
         return try jsonResult([
             "status": warnings.isEmpty ? "exported" : "exportedWithWarnings",
@@ -262,6 +266,8 @@ extension ToolExecutor {
             "copiedInternalMediaCount": report.copiedInternal,
             "missingMedia": missing,
             "totalBytes": report.totalBytes,
+            "outputSha256": job.outputSHA256 ?? "",
+            "outputByteCount": job.outputByteCount ?? report.totalBytes,
             "warnings": warnings,
         ])
     }

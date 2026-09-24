@@ -98,6 +98,8 @@ final class ExportService {
         fcpxmlVersion: FCPXMLVersion = .default,
         fcpxmlTarget: FCPXMLTarget = .default,
         referenceOutputURL: URL? = nil,
+        stagedMediaDirectoryURL: URL? = nil,
+        preserveOutputIdentity: Bool = false,
         acquireSlot: Bool = true,
         event: (@MainActor @Sendable (Event) -> Void)? = nil
     ) async {
@@ -145,6 +147,7 @@ final class ExportService {
                             timeline: timeline,
                             resolver: resolver,
                             outputURL: outputURL,
+                            preserveOutputIdentity: preserveOutputIdentity,
                             isCancelled: { cancellationFlag.isCancelled }
                         )
                     }.value
@@ -157,6 +160,8 @@ final class ExportService {
                         target: fcpxmlTarget,
                         outputURL: outputURL,
                         publishedOutputURL: referenceOutputURL,
+                        stagedMediaDirectoryURL: stagedMediaDirectoryURL,
+                        preserveOutputIdentity: preserveOutputIdentity,
                         isCancelled: { [weak self] in self?.cancelRequested ?? true },
                         progress: { [weak self] value in
                             self?.progress = value
@@ -310,6 +315,7 @@ final class ExportService {
         generationLog: GenerationLog,
         sourceProjectURL: URL?,
         outputURL: URL,
+        stagingURL: URL? = nil,
         acquireSlot: Bool = true,
         event: (@MainActor @Sendable (Event) -> Void)? = nil
     ) async -> ProjectPackageExporter.Report? {
@@ -344,6 +350,7 @@ final class ExportService {
                 try ProjectPackageExporter.export(
                     timeline: timeline, manifest: manifest, generationLog: generationLog,
                     sourceProjectURL: sourceProjectURL, to: outputURL,
+                    stagingURL: stagingURL,
                     isCancelled: { cancellationFlag.isCancelled },
                     progress: { p in
                         Task { @MainActor in
