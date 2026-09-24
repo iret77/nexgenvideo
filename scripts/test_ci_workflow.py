@@ -21,7 +21,7 @@ class CIWorkflowTests(unittest.TestCase):
                     key: str(required).lower() for key in ("build_required", "bundle_required", "ui_required")
                 }},
                 **{job: {"result": "success" if required else "skipped"}
-                   for job in ("build_test", "ui_render", "diagnostic-startup")},
+                   for job in ("build_test", "ui_render", "diagnostic-startup", "bpy-boundary")},
             }
             def check():
                 return subprocess.run([sys.executable, "-c", code], env={**os.environ, "NEEDS_JSON": json.dumps(needs)}, capture_output=True)

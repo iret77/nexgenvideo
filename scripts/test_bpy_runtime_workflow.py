@@ -27,8 +27,12 @@ class BpyRuntimeWorkflowTests(unittest.TestCase):
         self.assertIn(".rlimitASAllocationDenied == true", text)
         self.assertIn('.outOfMemoryState == "resourceLimited"', text)
         self.assertIn('.structuralLimitState == "resourceLimited"', text)
+        self.assertIn('.renderOnlyGeometryState == "resourceLimited"', text)
+        self.assertIn('.secondarySceneGeometryState == "resourceLimited"', text)
         self.assertIn('.storageLimitState == "resourceLimited"', text)
         self.assertIn('.aggregateByteLimitState == "resourceLimited"', text)
+        self.assertIn('.unlinkedStorageLimitState == "resourceLimited"', text)
+        self.assertIn('.healthyResourceChurnState == "awaitingConfirmation"', text)
         self.assertIn('.resourceScanErrorState == "crashed"', text)
         self.assertIn(".supervisorSignalDenied == true", text)
         self.assertIn(".supervisorSignalRecovered == true", text)
@@ -37,7 +41,7 @@ class BpyRuntimeWorkflowTests(unittest.TestCase):
         self.assertIn('.trustedVerification.blenderBuildHash == "d13f752e3b9c"', text)
         self.assertIn(".trustedVerification.libraryVersions.openvdb.version", text)
         self.assertIn("NGV_SELFTEST_BPY_HOST_CRASH", text)
-        self.assertIn("verify_bpy_source_closure.py", text)
+        self.assertIn("verify_bpy_distributable_source.py", text)
         self.assertIn(".appDelegateShutdown == true", text)
         self.assertIn(".jobMetrics.worker_process_identifier != .jobMetrics.verifier_process_identifier", text)
 
@@ -55,6 +59,17 @@ class BpyRuntimeWorkflowTests(unittest.TestCase):
         ci = (ROOT / ".github/workflows/ci.yml").read_text()
         self.assertIn("id: bpy_distribution", ci)
         self.assertIn("needs.source_gate.outputs.bpy_distribution_ready == 'true'", ci)
+        self.assertIn("verify_bpy_distributable_source.py", ci)
+        self.assertIn("--bpy-boundary-probe-for-ci-transfer", ci)
+        self.assertIn("name: NexGenVideo-ci-boundary-app", ci)
+        self.assertIn("NGV_SELFTEST_BPY_BOUNDARY", ci)
+        self.assertLess(
+            ci.index("verify_bpy_distributable_source.py"),
+            ci.index("name: Upload .app artifact"),
+        )
+        diagnostic = ci.split("  diagnostic-startup:", 1)[1].split("  bpy-boundary:", 1)[0]
+        self.assertIn("if: needs.source_gate.outputs.bundle_required == 'true'", diagnostic)
+        self.assertNotIn("bpy_distribution_ready", diagnostic)
         for workflow in (
             "chat-hang-replay.yml",
             "private-example-analysis.yml",
@@ -74,9 +89,10 @@ class BpyRuntimeWorkflowTests(unittest.TestCase):
             self.assertNotIn("com.apple.security.files", text)
 
     def test_bundle_creates_two_distinct_xpc_containers(self):
-        text = (ROOT / "scripts/bundle_bpy_runtime.sh").read_text()
-        self.assertIn("for slot in 0 1", text)
-        self.assertIn("bpy-service-$slot", text)
+        for filename in ("bundle_bpy_runtime.sh", "bundle_bpy_boundary_probe.sh"):
+            text = (ROOT / "scripts" / filename).read_text()
+            self.assertIn("for slot in 0 1", text)
+            self.assertIn("bpy-service-$slot", text)
 
     def test_exact_wheel_entrypoint_and_inventory_are_locked(self):
         lock = (ROOT / "Runtime/bpy/runtime-lock.json").read_text()
@@ -98,6 +114,9 @@ class BpyRuntimeWorkflowTests(unittest.TestCase):
         self.assertIn("raise SystemExit(71)", worker)
         self.assertIn('load_scene(bpy, config["scenePath"], False)', worker)
         self.assertIn('elif mode == "verify":', worker)
+        self.assertIn("class NGVGeometryVerifier", worker)
+        self.assertIn("bpy.ops.render.render(", worker)
+        self.assertNotIn("DAG_EVAL_RENDER", worker)
         self.assertIn("jobFingerprint", service)
         self.assertIn("resultExpired", service)
         self.assertIn("connection.interruptionHandler", service)
@@ -116,6 +135,9 @@ class BpyRuntimeWorkflowTests(unittest.TestCase):
         self.assertIn("NGV_BPY_SUPERVISOR_FAIL_CHILD_IDENTITY_CAPTURE", supervisor)
         self.assertIn("NGV_BPY_SUPERVISOR_CHILD_IGNORE_TERM", supervisor)
         self.assertIn("waitForOwnedChildExit", supervisor)
+        self.assertIn("procPIDFDInfo", service)
+        self.assertIn("ownedWritableVnodes", service)
+        self.assertIn("boundary-supervise", supervisor)
 
     def test_source_candidate_workflow_is_manual_source_only_and_fail_closed(self):
         text = (ROOT / ".github/workflows/bpy-source-closure-candidate.yml").read_text()
@@ -185,6 +207,11 @@ class BpyRuntimeWorkflowTests(unittest.TestCase):
         self.assertIn('lock.get("distributionClosure", {})', verifier)
         self.assertIn("distributionClosure.sourceArchives", stage)
         self.assertIn("distributionClosure.sourceArchives", bundle_verifier)
+        common = (ROOT / "scripts/verify_bpy_distributable_source.py").read_text()
+        self.assertIn("require_distributable=True", common)
+        for workflow in ("ci.yml", "release.yml", "bpy-runtime-acceptance.yml"):
+            text = (ROOT / ".github/workflows" / workflow).read_text()
+            self.assertIn("verify_bpy_distributable_source.py", text)
 
 
 if __name__ == "__main__":

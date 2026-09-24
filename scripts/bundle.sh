@@ -10,7 +10,7 @@ set -euo pipefail
 
 CONFIG="release"
 MODE="dev"
-INCLUDE_BPY_RUNTIME=true
+BPY_BUNDLE_MODE="full"
 for arg in "$@"; do
   case "$arg" in
     release|debug) CONFIG="$arg" ;;
@@ -18,7 +18,8 @@ for arg in "$@"; do
     --sign)        MODE="sign" ;;
     --dist)        MODE="dist" ;;
     --package)     MODE="package" ;;
-    --without-bpy-runtime-for-ci-transfer) INCLUDE_BPY_RUNTIME=false ;;
+    --without-bpy-runtime-for-ci-transfer) BPY_BUNDLE_MODE="omitted" ;;
+    --bpy-boundary-probe-for-ci-transfer) BPY_BUNDLE_MODE="boundary" ;;
     *) echo "unknown arg: $arg" >&2; exit 1 ;;
   esac
 done
@@ -130,8 +131,8 @@ if [ "$MODE" = "fast" ] || [ "$MODE" = "sign" ] || [ "$MODE" = "dist" ] || [ "$M
   [ -n "$SIGN_IDENTITY" ] || { echo "!! no 'Developer ID Application' identity in the keychain (set SIGN_IDENTITY or import the cert)" >&2; exit 1; }
 fi
 
-if [ "$INCLUDE_BPY_RUNTIME" = false ] && [ "$MODE" != "dev" ]; then
-  echo "!! runtime omission is only valid for unsigned CI test harnesses" >&2
+if [ "$BPY_BUNDLE_MODE" != "full" ] && [ "$MODE" != "dev" ]; then
+  echo "!! alternate bpy bundle modes are valid only for CI dev bundles" >&2
   exit 1
 fi
 
@@ -187,10 +188,18 @@ fi
 
 cp "$RESOURCES/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
-if [ "$INCLUDE_BPY_RUNTIME" = true ]; then
+if [ "$BPY_BUNDLE_MODE" = "full" ]; then
   BPY_RUNTIME_ROOT="${NGV_BPY_RUNTIME_ROOT:-$ROOT/.build/bpy-runtime}"
   "$ROOT/scripts/bundle_bpy_runtime.sh" \
     "$BPY_RUNTIME_ROOT" \
+    "$BIN_DIRECTORY/NexGenVideoBpyService" \
+    "$APP"
+elif [ "$BPY_BUNDLE_MODE" = "boundary" ]; then
+  [ "${CI:-}" = true ] || {
+    echo "!! --bpy-boundary-probe-for-ci-transfer is restricted to CI test harnesses" >&2
+    exit 1
+  }
+  "$ROOT/scripts/bundle_bpy_boundary_probe.sh" \
     "$BIN_DIRECTORY/NexGenVideoBpyService" \
     "$APP"
 else
@@ -242,7 +251,7 @@ touch "$APP"
 if [ "$MODE" = "fast" ]; then
   echo "==> Codesigning fast app"
   codesign --force --deep --sign "$SIGN_IDENTITY" "$APP"
-  if [ "$INCLUDE_BPY_RUNTIME" = true ]; then
+  if [ "$BPY_BUNDLE_MODE" = "full" ]; then
     BPY_RUNTIME="$APP/Contents/Helpers/BpyRuntime"
     codesign --force --sign "$SIGN_IDENTITY" \
       --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
@@ -273,11 +282,13 @@ dsymutil "$BIN_DIRECTORY/libNexGenEngine.dylib" -o "$ROOT/.build/NexGenEngine.dS
 if [ "$MODE" = "dev" ]; then
   echo "==> Ad-hoc signing dev app"
   codesign --force --deep --sign - "$APP"
-  if [ "$INCLUDE_BPY_RUNTIME" = true ]; then
-    BPY_RUNTIME="$APP/Contents/Helpers/BpyRuntime"
-    codesign --force --sign - \
-      --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
-      "$BPY_RUNTIME/python/bin/python3.13"
+  if [ "$BPY_BUNDLE_MODE" != "omitted" ]; then
+    if [ "$BPY_BUNDLE_MODE" = "full" ]; then
+      BPY_RUNTIME="$APP/Contents/Helpers/BpyRuntime"
+      codesign --force --sign - \
+        --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
+        "$BPY_RUNTIME/python/bin/python3.13"
+    fi
     codesign --force --sign - \
       --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
       "$APP/Contents/Helpers/NexGenVideoBpySupervisor"
@@ -297,7 +308,7 @@ if [ "$MODE" = "dev" ]; then
   exit 0
 fi
 
-if [ "$INCLUDE_BPY_RUNTIME" = true ]; then
+if [ "$BPY_BUNDLE_MODE" = "full" ]; then
   BPY_RUNTIME="$APP/Contents/Helpers/BpyRuntime"
   echo "==> Codesigning managed bpy runtime"
   while IFS= read -r -d '' binary; do

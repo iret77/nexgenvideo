@@ -345,14 +345,7 @@ jobs:
           python3 scripts/assemble_bpy_source_closure.py --output-directory "$OUTPUT"
           ARCHIVE="$OUTPUT/NexGenVideo-bpy-5.2.2-corresponding-source.tar"
           MANIFEST="$OUTPUT/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json"
-          python3 scripts/verify_bpy_source_closure.py \
-            "$ARCHIVE" "$MANIFEST" --require-distributable
-          [ "$(sha256sum "$ARCHIVE" | awk '{print $1}')" = \
-            "$(jq -r .distributionClosure.publicSourceAsset.sha256 Runtime/bpy/runtime-lock.json)" ]
-          [ "$(stat -c %s "$ARCHIVE")" = \
-            "$(jq -r .distributionClosure.publicSourceAsset.size Runtime/bpy/runtime-lock.json)" ]
-          [ "$(sha256sum "$MANIFEST" | awk '{print $1}')" = \
-            "$(jq -r .distributionClosure.publicSourceAsset.manifestSHA256 Runtime/bpy/runtime-lock.json)" ]
+          python3 scripts/verify_bpy_distributable_source.py "$ARCHIVE" "$MANIFEST"
       - uses: actions/upload-artifact@v4
         with:
           name: bpy-corresponding-source-${{ github.sha }}

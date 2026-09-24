@@ -22,7 +22,7 @@ jobs:
   source_gate:
     name: Source Gate
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 90
     outputs:
       build_required: ${{ steps.classify.outputs.build_required }}
       bundle_required: ${{ steps.classify.outputs.bundle_required }}
@@ -79,9 +79,16 @@ jobs:
         id: bpy_distribution
         run: |
           python3 scripts/verify_bpy_runtime.py
-          [ "$(jq -r .distributionStatus Runtime/bpy/runtime-lock.json)" = ready ] \
-            && echo "ready=true" >> "$GITHUB_OUTPUT" \
-            || echo "ready=false" >> "$GITHUB_OUTPUT"
+          if [ "$(jq -r .distributionStatus Runtime/bpy/runtime-lock.json)" = ready ]; then
+            OUTPUT="$RUNNER_TEMP/bpy-source-closure"
+            python3 scripts/assemble_bpy_source_closure.py --output-directory "$OUTPUT"
+            python3 scripts/verify_bpy_distributable_source.py \
+              "$OUTPUT/NexGenVideo-bpy-5.2.2-corresponding-source.tar" \
+              "$OUTPUT/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json"
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
 
   ui_render:
     name: Agent UI Evidence
@@ -310,9 +317,36 @@ jobs:
           retention-days: 7
           compression-level: 0
 
+      - name: Assemble signed no-bpy CI boundary app
+        if: needs.source_gate.outputs.bundle_required == 'true'
+        env:
+          CI: true
+        run: |
+          set -euo pipefail
+          scripts/bundle.sh debug --bpy-boundary-probe-for-ci-transfer
+          APP=.build/NexGenVideo.app
+          test -f "$APP/Contents/Resources/BPY_BOUNDARY_PROBE_NONPRODUCT_CI"
+          test ! -e "$APP/Contents/Helpers/BpyRuntime"
+          test ! -e "$APP/Contents/Helpers/BpyRuntime/python"
+          test -x "$APP/Contents/Helpers/NexGenVideoBpySupervisor"
+          test -x "$APP/Contents/XPCServices/NexGenVideoBpyService0.xpc/Contents/MacOS/NexGenVideoBpyService"
+          ! find "$APP" \( -name '__init__.so' -o -name 'bpy*.whl' \) -print | grep -q .
+          codesign --verify --strict --verbose=2 "$APP"
+          ditto -c -k --keepParent "$APP" .build/NexGenVideo-ci-boundary.zip
+
+      - name: Upload signed no-bpy CI boundary app
+        if: needs.source_gate.outputs.bundle_required == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: NexGenVideo-ci-boundary-app
+          path: .build/NexGenVideo-ci-boundary.zip
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
   diagnostic-startup:
     needs: [source_gate, build_test]
-    if: needs.source_gate.outputs.bundle_required == 'true' && needs.source_gate.outputs.bpy_distribution_ready == 'true'
+    if: needs.source_gate.outputs.bundle_required == 'true'
     runs-on: macos-26
     timeout-minutes: 10
     permissions:
@@ -332,11 +366,11 @@ jobs:
           python3 scripts/verify_hang_startup.py control/NexGenVideo.app --expect-missing-recorder --output evidence/control.json
       - uses: actions/download-artifact@v4
         with:
-          name: NexGenVideo-app
+          name: NexGenVideo-ci-boundary-app
           path: candidate
       - name: Verify normal startup and disabled preference
         run: |
-          ditto -x -k candidate/NexGenVideo.zip candidate
+          ditto -x -k candidate/NexGenVideo-ci-boundary.zip candidate
           python3 scripts/verify_hang_startup.py candidate/NexGenVideo.app --output evidence/candidate.json
       - uses: actions/upload-artifact@v4
         if: always()
@@ -344,9 +378,77 @@ jobs:
           name: diagnostic-normal-startup
           path: evidence/*.json
 
+  bpy-boundary:
+    name: Signed bpy Boundary Probe
+    needs: [source_gate, build_test]
+    if: needs.source_gate.outputs.bundle_required == 'true'
+    runs-on: macos-26
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: NexGenVideo-ci-boundary-app
+          path: candidate
+      - name: Verify signed XPC, Supervisor, and fixed child boundary
+        run: |
+          set -euo pipefail
+          [ "$(sw_vers -productVersion | cut -d. -f1)" = 26 ]
+          [ "$(uname -m)" = arm64 ]
+          ditto -x -k candidate/NexGenVideo-ci-boundary.zip candidate
+          APP="$PWD/candidate/NexGenVideo.app"
+          SUPERVISOR="$APP/Contents/Helpers/NexGenVideoBpySupervisor"
+          XPC="$APP/Contents/XPCServices/NexGenVideoBpyService0.xpc"
+          test -f "$APP/Contents/Resources/BPY_BOUNDARY_PROBE_NONPRODUCT_CI"
+          test ! -e "$APP/Contents/Helpers/BpyRuntime"
+          ! find "$APP" \( -name '__init__.so' -o -name 'bpy*.whl' \) -print | grep -q .
+          codesign --verify --strict --verbose=2 "$APP"
+          codesign --verify --strict --verbose=2 "$SUPERVISOR"
+          codesign --verify --strict --verbose=2 "$XPC"
+          codesign -d --entitlements :- "$SUPERVISOR" > "$RUNNER_TEMP/supervisor.plist"
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.app-sandbox' "$RUNNER_TEMP/supervisor.plist")" = true ]
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.inherit' "$RUNNER_TEMP/supervisor.plist")" = true ]
+          ! /usr/libexec/PlistBuddy -c 'Print :com.apple.security.network.client' "$RUNNER_TEMP/supervisor.plist"
+          codesign -d --entitlements :- "$XPC" > "$RUNNER_TEMP/xpc.plist"
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.app-sandbox' "$RUNNER_TEMP/xpc.plist")" = true ]
+          ! /usr/libexec/PlistBuddy -c 'Print :com.apple.security.network.client' "$RUNNER_TEMP/xpc.plist"
+          mkdir -p evidence
+          NGV_SELFTEST_BPY_BOUNDARY="$PWD/evidence/result.json" \
+            "$APP/Contents/MacOS/NexGenVideo" > evidence/runtime.log 2>&1
+          grep -q SELFTEST_BPY_BOUNDARY_OK evidence/runtime.log
+          jq -e '
+            .schema == "nexgenvideo/bpy-boundary-probe/1"
+            and .serviceProcessIdentifier > 1
+            and .supervisorProcessIdentifier > 1
+            and .childProcessIdentifier > 1
+            and .supervisorParentProcessIdentifier == .serviceProcessIdentifier
+            and .childParentProcessIdentifier == .supervisorProcessIdentifier
+            and .allowedWriteSucceeded == true
+            and (.outsideWriteDeniedErrno == 1 or .outsideWriteDeniedErrno == 13)
+            and (.forkDeniedErrno == 1 or .forkDeniedErrno == 35)
+            and (.networkDeniedErrno == 1 or .networkDeniedErrno == 13)
+            and (.signalDeniedErrnos | length) == 3
+            and all(.signalDeniedErrnos[]; . == 1 or . == 13)
+            and .unlinkedBytesObserved >= 1048576
+            and .unlinkedLimitReason == "disk"
+            and .cleanupSupervisorGone == true
+            and .cleanupChildGone == true
+            and .healthyFollowupSucceeded == true
+          ' evidence/result.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: signed-bpy-boundary-evidence
+          path: evidence
+          if-no-files-found: error
+          retention-days: 30
+
   merge_gate:
     name: Merge Gate
-    needs: [source_gate, build_test, ui_render, diagnostic-startup]
+    needs: [source_gate, build_test, ui_render, diagnostic-startup, bpy-boundary]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -367,14 +469,9 @@ jobs:
               expected = "success" if plan[key] == "true" else "skipped"
               if needs[job]["result"] != expected:
                   raise SystemExit(f"{job}: expected {expected}, got {needs[job]['result']}")
-          diagnostic_expected = "success" if (
-              plan["bundle_required"] == "true"
-              and plan["bpy_distribution_ready"] == "true"
-          ) else "skipped"
-          if needs["diagnostic-startup"]["result"] != diagnostic_expected:
-              raise SystemExit(
-                  f"diagnostic-startup: expected {diagnostic_expected}, "
-                  f"got {needs['diagnostic-startup']['result']}"
-              )
+          for job in ("diagnostic-startup", "bpy-boundary"):
+              expected = "success" if plan["bundle_required"] == "true" else "skipped"
+              if needs[job]["result"] != expected:
+                  raise SystemExit(f"{job}: expected {expected}, got {needs[job]['result']}")
           print("All applicable CI checks succeeded.")
           PYTHON

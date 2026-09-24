@@ -36,16 +36,9 @@ jobs:
             scripts.test_bpy_runtime_workflow
           OUTPUT="$RUNNER_TEMP/bpy-source-closure"
           python3 scripts/assemble_bpy_source_closure.py --output-directory "$OUTPUT"
-          python3 scripts/verify_bpy_source_closure.py \
+          python3 scripts/verify_bpy_distributable_source.py \
             "$OUTPUT/NexGenVideo-bpy-5.2.2-corresponding-source.tar" \
-            "$OUTPUT/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json" \
-            --require-distributable
-          [ "$(sha256sum "$OUTPUT/NexGenVideo-bpy-5.2.2-corresponding-source.tar" | awk '{print $1}')" = \
-            "$(jq -r .distributionClosure.publicSourceAsset.sha256 Runtime/bpy/runtime-lock.json)" ]
-          [ "$(stat -c %s "$OUTPUT/NexGenVideo-bpy-5.2.2-corresponding-source.tar")" = \
-            "$(jq -r .distributionClosure.publicSourceAsset.size Runtime/bpy/runtime-lock.json)" ]
-          [ "$(sha256sum "$OUTPUT/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json" | awk '{print $1}')" = \
-            "$(jq -r .distributionClosure.publicSourceAsset.manifestSHA256 Runtime/bpy/runtime-lock.json)" ]
+            "$OUTPUT/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json"
       - uses: actions/upload-artifact@v4
         with:
           name: managed-bpy-source-${{ inputs.source_sha }}
@@ -266,8 +259,12 @@ jobs:
             and .rlimitASAllocationDenied == true
             and .outOfMemoryState == "resourceLimited"
             and .structuralLimitState == "resourceLimited"
+            and .renderOnlyGeometryState == "resourceLimited"
+            and .secondarySceneGeometryState == "resourceLimited"
             and .storageLimitState == "resourceLimited"
             and .aggregateByteLimitState == "resourceLimited"
+            and .unlinkedStorageLimitState == "resourceLimited"
+            and .healthyResourceChurnState == "awaitingConfirmation"
             and .resourceScanErrorState == "crashed"
             and .containerSiblingWriteDenied == true
             and .supervisorSignalDenied == true

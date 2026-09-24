@@ -21,6 +21,27 @@ private struct WorkerIdentity: Codable {
     let startAbsoluteTime: UInt64
 }
 
+private struct BoundaryChildReport: Codable {
+    let schema: String
+    let mode: String
+    let processIdentifier: Int32
+    let parentProcessIdentifier: Int32
+    let allowedWriteSucceeded: Bool
+    let outsideWriteDeniedErrno: Int32
+    let forkDeniedErrno: Int32
+    let networkDeniedErrno: Int32
+    let signalDeniedErrnos: [Int32]
+    let unlinkedBytes: UInt64
+}
+
+private struct BoundaryIdentity: Codable {
+    let supervisorProcessIdentifier: Int32
+    let supervisorParentProcessIdentifier: Int32
+    let supervisorStartAbsoluteTime: UInt64
+    let childProcessIdentifier: Int32
+    let childStartAbsoluteTime: UInt64
+}
+
 nonisolated(unsafe) private var terminationRequested: sig_atomic_t = 0
 
 private func requestTermination(_ signal: Int32) {
@@ -141,6 +162,141 @@ private func execPython(arguments: [String]) throws -> Never {
         _ = Darwin.execv(python.path, buffer.baseAddress!)
     }
     throw POSIXError(.init(rawValue: errno) ?? .EIO)
+}
+
+private func writeAll(_ descriptor: Int32, data: Data) throws {
+    try data.withUnsafeBytes { bytes in
+        var offset = 0
+        while offset < bytes.count {
+            let written = Darwin.write(
+                descriptor,
+                bytes.baseAddress!.advanced(by: offset),
+                bytes.count - offset
+            )
+            guard written > 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+            offset += written
+        }
+    }
+}
+
+private func boundaryChild(arguments: [String]) throws -> Never {
+    guard arguments.count == 4,
+          ["denials", "unlinked-hold"].contains(arguments[3]) else {
+        throw SupervisorError.invalidArguments
+    }
+    let writeRoot = URL(fileURLWithPath: arguments[0], isDirectory: true).standardizedFileURL
+    let outsidePath = URL(fileURLWithPath: arguments[1]).standardizedFileURL
+    let reportURL = URL(fileURLWithPath: arguments[2]).standardizedFileURL
+    let mode = arguments[3]
+    guard reportURL.deletingLastPathComponent() == writeRoot,
+          outsidePath.deletingLastPathComponent() != writeRoot else {
+        throw SupervisorError.invalidArguments
+    }
+    if mode == "unlinked-hold" {
+        _ = Darwin.signal(SIGTERM, SIG_IGN)
+    }
+    try applyWorkerSandbox(writeRoot: writeRoot)
+    usleep(100_000)
+
+    if mode == "unlinked-hold" {
+        let path = writeRoot.appendingPathComponent("unlinked-resource.bin").path
+        let descriptor = Darwin.open(path, O_CREAT | O_TRUNC | O_RDWR, S_IRUSR | S_IWUSR)
+        guard descriptor >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        guard Darwin.unlink(path) == 0 else {
+            Darwin.close(descriptor)
+            throw POSIXError(.init(rawValue: errno) ?? .EIO)
+        }
+        let chunk = Data(repeating: 0x5a, count: 64 * 1_024)
+        for _ in 0..<16 { try writeAll(descriptor, data: chunk) }
+        guard Darwin.fsync(descriptor) == 0 else {
+            Darwin.close(descriptor)
+            throw POSIXError(.init(rawValue: errno) ?? .EIO)
+        }
+        let report = BoundaryChildReport(
+            schema: "nexgenvideo/bpy-boundary-child/1",
+            mode: mode,
+            processIdentifier: getpid(),
+            parentProcessIdentifier: getppid(),
+            allowedWriteSucceeded: true,
+            outsideWriteDeniedErrno: 0,
+            forkDeniedErrno: 0,
+            networkDeniedErrno: 0,
+            signalDeniedErrnos: [],
+            unlinkedBytes: UInt64(chunk.count * 16)
+        )
+        try JSONEncoder().encode(report).write(to: reportURL, options: .atomic)
+        while true { pause() }
+    }
+
+    let allowedWriteSucceeded = (try? Data("allowed".utf8).write(
+        to: writeRoot.appendingPathComponent("allowed-write"),
+        options: .atomic
+    )) != nil
+    errno = 0
+    let outsideDescriptor = Darwin.open(
+        outsidePath.path,
+        O_CREAT | O_TRUNC | O_WRONLY,
+        S_IRUSR | S_IWUSR
+    )
+    let outsideErrno: Int32
+    if outsideDescriptor >= 0 {
+        outsideErrno = 0
+        Darwin.close(outsideDescriptor)
+    } else {
+        outsideErrno = errno
+    }
+
+    errno = 0
+    let forked = Darwin.fork()
+    let forkErrno: Int32
+    if forked == 0 {
+        Darwin._exit(0)
+    } else if forked > 0 {
+        var status: Int32 = 0
+        _ = Darwin.waitpid(forked, &status, 0)
+        forkErrno = 0
+    } else {
+        forkErrno = errno
+    }
+
+    errno = 0
+    let socketDescriptor = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+    let networkErrno: Int32
+    if socketDescriptor >= 0 {
+        networkErrno = 0
+        Darwin.close(socketDescriptor)
+    } else {
+        networkErrno = errno
+    }
+
+    var signalErrnos: [Int32] = []
+    for value in [Int32(0), SIGSTOP, SIGKILL] {
+        errno = 0
+        signalErrnos.append(Darwin.kill(getppid(), value) == 0 ? 0 : errno)
+    }
+    let report = BoundaryChildReport(
+        schema: "nexgenvideo/bpy-boundary-child/1",
+        mode: mode,
+        processIdentifier: getpid(),
+        parentProcessIdentifier: getppid(),
+        allowedWriteSucceeded: allowedWriteSucceeded,
+        outsideWriteDeniedErrno: outsideErrno,
+        forkDeniedErrno: forkErrno,
+        networkDeniedErrno: networkErrno,
+        signalDeniedErrnos: signalErrnos,
+        unlinkedBytes: 0
+    )
+    try JSONEncoder().encode(report).write(to: reportURL, options: .atomic)
+    let denied = [EPERM, EACCES]
+    guard allowedWriteSucceeded,
+          denied.contains(outsideErrno),
+          [EPERM, EAGAIN].contains(forkErrno),
+          denied.contains(networkErrno),
+          signalErrnos.count == 3,
+          signalErrnos.allSatisfy({ denied.contains($0) }) else {
+        Darwin.exit(70)
+    }
+    Darwin.exit(0)
 }
 
 private func waitForOwnedChildExit(_ process: Process, timeoutNanoseconds: UInt64) -> Bool {
@@ -275,6 +431,72 @@ private func supervise(arguments: [String]) throws -> Int32 {
     return process.terminationStatus
 }
 
+private func superviseBoundary(arguments: [String]) throws -> Int32 {
+    guard arguments.count == 7,
+          let servicePID = Int32(arguments[0]),
+          let serviceStart = UInt64(arguments[1]),
+          servicePID > 1,
+          parentIsAlive(servicePID, startAbsoluteTime: serviceStart),
+          ["denials", "unlinked-hold"].contains(arguments[6]) else {
+        throw SupervisorError.invalidParent
+    }
+    let identityURL = URL(fileURLWithPath: arguments[2]).standardizedFileURL
+    let writeRoot = URL(fileURLWithPath: arguments[3], isDirectory: true).standardizedFileURL
+    let outsidePath = URL(fileURLWithPath: arguments[4]).standardizedFileURL
+    let reportURL = URL(fileURLWithPath: arguments[5]).standardizedFileURL
+    let mode = arguments[6]
+    _ = Darwin.signal(SIGTERM, requestTermination)
+    _ = Darwin.signal(SIGINT, requestTermination)
+
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
+    process.arguments = [
+        "boundary-child",
+        writeRoot.path,
+        outsidePath.path,
+        reportURL.path,
+        mode,
+    ]
+    process.currentDirectoryURL = writeRoot
+    process.standardInput = FileHandle.nullDevice
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.standardError
+    try process.run()
+    var childReaped = false
+    var childStart: UInt64?
+    defer {
+        if !childReaped {
+            terminateAndReapOwnedChild(process, startAbsoluteTime: childStart)
+        }
+    }
+    for _ in 0..<40 where childStart == nil && process.isRunning {
+        childStart = processStartAbsoluteTime(process.processIdentifier)
+        if childStart == nil { usleep(5_000) }
+    }
+    guard let childStart else { throw SupervisorError.processLaunch }
+    guard let supervisorStart = processStartAbsoluteTime(getpid()) else {
+        throw SupervisorError.processLaunch
+    }
+    try JSONEncoder().encode(BoundaryIdentity(
+        supervisorProcessIdentifier: getpid(),
+        supervisorParentProcessIdentifier: getppid(),
+        supervisorStartAbsoluteTime: supervisorStart,
+        childProcessIdentifier: process.processIdentifier,
+        childStartAbsoluteTime: childStart
+    )).write(to: identityURL, options: .atomic)
+
+    while process.isRunning {
+        if terminationRequested != 0
+            || !parentIsAlive(servicePID, startAbsoluteTime: serviceStart) {
+            return terminationRequested != 0 ? 0 : 70
+        }
+        usleep(10_000)
+    }
+    process.waitUntilExit()
+    childReaped = true
+    return process.terminationStatus
+}
+
 @main
 private enum BpySupervisorMain {
     static func main() {
@@ -286,6 +508,10 @@ private enum BpySupervisorMain {
                 Darwin.exit(try supervise(arguments: arguments))
             case "launch":
                 try execPython(arguments: arguments)
+            case "boundary-supervise":
+                Darwin.exit(try superviseBoundary(arguments: arguments))
+            case "boundary-child":
+                try boundaryChild(arguments: arguments)
             default:
                 throw SupervisorError.invalidArguments
             }

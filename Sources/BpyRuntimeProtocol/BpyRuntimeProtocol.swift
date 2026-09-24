@@ -6,6 +6,7 @@ public let bpyRuntimeServiceNames = [
 ]
 
 @objc public protocol BpyRuntimeServiceProtocol {
+    func runBoundaryProbe(_ request: Data, withReply reply: @escaping (Data) -> Void)
     func openSession(_ request: Data, withReply reply: @escaping (Data) -> Void)
     func restoreCheckpoint(_ request: Data, chunk: Data, withReply reply: @escaping (Data) -> Void)
     func stageInput(_ request: Data, chunk: Data, withReply reply: @escaping (Data) -> Void)
@@ -17,6 +18,82 @@ public let bpyRuntimeServiceNames = [
     func cancelJob(_ request: Data, withReply reply: @escaping (Data) -> Void)
     func closeSession(_ request: Data, withReply reply: @escaping (Data) -> Void)
     func shutdown(_ request: Data, withReply reply: @escaping (Data) -> Void)
+}
+
+public struct BpyBoundaryProbeRequest: Codable, Sendable, Equatable {
+    public let schema: String
+    public let nonce: UUID
+
+    public init(nonce: UUID) {
+        schema = "nexgenvideo/bpy-boundary-probe-request/1"
+        self.nonce = nonce
+    }
+}
+
+public struct BpyBoundaryProbeResult: Codable, Sendable, Equatable {
+    public let schema: String
+    public let nonce: UUID
+    public let serviceProcessIdentifier: Int32
+    public let serviceStartAbsoluteTime: UInt64
+    public let supervisorProcessIdentifier: Int32
+    public let supervisorParentProcessIdentifier: Int32
+    public let supervisorStartAbsoluteTime: UInt64
+    public let childProcessIdentifier: Int32
+    public let childStartAbsoluteTime: UInt64
+    public let childParentProcessIdentifier: Int32
+    public let allowedWriteSucceeded: Bool
+    public let outsideWriteDeniedErrno: Int32
+    public let forkDeniedErrno: Int32
+    public let networkDeniedErrno: Int32
+    public let signalDeniedErrnos: [Int32]
+    public let unlinkedBytesObserved: UInt64
+    public let unlinkedLimitReason: String
+    public let cleanupSupervisorGone: Bool
+    public let cleanupChildGone: Bool
+    public let healthyFollowupSucceeded: Bool
+
+    public init(
+        nonce: UUID,
+        serviceProcessIdentifier: Int32,
+        serviceStartAbsoluteTime: UInt64,
+        supervisorProcessIdentifier: Int32,
+        supervisorParentProcessIdentifier: Int32,
+        supervisorStartAbsoluteTime: UInt64,
+        childProcessIdentifier: Int32,
+        childStartAbsoluteTime: UInt64,
+        childParentProcessIdentifier: Int32,
+        allowedWriteSucceeded: Bool,
+        outsideWriteDeniedErrno: Int32,
+        forkDeniedErrno: Int32,
+        networkDeniedErrno: Int32,
+        signalDeniedErrnos: [Int32],
+        unlinkedBytesObserved: UInt64,
+        unlinkedLimitReason: String,
+        cleanupSupervisorGone: Bool,
+        cleanupChildGone: Bool,
+        healthyFollowupSucceeded: Bool
+    ) {
+        schema = "nexgenvideo/bpy-boundary-probe/1"
+        self.nonce = nonce
+        self.serviceProcessIdentifier = serviceProcessIdentifier
+        self.serviceStartAbsoluteTime = serviceStartAbsoluteTime
+        self.supervisorProcessIdentifier = supervisorProcessIdentifier
+        self.supervisorParentProcessIdentifier = supervisorParentProcessIdentifier
+        self.supervisorStartAbsoluteTime = supervisorStartAbsoluteTime
+        self.childProcessIdentifier = childProcessIdentifier
+        self.childStartAbsoluteTime = childStartAbsoluteTime
+        self.childParentProcessIdentifier = childParentProcessIdentifier
+        self.allowedWriteSucceeded = allowedWriteSucceeded
+        self.outsideWriteDeniedErrno = outsideWriteDeniedErrno
+        self.forkDeniedErrno = forkDeniedErrno
+        self.networkDeniedErrno = networkDeniedErrno
+        self.signalDeniedErrnos = signalDeniedErrnos
+        self.unlinkedBytesObserved = unlinkedBytesObserved
+        self.unlinkedLimitReason = unlinkedLimitReason
+        self.cleanupSupervisorGone = cleanupSupervisorGone
+        self.cleanupChildGone = cleanupChildGone
+        self.healthyFollowupSucceeded = healthyFollowupSucceeded
+    }
 }
 
 public struct BpyRuntimeLimits: Codable, Sendable, Equatable {

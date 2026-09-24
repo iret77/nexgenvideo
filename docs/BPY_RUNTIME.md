@@ -28,12 +28,23 @@ separate isolated `use_scripts=true` process proves the fixture can trigger it.
 The child applies hard `RLIMIT_CORE`, `RLIMIT_FSIZE`, `RLIMIT_NOFILE`, `RLIMIT_CPU`, `RLIMIT_AS`, and
 `RLIMIT_NPROC=0` limits before importing bpy. The service additionally monitors worker physical
 footprint, its own physical footprint, total bytes and files across every worker-writable root, wall
-deadline, and the live descendant tree. Recursive accounting includes package descendants, fails
-closed on traversal errors, counts the greater of logical size and allocated blocks plus directory
-storage, and stops as soon as a byte or file bound is crossed. A violation asks
+deadline, and the live descendant tree. Recursive accounting includes package descendants and counts
+the greater of logical size and allocated blocks plus directory storage. It joins that scan with the
+exact owned worker's writable regular-vnode descriptors from XNU `proc_pidinfo(PROC_PIDLISTFDS)` and
+`proc_pidfdinfo(PROC_PIDFDVNODEINFO)`, deduplicated by device and inode. Thus an open file remains
+charged after unlink, without trusting a worker report, scanning unrelated PIDs, or attributing a
+host-volume delta. PID reuse is excluded by rechecking the worker's XNU start identity before and
+after descriptor enumeration. A bounded three-pass rescan tolerates only `ENOENT` caused by
+concurrent rename/delete churn; permission failures and every other invisible subtree remain fatal.
+The service deliberately does not treat cumulative process write-I/O as disk occupancy: overwrites
+and healthy temp-file churn can increase it without increasing retained storage. A violation asks
 the exact native supervisor to terminate its directly owned worker and does not yield a candidate.
-The verifier rejects excessive evaluated objects/vertices/polygons and
-render dimensions/pixels; PNG dimensions and total outputs are checked again in native code.
+The verifier rejects excessive evaluated objects/vertices/polygons and render dimensions/pixels;
+PNG dimensions and total outputs are checked again in native code. Geometry validation registers a
+temporary Blender render engine and invokes `bpy.ops.render.render` for every scene and enabled view
+layer. Its `render(self, depsgraph)` callback measures the public render-evaluated dependency graph,
+so render-only modifiers, viewport-hidden renderable objects, and non-active scenes do not escape the
+bound. The verifier restores scene settings and produces no image.
 
 These are layered, bounded controls rather than a claim of a race-free general-purpose Python
 sandbox. `RLIMIT_AS` remains enabled because current XNU carries an address-space size limit in the
@@ -64,6 +75,10 @@ Primary platform references:
 - <https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_resource.c>
 - <https://github.com/apple-oss-distributions/xnu/blob/main/osfmk/vm/vm_map_xnu.h>
 - <https://github.com/apple-oss-distributions/xnu/blob/main/libsyscall/wrappers/libproc/libproc.h>
+- <https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/proc_info.h>
+- <https://docs.blender.org/api/5.2/bpy.types.RenderEngine.html>
+- <https://docs.blender.org/api/5.2/bpy.ops.render.html>
+- <https://docs.blender.org/api/5.2/bpy.types.Context.html>
 - <https://chromium.googlesource.com/chromium/src/+/refs/heads/main/sandbox/policy/mac/common.sb>
 - <https://github.com/anthropics/sandbox-runtime/blob/main/src/sandbox/macos-sandbox-utils.ts>
 
@@ -145,11 +160,22 @@ special upstream per-wheel attestation or a bit-identical rebuilt-binary hash.
 The stable release tag itself targets the exact build commit and supplies NexGenVideo's GPL source;
 the managed-runtime archive supplies the third-party closure not contained in that repository snapshot.
 
+One shared validator proves the ready state and revalidates the actual assembled archive, archive
+manifest, required notices, and binary/source correspondence before release, full-runtime acceptance,
+or a public CI binary upload. Hash-only lock readiness is insufficient. This does not impose blanket
+legal approval, a special attestation, or bit-identical rebuild evidence.
+
 The distribution gate runs before release builds, including dry runs, and before the managed-runtime
 acceptance build/transfer ZIP. Regular public CI does not upload the app or transfer it to the runtime
-runner while blocked. Other CI workflows that must transfer a diagnostic app use an explicit
-CI-only bundle mode that omits the runtime and embeds an omission marker. Normal dev, acceptance,
-and release bundles continue to require the runtime; readiness is never synthesized.
+runner while blocked. Bundle CI still produces a separately signed private diagnostic app containing
+the XPC services and supervisor but no Python or bpy payload. The existing diagnostic-startup check
+always consumes that app. A separate `macos-26` boundary job uses the same artifact to exercise the
+real signed XPC → supervisor → fixed native child ancestry, App Sandbox plus Seatbelt write/fork/
+network/signal denials, open-unlinked-vnode quota detection, exact cleanup, and a healthy following
+job. A marker compiled into only this CI bundle gates the fixed child path; normal app bundles cannot
+request it. Normal dev, acceptance, and release bundles continue to require the runtime; readiness is
+never synthesized. The native boundary probe is not a substitute for full bpy acceptance after source
+closure.
 
 ## Prepared Actions acceptance
 
@@ -182,6 +208,8 @@ thread, ctypes stdout, a kernel-blocked fork, in-place `execve`, memory over-all
 cancellation, worker crash, service and host kill/reopen cleanup, denied-file host positive controls,
 network and cross-container denials, disabled autorun plus isolated positive control, BMesh/modifier
 geometry, package-hidden file counts, aggregate writes outside outputs, resource-scan failure/recovery,
+open-unlinked writes with a healthy following job, healthy concurrent rename/delete temp churn,
+render-only modifier geometry, viewport-hidden renderable geometry, and a second scene,
 the exact `signal` denial for probes 0/SIGSTOP/SIGKILL followed by a healthy job, a supervisor failure
 after child start but before identity write followed by a healthy job, an unavailable child identity
 with a TERM-ignoring owned child followed by a healthy job, and a perspective Cycles render.

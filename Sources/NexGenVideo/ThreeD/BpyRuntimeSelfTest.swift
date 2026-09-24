@@ -20,6 +20,30 @@ private final class BpySelfTestBox: @unchecked Sendable {
     }
 }
 
+private final class BpyBoundaryReplyBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var response: Data?
+    private var error: Error?
+
+    func store(response: Data) {
+        lock.lock()
+        self.response = response
+        lock.unlock()
+    }
+
+    func store(error: Error) {
+        lock.lock()
+        self.error = error
+        lock.unlock()
+    }
+
+    func load() -> (Data?, Error?) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (response, error)
+    }
+}
+
 @MainActor
 enum BpyRuntimeSelfTest {
     private static var pendingResult: [String: Any]?
@@ -27,6 +51,22 @@ enum BpyRuntimeSelfTest {
     private static var retainedProjects: [VideoProject] = []
 
     static func scheduleIfRequested() {
+        if let outputPath = ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY_BOUNDARY"],
+           !outputPath.isEmpty {
+            DispatchQueue.main.async {
+                do {
+                    try runBoundaryProbe(outputPath: outputPath)
+                    FileHandle.standardOutput.write(Data("SELFTEST_BPY_BOUNDARY_OK\n".utf8))
+                    Darwin.exit(0)
+                } catch {
+                    FileHandle.standardError.write(
+                        Data("SELFTEST_BPY_BOUNDARY_FAIL \(error.localizedDescription)\n".utf8)
+                    )
+                    Darwin.exit(1)
+                }
+            }
+            return
+        }
         if let mode = ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY_HOST_CRASH"],
            ["before-authorization", "after-authorization"].contains(mode) {
             DispatchQueue.main.async {
@@ -61,6 +101,67 @@ enum BpyRuntimeSelfTest {
                 Darwin.exit(1)
             }
         }
+    }
+
+    private static func runBoundaryProbe(outputPath: String) throws {
+        let connection = NSXPCConnection(serviceName: bpyRuntimeServiceNames[0])
+        connection.remoteObjectInterface = NSXPCInterface(with: BpyRuntimeServiceProtocol.self)
+        let box = BpyBoundaryReplyBox()
+        let finished = DispatchSemaphore(value: 0)
+        connection.resume()
+        defer { connection.invalidate() }
+        guard let service = connection.remoteObjectProxyWithErrorHandler({ error in
+            box.store(error: error)
+            finished.signal()
+        }) as? BpyRuntimeServiceProtocol else {
+            throw BpyRuntimeError.unavailable("The boundary XPC service is unavailable.")
+        }
+        let nonce = UUID()
+        service.runBoundaryProbe(
+            try JSONEncoder().encode(BpyBoundaryProbeRequest(nonce: nonce))
+        ) { response in
+            box.store(response: response)
+            finished.signal()
+        }
+        guard finished.wait(timeout: .now() + 20) == .success else {
+            throw BpyRuntimeError.timedOut
+        }
+        let value = box.load()
+        if let error = value.1 { throw error }
+        guard let data = value.0 else {
+            throw BpyRuntimeError.invalidOutput("The boundary probe returned no result.")
+        }
+        let result = try JSONDecoder().decode(BpyBoundaryProbeResult.self, from: data)
+        let permissionErrors = [Int32(EPERM), Int32(EACCES)]
+        guard result.schema == "nexgenvideo/bpy-boundary-probe/1",
+              result.nonce == nonce,
+              result.serviceProcessIdentifier > 1,
+              result.supervisorProcessIdentifier > 1,
+              result.childProcessIdentifier > 1,
+              Set([
+                result.serviceProcessIdentifier,
+                result.supervisorProcessIdentifier,
+              result.childProcessIdentifier,
+              ]).count == 3,
+              result.serviceStartAbsoluteTime > 0,
+              result.supervisorParentProcessIdentifier == result.serviceProcessIdentifier,
+              result.supervisorStartAbsoluteTime > 0,
+              result.childStartAbsoluteTime > 0,
+              result.childParentProcessIdentifier == result.supervisorProcessIdentifier,
+              result.allowedWriteSucceeded,
+              permissionErrors.contains(result.outsideWriteDeniedErrno),
+              [Int32(EPERM), Int32(EAGAIN)].contains(result.forkDeniedErrno),
+              permissionErrors.contains(result.networkDeniedErrno),
+              result.signalDeniedErrnos.count == 3,
+              result.signalDeniedErrnos.allSatisfy({ permissionErrors.contains($0) }),
+              result.unlinkedBytesObserved >= 1_024 * 1_024,
+              result.unlinkedLimitReason == "disk",
+              result.cleanupSupervisorGone,
+              result.cleanupChildGone,
+              result.healthyFollowupSucceeded else {
+            throw BpyRuntimeError.invalidOutput("The signed boundary probe did not prove every denial and cleanup invariant.")
+        }
+        try data.write(to: URL(fileURLWithPath: outputPath), options: .atomic)
     }
 
     private static func runHostCrashProbe(mode: String) throws {
@@ -682,6 +783,42 @@ enum BpyRuntimeSelfTest {
         guard structuralLimit.response.state == .resourceLimited else {
             throw BpyRuntimeError.invalidOutput("Evaluated geometry/render limits were not terminal.")
         }
+        let renderOnlyGeometry = try constrained.runJob(
+            id: UUID(),
+            expectedRevision: nil,
+            source: """
+            bpy.ops.mesh.primitive_plane_add()
+            target = bpy.context.object
+            target.hide_viewport = True
+            modifier = target.modifiers.new('NGV_RENDER_ONLY_ARRAY', 'ARRAY')
+            modifier.count = 3
+            modifier.show_viewport = False
+            modifier.show_render = True
+            bpy.context.scene.render.resolution_x = 64
+            bpy.context.scene.render.resolution_y = 64
+            """
+        )
+        guard renderOnlyGeometry.response.state == .resourceLimited else {
+            throw BpyRuntimeError.invalidOutput("Render-only hidden geometry escaped verification.")
+        }
+        let secondarySceneGeometry = try constrained.runJob(
+            id: UUID(),
+            expectedRevision: nil,
+            source: """
+            scene = bpy.data.scenes.new('NGV_SECONDARY_RENDER_SCENE')
+            mesh = bpy.data.meshes.new('NGV_SECONDARY_RENDER_MESH')
+            mesh.from_pydata([(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)], [], [(0, 1, 2, 3)])
+            target = bpy.data.objects.new('NGV_SECONDARY_RENDER_OBJECT', mesh)
+            scene.collection.objects.link(target)
+            modifier = target.modifiers.new('NGV_SECONDARY_ARRAY', 'ARRAY')
+            modifier.count = 3
+            scene.render.resolution_x = 64
+            scene.render.resolution_y = 64
+            """
+        )
+        guard secondarySceneGeometry.response.state == .resourceLimited else {
+            throw BpyRuntimeError.invalidOutput("Secondary-scene geometry escaped verification.")
+        }
         let storageLimit = try constrained.runJob(
             id: UUID(),
             expectedRevision: nil,
@@ -710,6 +847,58 @@ enum BpyRuntimeSelfTest {
         guard aggregateBytes.response.state == .resourceLimited else {
             throw BpyRuntimeError.invalidOutput("Aggregate bytes outside outputs were not terminal.")
         }
+        let unlinkedStorage = try constrained.runJob(
+            id: UUID(),
+            expectedRevision: nil,
+            source: """
+            import os
+            handles = []
+            for index in range(2):
+                path = Path(os.environ['HOME']) / f'unlinked-{index}.bin'
+                handle = open(path, 'wb')
+                os.unlink(path)
+                handle.write(b'x' * 1400000)
+                handle.flush()
+                os.fsync(handle.fileno())
+                handles.append(handle)
+            while True:
+                pass
+            """,
+            timeoutSeconds: 5
+        )
+        guard unlinkedStorage.response.state == .resourceLimited else {
+            throw BpyRuntimeError.invalidOutput("Open unlinked vnodes escaped the disk limit.")
+        }
+        let healthyChurn = try constrained.runJob(
+            id: UUID(),
+            expectedRevision: nil,
+            source: """
+            import os
+            import threading
+            import time
+            home = Path(os.environ['HOME'])
+            def churn():
+                deadline = time.monotonic() + 0.5
+                index = 0
+                while time.monotonic() < deadline:
+                    source = home / f'churn-{index % 2}.part'
+                    destination = home / f'churn-{index % 2}.tmp'
+                    source.write_bytes(b'x' * 4096)
+                    os.replace(source, destination)
+                    destination.unlink()
+                    index += 1
+            thread = threading.Thread(target=churn)
+            thread.start()
+            thread.join()
+            bpy.context.scene.render.resolution_x = 64
+            bpy.context.scene.render.resolution_y = 64
+            """
+        )
+        guard healthyChurn.response.state == .awaitingConfirmation,
+              let healthyChurnID = healthyChurn.response.jobID else {
+            throw BpyRuntimeError.invalidOutput("Legitimate rename/delete churn failed the resource scan.")
+        }
+        _ = try constrained.cancel(jobID: healthyChurnID)
         let scanError = try constrained.runJob(
             id: UUID(),
             expectedRevision: nil,
@@ -782,8 +971,12 @@ enum BpyRuntimeSelfTest {
             "rlimitASAllocationDenied": true,
             "outOfMemoryState": outOfMemory.response.state?.rawValue ?? "",
             "structuralLimitState": structuralLimit.response.state?.rawValue ?? "",
+            "renderOnlyGeometryState": renderOnlyGeometry.response.state?.rawValue ?? "",
+            "secondarySceneGeometryState": secondarySceneGeometry.response.state?.rawValue ?? "",
             "storageLimitState": storageLimit.response.state?.rawValue ?? "",
             "aggregateByteLimitState": aggregateBytes.response.state?.rawValue ?? "",
+            "unlinkedStorageLimitState": unlinkedStorage.response.state?.rawValue ?? "",
+            "healthyResourceChurnState": healthyChurn.response.state?.rawValue ?? "",
             "resourceScanErrorState": scanError.response.state?.rawValue ?? "",
             "containerSiblingWriteDenied": true,
             "supervisorSignalDenied": true,

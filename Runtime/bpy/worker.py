@@ -100,28 +100,109 @@ def execute_job(config):
 
 
 def evaluated_geometry(bpy, limits):
-    depsgraph = bpy.context.evaluated_depsgraph_get()
-    objects = 0
-    vertices = 0
-    polygons = 0
-    for instance in depsgraph.object_instances:
-        objects += 1
-        if objects > limits["objects"]:
-            fail(f"evaluated object limit exceeded: {objects}")
-        obj = instance.object
-        if obj.type != "MESH":
-            continue
-        mesh = obj.to_mesh(preserve_all_data_layers=False, depsgraph=depsgraph)
-        try:
-            vertices += len(mesh.vertices)
-            polygons += len(mesh.polygons)
-        finally:
-            obj.to_mesh_clear()
-        if vertices > limits["vertices"] or polygons > limits["polygons"]:
-            fail(
-                f"evaluated geometry limit exceeded: vertices={vertices}, polygons={polygons}"
-            )
-    return objects, vertices, polygons
+    state = {"failure": None, "scenarios": []}
+    verifier_camera_prefix = "NGV_GEOMETRY_VERIFIER_CAMERA_"
+
+    class NGVGeometryVerifier(bpy.types.RenderEngine):
+        bl_idname = "NGV_GEOMETRY_VERIFIER"
+        bl_label = "NexGenVideo Geometry Verifier"
+
+        def render(self, depsgraph):
+            counts = {"objects": 0, "vertices": 0, "polygons": 0}
+            try:
+                for instance in depsgraph.object_instances:
+                    obj = instance.object
+                    original = getattr(obj, "original", None)
+                    if (original or obj).name.startswith(verifier_camera_prefix):
+                        continue
+                    counts["objects"] += 1
+                    if counts["objects"] > limits["objects"]:
+                        raise RuntimeError(
+                            f"evaluated object limit exceeded: {counts['objects']}"
+                        )
+                    if obj.type != "MESH":
+                        continue
+                    mesh = obj.to_mesh(
+                        preserve_all_data_layers=False,
+                        depsgraph=depsgraph,
+                    )
+                    try:
+                        counts["vertices"] += len(mesh.vertices)
+                        counts["polygons"] += len(mesh.polygons)
+                    finally:
+                        obj.to_mesh_clear()
+                    if (
+                        counts["vertices"] > limits["vertices"]
+                        or counts["polygons"] > limits["polygons"]
+                    ):
+                        raise RuntimeError(
+                            "evaluated geometry limit exceeded: "
+                            f"vertices={counts['vertices']}, "
+                            f"polygons={counts['polygons']}"
+                        )
+                state["scenarios"].append(counts)
+            except BaseException as error:
+                state["failure"] = str(error)
+            result = self.begin_result(0, 0, 1, 1)
+            self.end_result(result)
+
+    originals = []
+    temporary_cameras = []
+    bpy.utils.register_class(NGVGeometryVerifier)
+    try:
+        for scene in bpy.data.scenes:
+            originals.append((
+                scene,
+                scene.render.engine,
+                scene.render.use_compositing,
+                scene.render.use_sequencer,
+                scene.camera,
+            ))
+            if scene.camera is None:
+                camera_data = bpy.data.cameras.new(verifier_camera_prefix + scene.name)
+                camera = bpy.data.objects.new(verifier_camera_prefix + scene.name, camera_data)
+                scene.collection.objects.link(camera)
+                scene.camera = camera
+                temporary_cameras.append((scene, camera, camera_data))
+            scene.render.engine = NGVGeometryVerifier.bl_idname
+            scene.render.use_compositing = False
+            scene.render.use_sequencer = False
+            for view_layer in scene.view_layers:
+                if not getattr(view_layer, "use", True):
+                    continue
+                state["failure"] = None
+                result = bpy.ops.render.render(
+                    animation=False,
+                    write_still=False,
+                    use_viewport=False,
+                    scene=scene.name,
+                    layer=view_layer.name,
+                )
+                if state["failure"] is not None:
+                    fail(
+                        f"render geometry rejected for {scene.name}/{view_layer.name}: "
+                        f"{state['failure']}"
+                    )
+                if "FINISHED" not in result:
+                    fail(f"render geometry evaluation failed for {scene.name}/{view_layer.name}")
+    finally:
+        for scene, engine, compositing, sequencer, camera in originals:
+            scene.render.engine = engine
+            scene.render.use_compositing = compositing
+            scene.render.use_sequencer = sequencer
+            scene.camera = camera
+        for scene, camera, camera_data in temporary_cameras:
+            if camera.name in scene.collection.objects:
+                scene.collection.objects.unlink(camera)
+            bpy.data.objects.remove(camera)
+            bpy.data.cameras.remove(camera_data)
+        bpy.utils.unregister_class(NGVGeometryVerifier)
+    if not state["scenarios"]:
+        return 0, 0, 0
+    return tuple(
+        max(scenario[field] for scenario in state["scenarios"])
+        for field in ("objects", "vertices", "polygons")
+    )
 
 
 def render_contract(bpy, limits):
