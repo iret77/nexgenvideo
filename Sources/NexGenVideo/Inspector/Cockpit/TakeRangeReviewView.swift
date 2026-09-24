@@ -48,16 +48,19 @@ struct TakeRangeReviewView: View {
                             Text("Accept deviation — explain").tag(TakeReview.Verdict.acceptedDeviation)
                             Text("Not applicable — explain").tag(TakeReview.Verdict.notApplicable)
                         }
-                    }.disabled(busy)
-                    TextField("Describe what you observed throughout this range", text: $observation).disabled(busy)
+                    }.disabled(busy || !canWrite)
+                    TextField("Describe what you observed throughout this range", text: $observation)
+                        .disabled(busy || !canWrite)
                     Button("Accept range pass") {
+                        guard canWrite else { return }
                         findings.append(.init(pass: pass, verdict: verdict, observation: observation,
                             startSeconds: 0, endSeconds: range.durationSeconds))
                         observation = ""; verdict = .conforms
                     }.buttonStyle(InlineActionButtonStyle(variant: .approval))
-                        .disabled(busy || !validRange || player == nil || observation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(busy || !canWrite || !validRange || player == nil || observation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 } else if reviewID == nil {
                     Button("Save reviewed range") {
+                        guard canWrite else { return }
                         let selectedRange = range
                         let observations = findings
                         busy = true
@@ -72,10 +75,12 @@ struct TakeRangeReviewView: View {
                     }.buttonStyle(InlineActionButtonStyle(variant: .approval)).disabled(busy || !validRange || !canWrite)
                 }
                 if reviewID != nil || !savedRanges.isEmpty {
-                    Toggle("Include take audio", isOn: $includeAudio).disabled(busy)
+                    Toggle("Include take audio", isOn: $includeAudio)
+                        .disabled(busy || !canWrite)
                 }
                 if let reviewID {
                     Button("Add reviewed range at playhead") {
+                        guard canWrite else { return }
                         let withAudio = includeAudio
                         busy = true
                         Task {
@@ -88,7 +93,7 @@ struct TakeRangeReviewView: View {
                     }.buttonStyle(InlineActionButtonStyle(variant: .approval)).disabled(busy || !canWrite)
                 }
                 Button("Discard range review draft") { reset() }
-                    .buttonStyle(InlineActionButtonStyle()).disabled(busy)
+                    .buttonStyle(InlineActionButtonStyle()).disabled(busy || !canWrite)
                 if !savedRanges.isEmpty {
                     DisclosureGroup("Saved reviewed ranges") {
                         ForEach(savedRanges) { stored in
@@ -99,6 +104,7 @@ struct TakeRangeReviewView: View {
                                     Text("\(finding.pass.label): \(finding.observation)")
                                 }
                                 Button("Add this reviewed range at playhead") {
+                                    guard canWrite else { return }
                                     let withAudio = includeAudio
                                     busy = true
                                     Task {

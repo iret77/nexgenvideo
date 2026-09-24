@@ -1,6 +1,16 @@
 import SwiftUI
 import NexGenEngine
 
+enum PipelineStoryArtifact: String, Equatable {
+    case brief
+    case treatment
+}
+
+enum PipelineReviewArtifact: String, Equatable {
+    case frames
+    case render
+}
+
 enum PipelineApprovalControl {
     static func isEnabled(
         approvalReady: Bool,
@@ -21,6 +31,8 @@ enum PipelineSurfaceRouting {
     enum Destination: Equatable {
         case tab(CockpitTab)
         case pack(String)
+        case story(PipelineStoryArtifact)
+        case review(PipelineReviewArtifact)
         case storyboard
         case productionDesign
         case sanity
@@ -32,6 +44,28 @@ enum PipelineSurfaceRouting {
         let label: String
         let taskClass: String
         let destination: Destination
+
+        var legacyTab: CockpitTab? {
+            switch destination {
+            case .tab(let tab): tab
+            case .story: .story
+            case .review: .review
+            default: nil
+            }
+        }
+
+        var acceptanceID: String {
+            switch destination {
+            case .tab(let tab): tab.rawValue.lowercased()
+            case .pack(let id): "pack.\(id)"
+            case .story(let artifact): artifact.rawValue
+            case .review(let artifact): artifact.rawValue
+            case .storyboard: "storyboard"
+            case .productionDesign: "production-design"
+            case .sanity: "sanity"
+            case .interaction: "agent"
+            }
+        }
     }
 
     static func route(
@@ -54,8 +88,10 @@ enum PipelineSurfaceRouting {
 
     private static func route(forArtifactSelector selector: String, taskClass: String) -> Route {
         switch selector {
-        case "host.brief", "host.treatment":
-            Route(icon: "text.cursor", label: "Story", taskClass: taskClass, destination: .tab(.story))
+        case "host.brief":
+            Route(icon: "text.cursor", label: "Brief", taskClass: taskClass, destination: .story(.brief))
+        case "host.treatment":
+            Route(icon: "text.cursor", label: "Treatment", taskClass: taskClass, destination: .story(.treatment))
         case "host.production_design":
             Route(icon: "paintpalette", label: "Production Design", taskClass: taskClass, destination: .productionDesign)
         case "host.storyboard":
@@ -66,8 +102,10 @@ enum PipelineSurfaceRouting {
             Route(icon: "list.number", label: "Shot List", taskClass: taskClass, destination: .tab(.shotlist))
         case "host.sanity_report":
             Route(icon: "checklist", label: "Sanity", taskClass: taskClass, destination: .sanity)
-        case "host.frames_manifest", "host.render_manifest":
-            Route(icon: "eye", label: "Review", taskClass: taskClass, destination: .tab(.review))
+        case "host.frames_manifest":
+            Route(icon: "photo.on.rectangle.angled", label: "Frames", taskClass: taskClass, destination: .review(.frames))
+        case "host.render_manifest":
+            Route(icon: "play.rectangle", label: "Render", taskClass: taskClass, destination: .review(.render))
         default:
             Route(icon: "sparkles", label: "Agent", taskClass: taskClass, destination: .interaction)
         }
@@ -102,6 +140,133 @@ enum PipelineNextAction {
         default:
             "Complete the required \(phaseLabel) artifact."
         }
+    }
+}
+
+struct PipelineReadinessPresentation: Equatable {
+    let message: String
+    let diagnostic: String?
+
+    static func current(
+        selector: String?,
+        phaseLabel: String,
+        approval: NativeGateApprovalReadiness,
+        mutations: NativeGateApprovalReadiness,
+        hostDecisionRequirement: String?
+    ) -> Self {
+        if let hostDecisionRequirement {
+            return Self(
+                message: hostDecisionRequirement,
+                diagnostic: "A host-owned decision is still waiting for an answer."
+            )
+        }
+        if let blocker = mutations.blocker {
+            return Self(
+                message: userMessage(
+                    for: blocker,
+                    selector: selector,
+                    phaseLabel: phaseLabel
+                ),
+                diagnostic: blocker
+            )
+        }
+        if approval.isReady {
+            return Self(
+                message: "The \(phaseLabel) artifact is structurally complete and ready for approval.",
+                diagnostic: nil
+            )
+        }
+        guard let blocker = approval.blocker else {
+            return Self(
+                message: PipelineNextAction.requirement(
+                    for: selector,
+                    phaseLabel: phaseLabel
+                ),
+                diagnostic: nil
+            )
+        }
+        return Self(
+            message: userMessage(
+                for: blocker,
+                selector: selector,
+                phaseLabel: phaseLabel
+            ),
+            diagnostic: blocker
+        )
+    }
+
+    private static func userMessage(
+        for blocker: String,
+        selector: String?,
+        phaseLabel: String
+    ) -> String {
+        let lower = blocker.lowercased()
+        if lower.contains("checking") {
+            return "Checking \(phaseLabel) approval requirements."
+        }
+        if let card = hostOwnedCard(in: blocker) {
+            return "Complete the \(card) card before approving \(phaseLabel)."
+        }
+        if lower.contains("while ") && lower.contains(" is running") {
+            return "Wait for the running phase to finish before changing phase gates."
+        }
+        if lower.contains("workflow") || lower.contains("pack")
+            || lower.contains("plugin") || lower.contains("ngv.json") {
+            return "Restore the project's format workflow before changing phase gates."
+        }
+        if lower.contains("canon alternative") {
+            return "Resolve the open Treatment canon choices before approval."
+        }
+        if lower.contains("story causality") {
+            return "Update Treatment's story structure to match the current Brief."
+        }
+        if lower.contains("storyboard causality") || lower.contains("treatment beat") {
+            return "Update the Storyboard to cover the current Treatment beats."
+        }
+        if lower.contains("frame finding") || lower.contains("style audit")
+            || lower.contains("style criterion") || lower.contains("frame observation") {
+            return "Resolve or explicitly accept the current frame findings before approval."
+        }
+        if lower.contains("sequence review") || lower.contains("assembled sequence")
+            || lower.contains("reviewed reel") {
+            return "Complete the current sequence review before approving Render."
+        }
+        if selector == "host.render_manifest",
+           (lower.contains("take") || lower.contains("selected")) {
+            return "Select a reviewed final take for every shot before approving Render."
+        }
+        if selector == "host.analysis" {
+            if lower.contains("structure") || lower.contains("section") {
+                return "Review the unresolved Audio Analysis section structure."
+            }
+            if lower.contains("beat") || lower.contains("analysis artifact") {
+                return "Complete Audio Analysis with a verified beat grid and section structure."
+            }
+        }
+        if lower.contains("stale") || lower.contains("changed")
+            || lower.contains("does not match") || lower.contains("no longer matches")
+            || lower.contains("lineage") {
+            return "Update \(phaseLabel) to match its current approved inputs."
+        }
+        if lower.contains("missing") || lower.contains("unreadable")
+            || lower.contains("incomplete") || lower.contains("no ") {
+            return "Create or repair the current \(phaseLabel) artifact before approval."
+        }
+        return PipelineNextAction.requirement(
+            for: selector,
+            phaseLabel: phaseLabel
+        )
+    }
+
+    private static func hostOwnedCard(in blocker: String) -> String? {
+        let prefix = "Complete the host-owned "
+        let suffix = " card before working on "
+        guard let start = blocker.range(of: prefix),
+              let end = blocker.range(of: suffix, range: start.upperBound..<blocker.endIndex)
+        else { return nil }
+        let value = blocker[start.upperBound..<end.lowerBound]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
     }
 }
 
@@ -182,6 +347,16 @@ struct PipelinePanelView: View {
             } message: {
                 Text("Approvals for this phase and every later phase will be cleared. Artifacts, takes, media, and timeline clips remain in the project.")
             }
+            .overlay(alignment: .topLeading) {
+                if let rewindPhase {
+                    AppRelaunchClickProbe(
+                        identifier: "production.rewind.confirmation",
+                        acceptanceValue: rewindPhase.phase
+                    )
+                    .frame(width: AppTheme.BorderWidth.hairline, height: AppTheme.BorderWidth.hairline)
+                    .allowsHitTesting(false)
+                }
+            }
     }
 
     @ViewBuilder
@@ -222,10 +397,9 @@ struct PipelinePanelView: View {
                 AppDivider()
                 viewedPhaseSurface(data, contract: contract)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .disabled(runningPhase != nil || gateWriting)
                     .overlay(alignment: .topTrailing) {
-                        if runningPhase != nil {
-                            Label("Read only while a phase runs", systemImage: "lock.fill")
+                        if let reason = surfaceReadOnlyReason(data) {
+                            Label(reason, systemImage: "lock.fill")
                                 .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
                                 .foregroundStyle(AppTheme.Text.secondaryColor)
                                 .padding(.horizontal, AppTheme.Spacing.sm)
@@ -331,6 +505,12 @@ struct PipelinePanelView: View {
             }
             .buttonStyle(.plain)
             .help("View \(phaseLabel(phase.phase, contract: contract))")
+            .background(
+                AppRelaunchClickProbe(
+                    identifier: "production.phase.\(phase.phase)",
+                    acceptanceState: isSelected
+                )
+            )
 
             if phase.approved || isCurrent {
                 Menu {
@@ -355,6 +535,12 @@ struct PipelinePanelView: View {
                 .disabled(!controlsAvailable)
                 .accessibilityLabel("Gate actions for \(phaseLabel(phase.phase, contract: contract))")
                 .help(runningPhase == nil ? "Gate actions" : "Gate actions are unavailable while a phase is running")
+                .background(
+                    AppRelaunchClickProbe(
+                        identifier: "production.phase.\(phase.phase).actions",
+                        acceptanceState: controlsAvailable
+                    )
+                )
             }
         }
     }
@@ -367,33 +553,62 @@ struct PipelinePanelView: View {
                contract: contract,
                availablePackSurfaces: editor.availableCockpitPackSurfaces
            ) {
+            let allowsMutation = surfaceAllowsMutation(data)
             switch route.destination {
-            case .tab(.story):
-                StoryPanelView()
+            case .story(let artifact):
+                StoryPanelView(artifact: artifact, allowsMutation: allowsMutation)
+            case .review(let artifact):
+                ReviewPanelView(artifact: artifact, allowsMutation: allowsMutation)
             case .tab(.bible):
                 BiblePanelView()
             case .tab(.shotlist):
                 ShotlistPanelView()
-            case .tab(.review):
-                ReviewPanelView()
             case .tab(_):
-                interactionSurface(phase: phase.phase, route: route, contract: contract)
+                interactionSurface(
+                    phase: phase.phase,
+                    route: route,
+                    contract: contract,
+                    allowsMutation: allowsMutation
+                )
             case .pack(let id):
                 if let surface = editor.availableCockpitPackSurfaces.first(where: { $0.id == id }) {
                     DeclarativePackSurfaceView(surface: surface) {
                         editor.availableCockpitPackSurfaces.removeAll { $0.id == id }
                     }
                 } else {
-                    interactionSurface(phase: phase.phase, route: route, contract: contract)
+                    interactionSurface(
+                        phase: phase.phase,
+                        route: route,
+                        contract: contract,
+                        allowsMutation: allowsMutation
+                    )
                 }
             case .storyboard:
                 PipelineStoryboardReviewSheet(embedded: true)
             case .productionDesign:
-                productionDesignSurface(phase: phase.phase, route: route, contract: contract)
+                productionDesignSurface(
+                    phase: phase.phase,
+                    route: route,
+                    contract: contract,
+                    allowsMutation: allowsMutation
+                )
             case .sanity:
                 SanityPanelView()
             case .interaction:
-                interactionSurface(phase: phase.phase, route: route, contract: contract)
+                interactionSurface(
+                    phase: phase.phase,
+                    route: route,
+                    contract: contract,
+                    allowsMutation: allowsMutation
+                )
+            }
+            .overlay(alignment: .topLeading) {
+                AppRelaunchClickProbe(
+                    identifier: "production.surface.\(route.acceptanceID)",
+                    acceptanceState: allowsMutation
+                )
+                .frame(width: AppTheme.BorderWidth.hairline, height: AppTheme.BorderWidth.hairline)
+                .allowsHitTesting(false)
             }
         } else {
             CockpitStateView.empty(
@@ -407,11 +622,17 @@ struct PipelinePanelView: View {
     private func productionDesignSurface(
         phase: String,
         route: PipelineSurfaceRouting.Route,
-        contract: ContractData
+        contract: ContractData,
+        allowsMutation: Bool
     ) -> some View {
         VStack(spacing: AppTheme.Spacing.none) {
-            ProductionStyleReviewView()
-            interactionCard(phase: phase, route: route, contract: contract)
+            ProductionStyleReviewView(allowsMutation: false)
+            interactionCard(
+                phase: phase,
+                route: route,
+                contract: contract,
+                allowsMutation: allowsMutation
+            )
                 .padding(AppTheme.Spacing.lg)
             Spacer(minLength: AppTheme.Spacing.none)
         }
@@ -420,11 +641,17 @@ struct PipelinePanelView: View {
     private func interactionSurface(
         phase: String,
         route: PipelineSurfaceRouting.Route,
-        contract: ContractData
+        contract: ContractData,
+        allowsMutation: Bool
     ) -> some View {
         VStack {
             Spacer(minLength: AppTheme.Spacing.lg)
-            interactionCard(phase: phase, route: route, contract: contract)
+            interactionCard(
+                phase: phase,
+                route: route,
+                contract: contract,
+                allowsMutation: allowsMutation
+            )
                 .frame(maxWidth: AppTheme.ComponentSize.productionInteractionMaxWidth)
             Spacer(minLength: AppTheme.Spacing.lg)
         }
@@ -435,7 +662,8 @@ struct PipelinePanelView: View {
     private func interactionCard(
         phase: String,
         route: PipelineSurfaceRouting.Route,
-        contract: ContractData
+        contract: ContractData,
+        allowsMutation: Bool
     ) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.mdLg) {
             Label(phaseLabel(phase, contract: contract), systemImage: route.icon)
@@ -448,8 +676,14 @@ struct PipelinePanelView: View {
             .interfaceFont(size: AppTheme.Typography.reading)
             .foregroundStyle(AppTheme.Text.secondaryColor)
             .fixedSize(horizontal: false, vertical: true)
-            Button("Open Agent") { editor.agentPanelVisible = true }
-                .buttonStyle(.capsule(.prominent, size: .regular))
+            if allowsMutation {
+                Button("Open Agent") { editor.agentPanelVisible = true }
+                    .buttonStyle(.capsule(.prominent, size: .regular))
+            } else {
+                Text("Rewind this phase before making changes.")
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .foregroundStyle(AppTheme.Text.mutedColor)
+            }
         }
         .padding(AppTheme.Spacing.xl)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -515,6 +749,7 @@ struct PipelinePanelView: View {
 
     private func currentPhaseDock(_ phase: ProjectPhase, contract: ContractData) -> some View {
         let label = phaseLabel(phase.phase, contract: contract)
+        let selector = contract.phases[phase.phase]?.artifactSelector
         let route = PipelineSurfaceRouting.route(
             for: phase.phase,
             contract: contract,
@@ -527,19 +762,23 @@ struct PipelinePanelView: View {
             pipelineIsRunning: false,
             hostDecisionPending: editor.agentService.isComposerBlocked
         )
-        let requirement = approvalReadiness.isReady
-            ? "The \(label) artifact is structurally complete and ready for approval."
-            : PipelineNextAction.requirement(
-                for: contract.phases[phase.phase]?.artifactSelector,
-                phaseLabel: label
-            )
+        let presentation = PipelineReadinessPresentation.current(
+            selector: selector,
+            phaseLabel: label,
+            approval: approvalReadiness,
+            mutations: mutationReadiness,
+            hostDecisionRequirement: editor.agentService.composerBlockerDescription
+                ?? (editor.agentService.isComposerBlocked
+                    ? "Resolve the open Agent decision before approving \(label)."
+                    : nil)
+        )
         return HStack(alignment: .center, spacing: AppTheme.Spacing.mdLg) {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                 Text("CURRENT PHASE · \(label.uppercased())")
                     .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
                     .tracking(AppTheme.Tracking.wide)
                     .foregroundStyle(editor.projectPalette.accent)
-                Text(requirement)
+                Text(presentation.message)
                     .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                     .foregroundStyle(AppTheme.Text.primaryColor)
                     .fixedSize(horizontal: false, vertical: true)
@@ -550,21 +789,48 @@ struct PipelinePanelView: View {
                     open(route, phase: phase.phase)
                 }
                 .buttonStyle(.capsule(.secondary, size: .regular))
-                if !approvalReadiness.isReady, route.destination != .interaction {
-                    Button("Open Agent") { editor.agentPanelVisible = true }
-                        .buttonStyle(.capsule(.secondary, size: .regular))
+                .background(
+                    AppRelaunchClickProbe(
+                        identifier: "production.dock.open",
+                        acceptanceValue: route.acceptanceID
+                    )
+                )
+            }
+            if !enabled, let diagnostic = presentation.diagnostic {
+                Button("Ask Agent") {
+                    askAgentToResolveReadiness(
+                        phase: phase.phase,
+                        diagnostic: diagnostic
+                    )
                 }
+                .buttonStyle(.capsule(.secondary, size: .regular))
             }
             Button("Approve") { approve(phase) }
                 .buttonStyle(.capsule(.prominent, size: .regular))
                 .disabled(!enabled)
-                .help(enabled ? "Approve \(label)" : requirement)
+                .help(enabled ? "Approve \(label)" : presentation.message)
+                .background(
+                    AppRelaunchClickProbe(
+                        identifier: "production.dock.approve",
+                        acceptanceState: enabled,
+                        acceptanceValue: presentation.message
+                    )
+                )
         }
     }
 
     private func open(_ route: PipelineSurfaceRouting.Route, phase: String) {
         selectPhase(phase)
         if route.destination == .interaction { editor.agentPanelVisible = true }
+    }
+
+    private func askAgentToResolveReadiness(phase: String, diagnostic: String) {
+        editor.agentService.send(
+            text: "Resolve the \(phase) approval blocker before requesting approval again: \(diagnostic)",
+            mentions: [],
+            hidden: true
+        )
+        editor.agentPanelVisible = true
     }
 
     private func selectPhase(_ phase: String) {
@@ -576,6 +842,34 @@ struct PipelinePanelView: View {
     private func selectedPhase(in data: ProjectStateData) -> ProjectPhase? {
         guard let id = editor.viewedPipelinePhaseID else { return nil }
         return data.phases.first { $0.phase == id }
+    }
+
+    private func surfaceAllowsMutation(_ data: ProjectStateData) -> Bool {
+        guard selectedPhase(in: data)?.phase == data.nextPhaseName else { return false }
+        return runningPhase == nil
+            && !gateWriting
+            && mutationReadiness.isReady
+            && !editor.agentService.isComposerBlocked
+    }
+
+    private func surfaceReadOnlyReason(_ data: ProjectStateData) -> String? {
+        guard let selected = selectedPhase(in: data) else { return nil }
+        if let runningPhase {
+            return "Read only while \(phaseLabel(runningPhase)) runs"
+        }
+        if selected.approved {
+            return "Read only — rewind this phase to make changes"
+        }
+        if selected.phase != data.nextPhaseName {
+            return "Read only — complete earlier phases first"
+        }
+        if editor.agentService.isComposerBlocked {
+            return "Read only until the open decision is resolved"
+        }
+        if gateWriting || !mutationReadiness.isReady {
+            return "Checking editing access"
+        }
+        return nil
     }
 
     private func normalizeSelection(honorRequestedSurface: Bool = false) {

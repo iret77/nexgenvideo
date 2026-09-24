@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct TimelineStyleReviewView: View {
+    var allowsMutation = true
+
     private enum ReviewChoice: String, CaseIterable {
         case pass
         case fail
@@ -43,6 +45,7 @@ struct TimelineStyleReviewView: View {
             Text("Review the actual cut in the Timeline player. Image, motion, editing and sound criteria remain unreviewed until you record an observation or explicitly accept a deviation.")
                 .foregroundStyle(AppTheme.Text.secondaryColor)
             Button("Review current timeline") {
+                guard allowsMutation else { return }
                 busy = true
                 Task {
                     let home = editor.workingRoot
@@ -67,7 +70,7 @@ struct TimelineStyleReviewView: View {
                 }
             }
             .buttonStyle(InlineActionButtonStyle(variant: .approval))
-            .disabled(busy)
+            .disabled(!allowsMutation || busy)
             if let snapshot, snapshot.home == editor.workingRoot {
                 ForEach(snapshot.style.criteria, id: \.auditKey) { criterion in
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
@@ -83,12 +86,17 @@ struct TimelineStyleReviewView: View {
                                 Text(choice.label).tag(choice.rawValue)
                             }
                         }
-                        .disabled(snapshot.targetsByCriterion[criterion.auditKey]?.isEmpty == true)
+                        .disabled(
+                            !allowsMutation
+                                || snapshot.targetsByCriterion[criterion.auditKey]?.isEmpty == true
+                        )
                         TextField("Observation and time range, or reason for accepting the deviation", text: Binding(
                             get: { observations[criterion.auditKey] ?? "" }, set: { observations[criterion.auditKey] = $0 }))
+                            .disabled(!allowsMutation)
                     }
                 }
                 Button("Record this timeline review") {
+                    guard allowsMutation else { return }
                     let findings = snapshot.style.criteria.compactMap { criterion -> TimelineStyleFinding? in
                         guard let choice = choices[criterion.auditKey] else { return nil }
                         return TimelineStyleReview.makeFinding(
@@ -116,9 +124,15 @@ struct TimelineStyleReviewView: View {
                     }
                 }
                 .buttonStyle(InlineActionButtonStyle(variant: .approval))
-                .disabled(busy || snapshot.style.criteria.contains {
-                    choices[$0.auditKey] == nil || (observations[$0.auditKey] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                })
+                .disabled(
+                    !allowsMutation
+                        || busy
+                        || snapshot.style.criteria.contains {
+                            choices[$0.auditKey] == nil
+                                || (observations[$0.auditKey] ?? "")
+                                    .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        }
+                )
             }
             if let message { Text(message).foregroundStyle(AppTheme.Text.secondaryColor) }
         }

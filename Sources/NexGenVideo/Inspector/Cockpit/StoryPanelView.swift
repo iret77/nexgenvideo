@@ -7,6 +7,16 @@ import SwiftUI
 
 struct StoryPanelView: View {
     @Environment(EditorViewModel.self) private var editor
+    var artifact: PipelineStoryArtifact?
+    var allowsMutation: Bool
+
+    init(
+        artifact: PipelineStoryArtifact? = nil,
+        allowsMutation: Bool = true
+    ) {
+        self.artifact = artifact
+        self.allowsMutation = allowsMutation
+    }
 
     private enum TreatmentState: Equatable {
         case idle, loading
@@ -47,8 +57,7 @@ struct StoryPanelView: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
-                        briefSection
-                        treatmentSection
+                        selectedSections
                     }
                     .padding(.horizontal, AppTheme.Spacing.lg)
                     .padding(.vertical, AppTheme.Spacing.md)
@@ -61,6 +70,27 @@ struct StoryPanelView: View {
             Task { await loadTreatment() }
         }
         .onChange(of: editor.brief, initial: true) { _, brief in seedBriefEdits(brief) }
+        .overlay(alignment: .topLeading) {
+            AppRelaunchClickProbe(
+                identifier: "production.story.mutations",
+                acceptanceState: allowsMutation
+            )
+            .frame(width: AppTheme.BorderWidth.hairline, height: AppTheme.BorderWidth.hairline)
+            .allowsHitTesting(false)
+        }
+    }
+
+    @ViewBuilder
+    private var selectedSections: some View {
+        switch artifact {
+        case .some(.brief):
+            briefSection
+        case .some(.treatment):
+            treatmentSection
+        case nil:
+            briefSection
+            treatmentSection
+        }
     }
 
     // MARK: - Brief
@@ -273,6 +303,7 @@ struct StoryPanelView: View {
                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .labelsHidden()
+                .disabled(!allowsMutation)
         }
     }
 
@@ -295,6 +326,7 @@ struct StoryPanelView: View {
                 .foregroundStyle(AppTheme.Text.secondaryColor)
             }
             .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().focusable(false)
+            .disabled(!allowsMutation)
             Spacer(minLength: 0)
         }
     }
@@ -308,6 +340,7 @@ struct StoryPanelView: View {
             }
             .buttonStyle(.capsule(.prominent, size: .regular))
             .controlSize(.small)
+            .disabled(!allowsMutation)
         }
     }
 
@@ -423,6 +456,7 @@ struct StoryPanelView: View {
             TextField(placeholder, text: draft)
                 .textFieldStyle(.roundedBorder)
                 .interfaceFont(size: AppTheme.Typography.ui)
+                .disabled(!allowsMutation)
                 .onSubmit {
                     submit(
                         draft: draft,
@@ -443,7 +477,10 @@ struct StoryPanelView: View {
                     .interfaceFont(size: AppTheme.Typography.section)
             }
             .buttonStyle(.plain)
-            .disabled(!allowEmpty && draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .disabled(
+                !allowsMutation
+                    || (!allowEmpty && draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            )
         }
     }
 
@@ -453,6 +490,7 @@ struct StoryPanelView: View {
         action: String,
         command: (String) -> String
     ) {
+        guard allowsMutation else { return }
         let text = draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard allowEmpty || !text.isEmpty else { return }
         draft.wrappedValue = ""

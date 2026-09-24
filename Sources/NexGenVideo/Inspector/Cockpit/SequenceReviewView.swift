@@ -4,6 +4,7 @@ import SwiftUI
 
 struct SequenceReviewView: View {
     @Environment(EditorViewModel.self) private var editor
+    var allowsMutation = true
     @State private var snapshot: PipelineSequenceReviewStore.Snapshot?
     @State private var player: AVPlayer?
     @State private var reviewedAdjacentPairs = false
@@ -31,9 +32,9 @@ struct SequenceReviewView: View {
                     Text("\(snapshot.plan.selectedMedia.count) sources · \(snapshot.reel.durationFrames) frames · exact EDL \(snapshot.reel.edlSHA256.prefix(10))")
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                     Toggle("I reviewed every adjacent cut", isOn: $reviewedAdjacentPairs)
-                        .disabled(busy || snapshot.plan.selectedMedia.count < 2)
+                        .disabled(!allowsMutation || busy || snapshot.plan.selectedMedia.count < 2)
                     Toggle("I watched the complete reel with audio", isOn: $reviewedWholePlayback)
-                        .disabled(busy)
+                        .disabled(!allowsMutation || busy)
                     findingEditor(snapshot: snapshot)
                     if !findings.isEmpty {
                         ForEach(Array(findings.enumerated()), id: \.element.id) { index, finding in
@@ -47,18 +48,19 @@ struct SequenceReviewView: View {
                                 Spacer(minLength: AppTheme.Spacing.none)
                                 Button("Remove") { findings.remove(at: index) }
                                     .buttonStyle(InlineActionButtonStyle())
-                                    .disabled(busy)
+                                    .disabled(!allowsMutation || busy)
                             }
                         }
                     }
                     HStack(spacing: AppTheme.Spacing.sm) {
                         Button("Rebuild reel") { beginReview() }
                             .buttonStyle(InlineActionButtonStyle())
-                            .disabled(busy)
+                            .disabled(!allowsMutation || busy)
                         Button("Record review") { save(snapshot: snapshot) }
                             .buttonStyle(InlineActionButtonStyle(variant: .approval))
                             .disabled(
-                                busy
+                                !allowsMutation
+                                    || busy
                                     || !reviewedWholePlayback
                                     || (snapshot.plan.selectedMedia.count > 1 && !reviewedAdjacentPairs)
                             )
@@ -66,7 +68,7 @@ struct SequenceReviewView: View {
                 } else {
                     Button("Build review reel") { beginReview() }
                         .buttonStyle(InlineActionButtonStyle(variant: .approval))
-                        .disabled(busy)
+                        .disabled(!allowsMutation || busy)
                 }
                 if busy { ProgressView().controlSize(.small) }
                 if let message { Text(message).foregroundStyle(AppTheme.Text.secondaryColor) }
@@ -94,6 +96,7 @@ struct SequenceReviewView: View {
                     }
                 }
             }
+            .disabled(!allowsMutation)
             HStack(spacing: AppTheme.Spacing.sm) {
                 Picker("Severity", selection: $severity) {
                     Text("Info").tag(SequenceReviewSeverityV1.info)
@@ -108,17 +111,19 @@ struct SequenceReviewView: View {
                     Text("Rewind plan").tag(SequenceReviewActionV1.rewind)
                 }
             }
+            .disabled(!allowsMutation)
             TextField("Shot IDs, separated by commas", text: $shotIDs)
-                .disabled(busy)
+                .disabled(!allowsMutation || busy)
             HStack(spacing: AppTheme.Spacing.sm) {
                 TextField("First frame", value: $startFrame, format: .number)
                 TextField("End frame", value: $endFrame, format: .number)
             }
+            .disabled(!allowsMutation)
             TextField("Describe only what you observed", text: $evidence)
-                .disabled(busy)
+                .disabled(!allowsMutation || busy)
             Button("Add finding") { addFinding(snapshot: snapshot) }
                 .buttonStyle(InlineActionButtonStyle())
-                .disabled(busy || !validDraft(snapshot: snapshot))
+                .disabled(!allowsMutation || busy || !validDraft(snapshot: snapshot))
         }
         .padding(AppTheme.Spacing.sm)
         .background(AppTheme.Background.raisedColor)
@@ -163,6 +168,7 @@ struct SequenceReviewView: View {
     }
 
     private func beginReview() {
+        guard allowsMutation else { return }
         player?.pause()
         busy = true
         message = nil
@@ -191,6 +197,7 @@ struct SequenceReviewView: View {
     }
 
     private func save(snapshot: PipelineSequenceReviewStore.Snapshot) {
+        guard allowsMutation else { return }
         busy = true
         message = nil
         let recordedFindings = findings

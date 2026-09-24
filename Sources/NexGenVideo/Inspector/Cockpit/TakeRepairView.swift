@@ -29,16 +29,18 @@ struct TakeRepairView: View {
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                 Picker("Next action", selection: $operation) {
                     ForEach(TakeRepairPlan.Operation.allCases, id: \.self) { Text($0.label).tag($0) }
-                }.disabled(busy)
-                TextField("Explain the single change, clean rewrite or stop", text: $reason).disabled(busy)
+                }.disabled(busy || !canWrite)
+                TextField("Explain the single change, clean rewrite or stop", text: $reason)
+                    .disabled(busy || !canWrite)
                 DisclosureGroup("Iteration limits") {
                     TextField("Rolls per prompt revision", value: $policy.rollsPerPrompt, format: .number)
                     TextField("Failed iterations before clean rewrite", value: $policy.failuresBeforeRewrite, format: .number)
                     TextField("Clean failures before model-limit review", value: $policy.cleanFailuresBeforeModelLimit, format: .number)
                     TextField("Control channels before model-limit review", value: $policy.channelsBeforeModelLimit, format: .number)
                     TextField("Iterations before simplifying the shot", value: $policy.iterationsBeforeSimplification, format: .number)
-                }.disabled(busy)
+                }.disabled(busy || !canWrite)
                 Button("Save iteration decision") {
+                    guard canWrite else { return }
                     let choice = operation, explanation = reason, limits = policy
                     busy = true
                     Task {
@@ -52,6 +54,7 @@ struct TakeRepairView: View {
                 }.buttonStyle(InlineActionButtonStyle(variant: .approval))
                     .disabled(busy || !canWrite || reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (try? policy.validate()) == nil)
                 Button("Continue with agent") {
+                    guard canWrite else { return }
                     editor.agentService.send(controlTurn: AgentControlTurn(
                         command: "Read get_render_manifest for \(snapshot.take.phase) and the recorded iteration decision for shot \(snapshot.take.shotID). Apply that decision through the canonical workflow. A stop or rescue decision must not start a generation. Changes to approved shot truth require explicit rewind. Any generation still needs the existing spend approval.",
                         selections: [.init(label: "Shot", values: [snapshot.take.shotID]), .init(label: "Decision", values: [operation.label])],

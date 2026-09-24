@@ -1,4 +1,5 @@
 import AppKit
+import NexGenEngine
 import SwiftUI
 
 @MainActor
@@ -124,6 +125,13 @@ enum WorkspaceUIAcceptance {
             let originalDocumentEdited = document.isDocumentEdited
             let originalCanUndo = document.undoManager?.canUndo ?? false
             let originalUndoName = document.undoManager?.undoActionName ?? ""
+            await captureProductionNavigationCases(
+                editor: editor,
+                window: window,
+                host: host,
+                evidenceURL: evidenceURL,
+                scale: scale
+            )
             var initialEditFrames: [String: NSRect]?
             for workspace in EditorViewModel.WorkspaceFocus.allCases {
                 let identifier = "editor.workspace.\(workspace.rawValue)"
@@ -589,6 +597,203 @@ enum WorkspaceUIAcceptance {
         editor.mediaAssets = originalAssets
     }
 
+    private static func captureProductionNavigationCases(
+        editor: EditorViewModel,
+        window: NSWindow,
+        host: NSView,
+        evidenceURL: URL,
+        scale: Double
+    ) async {
+        guard await waitUntil(timeout: .seconds(5), {
+            host.layoutSubtreeIfNeeded()
+            return editor.workspaceFocus == .production
+                && editor.projectState?.nextPhaseName == "frames"
+                && probeState(identifier: "production.phase.frames", in: window) != nil
+        }) else {
+            fail("production navigation fixture did not load", scale: scale)
+        }
+
+        let destinations = [
+            (phase: "brief", artifact: "brief"),
+            (phase: "treatment", artifact: "treatment"),
+            (phase: "frames", artifact: "frames"),
+            (phase: "render", artifact: "render"),
+        ]
+        for destination in destinations {
+            let phaseID = "production.phase.\(destination.phase)"
+            guard clickRevealing(identifier: phaseID, in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      host.layoutSubtreeIfNeeded()
+                      return editor.workspaceFocus == .production
+                          && editor.viewedPipelinePhaseID == destination.phase
+                          && probeState(identifier: phaseID, in: window) == true
+                          && probeState(
+                              identifier: "production.surface.\(destination.artifact)",
+                              in: window
+                          ) == (destination.phase == "frames")
+                  }) else {
+                fail("production phase did not open \(destination.artifact)", scale: scale)
+            }
+            let name = "scale-\(scaleLabel(scale))-production-\(destination.artifact).png"
+            guard snapshot(host, at: evidenceURL.appendingPathComponent(name)) else {
+                fail("could not capture production \(destination.artifact)", scale: scale)
+            }
+            emit(
+                "production-surface",
+                scale: scale,
+                fields: [
+                    "artifact": destination.artifact,
+                    "focusedWorkspace": editor.workspaceFocus.rawValue,
+                    "phase": destination.phase,
+                    "screenshot": name,
+                ]
+            )
+        }
+
+        guard probeValue(identifier: "production.dock.open", in: window) == "frames",
+              click(identifier: "production.dock.open", in: window) == nil,
+              await waitUntil(timeout: .seconds(5), {
+                  host.layoutSubtreeIfNeeded()
+                  return editor.viewedPipelinePhaseID == "frames"
+                      && probeState(
+                          identifier: "production.surface.frames",
+                          in: window
+                      ) == true
+                      && probeState(identifier: "production.dock.approve", in: window) == false
+              }), let dockRequirement = probeValue(
+                  identifier: "production.dock.approve",
+                  in: window
+              ), dockRequirement.contains("Frames"),
+              !dockRequirement.contains("/"),
+              !dockRequirement.contains("write_") else {
+            fail("phase dock did not expose its current blocked artifact", scale: scale)
+        }
+        let dockName = "scale-\(scaleLabel(scale))-production-dock-blocked.png"
+        guard snapshot(host, at: evidenceURL.appendingPathComponent(dockName)) else {
+            fail("could not capture blocked production dock", scale: scale)
+        }
+        emit(
+            "production-dock",
+            scale: scale,
+            fields: [
+                "approvalEnabled": false,
+                "requirement": dockRequirement,
+                "screenshot": dockName,
+            ]
+        )
+
+        guard click(identifier: "production.settings", in: window) == nil,
+              await waitUntil(timeout: .seconds(5), {
+                  host.layoutSubtreeIfNeeded()
+                  return editor.cockpitTab == .project
+                      && probeState(identifier: "production.settings", in: window) == true
+                      && probeValue(identifier: "production.budget.status", in: window) != nil
+              }), let budget = probeValue(identifier: "production.budget.status", in: window) else {
+            fail("project spend status was not reachable from production", scale: scale)
+        }
+        let budgetName = "scale-\(scaleLabel(scale))-production-budget.png"
+        guard snapshot(host, at: evidenceURL.appendingPathComponent(budgetName)) else {
+            fail("could not capture project spend status", scale: scale)
+        }
+        emit(
+            "production-budget",
+            scale: scale,
+            fields: ["status": budget, "screenshot": budgetName]
+        )
+        guard click(identifier: "production.settings.back", in: window) == nil,
+              await waitUntil(timeout: .seconds(5), {
+                  host.layoutSubtreeIfNeeded()
+                  return editor.cockpitTab == .pipeline
+                      && probeState(identifier: "production.phase.frames", in: window) == true
+              }) else {
+            fail("production settings did not return to the selected phase", scale: scale)
+        }
+
+        guard clickRevealing(identifier: "production.phase.brief", in: window) == nil,
+              await waitUntil(timeout: .seconds(5), {
+                  host.layoutSubtreeIfNeeded()
+                  return editor.viewedPipelinePhaseID == "brief"
+                      && probeState(identifier: "production.phase.brief.actions", in: window) == true
+              }), click(identifier: "production.phase.brief.actions", in: window) == nil else {
+            fail("approved Brief gate menu was unavailable", scale: scale)
+        }
+        try? await Task.sleep(for: .milliseconds(200))
+        pressKey(keyCode: 125, characters: "\u{f701}")
+        pressKey(keyCode: 125, characters: "\u{f701}")
+        pressKey(keyCode: 36, characters: "\r")
+        guard await waitUntil(timeout: .seconds(5), {
+            host.layoutSubtreeIfNeeded()
+            return probeValue(identifier: "production.rewind.confirmation", in: window) == "brief"
+        }) else {
+            fail("Brief rewind did not present its consequences", scale: scale)
+        }
+        let rewindName = "scale-\(scaleLabel(scale))-production-rewind.png"
+        guard snapshot(host, at: evidenceURL.appendingPathComponent(rewindName)) else {
+            fail("could not capture rewind consequences", scale: scale)
+        }
+        emit(
+            "production-rewind",
+            scale: scale,
+            fields: ["phase": "brief", "screenshot": rewindName]
+        )
+        pressKey(keyCode: 53, characters: "\u{1b}")
+        guard await waitUntil(timeout: .seconds(5), {
+            probeValue(identifier: "production.rewind.confirmation", in: window) == nil
+        }) else {
+            fail("rewind confirmation did not cancel", scale: scale)
+        }
+
+        guard let home = editor.workingRoot,
+              let root = DataRootResolver.dataRoot(of: home) else {
+            fail("production working root was unavailable", scale: scale)
+        }
+        let runnerGate = DispatchSemaphore(value: 0)
+        let running = Task { @MainActor in
+            await editor.pipelinePhaseRunCoordinator.run(
+                projectRoot: root,
+                phase: "frames",
+                sourceFilename: nil,
+                runner: { _ in runnerGate.wait() },
+                progressRunner: nil,
+                state: editor.pipelinePhaseExecution
+            )
+        }
+        guard await waitUntil(timeout: .seconds(5), {
+            editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) == "frames"
+        }), clickRevealing(identifier: "production.phase.brief", in: window) == nil,
+              await waitUntil(timeout: .seconds(5), {
+                  host.layoutSubtreeIfNeeded()
+                  return editor.viewedPipelinePhaseID == "brief"
+                      && probeState(identifier: "production.surface.brief", in: window) == false
+                      && probeState(identifier: "production.story.mutations", in: window) == false
+                      && probeState(identifier: "production.phase.brief.actions", in: window) == false
+              }) else {
+            runnerGate.signal()
+            _ = await running.value
+            fail("historical Brief was not inspectable and read-only during a phase run", scale: scale)
+        }
+        let readOnlyName = "scale-\(scaleLabel(scale))-production-read-only.png"
+        guard snapshot(host, at: evidenceURL.appendingPathComponent(readOnlyName)) else {
+            runnerGate.signal()
+            _ = await running.value
+            fail("could not capture running-phase read-only browsing", scale: scale)
+        }
+        emit(
+            "production-read-only",
+            scale: scale,
+            fields: [
+                "inspectedPhase": "brief",
+                "runningPhase": "frames",
+                "screenshot": readOnlyName,
+            ]
+        )
+        runnerGate.signal()
+        let outcome = await running.value
+        guard outcome == .completed else {
+            fail("acceptance phase coordinator did not settle", scale: scale)
+        }
+    }
+
     private static func makeProjectFixture(scale: Double) throws -> URL {
         let title = scale == 1.25
             ? "An exceptionally long project name for the final picture lock"
@@ -647,6 +852,39 @@ enum WorkspaceUIAcceptance {
             options: .atomic
         )
         _ = try ProjectIdentity.uuid(for: projectURL)
+        let dataRoot = try ProjectScaffold.initProject(
+            home: projectURL,
+            name: title,
+            mode: .beat,
+            budgetEur: 125
+        )
+        let store = YAMLArtifactStore(dataRoot: dataRoot)
+        try store.save(
+            Brief(
+                project: title,
+                generated: "2026-09-24",
+                mission: .demo,
+                targetPlatform: "screening",
+                aspectRatio: .landscape16x9,
+                projectMode: "beat",
+                budgetEur: 125,
+                conceptType: .abstract,
+                visualMedium: .liveActionRealistic,
+                figures: .none,
+                lyricsIntegration: .ignored
+            ),
+            to: PipelineLayout.briefFile
+        )
+        var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+        GatesOperations.approve(&gates, phase: "project_init")
+        GatesOperations.approve(&gates, phase: "brief")
+        GatesOperations.approve(&gates, phase: "production_design")
+        GatesOperations.approve(&gates, phase: "treatment")
+        GatesOperations.approve(&gates, phase: "storyboard")
+        GatesOperations.approve(&gates, phase: "bible")
+        GatesOperations.approve(&gates, phase: "shotlist")
+        GatesOperations.approve(&gates, phase: "sanity")
+        try store.save(gates, to: PipelineLayout.gatesFile)
         return projectURL
     }
 
@@ -1310,6 +1548,52 @@ enum WorkspaceUIAcceptance {
         return nil
     }
 
+    private static func clickRevealing(
+        identifier: String,
+        in window: NSWindow
+    ) -> String? {
+        guard let root = window.contentView,
+              let probe = findProbe(in: root, identifier: identifier) else {
+            return "control geometry unavailable"
+        }
+        if let scrollView = enclosingScrollView(for: probe),
+           let documentView = scrollView.documentView {
+            documentView.scrollToVisible(probe.convert(probe.bounds, to: documentView))
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+            root.layoutSubtreeIfNeeded()
+        }
+        return click(identifier: identifier, in: window)
+    }
+
+    private static func pressKey(keyCode: UInt16, characters: String) {
+        let timestamp = ProcessInfo.processInfo.systemUptime
+        guard let down = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: timestamp,
+            windowNumber: NSApp.keyWindow?.windowNumber ?? 0,
+            context: nil,
+            characters: characters,
+            charactersIgnoringModifiers: characters,
+            isARepeat: false,
+            keyCode: keyCode
+        ), let up = NSEvent.keyEvent(
+            with: .keyUp,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: timestamp + 0.001,
+            windowNumber: NSApp.keyWindow?.windowNumber ?? 0,
+            context: nil,
+            characters: characters,
+            charactersIgnoringModifiers: characters,
+            isARepeat: false,
+            keyCode: keyCode
+        ) else { return }
+        NSApp.postEvent(down, atStart: false)
+        NSApp.postEvent(up, atStart: false)
+    }
+
     private static func findProbe(in view: NSView, identifier: String) -> NSView? {
         if view is AppRelaunchClickProbeView, view.identifier?.rawValue == identifier {
             return view
@@ -1325,6 +1609,13 @@ enum WorkspaceUIAcceptance {
               let probe = findProbe(in: root, identifier: identifier)
                 as? AppRelaunchClickProbeView else { return nil }
         return probe.acceptanceState
+    }
+
+    private static func probeValue(identifier: String, in window: NSWindow) -> String? {
+        guard let root = window.contentView,
+              let probe = findProbe(in: root, identifier: identifier)
+                as? AppRelaunchClickProbeView else { return nil }
+        return probe.acceptanceValue
     }
 
     private static func waitUntil(

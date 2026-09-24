@@ -4,6 +4,7 @@ import NexGenEngine
 
 struct TakeReviewView: View {
     @Environment(EditorViewModel.self) private var editor
+    var allowsMutation = true
     @State private var presented = false
     @State private var takes: [PipelineRenderTakeV1] = []
     @State private var selectedID = ""
@@ -43,8 +44,14 @@ struct TakeReviewView: View {
                 }.disabled(busy)
                 if let snapshot {
                     VideoPlayer(player: player).frame(minHeight: AppTheme.Layout.previewMinHeight)
-                    TakeRangeReviewView(snapshot: snapshot, wholeTakePlayer: player, canWrite: canWrite).id(snapshot.take.id)
-                    TakeRepairView(snapshot: snapshot, canWrite: canWrite).id(snapshot.take.id)
+                    TakeRangeReviewView(
+                        snapshot: snapshot,
+                        wholeTakePlayer: player,
+                        canWrite: canWrite && allowsMutation
+                    )
+                    .id(snapshot.take.id)
+                    TakeRepairView(snapshot: snapshot, canWrite: canWrite && allowsMutation)
+                        .id(snapshot.take.id)
                     DisclosureGroup("Submitted direction and image references") {
                         ScrollView {
                             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
@@ -65,7 +72,9 @@ struct TakeReviewView: View {
                             } catch { message = error.localizedDescription }
                             busy = false
                         }
-                    }.buttonStyle(InlineActionButtonStyle(variant: .approval)).disabled(busy || !canSelect || !canWrite)
+                    }
+                    .buttonStyle(InlineActionButtonStyle(variant: .approval))
+                    .disabled(busy || !canSelect || !canWrite || !allowsMutation)
                     if findings.count < TakeReview.Pass.allCases.count && findings.last?.verdict != .rejected {
                         let pass = TakeReview.Pass.allCases[findings.count]
                         Text("\(findings.count + 1) of 6 · \(pass.label)").fontWeight(AppTheme.FontWeight.semibold)
@@ -79,17 +88,20 @@ struct TakeReviewView: View {
                             if pass != .identity { Text("Accept deviation — explain").tag(TakeReview.Verdict.acceptedDeviation) }
                             if pass != .identity { Text("Not applicable — explain").tag(TakeReview.Verdict.notApplicable) }
                         }
+                        .disabled(!allowsMutation)
                         TextField("Describe what you observed in this take", text: $observation)
+                            .disabled(!allowsMutation)
                         HStack {
                             TextField("Start seconds", value: $start, format: .number)
                             TextField("End seconds", value: $end, format: .number)
                         }
+                        .disabled(!allowsMutation)
                         Button("Record pass") {
                             findings.append(.init(pass: pass, verdict: verdict, observation: observation, startSeconds: start, endSeconds: end))
                             observation = ""; verdict = .conforms; start = 0; end = snapshot.durationSeconds
                         }
                         .buttonStyle(InlineActionButtonStyle(variant: .approval))
-                        .disabled(busy || observation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        .disabled(!allowsMutation || busy || observation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                             || !start.isFinite || !end.isFinite || start < 0 || end <= start || end > snapshot.durationSeconds)
                     } else {
                         ForEach(findings, id: \.pass) { finding in
@@ -105,14 +117,17 @@ struct TakeReviewView: View {
                                 } catch { message = error.localizedDescription }
                                 busy = false
                             }
-                        }.buttonStyle(InlineActionButtonStyle(variant: .approval)).disabled(busy || !canWrite)
+                        }
+                        .buttonStyle(InlineActionButtonStyle(variant: .approval))
+                        .disabled(busy || !canWrite || !allowsMutation)
                         Button("Review again") { findings = []; observation = ""; verdict = .conforms; start = 0; end = snapshot.durationSeconds; canSelect = false }
-                            .buttonStyle(InlineActionButtonStyle()).disabled(busy)
+                            .buttonStyle(InlineActionButtonStyle())
+                            .disabled(busy || !allowsMutation)
                     }
                 }
             }
             if let message { Text(message).foregroundStyle(AppTheme.Text.secondaryColor) }
-            if !canWrite { Text("Save reviews and select takes during Render. Rewind Render before changing an approved selection.").foregroundStyle(AppTheme.Text.secondaryColor) }
+            if !canWrite || !allowsMutation { Text("Save reviews and select takes during Render. Rewind Render before changing an approved selection.").foregroundStyle(AppTheme.Text.secondaryColor) }
         }
         .padding(AppTheme.Spacing.lg)
         }
@@ -128,7 +143,7 @@ struct TakeReviewView: View {
     private func load() async {
         canWrite = false
         guard let home = editor.workingRoot, let root = DataRootResolver.dataRoot(of: home) else { return }
-        canWrite = (try? PipelinePhaseAccess.requireCurrentPhaseAndIntake("render", dataRoot: root,
+        canWrite = allowsMutation && (try? PipelinePhaseAccess.requireCurrentPhaseAndIntake("render", dataRoot: root,
             declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)) != nil
         do {
             let values = try await Task.detached(priority: .userInitiated) {

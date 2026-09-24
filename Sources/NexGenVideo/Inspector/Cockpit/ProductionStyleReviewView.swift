@@ -3,6 +3,7 @@ import NexGenEngine
 
 struct ProductionStyleReviewView: View {
     @Environment(EditorViewModel.self) private var editor
+    var allowsMutation = true
     @State private var snapshot: Snapshot?
     @State private var failed = false
     @State private var expanded = false
@@ -61,7 +62,9 @@ struct ProductionStyleReviewView: View {
                                 Text("The approved original song determines the music and timing.")
                                     .interfaceFont(size: AppTheme.Typography.ui)
                             }
-                            if snapshot.approved { TimelineStyleReviewView() }
+                            if snapshot.approved {
+                                TimelineStyleReviewView(allowsMutation: allowsMutation)
+                            }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.top, AppTheme.Spacing.sm)

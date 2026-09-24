@@ -1287,6 +1287,28 @@ final class AgentService {
             || currentGateFollowUp != nil
     }
 
+    var composerBlockerDescription: String? {
+        if let dialog = pendingDialog {
+            return "Answer \u{201C}\(dialog.title)\u{201D} in Agent before changing the phase."
+        }
+        if let approval = pendingSpendApproval {
+            return "Approve or decline \(approval.actionLabel.lowercased()) in Agent before changing the phase."
+        }
+        if editor?.generationBatchCoordinator.pending != nil {
+            return "Approve or decline the pending generation batch in Agent before changing the phase."
+        }
+        if currentSpendFollowUp != nil {
+            return "Retry the pending spend result in Agent before changing the phase."
+        }
+        if let approval = pendingGateApproval {
+            return "Answer the pending \(approval.phaseLabel) gate decision in Agent before changing the phase."
+        }
+        if currentGateFollowUp != nil {
+            return "Retry the pending gate result in Agent before changing the phase."
+        }
+        return nil
+    }
+
     // MARK: - Spend approval (Cost-Guard, M7)
 
     /// The ONE pending spend confirmation (locked provider architecture — user has the final word on

@@ -143,7 +143,7 @@ enum PipelineNavigationSelection {
                 if let requestedPackSurfaceID {
                     return route.destination == .pack(requestedPackSurfaceID)
                 }
-                return route.destination == .tab(requestedTab)
+                return route.legacyTab == requestedTab
             }) {
                 return match.phase
             }

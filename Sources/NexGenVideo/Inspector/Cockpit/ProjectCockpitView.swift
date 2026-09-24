@@ -30,6 +30,9 @@ struct ProjectCockpitView: View {
                             .foregroundStyle(AppTheme.Text.secondaryColor)
                     }
                     .buttonStyle(.plain)
+                    .background(
+                        AppRelaunchClickProbe(identifier: "production.settings.back")
+                    )
                 } else {
                     Text("Production")
                         .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
@@ -99,6 +102,12 @@ struct ProjectCockpitView: View {
         .padding(.trailing, AppTheme.Spacing.sm)
         .accessibilityLabel("Project settings")
         .help("Project settings")
+        .background(
+            AppRelaunchClickProbe(
+                identifier: "production.settings",
+                acceptanceState: selected
+            )
+        )
     }
 }
 
@@ -124,6 +133,10 @@ struct ProjectSettingsView: View {
                     menuRow("Aspect Ratio", formatAspectRatio(width: editor.timeline.width, height: editor.timeline.height)) { aspectMenuItems }
                 }
 
+                if let state = editor.projectState {
+                    spendSection(state)
+                }
+
                 pluginSection
             }
             .padding(.horizontal, AppTheme.Spacing.lg)
@@ -133,6 +146,49 @@ struct ProjectSettingsView: View {
     }
 
     // MARK: - Format plugin (the activation surface — Epic #98 / #95 C3)
+
+    private func spendSection(_ state: ProjectStateData) -> some View {
+        section("Spend") {
+            plainRow("Planning budget", euro(state.budgetEur))
+            plainRow(
+                state.spendComplete ? "Verified spend" : "Verified spend at least",
+                euro(state.budgetSpentEur)
+            )
+            plainRow(
+                "Planning remaining",
+                state.budgetRemainingEur.map(euro) ?? "Unknown"
+            )
+            plainRow(
+                "Hard-stop remaining",
+                state.hardStopRemainingEur.map(euro) ?? "No hard stop"
+            )
+            plainRow("Active reservations", String(state.activeReservations))
+            plainRow(
+                "Unknown spend records",
+                state.spendComplete
+                    ? "None"
+                    : String(state.unpricedTransactions + state.legacyGenerations)
+            )
+        }
+        .overlay(alignment: .topLeading) {
+            AppRelaunchClickProbe(
+                identifier: "production.budget.status",
+                acceptanceState: state.spendComplete,
+                acceptanceValue: [
+                    euro(state.budgetSpentEur),
+                    state.budgetRemainingEur.map(euro) ?? "Unknown",
+                    String(state.activeReservations),
+                    state.spendComplete ? "None" : "Unknown",
+                ].joined(separator: "|")
+            )
+            .frame(width: AppTheme.BorderWidth.hairline, height: AppTheme.BorderWidth.hairline)
+            .allowsHitTesting(false)
+        }
+    }
+
+    private func euro(_ amount: Double) -> String {
+        String(format: "€%.2f", amount)
+    }
 
     /// Exactly one plugin is active per project ("installed ≠ active"); none = the generic
     /// workflow. The pane shows ONLY the project's state — the active pack with its global

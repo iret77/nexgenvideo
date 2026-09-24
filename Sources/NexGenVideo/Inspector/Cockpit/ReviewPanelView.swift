@@ -7,6 +7,16 @@ import SwiftUI
 
 struct ReviewPanelView: View {
     @Environment(EditorViewModel.self) private var editor
+    var artifact: PipelineReviewArtifact?
+    var allowsMutation: Bool
+
+    init(
+        artifact: PipelineReviewArtifact? = nil,
+        allowsMutation: Bool = true
+    ) {
+        self.artifact = artifact
+        self.allowsMutation = allowsMutation
+    }
 
     private enum LoadState: Equatable {
         case idle
@@ -51,21 +61,47 @@ struct ReviewPanelView: View {
             .onChange(of: editor.engineStateRevision) { _, _ in
                 Task { await load() }
             }
+            .overlay(alignment: .topLeading) {
+                AppRelaunchClickProbe(
+                    identifier: "production.review.mutations",
+                    acceptanceState: allowsMutation
+                )
+                .frame(width: AppTheme.BorderWidth.hairline, height: AppTheme.BorderWidth.hairline)
+                .allowsHitTesting(false)
+            }
     }
 
     @ViewBuilder
     private var layout: some View {
-        if case .failed(.notInitialized) = state {
+        if case .failed(.notInitialized) = state, artifact != .render {
             // No pipeline yet: the whole pane is one "Start production" call to action. Stacking the
             // Sanity strip below would render a second, identical "No production pipeline" block —
             // Sanity has nothing to gate before a shotlist exists — a doubled, half-clipped message.
             content
+        } else if artifact == .frames {
+            VStack(spacing: AppTheme.Spacing.none) {
+                ProductionStyleReviewView(allowsMutation: false)
+                FrameFindingsReviewView(allowsMutation: allowsMutation)
+                content
+                    .frame(minHeight: AppTheme.Spacing.none)
+                    .clipped()
+            }
+        } else if artifact == .render {
+            ScrollView {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+                    ProductionStyleReviewView(allowsMutation: allowsMutation)
+                    TakeReviewView(allowsMutation: allowsMutation)
+                    SequenceReviewView(allowsMutation: allowsMutation)
+                }
+                .padding(AppTheme.Spacing.md)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
         } else {
             VStack(spacing: AppTheme.Spacing.none) {
-                ProductionStyleReviewView()
-                FrameFindingsReviewView()
-                TakeReviewView()
-                SequenceReviewView()
+                ProductionStyleReviewView(allowsMutation: allowsMutation)
+                FrameFindingsReviewView(allowsMutation: allowsMutation)
+                TakeReviewView(allowsMutation: allowsMutation)
+                SequenceReviewView(allowsMutation: allowsMutation)
                 content
                     .frame(minHeight: AppTheme.Spacing.none)
                     .clipped()
@@ -139,6 +175,7 @@ struct ReviewPanelView: View {
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                     Button("Clear") { remixSelection[shot.shotId] = [] }
                         .controlSize(.small)
+                        .disabled(!allowsMutation)
                 }
                 if (remixSelection[shot.shotId]?.count ?? 0) >= 2 {
                     Button("Remix…") {
@@ -151,6 +188,7 @@ struct ReviewPanelView: View {
                         remixShot = shot.shotId
                     }
                     .controlSize(.small)
+                    .disabled(!allowsMutation)
                     .popover(isPresented: remixPopoverBinding(shot.shotId)) {
                         remixPopover(shot.shotId)
                     }
@@ -195,6 +233,7 @@ struct ReviewPanelView: View {
             }
             .contentShape(Rectangle())
             .onTapGesture {
+                guard allowsMutation else { return }
                 // Tap picks the tile as a remix source ("composition of 2 + lighting of 4").
                 var set = remixSelection[shotId] ?? []
                 if !set.insert(frame.name).inserted { set.remove(frame.name) }
@@ -203,12 +242,14 @@ struct ReviewPanelView: View {
             HStack(spacing: AppTheme.Spacing.xs) {
                 Button("Use") { accept(frame, shotId: shotId) }
                     .controlSize(.small)
+                    .disabled(!allowsMutation)
                 Button("Redo…") {
                     redoReason = .continuity
                     redoNote = ""
                     redoTarget = RedoTarget(shotId: shotId, frameName: frame.name)
                 }
                 .controlSize(.small)
+                .disabled(!allowsMutation)
             }
         }
         .frame(width: AppTheme.ComponentSize.reviewThumbnailWidth)
@@ -397,6 +438,7 @@ struct ReviewPanelView: View {
     }
 
     private func send(_ turn: AgentControlTurn) {
+        guard allowsMutation else { return }
         editor.agentService.send(controlTurn: turn)
         editor.agentPanelVisible = true
     }

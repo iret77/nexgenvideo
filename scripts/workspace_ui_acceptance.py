@@ -24,6 +24,12 @@ EXPECTED_KEYFRAME_LANES = {
     "audio": ["volume"],
     "video": ["position", "scale", "rotation", "opacity", "crop"],
 }
+EXPECTED_PRODUCTION_SURFACES = {
+    ("brief", "brief"),
+    ("treatment", "treatment"),
+    ("frames", "frames"),
+    ("render", "render"),
+}
 SCALES = (1.0, 1.25, 1.5)
 
 
@@ -167,6 +173,15 @@ def run_scale(executable, output, scale):
     pinned = [row for row in rows if row.get("event") == "narrow-production-pinned"]
     invariants = [row for row in rows if row.get("event") == "invariants"]
     inspector = [row for row in rows if row.get("event") == "inspector"]
+    production_surfaces = [
+        row for row in rows if row.get("event") == "production-surface"
+    ]
+    production_dock = [row for row in rows if row.get("event") == "production-dock"]
+    production_budget = [row for row in rows if row.get("event") == "production-budget"]
+    production_rewind = [row for row in rows if row.get("event") == "production-rewind"]
+    production_read_only = [
+        row for row in rows if row.get("event") == "production-read-only"
+    ]
     open_keyframes = [row for row in inspector if row.get("keyframes") == "open"]
     screenshots = [
         row.get("screenshot")
@@ -176,6 +191,14 @@ def run_scale(executable, output, scale):
         row.get("screenshot")
         for row in inspector
         if row.get("keyframes") != "open"
+    ]
+    screenshots += [
+        row.get("screenshot")
+        for row in production_surfaces
+        + production_dock
+        + production_budget
+        + production_rewind
+        + production_read_only
     ]
     screenshots += [
         layout.get("screenshot")
@@ -204,12 +227,38 @@ def run_scale(executable, output, scale):
         and len(inspector) == len(EXPECTED_INSPECTOR_CASES)
         and len(open_keyframes) == len(EXPECTED_KEYFRAME_LANES)
         and all(valid_keyframe_lane_evidence(row) for row in open_keyframes)
+        and {
+            (row.get("phase"), row.get("artifact"))
+            for row in production_surfaces
+        }
+        == EXPECTED_PRODUCTION_SURFACES
+        and len(production_surfaces) == len(EXPECTED_PRODUCTION_SURFACES)
+        and all(
+            row.get("focusedWorkspace") == "production"
+            for row in production_surfaces
+        )
+        and len(production_dock) == 1
+        and production_dock[0].get("approvalEnabled") is False
+        and "Frames" in production_dock[0].get("requirement", "")
+        and "/" not in production_dock[0].get("requirement", "")
+        and "write_" not in production_dock[0].get("requirement", "")
+        and len(production_budget) == 1
+        and production_budget[0].get("status") == "€0.00|€125.00|0|None"
+        and len(production_rewind) == 1
+        and production_rewind[0].get("phase") == "brief"
+        and len(production_read_only) == 1
+        and production_read_only[0].get("inspectedPhase") == "brief"
+        and production_read_only[0].get("runningPhase") == "frames"
         and invariants[0].get("liveStateUnchanged") is True
         and invariants[0].get("projectBytesUnchanged") is True
         and invariants[0].get("undoUnchanged") is True
         and invariants[0].get("workingCopyUnchanged") is True
         and len(screenshots)
-        == 8 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES)
+        == 8
+        + len(EXPECTED_INSPECTOR_CASES)
+        + len(EXPECTED_KEYFRAME_LANES)
+        + len(EXPECTED_PRODUCTION_SURFACES)
+        + 4
         and valid_images
     )
     return {

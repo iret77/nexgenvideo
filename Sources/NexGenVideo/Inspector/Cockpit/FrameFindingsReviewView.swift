@@ -3,6 +3,7 @@ import NexGenEngine
 
 struct FrameFindingsReviewView: View {
     @Environment(EditorViewModel.self) private var editor
+    var allowsMutation = true
     @State private var items: [Item] = []
     @State private var home: URL?
     @State private var failure: String?
@@ -19,7 +20,12 @@ struct FrameFindingsReviewView: View {
             if let failure { Text(failure).foregroundStyle(AppTheme.Text.secondaryColor) }
             if home == editor.workingRoot {
                 ForEach(items) { item in
-                    FrameFindingsCard(audit: item.audit, snapshot: item.snapshot, project: home)
+                    FrameFindingsCard(
+                        audit: item.audit,
+                        snapshot: item.snapshot,
+                        project: home,
+                        allowsMutation: allowsMutation
+                    )
                 }
             }
         }
@@ -57,6 +63,7 @@ private struct FrameFindingsCard: View {
     let audit: FrameAudit
     let snapshot: String
     let project: URL?
+    let allowsMutation: Bool
     @State private var reason = ""
     @State private var busy = false
     @State private var failure: String?
@@ -84,7 +91,9 @@ private struct FrameFindingsCard: View {
                     }
                 }
                 TextField("Reason for accepting these deviations", text: $reason)
+                    .disabled(!allowsMutation)
                 Button("Accept these deviations") {
+                    guard allowsMutation else { return }
                     busy = true
                     Task {
                         do {
@@ -94,7 +103,12 @@ private struct FrameFindingsCard: View {
                     }
                 }
                 .buttonStyle(InlineActionButtonStyle(variant: .approval))
-                .disabled(busy || !readiness.isReady || reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(
+                    !allowsMutation
+                        || busy
+                        || !readiness.isReady
+                        || reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                )
                 if let blocker = readiness.blocker { Text(blocker).foregroundStyle(AppTheme.Text.secondaryColor) }
                 if let failure { Text(failure).foregroundStyle(AppTheme.Text.secondaryColor) }
             }

@@ -290,8 +290,12 @@ struct PackSurfaceTests {
 
         let reviewContract = try JSONDecoder().decode(
             ContractData.self,
-            from: Data(#"{"phase_order":["production_design","storyboard","bible","shotlist","sanity","frames"],"phases":{"production_design":{"surface":"review","task_class":"review","artifact_selector":"host.production_design"},"storyboard":{"surface":"review","task_class":"review","artifact_selector":"host.storyboard"},"bible":{"surface":"review","task_class":"review","artifact_selector":"host.bible"},"shotlist":{"surface":"review","task_class":"review","artifact_selector":"host.shotlist"},"sanity":{"surface":"review","task_class":"review","artifact_selector":"host.sanity_report"},"frames":{"surface":"review","task_class":"review","artifact_selector":"host.frames_manifest"}}}"#.utf8)
+            from: Data(#"{"phase_order":["brief","production_design","treatment","storyboard","bible","shotlist","sanity","frames","render"],"phases":{"brief":{"surface":"prose","task_class":"review","artifact_selector":"host.brief"},"production_design":{"surface":"review","task_class":"review","artifact_selector":"host.production_design"},"treatment":{"surface":"prose","task_class":"review","artifact_selector":"host.treatment"},"storyboard":{"surface":"review","task_class":"review","artifact_selector":"host.storyboard"},"bible":{"surface":"review","task_class":"review","artifact_selector":"host.bible"},"shotlist":{"surface":"review","task_class":"review","artifact_selector":"host.shotlist"},"sanity":{"surface":"review","task_class":"review","artifact_selector":"host.sanity_report"},"frames":{"surface":"review","task_class":"review","artifact_selector":"host.frames_manifest"},"render":{"surface":"review","task_class":"review","artifact_selector":"host.render_manifest"}}}"#.utf8)
         )
+        #expect(PipelineSurfaceRouting.route(for: "brief", contract: reviewContract,
+            availablePackSurfaces: [])?.destination == .story(.brief))
+        #expect(PipelineSurfaceRouting.route(for: "treatment", contract: reviewContract,
+            availablePackSurfaces: [])?.destination == .story(.treatment))
         #expect(PipelineSurfaceRouting.route(for: "storyboard", contract: reviewContract,
             availablePackSurfaces: [])?.destination == .storyboard)
         #expect(PipelineSurfaceRouting.route(for: "bible", contract: reviewContract,
@@ -301,7 +305,9 @@ struct PackSurfaceTests {
         #expect(PipelineSurfaceRouting.route(for: "sanity", contract: reviewContract,
             availablePackSurfaces: [])?.destination == .sanity)
         #expect(PipelineSurfaceRouting.route(for: "frames", contract: reviewContract,
-            availablePackSurfaces: [])?.destination == .tab(.review))
+            availablePackSurfaces: [])?.destination == .review(.frames))
+        #expect(PipelineSurfaceRouting.route(for: "render", contract: reviewContract,
+            availablePackSurfaces: [])?.destination == .review(.render))
         let unavailable = try #require(PipelineSurfaceRouting.route(for: "production_design",
             contract: reviewContract, availablePackSurfaces: []))
         #expect(unavailable.destination == .productionDesign)
@@ -353,6 +359,40 @@ struct PackSurfaceTests {
             contract: contract,
             availablePackSurfaces: []
         )?.destination == .storyboard)
+    }
+
+    @Test("dock readiness presents shared blockers without exposing tool or path diagnostics")
+    func readinessPresentation() {
+        let analysis = PipelineReadinessPresentation.current(
+            selector: "host.analysis",
+            phaseLabel: "Audio Analysis",
+            approval: .blocked("run_phase found no analysis artifact at /tmp/private/analysis.json"),
+            mutations: .ready,
+            hostDecisionRequirement: nil
+        )
+        #expect(analysis.message == "Complete Audio Analysis with a verified beat grid and section structure.")
+        #expect(!analysis.message.contains("run_phase"))
+        #expect(!analysis.message.contains("/tmp"))
+        #expect(analysis.diagnostic?.contains("run_phase") == true)
+
+        let decision = PipelineReadinessPresentation.current(
+            selector: "host.production_design",
+            phaseLabel: "Production Design",
+            approval: .ready,
+            mutations: .ready,
+            hostDecisionRequirement: "Answer \u{201C}Choose a visual direction\u{201D} in Agent before changing the phase."
+        )
+        #expect(decision.message == "Answer \u{201C}Choose a visual direction\u{201D} in Agent before changing the phase.")
+        #expect(decision.diagnostic != nil)
+
+        let intake = PipelineReadinessPresentation.current(
+            selector: "host.project_track",
+            phaseLabel: "Project Init",
+            approval: .blocked("Complete the host-owned Track card before working on Project Init."),
+            mutations: .ready,
+            hostDecisionRequirement: nil
+        )
+        #expect(intake.message == "Complete the Track card before approving Project Init.")
     }
 
     @Test("navigation validation rejects stale state and selection keeps browsing separate from execution")
