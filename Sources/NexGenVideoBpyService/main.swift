@@ -135,9 +135,15 @@ private struct DirectorySnapshot {
 
 private let procPIDListFDs: Int32 = 1
 private let procFDTypeVnode: UInt32 = 1
-private let procPIDFDVnodeInfo: Int32 = 1
+private let procPIDFDVnodePathInfo: Int32 = 2
+private let procPIDRegionPathInfo: Int32 = 8
 private let procFDInfoSize = 8
-private let vnodeFDInfoSize = 176
+private let vnodeFDInfoWithPathSize = 1_200
+private let procRegionWithPathInfoSize = 1_272
+private let vnodePathLength = 1_024
+private let kernelFRead: UInt32 = 1
+private let kernelFWrite: UInt32 = 2
+private let maximumMappedRegionCount = 65_536
 
 private func vanished(_ error: Error) -> Bool {
     let value = error as NSError
@@ -280,11 +286,57 @@ private func directoryUsage(
     return conservative
 }
 
-private func ownedWritableVnodes(_ identity: SupervisorWorkerIdentity) throws -> [VnodeIdentity: UInt64] {
-    guard processUsage(identity.processIdentifier)?.startAbsoluteTime == identity.startAbsoluteTime else {
+private func processMatches(_ identity: SupervisorWorkerIdentity) -> Bool {
+    processUsage(identity.processIdentifier)?.startAbsoluteTime == identity.startAbsoluteTime
+}
+
+private func kernelPath(
+    _ buffer: UnsafeRawPointer,
+    offset: Int
+) throws -> String? {
+    let bytes = UnsafeBufferPointer(
+        start: buffer.advanced(by: offset).assumingMemoryBound(to: UInt8.self),
+        count: vnodePathLength
+    )
+    guard let end = bytes.firstIndex(of: 0) else {
+        throw CocoaError(.fileReadCorruptFile)
+    }
+    guard end > 0 else { return nil }
+    guard let path = String(bytes: bytes[..<end], encoding: .utf8), path.hasPrefix("/") else {
+        throw CocoaError(.fileReadCorruptFile)
+    }
+    return path
+}
+
+private func managedRootPaths(_ roots: [URL]) -> [String] {
+    roots.map { $0.resolvingSymlinksInPath().standardizedFileURL.path }
+}
+
+private func isManagedPath(_ path: String?, roots: [String]) -> Bool {
+    guard let path else { return false }
+    let candidate = URL(fileURLWithPath: path).standardizedFileURL.path
+    return roots.contains { candidate == $0 || candidate.hasPrefix($0 + "/") }
+}
+
+private func mergeVnodes(
+    _ observations: [VnodeIdentity: UInt64],
+    into resources: inout [VnodeIdentity: UInt64]
+) {
+    for (identity, bytes) in observations {
+        resources[identity] = max(resources[identity] ?? 0, bytes)
+    }
+}
+
+private func ownedOpenVnodes(
+    _ identity: SupervisorWorkerIdentity,
+    roots: [URL]
+) throws -> [VnodeIdentity: UInt64] {
+    guard processMatches(identity) else {
         return [:]
     }
+    let rootPaths = managedRootPaths(roots)
     let maximumBytes = procFDInfoSize * 4_096
+    errno = 0
     let required = Int(procPIDInfo(
         identity.processIdentifier,
         procPIDListFDs,
@@ -293,7 +345,7 @@ private func ownedWritableVnodes(_ identity: SupervisorWorkerIdentity) throws ->
         0
     ))
     if required <= 0 {
-        if processUsage(identity.processIdentifier)?.startAbsoluteTime != identity.startAbsoluteTime {
+        if !processMatches(identity) {
             return [:]
         }
         throw POSIXError(.init(rawValue: errno) ?? .EIO)
@@ -311,7 +363,7 @@ private func ownedWritableVnodes(_ identity: SupervisorWorkerIdentity) throws ->
         Int32(capacity)
     ))
     if returned <= 0 {
-        if processUsage(identity.processIdentifier)?.startAbsoluteTime != identity.startAbsoluteTime {
+        if !processMatches(identity) {
             return [:]
         }
         throw POSIXError(.init(rawValue: errno) ?? .EIO)
@@ -324,33 +376,43 @@ private func ownedWritableVnodes(_ identity: SupervisorWorkerIdentity) throws ->
         let descriptor = descriptors.load(fromByteOffset: offset, as: Int32.self)
         let type = descriptors.load(fromByteOffset: offset + 4, as: UInt32.self)
         guard descriptor >= 0, type == procFDTypeVnode else { continue }
-        let vnode = UnsafeMutableRawPointer.allocate(byteCount: vnodeFDInfoSize, alignment: 8)
+        let vnode = UnsafeMutableRawPointer.allocate(byteCount: vnodeFDInfoWithPathSize, alignment: 8)
         defer { vnode.deallocate() }
-        vnode.initializeMemory(as: UInt8.self, repeating: 0, count: vnodeFDInfoSize)
+        vnode.initializeMemory(as: UInt8.self, repeating: 0, count: vnodeFDInfoWithPathSize)
+        errno = 0
         let result = procPIDFDInfo(
             identity.processIdentifier,
             descriptor,
-            procPIDFDVnodeInfo,
+            procPIDFDVnodePathInfo,
             vnode,
-            Int32(vnodeFDInfoSize)
+            Int32(vnodeFDInfoWithPathSize)
         )
-        guard Int(result) == vnodeFDInfoSize else {
-            if processUsage(identity.processIdentifier)?.startAbsoluteTime != identity.startAbsoluteTime {
+        guard Int(result) == vnodeFDInfoWithPathSize else {
+            if !processMatches(identity) {
                 return [:]
             }
             if result == 0 && [EBADF, ENOENT, EINVAL].contains(errno) { continue }
             throw POSIXError(.init(rawValue: errno) ?? .EIO)
         }
         let openFlags = vnode.load(fromByteOffset: 0, as: UInt32.self)
-        guard openFlags & UInt32(O_ACCMODE) != UInt32(O_RDONLY) else { continue }
         let mode = vnode.load(fromByteOffset: 28, as: UInt16.self)
         guard mode & UInt16(S_IFMT) == UInt16(S_IFREG) else { continue }
-        let device = vnode.load(fromByteOffset: 24, as: Int32.self)
+        let device = vnode.load(fromByteOffset: 24, as: UInt32.self)
+        let linkCount = vnode.load(fromByteOffset: 30, as: UInt16.self)
         let inode = vnode.load(fromByteOffset: 32, as: UInt64.self)
         let logical = vnode.load(fromByteOffset: 112, as: Int64.self)
         let blocks = vnode.load(fromByteOffset: 120, as: Int64.self)
+        let path = try kernelPath(vnode, offset: 176)
+        let belongsToJob = linkCount == 0 || isManagedPath(path, roots: rootPaths)
+        if !belongsToJob {
+            let accessFlags = openFlags & (kernelFRead | kernelFWrite)
+            guard accessFlags & kernelFWrite == 0 else {
+                throw CocoaError(.fileWriteNoPermission)
+            }
+            continue
+        }
         let key = VnodeIdentity(
-            device: UInt64(bitPattern: Int64(device)),
+            device: UInt64(device),
             inode: inode
         )
         resources[key] = max(
@@ -358,9 +420,87 @@ private func ownedWritableVnodes(_ identity: SupervisorWorkerIdentity) throws ->
             vnodeBytes(logical: logical, blocks: blocks)
         )
     }
-    guard processUsage(identity.processIdentifier)?.startAbsoluteTime == identity.startAbsoluteTime else {
+    guard processMatches(identity) else {
         return [:]
     }
+    return resources
+}
+
+private func ownedMappedVnodes(
+    _ identity: SupervisorWorkerIdentity,
+    roots: [URL]
+) throws -> [VnodeIdentity: UInt64] {
+    guard processMatches(identity) else { return [:] }
+    let rootPaths = managedRootPaths(roots)
+    let region = UnsafeMutableRawPointer.allocate(
+        byteCount: procRegionWithPathInfoSize,
+        alignment: 8
+    )
+    defer { region.deallocate() }
+    var resources: [VnodeIdentity: UInt64] = [:]
+    var address: UInt64 = 0
+    var traversedRegions = 0
+    for _ in 0..<maximumMappedRegionCount {
+        region.initializeMemory(
+            as: UInt8.self,
+            repeating: 0,
+            count: procRegionWithPathInfoSize
+        )
+        errno = 0
+        let result = procPIDInfo(
+            identity.processIdentifier,
+            procPIDRegionPathInfo,
+            address,
+            region,
+            Int32(procRegionWithPathInfoSize)
+        )
+        guard Int(result) == procRegionWithPathInfoSize else {
+            if !processMatches(identity) { return [:] }
+            if result == 0 && errno == EINVAL && traversedRegions > 0 { return resources }
+            throw POSIXError(.init(rawValue: errno) ?? .EIO)
+        }
+        traversedRegions += 1
+        let regionAddress = region.load(fromByteOffset: 80, as: UInt64.self)
+        let regionSize = region.load(fromByteOffset: 88, as: UInt64.self)
+        guard regionAddress >= address,
+              regionSize > 0,
+              regionAddress <= UInt64.max - regionSize else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        let nextAddress = regionAddress + regionSize
+        let mode = region.load(fromByteOffset: 100, as: UInt16.self)
+        if mode & UInt16(S_IFMT) == UInt16(S_IFREG) {
+            let linkCount = region.load(fromByteOffset: 102, as: UInt16.self)
+            let path = try kernelPath(region, offset: 248)
+            if linkCount == 0 || isManagedPath(path, roots: rootPaths) {
+                let device = region.load(fromByteOffset: 96, as: UInt32.self)
+                let inode = region.load(fromByteOffset: 104, as: UInt64.self)
+                let logical = region.load(fromByteOffset: 184, as: Int64.self)
+                let blocks = region.load(fromByteOffset: 192, as: Int64.self)
+                let key = VnodeIdentity(device: UInt64(device), inode: inode)
+                resources[key] = max(
+                    resources[key] ?? 0,
+                    vnodeBytes(logical: logical, blocks: blocks)
+                )
+            }
+        }
+        if nextAddress == UInt64.max {
+            guard processMatches(identity) else { return [:] }
+            return resources
+        }
+        address = nextAddress
+    }
+    guard processMatches(identity) else { return [:] }
+    throw CocoaError(.fileReadTooLarge)
+}
+
+private func ownedRetainedVnodes(
+    _ identity: SupervisorWorkerIdentity,
+    roots: [URL]
+) throws -> [VnodeIdentity: UInt64] {
+    var resources = try ownedOpenVnodes(identity, roots: roots)
+    mergeVnodes(try ownedMappedVnodes(identity, roots: roots), into: &resources)
+    guard processMatches(identity) else { return [:] }
     return resources
 }
 
@@ -374,9 +514,9 @@ private func resourceUsage(
     guard named.limitReason == nil, let worker else { return named }
     var resources = named.resources
     var files = named.files
-    for (identity, bytes) in try ownedWritableVnodes(worker) where resources[identity] == nil {
-        resources[identity] = bytes
-        files += 1
+    for (identity, bytes) in try ownedRetainedVnodes(worker, roots: roots) {
+        if resources[identity] == nil { files += 1 }
+        resources[identity] = max(resources[identity] ?? 0, bytes)
     }
     return usage(
         resources: resources,
@@ -598,8 +738,16 @@ private struct BoundaryChildReport: Decodable {
     let forkDeniedErrno: Int32
     let networkDeniedErrno: Int32
     let signalDeniedErrnos: [Int32]
-    let unlinkedBytes: UInt64
+    let resourceBytes: UInt64
 }
+
+private let boundaryResourceModes: Set<String> = [
+    "open-unlinked-hold",
+    "readonly-unlinked-hold",
+    "mapped-unlinked-hold",
+    "external-readonly-hold",
+]
+private let boundaryProbeResourceBytes: UInt64 = 1_024 * 1_024
 
 private struct BoundarySupervisorIdentity: Decodable {
     let supervisorProcessIdentifier: Int32
@@ -617,7 +765,7 @@ private struct BoundaryRun {
     let report: BoundaryChildReport
     let supervisorGone: Bool
     let childGone: Bool
-    let observedUnlinkedBytes: UInt64
+    let observedRetainedBytes: UInt64
     let limitReason: String?
 }
 
@@ -659,6 +807,9 @@ private func runBoundarySupervisor(
     let reportURL = writeRoot.appendingPathComponent("report.json")
     try FileManager.default.createDirectory(at: writeRoot, withIntermediateDirectories: true)
     try FileManager.default.createDirectory(at: outsideRoot, withIntermediateDirectories: true)
+    if mode == "external-readonly-hold" {
+        try Data(repeating: 0x4e, count: 1_024 * 1_024).write(to: outsidePath, options: .atomic)
+    }
     guard let service = processUsage(getpid()) else { throw CocoaError(.executableLoad) }
 
     let process = Process()
@@ -711,7 +862,7 @@ private func runBoundarySupervisor(
             report = value
         }
         if boundaryIdentity != nil, report != nil { break }
-        if !process.isRunning && mode == "unlinked-hold" { break }
+        if !process.isRunning && boundaryResourceModes.contains(mode) { break }
         Thread.sleep(forTimeInterval: 0.01)
     }
     guard let boundaryIdentity, let report,
@@ -730,11 +881,11 @@ private func runBoundarySupervisor(
         startAbsoluteTime: boundaryIdentity.childStartAbsoluteTime
     )
 
-    var observedUnlinkedBytes: UInt64 = 0
+    var observedRetainedBytes: UInt64 = 0
     var limitReason: String?
-    if mode == "unlinked-hold" {
-        let openResources = try ownedWritableVnodes(child)
-        observedUnlinkedBytes = openResources.values.reduce(0, +)
+    if boundaryResourceModes.contains(mode) {
+        let retainedResources = try ownedRetainedVnodes(child, roots: [writeRoot])
+        observedRetainedBytes = retainedResources.values.reduce(0, +)
         let quota = try resourceUsage(
             roots: [writeRoot],
             worker: child,
@@ -742,8 +893,14 @@ private func runBoundarySupervisor(
             fileLimit: 64
         )
         limitReason = quota.limitReason
-        guard observedUnlinkedBytes >= report.unlinkedBytes,
-              limitReason == "disk" else {
+        let validResourceResult = mode == "external-readonly-hold"
+            ? report.resourceBytes == boundaryProbeResourceBytes
+                && observedRetainedBytes < boundaryProbeResourceBytes
+                && limitReason == nil
+            : report.resourceBytes == boundaryProbeResourceBytes
+                && observedRetainedBytes >= boundaryProbeResourceBytes
+                && limitReason == "disk"
+        guard validResourceResult else {
             _ = terminateBoundaryProcess(process, startAbsoluteTime: supervisorStart)
             throw CocoaError(.fileReadTooLarge)
         }
@@ -768,7 +925,7 @@ private func runBoundarySupervisor(
         report: report,
         supervisorGone: supervisorGone,
         childGone: childGone,
-        observedUnlinkedBytes: observedUnlinkedBytes,
+        observedRetainedBytes: observedRetainedBytes,
         limitReason: limitReason
     )
 }
@@ -2071,10 +2228,25 @@ private final class BpyRuntimeService: NSObject, BpyRuntimeServiceProtocol, @unc
                 root: probeRoot.appendingPathComponent("denials", isDirectory: true),
                 mode: "denials"
             )
-            let cleanup = try runBoundarySupervisor(
+            let openUnlinked = try runBoundarySupervisor(
                 supervisorURL: supervisor,
-                root: probeRoot.appendingPathComponent("cleanup", isDirectory: true),
-                mode: "unlinked-hold"
+                root: probeRoot.appendingPathComponent("open-unlinked", isDirectory: true),
+                mode: "open-unlinked-hold"
+            )
+            let readOnlyUnlinked = try runBoundarySupervisor(
+                supervisorURL: supervisor,
+                root: probeRoot.appendingPathComponent("readonly-unlinked", isDirectory: true),
+                mode: "readonly-unlinked-hold"
+            )
+            let mappedUnlinked = try runBoundarySupervisor(
+                supervisorURL: supervisor,
+                root: probeRoot.appendingPathComponent("mapped-unlinked", isDirectory: true),
+                mode: "mapped-unlinked-hold"
+            )
+            let externalReadOnly = try runBoundarySupervisor(
+                supervisorURL: supervisor,
+                root: probeRoot.appendingPathComponent("external-readonly", isDirectory: true),
+                mode: "external-readonly-hold"
             )
             let followup = try runBoundarySupervisor(
                 supervisorURL: supervisor,
@@ -2083,12 +2255,19 @@ private final class BpyRuntimeService: NSObject, BpyRuntimeServiceProtocol, @unc
             )
             guard first.supervisorGone,
                   first.childGone,
-                  cleanup.supervisorGone,
-                  cleanup.childGone,
+                  openUnlinked.supervisorGone,
+                  openUnlinked.childGone,
+                  readOnlyUnlinked.supervisorGone,
+                  readOnlyUnlinked.childGone,
+                  mappedUnlinked.supervisorGone,
+                  mappedUnlinked.childGone,
+                  externalReadOnly.supervisorGone,
+                  externalReadOnly.childGone,
                   followup.supervisorGone,
                   followup.childGone else {
                 throw CocoaError(.executableLoad)
             }
+            let retainedRuns = [openUnlinked, readOnlyUnlinked, mappedUnlinked]
             let result = BpyBoundaryProbeResult(
                 nonce: request.nonce,
                 serviceProcessIdentifier: getpid(),
@@ -2104,11 +2283,17 @@ private final class BpyRuntimeService: NSObject, BpyRuntimeServiceProtocol, @unc
                 forkDeniedErrno: first.report.forkDeniedErrno,
                 networkDeniedErrno: first.report.networkDeniedErrno,
                 signalDeniedErrnos: first.report.signalDeniedErrnos,
-                unlinkedBytesObserved: cleanup.observedUnlinkedBytes,
-                unlinkedLimitReason: cleanup.limitReason ?? "",
-                cleanupSupervisorGone: cleanup.supervisorGone,
-                cleanupChildGone: cleanup.childGone,
-                healthyFollowupSucceeded: followup.supervisorGone
+                unlinkedBytesObserved: retainedRuns
+                    .map(\.observedRetainedBytes)
+                    .min() ?? 0,
+                unlinkedLimitReason: retainedRuns.allSatisfy({ $0.limitReason == "disk" })
+                    ? "disk"
+                    : "",
+                cleanupSupervisorGone: retainedRuns.allSatisfy(\.supervisorGone),
+                cleanupChildGone: retainedRuns.allSatisfy(\.childGone),
+                healthyFollowupSucceeded: externalReadOnly.limitReason == nil
+                    && externalReadOnly.observedRetainedBytes < boundaryProbeResourceBytes
+                    && followup.supervisorGone
                     && followup.childGone
                     && followup.report.allowedWriteSucceeded
             )

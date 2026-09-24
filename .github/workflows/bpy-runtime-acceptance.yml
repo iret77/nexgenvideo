@@ -261,6 +261,7 @@ jobs:
             and .structuralLimitState == "resourceLimited"
             and .renderOnlyGeometryState == "resourceLimited"
             and .secondarySceneGeometryState == "resourceLimited"
+            and .prefixedUserGeometryState == "resourceLimited"
             and .storageLimitState == "resourceLimited"
             and .aggregateByteLimitState == "resourceLimited"
             and .unlinkedStorageLimitState == "resourceLimited"

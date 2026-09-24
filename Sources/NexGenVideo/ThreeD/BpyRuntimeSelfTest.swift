@@ -819,6 +819,25 @@ enum BpyRuntimeSelfTest {
         guard secondarySceneGeometry.response.state == .resourceLimited else {
             throw BpyRuntimeError.invalidOutput("Secondary-scene geometry escaped verification.")
         }
+        let prefixedUserGeometry = try constrained.runJob(
+            id: UUID(),
+            expectedRevision: nil,
+            source: """
+            mesh = bpy.data.meshes.new('NGV_PREFIXED_USER_MESH')
+            mesh.from_pydata(
+                [(float(index), 0, 0) for index in range(9)],
+                [],
+                [(0, 1, 2), (3, 4, 5), (6, 7, 8)]
+            )
+            target = bpy.data.objects.new('NGV_GEOMETRY_VERIFIER_CAMERA_user_mesh', mesh)
+            bpy.context.scene.collection.objects.link(target)
+            bpy.context.scene.render.resolution_x = 64
+            bpy.context.scene.render.resolution_y = 64
+            """
+        )
+        guard prefixedUserGeometry.response.state == .resourceLimited else {
+            throw BpyRuntimeError.invalidOutput("A user mesh with the verifier-camera prefix escaped verification.")
+        }
         let storageLimit = try constrained.runJob(
             id: UUID(),
             expectedRevision: nil,
@@ -973,6 +992,7 @@ enum BpyRuntimeSelfTest {
             "structuralLimitState": structuralLimit.response.state?.rawValue ?? "",
             "renderOnlyGeometryState": renderOnlyGeometry.response.state?.rawValue ?? "",
             "secondarySceneGeometryState": secondarySceneGeometry.response.state?.rawValue ?? "",
+            "prefixedUserGeometryState": prefixedUserGeometry.response.state?.rawValue ?? "",
             "storageLimitState": storageLimit.response.state?.rawValue ?? "",
             "aggregateByteLimitState": aggregateBytes.response.state?.rawValue ?? "",
             "unlinkedStorageLimitState": unlinkedStorage.response.state?.rawValue ?? "",

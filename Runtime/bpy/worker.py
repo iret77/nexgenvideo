@@ -102,6 +102,7 @@ def execute_job(config):
 def evaluated_geometry(bpy, limits):
     state = {"failure": None, "scenarios": []}
     verifier_camera_prefix = "NGV_GEOMETRY_VERIFIER_CAMERA_"
+    verifier_camera_identities = set()
 
     class NGVGeometryVerifier(bpy.types.RenderEngine):
         bl_idname = "NGV_GEOMETRY_VERIFIER"
@@ -113,7 +114,8 @@ def evaluated_geometry(bpy, limits):
                 for instance in depsgraph.object_instances:
                     obj = instance.object
                     original = getattr(obj, "original", None)
-                    if (original or obj).name.startswith(verifier_camera_prefix):
+                    source_object = original if original is not None else obj
+                    if source_object.as_pointer() in verifier_camera_identities:
                         continue
                     counts["objects"] += 1
                     if counts["objects"] > limits["objects"]:
@@ -163,6 +165,7 @@ def evaluated_geometry(bpy, limits):
                 camera = bpy.data.objects.new(verifier_camera_prefix + scene.name, camera_data)
                 scene.collection.objects.link(camera)
                 scene.camera = camera
+                verifier_camera_identities.add(camera.as_pointer())
                 temporary_cameras.append((scene, camera, camera_data))
             scene.render.engine = NGVGeometryVerifier.bl_idname
             scene.render.use_compositing = False

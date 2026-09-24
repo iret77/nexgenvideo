@@ -31,8 +31,16 @@ private struct BoundaryChildReport: Codable {
     let forkDeniedErrno: Int32
     let networkDeniedErrno: Int32
     let signalDeniedErrnos: [Int32]
-    let unlinkedBytes: UInt64
+    let resourceBytes: UInt64
 }
+
+private let boundaryResourceBytes = 1_024 * 1_024
+private let boundaryResourceModes: Set<String> = [
+    "open-unlinked-hold",
+    "readonly-unlinked-hold",
+    "mapped-unlinked-hold",
+    "external-readonly-hold",
+]
 
 private struct BoundaryIdentity: Codable {
     let supervisorProcessIdentifier: Int32
@@ -179,9 +187,19 @@ private func writeAll(_ descriptor: Int32, data: Data) throws {
     }
 }
 
+private func writeBoundaryResource(_ descriptor: Int32) throws {
+    let chunk = Data(repeating: 0x5a, count: 64 * 1_024)
+    for _ in 0..<(boundaryResourceBytes / chunk.count) {
+        try writeAll(descriptor, data: chunk)
+    }
+    guard Darwin.fsync(descriptor) == 0 else {
+        throw POSIXError(.init(rawValue: errno) ?? .EIO)
+    }
+}
+
 private func boundaryChild(arguments: [String]) throws -> Never {
     guard arguments.count == 4,
-          ["denials", "unlinked-hold"].contains(arguments[3]) else {
+          arguments[3] == "denials" || boundaryResourceModes.contains(arguments[3]) else {
         throw SupervisorError.invalidArguments
     }
     let writeRoot = URL(fileURLWithPath: arguments[0], isDirectory: true).standardizedFileURL
@@ -192,25 +210,85 @@ private func boundaryChild(arguments: [String]) throws -> Never {
           outsidePath.deletingLastPathComponent() != writeRoot else {
         throw SupervisorError.invalidArguments
     }
-    if mode == "unlinked-hold" {
+    if boundaryResourceModes.contains(mode) {
         _ = Darwin.signal(SIGTERM, SIG_IGN)
     }
     try applyWorkerSandbox(writeRoot: writeRoot)
     usleep(100_000)
 
-    if mode == "unlinked-hold" {
-        let path = writeRoot.appendingPathComponent("unlinked-resource.bin").path
-        let descriptor = Darwin.open(path, O_CREAT | O_TRUNC | O_RDWR, S_IRUSR | S_IWUSR)
-        guard descriptor >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
-        guard Darwin.unlink(path) == 0 else {
-            Darwin.close(descriptor)
-            throw POSIXError(.init(rawValue: errno) ?? .EIO)
-        }
-        let chunk = Data(repeating: 0x5a, count: 64 * 1_024)
-        for _ in 0..<16 { try writeAll(descriptor, data: chunk) }
-        guard Darwin.fsync(descriptor) == 0 else {
-            Darwin.close(descriptor)
-            throw POSIXError(.init(rawValue: errno) ?? .EIO)
+    if boundaryResourceModes.contains(mode) {
+        let path = mode == "external-readonly-hold"
+            ? outsidePath.path
+            : writeRoot.appendingPathComponent("retained-resource.bin").path
+        var retainedDescriptor: Int32 = -1
+        if mode == "open-unlinked-hold" {
+            retainedDescriptor = Darwin.open(
+                path,
+                O_CREAT | O_TRUNC | O_RDWR,
+                S_IRUSR | S_IWUSR
+            )
+            guard retainedDescriptor >= 0 else {
+                throw POSIXError(.init(rawValue: errno) ?? .EIO)
+            }
+            guard Darwin.unlink(path) == 0 else {
+                Darwin.close(retainedDescriptor)
+                throw POSIXError(.init(rawValue: errno) ?? .EIO)
+            }
+            try writeBoundaryResource(retainedDescriptor)
+        } else if mode == "readonly-unlinked-hold" || mode == "mapped-unlinked-hold" {
+            let writer = Darwin.open(
+                path,
+                O_CREAT | O_TRUNC | O_RDWR,
+                S_IRUSR | S_IWUSR
+            )
+            guard writer >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+            do {
+                try writeBoundaryResource(writer)
+                Darwin.close(writer)
+            } catch {
+                Darwin.close(writer)
+                throw error
+            }
+            retainedDescriptor = Darwin.open(path, O_RDONLY)
+            guard retainedDescriptor >= 0 else {
+                throw POSIXError(.init(rawValue: errno) ?? .EIO)
+            }
+            if mode == "mapped-unlinked-hold" {
+                let mapping = Darwin.mmap(
+                    nil,
+                    boundaryResourceBytes,
+                    PROT_READ,
+                    MAP_PRIVATE,
+                    retainedDescriptor,
+                    0
+                )
+                guard let mapping,
+                      mapping != UnsafeMutableRawPointer(bitPattern: -1) else {
+                    Darwin.close(retainedDescriptor)
+                    throw POSIXError(.init(rawValue: errno) ?? .EIO)
+                }
+                guard mapping.load(as: UInt8.self) == 0x5a else {
+                    Darwin.close(retainedDescriptor)
+                    throw CocoaError(.fileReadCorruptFile)
+                }
+                Darwin.close(retainedDescriptor)
+                retainedDescriptor = -1
+            }
+            guard Darwin.unlink(path) == 0 else {
+                if retainedDescriptor >= 0 { Darwin.close(retainedDescriptor) }
+                throw POSIXError(.init(rawValue: errno) ?? .EIO)
+            }
+        } else {
+            retainedDescriptor = Darwin.open(path, O_RDONLY)
+            guard retainedDescriptor >= 0 else {
+                throw POSIXError(.init(rawValue: errno) ?? .EIO)
+            }
+            var status = stat()
+            guard Darwin.fstat(retainedDescriptor, &status) == 0,
+                  status.st_size >= Int64(boundaryResourceBytes) else {
+                Darwin.close(retainedDescriptor)
+                throw CocoaError(.fileReadCorruptFile)
+            }
         }
         let report = BoundaryChildReport(
             schema: "nexgenvideo/bpy-boundary-child/1",
@@ -222,7 +300,7 @@ private func boundaryChild(arguments: [String]) throws -> Never {
             forkDeniedErrno: 0,
             networkDeniedErrno: 0,
             signalDeniedErrnos: [],
-            unlinkedBytes: UInt64(chunk.count * 16)
+            resourceBytes: UInt64(boundaryResourceBytes)
         )
         try JSONEncoder().encode(report).write(to: reportURL, options: .atomic)
         while true { pause() }
@@ -284,7 +362,7 @@ private func boundaryChild(arguments: [String]) throws -> Never {
         forkDeniedErrno: forkErrno,
         networkDeniedErrno: networkErrno,
         signalDeniedErrnos: signalErrnos,
-        unlinkedBytes: 0
+        resourceBytes: 0
     )
     try JSONEncoder().encode(report).write(to: reportURL, options: .atomic)
     let denied = [EPERM, EACCES]
@@ -437,7 +515,7 @@ private func superviseBoundary(arguments: [String]) throws -> Int32 {
           let serviceStart = UInt64(arguments[1]),
           servicePID > 1,
           parentIsAlive(servicePID, startAbsoluteTime: serviceStart),
-          ["denials", "unlinked-hold"].contains(arguments[6]) else {
+          arguments[6] == "denials" || boundaryResourceModes.contains(arguments[6]) else {
         throw SupervisorError.invalidParent
     }
     let identityURL = URL(fileURLWithPath: arguments[2]).standardizedFileURL
