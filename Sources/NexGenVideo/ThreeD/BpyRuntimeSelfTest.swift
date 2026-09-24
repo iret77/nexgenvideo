@@ -133,7 +133,7 @@ enum BpyRuntimeSelfTest {
         }
         let result = try JSONDecoder().decode(BpyBoundaryProbeResult.self, from: data)
         let permissionErrors = [Int32(EPERM), Int32(EACCES)]
-        guard result.schema == "nexgenvideo/bpy-boundary-probe/1",
+        guard result.schema == "nexgenvideo/bpy-boundary-probe/2",
               result.nonce == nonce,
               result.serviceProcessIdentifier > 1,
               result.supervisorProcessIdentifier > 1,
@@ -158,6 +158,8 @@ enum BpyRuntimeSelfTest {
               result.unlinkedLimitReason == "disk",
               result.cleanupSupervisorGone,
               result.cleanupChildGone,
+              result.internalLinkedWritableDeduplicated,
+              result.fileportRetentionDeniedOrAccounted,
               result.healthyFollowupSucceeded else {
             throw BpyRuntimeError.invalidOutput("The signed boundary probe did not prove every denial and cleanup invariant.")
         }
@@ -838,6 +840,39 @@ enum BpyRuntimeSelfTest {
         guard prefixedUserGeometry.response.state == .resourceLimited else {
             throw BpyRuntimeError.invalidOutput("A user mesh with the verifier-camera prefix escaped verification.")
         }
+        let zeroEffectiveResolution = try constrained.runJob(
+            id: UUID(),
+            expectedRevision: nil,
+            source: """
+            mesh = bpy.data.meshes.new('NGV_ZERO_RESOLUTION_MESH')
+            mesh.from_pydata(
+                [(float(index), 0, 0) for index in range(9)],
+                [],
+                [(0, 1, 2), (3, 4, 5), (6, 7, 8)]
+            )
+            target = bpy.data.objects.new('NGV_ZERO_RESOLUTION_OBJECT', mesh)
+            bpy.context.scene.collection.objects.link(target)
+            bpy.context.scene.render.resolution_x = 4
+            bpy.context.scene.render.resolution_y = 4
+            bpy.context.scene.render.resolution_percentage = 1
+            """
+        )
+        guard zeroEffectiveResolution.response.state == .resourceLimited else {
+            throw BpyRuntimeError.invalidOutput("Zero effective render resolution escaped verification.")
+        }
+        let noEnabledViewLayer = try constrained.runJob(
+            id: UUID(),
+            expectedRevision: nil,
+            source: """
+            for view_layer in bpy.context.scene.view_layers:
+                view_layer.use = False
+            bpy.context.scene.render.resolution_x = 64
+            bpy.context.scene.render.resolution_y = 64
+            """
+        )
+        guard noEnabledViewLayer.response.state == .resourceLimited else {
+            throw BpyRuntimeError.invalidOutput("A scene without an enabled View Layer escaped verification.")
+        }
         let storageLimit = try constrained.runJob(
             id: UUID(),
             expectedRevision: nil,
@@ -887,6 +922,28 @@ enum BpyRuntimeSelfTest {
         )
         guard unlinkedStorage.response.state == .resourceLimited else {
             throw BpyRuntimeError.invalidOutput("Open unlinked vnodes escaped the disk limit.")
+        }
+        let renameChurnStorage = try constrained.runJob(
+            id: UUID(),
+            expectedRevision: nil,
+            source: """
+            import os
+            home = Path(os.environ['HOME'])
+            paths = [home / 'rename-over-quota-a-0.bin', home / 'rename-over-quota-b-0.bin']
+            for path in paths:
+                path.write_bytes(b'x' * 1400000)
+            index = 1
+            while True:
+                for offset, source in enumerate(paths):
+                    destination = home / f'rename-over-quota-{offset}-{index}.bin'
+                    os.rename(source, destination)
+                    paths[offset] = destination
+                index += 1
+            """,
+            timeoutSeconds: 5
+        )
+        guard renameChurnStorage.response.state == .resourceLimited else {
+            throw BpyRuntimeError.invalidOutput("Closed rename-churn storage escaped the disk limit.")
         }
         let healthyChurn = try constrained.runJob(
             id: UUID(),
@@ -993,9 +1050,12 @@ enum BpyRuntimeSelfTest {
             "renderOnlyGeometryState": renderOnlyGeometry.response.state?.rawValue ?? "",
             "secondarySceneGeometryState": secondarySceneGeometry.response.state?.rawValue ?? "",
             "prefixedUserGeometryState": prefixedUserGeometry.response.state?.rawValue ?? "",
+            "zeroEffectiveResolutionState": zeroEffectiveResolution.response.state?.rawValue ?? "",
+            "noEnabledViewLayerState": noEnabledViewLayer.response.state?.rawValue ?? "",
             "storageLimitState": storageLimit.response.state?.rawValue ?? "",
             "aggregateByteLimitState": aggregateBytes.response.state?.rawValue ?? "",
             "unlinkedStorageLimitState": unlinkedStorage.response.state?.rawValue ?? "",
+            "renameChurnStorageLimitState": renameChurnStorage.response.state?.rawValue ?? "",
             "healthyResourceChurnState": healthyChurn.response.state?.rawValue ?? "",
             "resourceScanErrorState": scanError.response.state?.rawValue ?? "",
             "containerSiblingWriteDenied": true,

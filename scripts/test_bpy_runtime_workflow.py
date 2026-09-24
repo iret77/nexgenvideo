@@ -148,7 +148,28 @@ class BpyRuntimeWorkflowTests(unittest.TestCase):
         self.assertIn('"readonly-unlinked-hold"', supervisor)
         self.assertIn('"mapped-unlinked-hold"', supervisor)
         self.assertIn('"external-readonly-hold"', supervisor)
+        self.assertIn('"internal-linked-writable-hold"', supervisor)
+        self.assertIn('"fileport-unlinked-hold"', supervisor)
         self.assertIn("Darwin.mmap(", supervisor)
+        self.assertIn("fileportMakePort", supervisor)
+        self.assertIn("getAttributeListBulk", service)
+        self.assertIn("fileSystemPath", service)
+        self.assertIn("UInt64(UInt32(bitPattern: status.st_dev))", service)
+        self.assertIn("snapshot.files > fileLimit", service)
+        self.assertIn("unresolvedSnapshots >= 3", service)
+        self.assertIn("internalLinkedWritableDeduplicated", service)
+        self.assertIn('state["observed"] != 1', worker)
+        self.assertIn("depsgraph.scene.as_pointer()", worker)
+        self.assertIn("depsgraph.view_layer.as_pointer()", worker)
+        self.assertIn("render geometry has no enabled view layer", worker)
+        self.assertIn("effective_width < 1", worker)
+        verify_scene = worker[worker.index("def verify_scene"):]
+        render_contract_call = 'render_contract(bpy, config["limits"])'
+        evaluated_geometry_call = 'evaluated_geometry(bpy, config["limits"])'
+        self.assertLess(
+            verify_scene.index(render_contract_call),
+            verify_scene.index(evaluated_geometry_call),
+        )
         self.assertIn("verifier_camera_identities", worker)
         self.assertIn("source_object.as_pointer() in verifier_camera_identities", worker)
         self.assertNotIn(".name.startswith(verifier_camera_prefix)", worker)

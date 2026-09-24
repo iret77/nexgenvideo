@@ -35,6 +35,38 @@ private func procPIDFDInfo(
     _ bufferSize: Int32
 ) -> Int32
 
+private struct DarwinAttrList {
+    var bitmapCount: UInt16
+    var reserved: UInt16
+    var commonAttributes: UInt32
+    var volumeAttributes: UInt32
+    var directoryAttributes: UInt32
+    var fileAttributes: UInt32
+    var forkAttributes: UInt32
+}
+
+private struct DarwinFSID {
+    var first: Int32
+    var second: Int32
+}
+
+@_silgen_name("getattrlistbulk")
+private func getAttributeListBulk(
+    _ descriptor: Int32,
+    _ attributes: UnsafeMutablePointer<DarwinAttrList>,
+    _ buffer: UnsafeMutableRawPointer,
+    _ bufferSize: Int,
+    _ options: UInt64
+) -> Int32
+
+@_silgen_name("fsgetpath")
+private func fileSystemPath(
+    _ buffer: UnsafeMutablePointer<CChar>,
+    _ bufferSize: Int,
+    _ fileSystem: UnsafeMutablePointer<DarwinFSID>,
+    _ fileIdentifier: UInt64
+) -> Int
+
 private let resultRetentionSeconds: TimeInterval = 15 * 60
 
 private extension NSLock {
@@ -128,9 +160,20 @@ private struct VnodeIdentity: Hashable {
 }
 
 private struct DirectorySnapshot {
+    var bytes: UInt64
     var resources: [VnodeIdentity: UInt64]
     var files: Int
-    var transientChurn: Bool
+    var limitReason: String?
+}
+
+private struct DirectoryReference {
+    let path: String?
+    let fileSystem: DarwinFSID?
+    let identity: VnodeIdentity?
+}
+
+private enum DirectoryScanError: Error {
+    case unresolvedDirectory
 }
 
 private let procPIDListFDs: Int32 = 1
@@ -144,24 +187,26 @@ private let vnodePathLength = 1_024
 private let kernelFRead: UInt32 = 1
 private let kernelFWrite: UInt32 = 2
 private let maximumMappedRegionCount = 65_536
-
-private func vanished(_ error: Error) -> Bool {
-    let value = error as NSError
-    if value.domain == NSPOSIXErrorDomain && value.code == Int(ENOENT) { return true }
-    if value.domain == NSCocoaErrorDomain
-        && [CocoaError.fileNoSuchFile.rawValue, CocoaError.fileReadNoSuchFile.rawValue]
-            .contains(value.code) {
-        return true
-    }
-    if let underlying = value.userInfo[NSUnderlyingErrorKey] as? Error {
-        return vanished(underlying)
-    }
-    return false
-}
+private let attributeBitmapCount: UInt16 = 5
+private let attributeCommonName: UInt32 = 0x0000_0001
+private let attributeCommonDevice: UInt32 = 0x0000_0002
+private let attributeCommonFileSystem: UInt32 = 0x0000_0004
+private let attributeCommonObjectType: UInt32 = 0x0000_0008
+private let attributeCommonFileID: UInt32 = 0x0200_0000
+private let attributeCommonError: UInt32 = 0x2000_0000
+private let attributeCommonReturned: UInt32 = 0x8000_0000
+private let attributeDirectoryAllocationSize: UInt32 = 0x0000_0008
+private let attributeFileTotalSize: UInt32 = 0x0000_0002
+private let attributeFileAllocationSize: UInt32 = 0x0000_0004
+private let attributePackInvalid: UInt64 = 0x0000_0008
+private let vnodeTypeRegular: UInt32 = 1
+private let vnodeTypeDirectory: UInt32 = 2
+private let bulkAttributeBufferSize = 64 * 1_024
+private let bulkAttributeFixedSize = 84
 
 private func vnodeIdentity(_ status: stat) -> VnodeIdentity {
     .init(
-        device: UInt64(bitPattern: Int64(status.st_dev)),
+        device: UInt64(UInt32(bitPattern: status.st_dev)),
         inode: UInt64(status.st_ino)
     )
 }
@@ -173,52 +218,265 @@ private func vnodeBytes(logical: Int64, blocks: Int64) -> UInt64 {
     )
 }
 
-private func directorySnapshot(_ roots: [URL]) throws -> DirectorySnapshot {
-    var snapshot = DirectorySnapshot(resources: [:], files: 0, transientChurn: false)
-    func record(_ status: stat, countFile: Bool) {
-        let identity = vnodeIdentity(status)
-        let logical = (status.st_mode & S_IFMT) == S_IFREG ? Int64(status.st_size) : 0
-        let bytes = vnodeBytes(logical: logical, blocks: Int64(status.st_blocks))
-        snapshot.resources[identity] = max(snapshot.resources[identity] ?? 0, bytes)
-        if countFile { snapshot.files += 1 }
-    }
-    for root in roots {
-        var rootStatus = stat()
-        guard lstat(root.path, &rootStatus) == 0 else {
-            throw POSIXError(.init(rawValue: errno) ?? .EIO)
-        }
-        guard (rootStatus.st_mode & S_IFMT) == S_IFDIR else {
-            throw CocoaError(.fileReadCorruptFile)
-        }
-        record(rootStatus, countFile: false)
-        var enumerationError: Error?
-        guard let values = FileManager.default.enumerator(
-            at: root,
-            includingPropertiesForKeys: nil,
-            options: [],
-            errorHandler: { _, error in
-                if vanished(error) {
-                    snapshot.transientChurn = true
-                    return true
-                }
-                enumerationError = error
-                return false
+private func directoryDescriptor(
+    _ reference: DirectoryReference,
+    managedRoots: [String]
+) throws -> Int32 {
+    for _ in 0..<4 {
+        let path: String
+        if let directPath = reference.path {
+            path = directPath
+        } else if var fileSystem = reference.fileSystem, let identity = reference.identity {
+            var pathBytes = [CChar](repeating: 0, count: Int(PATH_MAX))
+            errno = 0
+            let length = pathBytes.withUnsafeMutableBufferPointer { buffer in
+                fileSystemPath(
+                    buffer.baseAddress!,
+                    buffer.count,
+                    &fileSystem,
+                    identity.inode
+                )
             }
-        ) else {
-            throw CocoaError(.fileReadUnknown)
-        }
-        while let url = values.nextObject() as? URL {
-            var status = stat()
-            guard lstat(url.path, &status) == 0 else {
-                if errno == ENOENT {
-                    snapshot.transientChurn = true
-                    continue
-                }
+            if length < 0 {
+                if errno == ENOENT { continue }
                 throw POSIXError(.init(rawValue: errno) ?? .EIO)
             }
-            record(status, countFile: true)
+            guard length > 0, length < pathBytes.count else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            path = String(cString: pathBytes)
+            guard isManagedPath(path, roots: managedRoots) else {
+                throw CocoaError(.fileReadNoPermission)
+            }
+        } else {
+            throw CocoaError(.fileReadCorruptFile)
         }
-        if let enumerationError { throw enumerationError }
+
+        errno = 0
+        let descriptor = Darwin.open(
+            path,
+            O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW
+        )
+        if descriptor < 0 {
+            if reference.path == nil && errno == ENOENT { continue }
+            throw POSIXError(.init(rawValue: errno) ?? .EIO)
+        }
+        var status = stat()
+        guard Darwin.fstat(descriptor, &status) == 0 else {
+            let savedError = errno
+            Darwin.close(descriptor)
+            throw POSIXError(.init(rawValue: savedError) ?? .EIO)
+        }
+        guard (status.st_mode & S_IFMT) == S_IFDIR else {
+            Darwin.close(descriptor)
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        if let identity = reference.identity, vnodeIdentity(status) != identity {
+            Darwin.close(descriptor)
+            continue
+        }
+        return descriptor
+    }
+    throw DirectoryScanError.unresolvedDirectory
+}
+
+private func directorySnapshot(
+    _ roots: [URL],
+    byteLimit: UInt64,
+    fileLimit: Int
+) throws -> DirectorySnapshot {
+    var snapshot = DirectorySnapshot(bytes: 0, resources: [:], files: 0, limitReason: nil)
+    let managedRoots = managedRootPaths(roots)
+    var pending = roots.map {
+        DirectoryReference(path: $0.path, fileSystem: nil, identity: nil)
+    }
+    var traversedDirectories = Set<VnodeIdentity>()
+    let requestedCommon = attributeCommonName
+        | attributeCommonDevice
+        | attributeCommonFileSystem
+        | attributeCommonObjectType
+        | attributeCommonFileID
+        | attributeCommonError
+        | attributeCommonReturned
+    var attributes = DarwinAttrList(
+        bitmapCount: attributeBitmapCount,
+        reserved: 0,
+        commonAttributes: requestedCommon,
+        volumeAttributes: 0,
+        directoryAttributes: attributeDirectoryAllocationSize,
+        fileAttributes: attributeFileTotalSize | attributeFileAllocationSize,
+        forkAttributes: 0
+    )
+    let buffer = UnsafeMutableRawPointer.allocate(
+        byteCount: bulkAttributeBufferSize,
+        alignment: 8
+    )
+    defer { buffer.deallocate() }
+
+    func record(identity: VnodeIdentity, bytes: UInt64, countFile: Bool) -> Bool {
+        if countFile {
+            snapshot.files += 1
+            if snapshot.files > fileLimit {
+                snapshot.limitReason = "file-count"
+                return false
+            }
+        }
+        let prior = snapshot.resources[identity] ?? 0
+        let observed = max(prior, bytes)
+        if observed > prior {
+            let increase = observed - prior
+            snapshot.resources[identity] = observed
+            if increase > byteLimit - min(snapshot.bytes, byteLimit) {
+                snapshot.bytes = byteLimit &+ 1
+                snapshot.limitReason = "disk"
+                return false
+            }
+            snapshot.bytes += increase
+        }
+        return true
+    }
+
+    while let reference = pending.popLast() {
+        let descriptor = try directoryDescriptor(reference, managedRoots: managedRoots)
+        do {
+            var directoryStatus = stat()
+            guard Darwin.fstat(descriptor, &directoryStatus) == 0 else {
+                throw POSIXError(.init(rawValue: errno) ?? .EIO)
+            }
+            let directoryIdentity = vnodeIdentity(directoryStatus)
+            if !traversedDirectories.insert(directoryIdentity).inserted {
+                Darwin.close(descriptor)
+                continue
+            }
+            if reference.path != nil {
+                let bytes = vnodeBytes(logical: 0, blocks: Int64(directoryStatus.st_blocks))
+                guard record(identity: directoryIdentity, bytes: bytes, countFile: false) else {
+                    Darwin.close(descriptor)
+                    return snapshot
+                }
+            }
+
+            while true {
+                buffer.initializeMemory(
+                    as: UInt8.self,
+                    repeating: 0,
+                    count: bulkAttributeBufferSize
+                )
+                errno = 0
+                let entryCount = getAttributeListBulk(
+                    descriptor,
+                    &attributes,
+                    buffer,
+                    bulkAttributeBufferSize,
+                    attributePackInvalid
+                )
+                guard entryCount >= 0 else {
+                    throw POSIXError(.init(rawValue: errno) ?? .EIO)
+                }
+                if entryCount == 0 { break }
+                var offset = 0
+                for _ in 0..<entryCount {
+                    guard offset <= bulkAttributeBufferSize - bulkAttributeFixedSize else {
+                        throw CocoaError(.fileReadCorruptFile)
+                    }
+                    let entry = UnsafeRawPointer(buffer.advanced(by: offset))
+                    let length = Int(entry.loadUnaligned(as: UInt32.self))
+                    guard length >= bulkAttributeFixedSize,
+                          length <= bulkAttributeBufferSize - offset else {
+                        throw CocoaError(.fileReadCorruptFile)
+                    }
+                    let returnedCommon = entry.loadUnaligned(
+                        fromByteOffset: 4,
+                        as: UInt32.self
+                    )
+                    let returnedDirectory = entry.loadUnaligned(
+                        fromByteOffset: 12,
+                        as: UInt32.self
+                    )
+                    let returnedFile = entry.loadUnaligned(
+                        fromByteOffset: 16,
+                        as: UInt32.self
+                    )
+                    let entryError = entry.loadUnaligned(
+                        fromByteOffset: 24,
+                        as: UInt32.self
+                    )
+                    guard returnedCommon & requestedCommon == requestedCommon,
+                          entryError == 0 else {
+                        throw POSIXError(.init(rawValue: Int32(entryError)) ?? .EIO)
+                    }
+                    let nameOffset = Int(entry.loadUnaligned(
+                        fromByteOffset: 28,
+                        as: Int32.self
+                    )) + 28
+                    let nameLength = Int(entry.loadUnaligned(
+                        fromByteOffset: 32,
+                        as: UInt32.self
+                    ))
+                    guard nameOffset >= bulkAttributeFixedSize,
+                          nameLength > 0,
+                          nameOffset <= length - nameLength,
+                          entry.loadUnaligned(
+                            fromByteOffset: nameOffset + nameLength - 1,
+                            as: UInt8.self
+                          ) == 0 else {
+                        throw CocoaError(.fileReadCorruptFile)
+                    }
+                    let device = entry.loadUnaligned(fromByteOffset: 36, as: Int32.self)
+                    let fileSystem = DarwinFSID(
+                        first: entry.loadUnaligned(fromByteOffset: 40, as: Int32.self),
+                        second: entry.loadUnaligned(fromByteOffset: 44, as: Int32.self)
+                    )
+                    let objectType = entry.loadUnaligned(
+                        fromByteOffset: 48,
+                        as: UInt32.self
+                    )
+                    let identity = VnodeIdentity(
+                        device: UInt64(UInt32(bitPattern: device)),
+                        inode: entry.loadUnaligned(fromByteOffset: 52, as: UInt64.self)
+                    )
+                    let bytes: UInt64
+                    if objectType == vnodeTypeDirectory {
+                        guard returnedDirectory & attributeDirectoryAllocationSize != 0 else {
+                            throw CocoaError(.fileReadCorruptFile)
+                        }
+                        let allocated = entry.loadUnaligned(fromByteOffset: 60, as: Int64.self)
+                        guard allocated >= 0 else { throw CocoaError(.fileReadCorruptFile) }
+                        bytes = UInt64(allocated)
+                    } else if returnedFile
+                        & (attributeFileTotalSize | attributeFileAllocationSize)
+                        == (attributeFileTotalSize | attributeFileAllocationSize) {
+                        let logical = entry.loadUnaligned(fromByteOffset: 68, as: Int64.self)
+                        let allocated = entry.loadUnaligned(fromByteOffset: 76, as: Int64.self)
+                        guard logical >= 0, allocated >= 0 else {
+                            throw CocoaError(.fileReadCorruptFile)
+                        }
+                        bytes = max(UInt64(logical), UInt64(allocated))
+                    } else if objectType == vnodeTypeRegular {
+                        throw CocoaError(.fileReadCorruptFile)
+                    } else {
+                        bytes = 0
+                    }
+                    guard record(identity: identity, bytes: bytes, countFile: true) else {
+                        Darwin.close(descriptor)
+                        return snapshot
+                    }
+                    if objectType == vnodeTypeDirectory,
+                       !traversedDirectories.contains(identity) {
+                        pending.append(.init(
+                            path: nil,
+                            fileSystem: fileSystem,
+                            identity: identity
+                        ))
+                    }
+                    offset += length
+                }
+            }
+            Darwin.close(descriptor)
+        } catch {
+            Darwin.close(descriptor)
+            throw error
+        }
     }
     return snapshot
 }
@@ -257,33 +515,45 @@ private func directoryUsage(
     byteLimit: UInt64,
     fileLimit: Int
 ) throws -> DirectoryUsage {
-    var conservative: DirectoryUsage?
-    for _ in 0..<3 {
-        let snapshot = try directorySnapshot(roots)
-        let current = usage(
-            resources: snapshot.resources,
-            files: snapshot.files,
-            byteLimit: byteLimit,
-            fileLimit: fileLimit
-        )
-        if current.limitReason != nil { return current }
-        if let previous = conservative {
-            let resources = current.bytes > previous.bytes
-                ? current.resources
-                : previous.resources
-            conservative = usage(
-                resources: resources,
-                files: max(current.files, previous.files),
+    var resources: [VnodeIdentity: UInt64] = [:]
+    var files = 0
+    var completedSnapshots = 0
+    var unresolvedSnapshots = 0
+    while completedSnapshots < 3 {
+        do {
+            let snapshot = try directorySnapshot(
+                roots,
                 byteLimit: byteLimit,
                 fileLimit: fileLimit
             )
-        } else {
-            conservative = current
+            let current = usage(
+                resources: snapshot.resources,
+                files: snapshot.files,
+                byteLimit: byteLimit,
+                fileLimit: fileLimit
+            )
+            if current.limitReason != nil { return current }
+            mergeVnodes(snapshot.resources, into: &resources)
+            files = max(files, snapshot.files)
+            let conservative = usage(
+                resources: resources,
+                files: files,
+                byteLimit: byteLimit,
+                fileLimit: fileLimit
+            )
+            if conservative.limitReason != nil { return conservative }
+            completedSnapshots += 1
+        } catch DirectoryScanError.unresolvedDirectory {
+            unresolvedSnapshots += 1
+            if unresolvedSnapshots >= 3 { throw DirectoryScanError.unresolvedDirectory }
         }
-        if !snapshot.transientChurn { return current }
     }
-    guard let conservative else { throw CocoaError(.fileReadUnknown) }
-    return conservative
+    return usage(
+        resources: resources,
+        files: files,
+        byteLimit: byteLimit,
+        fileLimit: fileLimit
+    )
 }
 
 private func processMatches(_ identity: SupervisorWorkerIdentity) -> Bool {
@@ -739,6 +1009,7 @@ private struct BoundaryChildReport: Decodable {
     let networkDeniedErrno: Int32
     let signalDeniedErrnos: [Int32]
     let resourceBytes: UInt64
+    let retentionDeniedErrno: Int32
 }
 
 private let boundaryResourceModes: Set<String> = [
@@ -746,8 +1017,11 @@ private let boundaryResourceModes: Set<String> = [
     "readonly-unlinked-hold",
     "mapped-unlinked-hold",
     "external-readonly-hold",
+    "internal-linked-writable-hold",
+    "fileport-unlinked-hold",
 ]
 private let boundaryProbeResourceBytes: UInt64 = 1_024 * 1_024
+private let boundaryInternalResourceBytes: UInt64 = 128 * 1_024
 
 private struct BoundarySupervisorIdentity: Decodable {
     let supervisorProcessIdentifier: Int32
@@ -767,6 +1041,8 @@ private struct BoundaryRun {
     let childGone: Bool
     let observedRetainedBytes: UInt64
     let limitReason: String?
+    let internalLinkedWritableDeduplicated: Bool
+    let retentionDeniedOrAccounted: Bool
 }
 
 private func waitForExit(_ process: Process, timeout: TimeInterval) -> Bool {
@@ -869,7 +1145,7 @@ private func runBoundarySupervisor(
           boundaryIdentity.supervisorProcessIdentifier == supervisorPID,
           boundaryIdentity.supervisorParentProcessIdentifier == getpid(),
           boundaryIdentity.supervisorStartAbsoluteTime == supervisorStart,
-          report.schema == "nexgenvideo/bpy-boundary-child/1",
+          report.schema == "nexgenvideo/bpy-boundary-child/2",
           report.mode == mode,
           report.processIdentifier == boundaryIdentity.childProcessIdentifier,
           report.parentProcessIdentifier == supervisorPID else {
@@ -883,9 +1159,16 @@ private func runBoundarySupervisor(
 
     var observedRetainedBytes: UInt64 = 0
     var limitReason: String?
+    var internalLinkedWritableDeduplicated = false
+    var retentionDeniedOrAccounted = false
     if boundaryResourceModes.contains(mode) {
         let retainedResources = try ownedRetainedVnodes(child, roots: [writeRoot])
         observedRetainedBytes = retainedResources.values.reduce(0, +)
+        let named = try directoryUsage(
+            [writeRoot],
+            byteLimit: 512 * 1_024,
+            fileLimit: 64
+        )
         let quota = try resourceUsage(
             roots: [writeRoot],
             worker: child,
@@ -893,13 +1176,33 @@ private func runBoundarySupervisor(
             fileLimit: 64
         )
         limitReason = quota.limitReason
-        let validResourceResult = mode == "external-readonly-hold"
-            ? report.resourceBytes == boundaryProbeResourceBytes
+        let validResourceResult: Bool
+        if mode == "external-readonly-hold" {
+            validResourceResult = report.resourceBytes == boundaryProbeResourceBytes
                 && observedRetainedBytes < boundaryProbeResourceBytes
                 && limitReason == nil
-            : report.resourceBytes == boundaryProbeResourceBytes
+        } else if mode == "internal-linked-writable-hold" {
+            let overlap = retainedResources.keys.filter { named.resources[$0] != nil }
+            internalLinkedWritableDeduplicated = report.resourceBytes
+                == boundaryInternalResourceBytes
+                && retainedResources.count == 1
+                && overlap.count == 1
+                && observedRetainedBytes >= boundaryInternalResourceBytes
+                && quota.files == named.files
+                && limitReason == nil
+            validResourceResult = internalLinkedWritableDeduplicated
+        } else if mode == "fileport-unlinked-hold" {
+            let denied = [EPERM, EACCES].contains(report.retentionDeniedErrno)
+            let accounted = report.retentionDeniedErrno == 0
                 && observedRetainedBytes >= boundaryProbeResourceBytes
                 && limitReason == "disk"
+            retentionDeniedOrAccounted = denied || accounted
+            validResourceResult = true
+        } else {
+            validResourceResult = report.resourceBytes == boundaryProbeResourceBytes
+                && observedRetainedBytes >= boundaryProbeResourceBytes
+                && limitReason == "disk"
+        }
         guard validResourceResult else {
             _ = terminateBoundaryProcess(process, startAbsoluteTime: supervisorStart)
             throw CocoaError(.fileReadTooLarge)
@@ -926,7 +1229,9 @@ private func runBoundarySupervisor(
         supervisorGone: supervisorGone,
         childGone: childGone,
         observedRetainedBytes: observedRetainedBytes,
-        limitReason: limitReason
+        limitReason: limitReason,
+        internalLinkedWritableDeduplicated: internalLinkedWritableDeduplicated,
+        retentionDeniedOrAccounted: retentionDeniedOrAccounted
     )
 }
 
@@ -2248,6 +2553,16 @@ private final class BpyRuntimeService: NSObject, BpyRuntimeServiceProtocol, @unc
                 root: probeRoot.appendingPathComponent("external-readonly", isDirectory: true),
                 mode: "external-readonly-hold"
             )
+            let internalLinkedWritable = try runBoundarySupervisor(
+                supervisorURL: supervisor,
+                root: probeRoot.appendingPathComponent("internal-linked", isDirectory: true),
+                mode: "internal-linked-writable-hold"
+            )
+            let fileportRetention = try runBoundarySupervisor(
+                supervisorURL: supervisor,
+                root: probeRoot.appendingPathComponent("fileport-retention", isDirectory: true),
+                mode: "fileport-unlinked-hold"
+            )
             let followup = try runBoundarySupervisor(
                 supervisorURL: supervisor,
                 root: probeRoot.appendingPathComponent("followup", isDirectory: true),
@@ -2263,6 +2578,10 @@ private final class BpyRuntimeService: NSObject, BpyRuntimeServiceProtocol, @unc
                   mappedUnlinked.childGone,
                   externalReadOnly.supervisorGone,
                   externalReadOnly.childGone,
+                  internalLinkedWritable.supervisorGone,
+                  internalLinkedWritable.childGone,
+                  fileportRetention.supervisorGone,
+                  fileportRetention.childGone,
                   followup.supervisorGone,
                   followup.childGone else {
                 throw CocoaError(.executableLoad)
@@ -2291,6 +2610,11 @@ private final class BpyRuntimeService: NSObject, BpyRuntimeServiceProtocol, @unc
                     : "",
                 cleanupSupervisorGone: retainedRuns.allSatisfy(\.supervisorGone),
                 cleanupChildGone: retainedRuns.allSatisfy(\.childGone),
+                internalLinkedWritableDeduplicated: internalLinkedWritable
+                    .internalLinkedWritableDeduplicated,
+                fileportRetentionDeniedErrno: fileportRetention.report.retentionDeniedErrno,
+                fileportRetentionDeniedOrAccounted: fileportRetention
+                    .retentionDeniedOrAccounted,
                 healthyFollowupSucceeded: externalReadOnly.limitReason == nil
                     && externalReadOnly.observedRetainedBytes < boundaryProbeResourceBytes
                     && followup.supervisorGone

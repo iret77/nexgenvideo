@@ -100,7 +100,12 @@ def execute_job(config):
 
 
 def evaluated_geometry(bpy, limits):
-    state = {"failure": None, "scenarios": []}
+    state = {
+        "expected": None,
+        "failure": None,
+        "observed": 0,
+        "scenarios": [],
+    }
     verifier_camera_prefix = "NGV_GEOMETRY_VERIFIER_CAMERA_"
     verifier_camera_identities = set()
 
@@ -111,6 +116,24 @@ def evaluated_geometry(bpy, limits):
         def render(self, depsgraph):
             counts = {"objects": 0, "vertices": 0, "polygons": 0}
             try:
+                expected = state["expected"]
+                if expected is None:
+                    raise RuntimeError("unexpected render geometry callback")
+                actual = (
+                    depsgraph.scene.as_pointer(),
+                    depsgraph.view_layer.as_pointer(),
+                )
+                if actual != expected[0]:
+                    raise RuntimeError(
+                        "render geometry callback mismatch: "
+                        f"expected={expected[1]}, actual="
+                        f"{depsgraph.scene.name}/{depsgraph.view_layer.name}"
+                    )
+                if state["observed"] != 0:
+                    raise RuntimeError(
+                        f"duplicate render geometry callback for {expected[1]}"
+                    )
+                state["observed"] = 1
                 for instance in depsgraph.object_instances:
                     obj = instance.object
                     original = getattr(obj, "original", None)
@@ -142,7 +165,7 @@ def evaluated_geometry(bpy, limits):
                             f"vertices={counts['vertices']}, "
                             f"polygons={counts['polygons']}"
                         )
-                state["scenarios"].append(counts)
+                state["scenarios"].append((expected[1], counts))
             except BaseException as error:
                 state["failure"] = str(error)
             result = self.begin_result(0, 0, 1, 1)
@@ -170,10 +193,21 @@ def evaluated_geometry(bpy, limits):
             scene.render.engine = NGVGeometryVerifier.bl_idname
             scene.render.use_compositing = False
             scene.render.use_sequencer = False
-            for view_layer in scene.view_layers:
-                if not getattr(view_layer, "use", True):
-                    continue
+            enabled_layers = [
+                view_layer
+                for view_layer in scene.view_layers
+                if getattr(view_layer, "use", True)
+            ]
+            if not enabled_layers:
+                fail(f"render geometry has no enabled view layer for {scene.name}")
+            for view_layer in enabled_layers:
+                token = f"{scene.name}/{view_layer.name}"
+                state["expected"] = (
+                    (scene.as_pointer(), view_layer.as_pointer()),
+                    token,
+                )
                 state["failure"] = None
+                state["observed"] = 0
                 result = bpy.ops.render.render(
                     animation=False,
                     write_still=False,
@@ -187,7 +221,10 @@ def evaluated_geometry(bpy, limits):
                         f"{state['failure']}"
                     )
                 if "FINISHED" not in result:
-                    fail(f"render geometry evaluation failed for {scene.name}/{view_layer.name}")
+                    fail(f"render geometry evaluation failed for {token}")
+                if state["observed"] != 1:
+                    fail(f"render geometry callback missing for {token}")
+                state["expected"] = None
     finally:
         for scene, engine, compositing, sequencer, camera in originals:
             scene.render.engine = engine
@@ -201,9 +238,9 @@ def evaluated_geometry(bpy, limits):
             bpy.data.cameras.remove(camera_data)
         bpy.utils.unregister_class(NGVGeometryVerifier)
     if not state["scenarios"]:
-        return 0, 0, 0
+        fail("render geometry produced no verified scene/view-layer scenarios")
     return tuple(
-        max(scenario[field] for scenario in state["scenarios"])
+        max(scenario[field] for _, scenario in state["scenarios"])
         for field in ("objects", "vertices", "polygons")
     )
 
@@ -214,12 +251,17 @@ def render_contract(bpy, limits):
         width = int(scene.render.resolution_x)
         height = int(scene.render.resolution_y)
         percentage = int(scene.render.resolution_percentage)
-        pixels = width * height * percentage * percentage // 10_000
+        effective_width = width * percentage // 100
+        effective_height = height * percentage // 100
+        pixels = effective_width * effective_height
         if (
             width <= 0
             or height <= 0
             or percentage <= 0
             or percentage > 100
+            or effective_width < 1
+            or effective_height < 1
+            or pixels < 1
             or width > limits["renderWidth"]
             or height > limits["renderHeight"]
             or pixels > limits["renderPixels"]
@@ -232,6 +274,8 @@ def render_contract(bpy, limits):
             "width": width,
             "height": height,
             "percentage": percentage,
+            "effectiveWidth": effective_width,
+            "effectiveHeight": effective_height,
             "pixels": pixels,
             "engine": scene.render.engine,
             "cyclesDevice": getattr(getattr(scene, "cycles", None), "device", None),
@@ -285,8 +329,8 @@ def verify_scene(config):
     started = time.monotonic()
     bpy, _, _ = load_runtime(config["sitePackages"])
     load_scene(bpy, config["scenePath"], False)
-    objects, vertices, polygons = evaluated_geometry(bpy, config["limits"])
     scenes = render_contract(bpy, config["limits"])
+    objects, vertices, polygons = evaluated_geometry(bpy, config["limits"])
     denied, network = denial_contract(config.get("diagnosticDeniedPaths", []))
     manifest = {
         "schema": "nexgenvideo/bpy-verification/1",

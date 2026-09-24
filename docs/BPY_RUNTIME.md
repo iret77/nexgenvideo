@@ -28,34 +28,46 @@ separate isolated `use_scripts=true` process proves the fixture can trigger it.
 The child applies hard `RLIMIT_CORE`, `RLIMIT_FSIZE`, `RLIMIT_NOFILE`, `RLIMIT_CPU`, `RLIMIT_AS`, and
 `RLIMIT_NPROC=0` limits before importing bpy. The service additionally monitors worker physical
 footprint, its own physical footprint, total bytes and files across every worker-writable root, wall
-deadline, and the live descendant tree. Recursive accounting includes package descendants and counts
-the greater of logical size and allocated blocks plus directory storage. It joins that scan with the
+deadline, and the live descendant tree. Recursive accounting uses `getattrlistbulk` to obtain
+identity, type, logical size, and allocated size in the same directory-entry operation. Renamed
+directories are reopened by `fsgetpath` and verified by device/inode before traversal. Three complete
+bounded scans are identity-unioned, stop immediately at the file or byte limit, and fail closed after
+bounded unresolved-directory retries. The service joins that scan with the
 exact owned worker's regular-vnode descriptors from XNU `proc_pidinfo(PROC_PIDLISTFDS)` plus
 `proc_pidfdinfo(PROC_PIDFDVNODEPATHINFO)`, and its file-backed mappings from
 `proc_pidinfo(PROC_PIDREGIONPATHINFO)`. Device/inode identity deduplicates all three views and the
-largest observed vnode size wins. Unlinked vnodes remain charged whether the retained descriptor is
-writable, read-only, or already closed while a mapping survives. Linked files outside the managed
+largest observed vnode size wins. Unlinked vnodes remain charged when retained by a writable/read-only
+descriptor or by a surviving file-backed mapping. Linked files outside the managed
 roots are excluded only when their kernel `FWRITE` bit is clear, so normal external read sources do
 not become job storage and an unexpected external writable descriptor fails closed. This does not
 trust a worker report, scan unrelated PIDs, or attribute a host-volume delta. PID reuse is excluded
 by rechecking the worker's XNU start identity around each bounded traversal; `EINVAL` from the still-
 identical process ends the address-space walk only after at least one region. Process end returns no
-stale ownership, and visibility or malformed-kernel-view errors fail closed. A bounded three-pass
-directory rescan tolerates only `ENOENT` caused by concurrent rename/delete churn; permission
-failures and every other invisible subtree remain fatal.
+stale ownership, and visibility or malformed-kernel-view errors fail closed. Normal file renames do
+not create a path-to-`lstat` gap; incomplete directory re-resolution, permission failures, entry-level
+errors, and malformed attribute records remain fatal.
 The service deliberately does not treat cumulative process write-I/O as disk occupancy: overwrites
 and healthy temp-file churn can increase it without increasing retained storage. A violation asks
 the exact native supervisor to terminate its directly owned worker and does not yield a candidate.
 The verifier rejects excessive evaluated objects/vertices/polygons and render dimensions/pixels;
+the effective width and height must each be at least one pixel, and this contract is checked before
+any render operator runs.
 PNG dimensions and total outputs are checked again in native code. Geometry validation registers a
 temporary Blender render engine and invokes `bpy.ops.render.render` for every scene and enabled view
-layer. Its `render(self, depsgraph)` callback measures the public render-evaluated dependency graph,
+layer. Each call binds the expected scene/View Layer identities and must produce exactly one matching
+`render(self, depsgraph)` callback before it can contribute a scenario. A scene without an enabled
+View Layer is rejected. The callback measures the public render-evaluated dependency graph,
 so render-only modifiers, viewport-hidden renderable objects, and non-active scenes do not escape the
 bound. The verifier restores scene settings and produces no image.
 
 These are layered, sampled controls rather than a claim of a race-free, instantaneous quota or a
-general-purpose Python sandbox. The service polls at fixed intervals and terminates on an observed
-violation; it does not claim that no transient overage can exist between samples. `RLIMIT_AS` remains
+general-purpose Python sandbox. FD and mapping inspection does not establish coverage for every kernel
+object that can retain an unlinked vnode. In particular, SCM_RIGHTS in-flight messages and Mach memory
+entries remain unproven; the signed native no-bpy acceptance must prove that a fileport-retained
+unlinked vnode is denied or charged before runtime delivery. Until those retention channels have
+authorized macOS 26 evidence or an implemented accounting/denial boundary, disk-quota completeness is
+an explicit runtime and distribution blocker. The service polls at fixed intervals and terminates on
+an observed violation; it does not claim that no transient overage can exist between samples. `RLIMIT_AS` remains
 enabled because current XNU carries an address-space size limit in the VM map; acceptance records the
 configured limit and an over-allocation outcome so the shipped macOS
 behavior is measured. `RLIMIT_NPROC` supplies the kernel fork/spawn barrier for the non-root app
@@ -87,6 +99,9 @@ Primary platform references:
 - <https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/proc_info.c>
 - <https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/proc_info.h>
 - <https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/fcntl.h>
+- <https://github.com/apple-oss-distributions/xnu/blob/main/bsd/man/man2/getattrlistbulk.2>
+- <https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/fsgetpath.h>
+- <https://github.com/apple-oss-distributions/xnu/blob/main/bsd/man/man2/fileport_makeport.2>
 - <https://docs.blender.org/api/5.2/bpy.types.RenderEngine.html>
 - <https://docs.blender.org/api/5.2/bpy.ops.render.html>
 - <https://docs.blender.org/api/5.2/bpy.types.Context.html>
@@ -183,7 +198,9 @@ the XPC services and supervisor but no Python or bpy payload. The existing diagn
 always consumes that app. A separate `macos-26` boundary job uses the same artifact to exercise the
 real signed XPC → supervisor → fixed native child ancestry, App Sandbox plus Seatbelt write/fork/
 network/signal denials, writable-FD/read-only-FD/mapping-retained unlinked-vnode quota detection,
-a healthy linked external read-only control, exact cleanup, and a healthy following job. A marker
+a linked internal writable-under-quota FD deduplicated against the directory view, a healthy linked
+external read-only control, and a native fileport-retention probe that must be denied or accounted,
+plus exact cleanup and a healthy following job. A marker
 compiled into only this CI bundle gates the fixed child path; normal app bundles cannot
 request it. Normal dev, acceptance, and release bundles continue to require the runtime; readiness is
 never synthesized. The native boundary probe is not a substitute for full bpy acceptance after source
@@ -221,9 +238,12 @@ cancellation, worker crash, service and host kill/reopen cleanup, denied-file ho
 network and cross-container denials, disabled autorun plus isolated positive control, BMesh/modifier
 geometry, package-hidden file counts, aggregate writes outside outputs, resource-scan failure/recovery,
 open-unlinked writes with a healthy following job, native no-bpy writable/read-only/mapping-retained
-unlinked resources plus a linked external read-only control, healthy concurrent rename/delete temp churn,
+unlinked resources, linked internal writable deduplication, a linked external read-only control, and
+fileport-retention denial-or-accounting, healthy concurrent rename/delete temp churn, adversarial
+closed-file rename churn above quota,
 render-only modifier geometry, viewport-hidden renderable geometry, a second scene, and legitimate
-user mesh geometry carrying the verifier-camera name prefix,
+user mesh geometry carrying the verifier-camera name prefix, zero effective resolution, and a scene
+without an enabled View Layer,
 the exact `signal` denial for probes 0/SIGSTOP/SIGKILL followed by a healthy job, a supervisor failure
 after child start but before identity write followed by a healthy job, an unavailable child identity
 with a TERM-ignoring owned child followed by a healthy job, and a perspective Cycles render.

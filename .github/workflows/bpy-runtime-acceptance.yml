@@ -262,9 +262,12 @@ jobs:
             and .renderOnlyGeometryState == "resourceLimited"
             and .secondarySceneGeometryState == "resourceLimited"
             and .prefixedUserGeometryState == "resourceLimited"
+            and .zeroEffectiveResolutionState == "resourceLimited"
+            and .noEnabledViewLayerState == "resourceLimited"
             and .storageLimitState == "resourceLimited"
             and .aggregateByteLimitState == "resourceLimited"
             and .unlinkedStorageLimitState == "resourceLimited"
+            and .renameChurnStorageLimitState == "resourceLimited"
             and .healthyResourceChurnState == "awaitingConfirmation"
             and .resourceScanErrorState == "crashed"
             and .containerSiblingWriteDenied == true

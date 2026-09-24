@@ -50,6 +50,9 @@ public struct BpyBoundaryProbeResult: Codable, Sendable, Equatable {
     public let unlinkedLimitReason: String
     public let cleanupSupervisorGone: Bool
     public let cleanupChildGone: Bool
+    public let internalLinkedWritableDeduplicated: Bool
+    public let fileportRetentionDeniedErrno: Int32
+    public let fileportRetentionDeniedOrAccounted: Bool
     public let healthyFollowupSucceeded: Bool
 
     public init(
@@ -71,9 +74,12 @@ public struct BpyBoundaryProbeResult: Codable, Sendable, Equatable {
         unlinkedLimitReason: String,
         cleanupSupervisorGone: Bool,
         cleanupChildGone: Bool,
+        internalLinkedWritableDeduplicated: Bool,
+        fileportRetentionDeniedErrno: Int32,
+        fileportRetentionDeniedOrAccounted: Bool,
         healthyFollowupSucceeded: Bool
     ) {
-        schema = "nexgenvideo/bpy-boundary-probe/1"
+        schema = "nexgenvideo/bpy-boundary-probe/2"
         self.nonce = nonce
         self.serviceProcessIdentifier = serviceProcessIdentifier
         self.serviceStartAbsoluteTime = serviceStartAbsoluteTime
@@ -92,6 +98,9 @@ public struct BpyBoundaryProbeResult: Codable, Sendable, Equatable {
         self.unlinkedLimitReason = unlinkedLimitReason
         self.cleanupSupervisorGone = cleanupSupervisorGone
         self.cleanupChildGone = cleanupChildGone
+        self.internalLinkedWritableDeduplicated = internalLinkedWritableDeduplicated
+        self.fileportRetentionDeniedErrno = fileportRetentionDeniedErrno
+        self.fileportRetentionDeniedOrAccounted = fileportRetentionDeniedOrAccounted
         self.healthyFollowupSucceeded = healthyFollowupSucceeded
     }
 }
