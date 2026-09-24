@@ -53,8 +53,12 @@ final class EditorWindowController: NSWindowController {
         let cmd = mods.contains(.command)
         let rangeMarkShortcut = mods.intersection([.command, .option, .control]).isEmpty
 
-        if canHandleMediaShortcut(), !shift,
-           let direction = mediaArrowDirection(for: event.keyCode) {
+        let mediaDirection = mediaArrowDirection(for: event.keyCode)
+        if canHandleMediaShortcut(), editorViewModel.mediaCommandFocus == .folderTree,
+           mediaDirection != nil {
+            return false
+        }
+        if canHandleMediaBrowserShortcut(), !shift, let direction = mediaDirection {
             editorViewModel.moveMediaSelection(direction: direction)
             return true
         }
@@ -290,12 +294,24 @@ extension EditorWindowController: EditorActions {
         !isTextInputFocused
             && (editorViewModel.workspaceFocus == .media || editorViewModel.workspaceFocus == .edit)
             && editorViewModel.focusedPanel == .media
+            && editorViewModel.mediaCommandFocus != nil
             && editorViewModel.isSidebarPresented
+    }
+
+    private func canHandleMediaBrowserShortcut() -> Bool {
+        canHandleMediaShortcut() && editorViewModel.mediaCommandFocus == .browser
     }
 
     @discardableResult
     private func performContextualDelete(ripple: Bool) -> Bool {
         if canHandleMediaShortcut() {
+            if editorViewModel.mediaCommandFocus == .folderTree {
+                let folderIDs = editorViewModel.selectedFolderIds
+                guard !folderIDs.isEmpty,
+                      editorViewModel.canDeleteFolders(ids: folderIDs) else { return false }
+                editorViewModel.mediaPanelDeleteFolderRequest = folderIDs
+                return true
+            }
             let hasFolders = !editorViewModel.selectedFolderIds.isEmpty
             let hasAssets = !editorViewModel.selectedMediaAssetIds.isEmpty
             guard hasFolders || hasAssets else { return false }
@@ -445,6 +461,11 @@ extension EditorWindowController: EditorActions {
             return !isTextInputFocused && editorViewModel.canOverwriteActiveSource
         case #selector(deleteSelectedClips(_:)):
             if canHandleMediaShortcut() {
+                if editorViewModel.mediaCommandFocus == .folderTree {
+                    let folderIds = editorViewModel.selectedFolderIds
+                    return !folderIds.isEmpty
+                        && editorViewModel.canDeleteFolders(ids: folderIds)
+                }
                 let folderIds = editorViewModel.selectedFolderIds
                 let assetIds = editorViewModel.selectedMediaAssetIds
                 return (!folderIds.isEmpty || !assetIds.isEmpty)

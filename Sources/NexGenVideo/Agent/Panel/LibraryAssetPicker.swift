@@ -107,6 +107,11 @@ struct LibraryAssetPicker: View {
             }
         }
         .accessibilityIdentifier("mediaPicker.\(purpose.accessibilitySuffix)")
+        .onChange(of: editor.folders.map(\.id), initial: true) { _, folderIDs in
+            if let folderID = session.folderID, !Set(folderIDs).contains(folderID) {
+                session.folderID = nil
+            }
+        }
     }
 
     @ViewBuilder
@@ -127,6 +132,15 @@ struct LibraryAssetPicker: View {
                     anchor: .center
                 )
                 .frame(maxHeight: scrollHeight)
+                .background {
+                    if WorkspaceUIAcceptance.isRequested {
+                        AppRelaunchClickProbe(
+                            identifier: "mediaPicker.\(purpose.accessibilitySuffix).scroll"
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .allowsHitTesting(false)
+                    }
+                }
         } else {
             list
         }
@@ -154,6 +168,18 @@ struct LibraryAssetPicker: View {
             Button("Show in Media") { editor.revealMediaAsset(id: asset.id) }
         }
         .accessibilityIdentifier("mediaPicker.asset.\(asset.id)")
+        .onAppear {
+            WorkspaceUIAcceptance.recordPickerRow(assetID: asset.id, purpose: purpose)
+        }
+        .background {
+            if WorkspaceUIAcceptance.isRequested {
+                AppRelaunchClickProbe(
+                    identifier: "mediaPicker.\(purpose.accessibilitySuffix).asset.\(asset.id)"
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
+            }
+        }
 
         if allowsDragging {
             button.draggable(MediaTab.assetDragString(forAssetId: asset.id))
@@ -253,6 +279,16 @@ struct LibraryAssetPicker: View {
                         isSelected(t, session: session) ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.muted) : AppTheme.Background.clearColor,
                         in: RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
                     )
+                    .background {
+                        if WorkspaceUIAcceptance.isRequested {
+                            AppRelaunchClickProbe(
+                                identifier: "mediaPicker.\(purpose.accessibilitySuffix).filter.\(t.label.lowercased())",
+                                acceptanceState: isSelected(t, session: session)
+                            )
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .allowsHitTesting(false)
+                        }
+                    }
                     .contentShape(Rectangle())
                     .onTapGesture {
                         session.filterTypes = t.clipType.map { Set([$0]) } ?? []

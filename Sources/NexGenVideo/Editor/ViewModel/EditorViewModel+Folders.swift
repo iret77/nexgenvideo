@@ -89,6 +89,7 @@ extension EditorViewModel {
 
         mediaManifest.folders.removeAll { allFolderIds.contains($0.id) }
         selectedFolderIds.subtract(allFolderIds)
+        normalizeMediaLibraryFolderSessions()
 
         undoManager?.registerUndo(withTarget: self) { vm in
             vm.restoreMediaLibraryUndoSnapshot(before, actionName: "Delete Folder")
@@ -213,6 +214,7 @@ extension EditorViewModel {
         previewTabHistoryIndex = snapshot.previewTabHistoryIndex
         sourcePreviewStates = snapshot.sourcePreviewStates
         sourcePlayheadFrame = snapshot.sourcePlayheadFrame
+        normalizeMediaLibraryFolderSessions()
         videoEngine?.activateTab(activePreviewTab)
         refreshMissingMediaCache()
         notifyTimelineChanged()

@@ -9,6 +9,7 @@ struct MediaWorkspaceNavigation: View {
     @State private var renameFolderID: String?
     @State private var renameDraft = ""
     @State private var pendingDelete: Set<String> = []
+    @State private var synchronizedSelection: Set<String>?
 
     private struct Node: Identifiable {
         let folder: MediaFolder
@@ -49,15 +50,36 @@ struct MediaWorkspaceNavigation: View {
                     .allowsHitTesting(false)
             }
         }
-        .onAppear { selection = editor.selectedFolderIds }
+        .onAppear {
+            synchronizedSelection = editor.selectedFolderIds
+            selection = editor.selectedFolderIds
+        }
+        .simultaneousGesture(TapGesture().onEnded {
+            editor.focusedPanel = .media
+            editor.mediaCommandFocus = .folderTree
+        })
         .onChange(of: editor.mediaPanelCurrentFolderId) { _, folderID in
             guard editor.workspaceFocus == .media else { return }
-            selection = folderID.map { Set([$0]) } ?? []
+            let value = folderID.map { Set([$0]) } ?? []
+            synchronizedSelection = value
+            selection = value
         }
         .onChange(of: selection) { _, value in
+            if synchronizedSelection == value {
+                synchronizedSelection = nil
+                return
+            }
+            synchronizedSelection = nil
+            editor.focusedPanel = .media
+            editor.mediaCommandFocus = .folderTree
             editor.selectedFolderIds = value
+            editor.selectedMediaAssetIds.removeAll()
             guard value.count == 1, let folderID = value.first else { return }
             openFolder(folderID)
+        }
+        .onChange(of: editor.mediaPanelDeleteFolderRequest) { _, folderIDs in
+            guard !folderIDs.isEmpty else { return }
+            pendingDelete = folderIDs
         }
         .alert("Rename Folder", isPresented: renameAlertPresented) {
             TextField("Folder name", text: $renameDraft)
@@ -73,8 +95,12 @@ struct MediaWorkspaceNavigation: View {
                 editor.deleteFolders(ids: pendingDelete)
                 selection.subtract(pendingDelete)
                 pendingDelete.removeAll()
+                editor.mediaPanelDeleteFolderRequest = []
             }
-            Button("Cancel", role: .cancel) { pendingDelete.removeAll() }
+            Button("Cancel", role: .cancel) {
+                pendingDelete.removeAll()
+                editor.mediaPanelDeleteFolderRequest = []
+            }
         } message: {
             Text("Assets move to Imports. Asset IDs and edit references stay unchanged.")
         }
@@ -108,6 +134,8 @@ struct MediaWorkspaceNavigation: View {
             Button {
                 selection.removeAll()
                 editor.selectedFolderIds.removeAll()
+                editor.selectedMediaAssetIds.removeAll()
+                editor.mediaCommandFocus = .folderTree
                 editor.mediaPanelOpenFolderId = Self.rootRouteID
                 editor.publishMediaPanelFolder(nil, for: .media)
                 editor.mediaLibrarySession(for: .workspace).folderID = nil
@@ -234,7 +262,12 @@ struct MediaWorkspaceNavigation: View {
     private var deleteConfirmationPresented: Binding<Bool> {
         Binding(
             get: { !pendingDelete.isEmpty },
-            set: { if !$0 { pendingDelete.removeAll() } }
+            set: {
+                if !$0 {
+                    pendingDelete.removeAll()
+                    editor.mediaPanelDeleteFolderRequest = []
+                }
+            }
         )
     }
 

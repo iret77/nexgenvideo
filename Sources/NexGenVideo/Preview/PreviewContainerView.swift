@@ -751,6 +751,7 @@ private struct ReadOnlyDocumentPreview: View {
     let url: URL
     @State private var text = ""
     @State private var error: String?
+    @State private var isTruncated = false
 
     var body: some View {
         ScrollView {
@@ -762,11 +763,19 @@ private struct ReadOnlyDocumentPreview: View {
                         description: Text(error)
                     )
                 } else {
-                    Text(text)
-                        .interfaceFont(size: AppTheme.Typography.reading)
-                        .foregroundStyle(AppTheme.Text.primaryColor)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+                        if isTruncated {
+                            Label("Showing first 2 MB", systemImage: "doc.text.magnifyingglass")
+                                .interfaceFont(size: AppTheme.Typography.metadata)
+                                .foregroundStyle(AppTheme.Text.secondaryColor)
+                                .accessibilityIdentifier("preview.documentTruncated")
+                        }
+                        Text(text)
+                            .interfaceFont(size: AppTheme.Typography.reading)
+                            .foregroundStyle(AppTheme.Text.primaryColor)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
             .padding(AppTheme.Spacing.lg)
@@ -777,22 +786,23 @@ private struct ReadOnlyDocumentPreview: View {
             let result = await Self.load(url)
             text = result.text
             error = result.error
+            isTruncated = result.isTruncated
         }
         .accessibilityIdentifier("preview.readOnlyDocument")
     }
 
-    nonisolated private static func load(_ url: URL) async -> (text: String, error: String?) {
+    nonisolated private static func load(
+        _ url: URL
+    ) async -> (text: String, error: String?, isTruncated: Bool) {
         await Task.detached(priority: .userInitiated) {
             do {
-                let handle = try FileHandle(forReadingFrom: url)
-                defer { try? handle.close() }
-                let data = try handle.read(upToCount: 2_000_000) ?? Data()
-                guard let value = String(data: data, encoding: .utf8) else {
-                    throw CocoaError(.fileReadInapplicableStringEncoding)
-                }
-                return (value, nil)
+                let read = try BoundedTextFileReader.readUTF8Prefix(
+                    from: url,
+                    maximumBytes: 2_000_000
+                )
+                return (read.text, nil, read.isTruncated)
             } catch {
-                return ("", error.localizedDescription)
+                return ("", error.localizedDescription, false)
             }
         }.value
     }

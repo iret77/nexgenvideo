@@ -1,15 +1,31 @@
+import AVFoundation
 import AppKit
 import SwiftUI
 
 @MainActor
 enum WorkspaceUIAcceptance {
     private static var editorSizeProbes: [[String: String]] = []
+    private static var pickerRowProbes: [String: Set<String>] = [:]
     static let agentPinnedAwayNotification = Notification.Name(
         "WorkspaceUIAcceptance.agentPinnedAway"
     )
 
     static var isRequested: Bool {
         ProcessInfo.processInfo.environment["NGV_WORKSPACE_UI_ACCEPTANCE"] == "1"
+    }
+
+    static func resetPickerRowProbes(for purpose: MediaLibraryPurpose) {
+        guard isRequested else { return }
+        pickerRowProbes[purpose.accessibilitySuffix] = []
+    }
+
+    static func recordPickerRow(assetID: String, purpose: MediaLibraryPurpose) {
+        guard isRequested else { return }
+        pickerRowProbes[purpose.accessibilitySuffix, default: []].insert(assetID)
+    }
+
+    static func pickerRowProbeCount(for purpose: MediaLibraryPurpose) -> Int {
+        pickerRowProbes[purpose.accessibilitySuffix]?.count ?? 0
     }
 
     private static var inspectorRequested: Bool {
@@ -26,6 +42,7 @@ enum WorkspaceUIAcceptance {
         }
 
         editorSizeProbes = []
+        pickerRowProbes = [:]
         resetWorkspaceDefaults(scale: scale)
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
@@ -79,7 +96,7 @@ enum WorkspaceUIAcceptance {
                     && editor.mediaAssets.count >= 523
                     && editor.mediaAssets
                         .filter { $0.id.hasPrefix("acceptance-bulk-") }
-                        .allSatisfy { $0.thumbnail == nil }
+                        .allSatisfy { FileManager.default.fileExists(atPath: $0.url.path) }
                     && editor.mediaManifest.intakeRoleByAssetID.keys
                         .allSatisfy { !$0.hasPrefix("acceptance-bulk-") }
                     && previewTimecodeIsSingleLine(in: window, scale: scale)
@@ -92,11 +109,37 @@ enum WorkspaceUIAcceptance {
             guard visiblePanelFrames(in: host) == preparedMediaFrames else {
                 fail("large media layout did not settle", scale: scale)
             }
-            guard click(identifier: "media.folder.row.acceptance-folder-0", in: window) == nil,
+            guard click(identifier: "selection.asset.selection-source", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.activeSourceAsset?.id == "selection-source"
+                          && editor.mediaCommandFocus == .browser
+                          && editor.focusedPanel == .media
+                  }),
+                  pressKey(keyCode: 124, characters: "\u{F703}", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.selectedMediaAssetIds == ["selection-secondary"]
+                  }),
+                  click(identifier: "selection.asset.selection-source", in: window) == nil,
+                  click(identifier: "media.folder.row.acceptance-folder-0", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
                       editor.mediaPanelCurrentFolderId == "acceptance-folder-0"
                           && editor.mediaLibrarySession(for: .workspace).folderID
                               == "acceptance-folder-0"
+                          && editor.mediaCommandFocus == .folderTree
+                          && editor.selectedFolderIds == ["acceptance-folder-0"]
+                          && editor.selectedMediaAssetIds.isEmpty
+                  }),
+                  pressKey(keyCode: 36, characters: "\r", in: window) == nil,
+                  pressKey(keyCode: 51, characters: "\u{8}", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.mediaPanelDeleteFolderRequest == ["acceptance-folder-0"]
+                          && editor.folder(id: "acceptance-folder-0") != nil
+                          && editor.mediaAssets.contains { $0.id == "selection-source" }
+                          && editor.mediaCommandFocus == .folderTree
+                  }),
+                  pressKey(keyCode: 53, characters: "\u{1b}", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.mediaPanelDeleteFolderRequest.isEmpty
                   }),
                   click(identifier: "media.folder.library", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
@@ -105,6 +148,15 @@ enum WorkspaceUIAcceptance {
                   }) else {
                 fail("native folder tree did not route the shared media library", scale: scale)
             }
+            emit(
+                "media-keyboard",
+                scale: scale,
+                fields: [
+                    "browserArrowSelected": "selection-secondary",
+                    "treeDeletePreservedAsset": editor.mediaAssets.contains { $0.id == "selection-source" },
+                    "treeDeleteRequestedConfirmation": editor.folder(id: "acceptance-folder-0") != nil,
+                ]
+            )
             resetSplitAutosaveDefaults()
             editor.setWorkspaceFocus(.production)
             guard await waitUntil(timeout: .seconds(5), {
@@ -123,6 +175,142 @@ enum WorkspaceUIAcceptance {
             host.layoutSubtreeIfNeeded()
             guard visiblePanelFrames(in: host) == preparedProductionFrames else {
                 fail("large production layout did not settle", scale: scale)
+            }
+            let pickerTimeline = editor.timeline
+            let productionPicker = editor.mediaLibrarySession(for: .productionSource)
+            productionPicker.folderID = "acceptance-folder-0"
+            productionPicker.filterTypes = []
+            productionPicker.scrollAnchorID = nil
+            WorkspaceUIAcceptance.resetPickerRowProbes(for: .productionSource)
+            let productionEligibleCount = MediaLibraryProjection.assets(
+                from: editor.mediaAssets.filter { !$0.isGenerating },
+                session: productionPicker
+            ).count
+            var initialPickerAnchor: String?
+            var productionScrollAnchor: String?
+            var productionRenderedRows = 0
+            guard productionEligibleCount > 1,
+                  click(identifier: "mediaPicker.toggle.production", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      let count = pickerRowProbeCount(for: .productionSource)
+                      let ready = probeState(identifier: "mediaPicker.toggle.production", in: window) == true
+                          && count > 0
+                          && count < productionEligibleCount
+                      if ready {
+                          initialPickerAnchor = productionPicker.scrollAnchorID
+                          productionRenderedRows = count
+                      }
+                      return ready
+                  }),
+                  scroll(identifier: "mediaPicker.production.scroll", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      guard let anchor = productionPicker.scrollAnchorID,
+                            anchor != initialPickerAnchor else { return false }
+                      productionScrollAnchor = anchor
+                      return true
+                  }),
+                  click(identifier: "mediaPicker.production.filter.video", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      probeState(identifier: "mediaPicker.production.filter.video", in: window) == true
+                          && productionPicker.filterTypes == [.video]
+                          && findProbe(
+                              in: host,
+                              identifier: "mediaPicker.production.asset.acceptance-bulk-0"
+                          ) != nil
+                  }),
+                  click(
+                      identifier: "mediaPicker.production.asset.acceptance-bulk-0",
+                      in: window
+                  ) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.activeSourceAsset?.id == "acceptance-bulk-0"
+                          && productionPicker.selectedAssetIDs == ["acceptance-bulk-0"]
+                  }),
+                  click(identifier: "preview.scrub", horizontalFraction: 0.25, in: window) == nil,
+                  click(identifier: "source.markIn", in: window) == nil,
+                  click(identifier: "preview.scrub", horizontalFraction: 0.75, in: window) == nil,
+                  click(identifier: "source.markOut", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.activeSourcePreviewState?.inFrame != nil
+                          && editor.activeSourcePreviewState?.outFrame != nil
+                  }) else {
+                fail("production picker did not lazily select and range a real source", scale: scale)
+            }
+            let productionRange = editor.activeSourcePreviewState
+            let postPicker = editor.mediaLibrarySession(for: .postproductionSource)
+            postPicker.folderID = "acceptance-folder-0"
+            postPicker.filterTypes = []
+            WorkspaceUIAcceptance.resetPickerRowProbes(for: .postproductionSource)
+            guard click(identifier: "editor.workspace.postproduction", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      host.layoutSubtreeIfNeeded()
+                      return editor.workspaceFocus == .postproduction
+                          && visiblePanelIDs(in: host) == expectedPanels(for: .postproduction)
+                  }),
+                  click(identifier: "mediaPicker.toggle.postproduction", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      probeState(identifier: "mediaPicker.toggle.postproduction", in: window) == true
+                          && pickerRowProbeCount(for: .postproductionSource) > 0
+                  }),
+                  click(identifier: "mediaPicker.postproduction.filter.video", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      probeState(identifier: "mediaPicker.postproduction.filter.video", in: window) == true
+                          && postPicker.filterTypes == [.video]
+                  }),
+                  click(
+                      identifier: "mediaPicker.postproduction.asset.acceptance-bulk-0",
+                      in: window
+                  ) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.activeSourceAsset?.id == "acceptance-bulk-0"
+                          && postPicker.selectedAssetIDs == ["acceptance-bulk-0"]
+                  }),
+                  click(identifier: "preview.scrub", horizontalFraction: 0.1, in: window) == nil,
+                  click(identifier: "source.markIn", in: window) == nil,
+                  click(identifier: "preview.scrub", horizontalFraction: 0.4, in: window) == nil,
+                  click(identifier: "source.markOut", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      guard let state = editor.activeSourcePreviewState else { return false }
+                      return state.inFrame != productionRange?.inFrame
+                          && state.outFrame != productionRange?.outFrame
+                  }),
+                  click(identifier: "mediaPicker.toggle.postproduction", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      probeState(identifier: "mediaPicker.toggle.postproduction", in: window) == false
+                  }),
+                  click(identifier: "editor.workspace.production", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.workspaceFocus == .production
+                          && editor.activeSourceAsset?.id == "acceptance-bulk-0"
+                          && editor.activeSourcePreviewState == productionRange
+                          && productionPicker.folderID == "acceptance-folder-0"
+                          && productionPicker.selectedAssetIDs == ["acceptance-bulk-0"]
+                          && editor.timeline == pickerTimeline
+                  }) else {
+                fail("picker purpose switch changed source range, folder, selection, or timeline", scale: scale)
+            }
+            emit(
+                "media-picker",
+                scale: scale,
+                fields: [
+                    "eligibleRows": productionEligibleCount,
+                    "renderedRows": productionRenderedRows,
+                    "activeAsset": editor.activeSourceAsset?.id ?? "",
+                    "folder": productionPicker.folderID ?? "",
+                    "sourceIn": editor.activeSourcePreviewState?.inFrame ?? -1,
+                    "sourceOut": editor.activeSourcePreviewState?.outFrame ?? -1,
+                    "timelineStable": editor.timeline == pickerTimeline,
+                    "nativeFilterSelected": productionPicker.filterTypes == [.video],
+                    "nativeScrollAnchored": productionScrollAnchor != nil,
+                    "postPurposeSelectedSameAsset": postPicker.selectedAssetIDs == ["acceptance-bulk-0"],
+                    "productionPurposeRestored": editor.activeSourcePreviewState == productionRange,
+                ]
+            )
+            guard click(identifier: "mediaPicker.toggle.production", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      probeState(identifier: "mediaPicker.toggle.production", in: window) == false
+                  }) else {
+                fail("production picker did not close after acceptance", scale: scale)
             }
             emit(
                 "window-ready",
@@ -217,9 +405,9 @@ enum WorkspaceUIAcceptance {
                 if workspace == .media {
                     fields["mediaAssetCount"] = editor.mediaAssets.count
                     fields["mediaSurface"] = mediaWorkspaceSurfaceDiagnostics(in: host)
-                    fields["bulkThumbnailsLoaded"] = editor.mediaAssets
+                    fields["bulkFilesUnavailable"] = editor.mediaAssets
                         .filter { $0.id.hasPrefix("acceptance-bulk-") }
-                        .filter { $0.thumbnail != nil }
+                        .filter { !FileManager.default.fileExists(atPath: $0.url.path) }
                         .count
                     fields["bulkIntakeAssignments"] = editor.mediaManifest.intakeRoleByAssetID.keys
                         .filter { $0.hasPrefix("acceptance-bulk-") }
@@ -1479,6 +1667,41 @@ enum WorkspaceUIAcceptance {
         )
         let sourceURL = mediaDirectory.appendingPathComponent("selection-source.mov")
         try FileManager.default.copyItem(at: generatedVideo, to: sourceURL)
+        let audioURL = mediaDirectory.appendingPathComponent("bulk-audio.wav")
+        guard let audioFormat = AVAudioFormat(
+            standardFormatWithSampleRate: 8_000,
+            channels: 1
+        ) else { throw CocoaError(.fileWriteUnknown) }
+        let audioFile = try AVAudioFile(forWriting: audioURL, settings: audioFormat.settings)
+        guard let audioBuffer = AVAudioPCMBuffer(
+            pcmFormat: audioFormat,
+            frameCapacity: 8_000
+        ), let audioChannel = audioBuffer.floatChannelData?[0] else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        audioBuffer.frameLength = 8_000
+        audioChannel.initialize(repeating: 0, count: 8_000)
+        try audioFile.write(from: audioBuffer)
+
+        let imageURL = mediaDirectory.appendingPathComponent("bulk-image.png")
+        let image = NSImage(size: NSSize(width: 64, height: 64), flipped: false) { rect in
+            NSColor.systemBlue.setFill()
+            rect.fill()
+            return true
+        }
+        guard let tiff = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff),
+              let png = bitmap.representation(using: .png, properties: [:]) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        try png.write(to: imageURL, options: .atomic)
+
+        let documentURL = mediaDirectory.appendingPathComponent("bulk-document.md")
+        try Data("Acceptance document content".utf8).write(to: documentURL, options: .atomic)
+        let lottieURL = mediaDirectory.appendingPathComponent("bulk-lottie.json")
+        try Data(
+            #"{"v":"5.7.4","fr":30,"ip":0,"op":30,"w":64,"h":64,"layers":[]}"#.utf8
+        ).write(to: lottieURL, options: .atomic)
 
         var clip = Clip(
             mediaRef: "selection-source",
@@ -1609,24 +1832,30 @@ enum WorkspaceUIAcceptance {
                 originalFilename: "Offline Source.mov"
             ),
         ]
-        let bulkTypes: [ClipType] = [.video, .audio, .image, .document, .lottie]
         let bulkFolderCount = manifest.folders.count
         manifest.entries.append(contentsOf: (0..<520).map { index in
-            let type = bulkTypes[index % bulkTypes.count]
-            let fileExtension = switch type {
-            case .video: "mov"
-            case .audio: "wav"
-            case .image: "png"
-            case .document: "md"
-            case .lottie: "json"
-            case .text: "txt"
+            let type: ClipType = switch index {
+            case 0: .video
+            case 1: .audio
+            case 2: .image
+            case 3: .lottie
+            default: .document
             }
+            let relativePath = switch type {
+            case .video: "selection-source.mov"
+            case .audio: "bulk-audio.wav"
+            case .image: "bulk-image.png"
+            case .document: "bulk-document.md"
+            case .lottie: "bulk-lottie.json"
+            case .text: "bulk-document.md"
+            }
+            let fileExtension = URL(fileURLWithPath: relativePath).pathExtension
             return MediaManifestEntry(
                 id: "acceptance-bulk-\(index)",
                 name: "Storage \(index)",
                 type: type,
                 source: .project(
-                    relativePath: "\(Project.mediaDirectoryName)/missing-bulk-\(index).\(fileExtension)"
+                    relativePath: "\(Project.mediaDirectoryName)/\(relativePath)"
                 ),
                 duration: type == .video || type == .audio ? Double((index % 30) + 1) : 0,
                 folderId: "acceptance-folder-\(index % bulkFolderCount)",
@@ -2357,6 +2586,44 @@ enum WorkspaceUIAcceptance {
         }
         NSApp.postEvent(down, atStart: false)
         NSApp.postEvent(up, atStart: false)
+        return nil
+    }
+
+    private static func scroll(identifier: String, in window: NSWindow) -> String? {
+        guard let root = window.contentView,
+              let probe = findProbe(in: root, identifier: identifier) else {
+            return "scroll geometry unavailable"
+        }
+        let probeCenter = probe.convert(
+            NSPoint(x: probe.bounds.midX, y: probe.bounds.midY),
+            to: root
+        )
+        var candidates: [(view: NSScrollView, area: CGFloat)] = []
+        func collect(_ view: NSView) {
+            if let scrollView = view as? NSScrollView,
+               !scrollView.isHiddenOrHasHiddenAncestor {
+                let frame = scrollView.convert(scrollView.bounds, to: root)
+                if frame.contains(probeCenter) {
+                    candidates.append((scrollView, frame.width * frame.height))
+                }
+            }
+            view.subviews.forEach(collect)
+        }
+        collect(root)
+        let scrollView = enclosingScrollView(for: probe)
+            ?? candidates.min(by: { $0.area < $1.area })?.view
+        guard let scrollView,
+              let event = CGEvent(
+                  scrollWheelEvent2Source: nil,
+                  units: .pixel,
+                  wheelCount: 1,
+                  wheel1: -300,
+                  wheel2: 0,
+                  wheel3: 0
+              ), let wheel = NSEvent(cgEvent: event) else {
+            return "native scroll event unavailable"
+        }
+        scrollView.scrollWheel(with: wheel)
         return nil
     }
 

@@ -195,6 +195,10 @@ final class MediaAsset: Identifiable {
     }
 
     func loadMetadata() async {
+        if type == .document {
+            duration = 0
+            return
+        }
         if type == .image {
             duration = Defaults.imageDurationSeconds
             let imageURL = url

@@ -1439,10 +1439,20 @@ struct GenerationView: View {
         }
         .buttonStyle(.plain)
         .help("Choose from Media or drop a source")
+        .background {
+            if WorkspaceUIAcceptance.isRequested {
+                AppRelaunchClickProbe(identifier: "mediaPicker.generation-\(pickerID)")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
+            }
+        }
         .overlay {
-            DropTargetOverlay(isTargeted: isTargeted) { payload in
-                for asset in editor.assetsFromDragPayload(payload)
-                where acceptedTypes.contains(asset.type) {
+            DropTargetOverlay(
+                isTargeted: isTargeted,
+                helpText: "Choose from Media or drop a source",
+                onClick: { activeLibraryPickerID = pickerID }
+            ) { payload in
+                for asset in editor.assetsFromDragPayload(payload) {
                     onDrop(asset)
                 }
             }

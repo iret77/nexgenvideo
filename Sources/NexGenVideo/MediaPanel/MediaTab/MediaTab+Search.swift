@@ -8,27 +8,30 @@ extension MediaTab {
 
     var searchResults: some View {
         let nameMatches = searchScope == .filename ? sortAndFilter(editor.mediaAssets) : []
+        let visibleVisualHits = visualHits.filter(hitPassesFilters)
+        let visibleSpokenHits = spokenHits.filter(hitPassesFilters)
+        let visibleDocumentHits = documentHits.filter(hitPassesFilters)
         return ScrollView {
             LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
-                if !visualHits.isEmpty {
-                    momentHeader("Moments", icon: "sparkle.magnifyingglass", count: visualHits.count, collapsible: true)
+                if !visibleVisualHits.isEmpty {
+                    momentHeader("Moments", icon: "sparkle.magnifyingglass", count: visibleVisualHits.count, collapsible: true)
                     if !collapsedSearchSections.contains("Moments") {
-                        resultsGrid { ForEach(visualHits.indices, id: \.self) { momentCard(visualHits[$0]) } }
+                        resultsGrid { ForEach(visibleVisualHits.indices, id: \.self) { momentCard(visibleVisualHits[$0]) } }
                     }
                 }
-                if !spokenHits.isEmpty {
-                    momentHeader("Transcript", icon: "waveform", count: spokenHits.count, collapsible: true)
+                if !visibleSpokenHits.isEmpty {
+                    momentHeader("Transcript", icon: "waveform", count: visibleSpokenHits.count, collapsible: true)
                     if !collapsedSearchSections.contains("Transcript") {
                         VStack(spacing: AppTheme.Spacing.sm) {
-                            ForEach(spokenHits.indices, id: \.self) { spokenRow(spokenHits[$0]) }
+                            ForEach(visibleSpokenHits.indices, id: \.self) { spokenRow(visibleSpokenHits[$0]) }
                         }
                         .padding(.bottom, AppTheme.Spacing.sm)
                     }
                 }
-                if !documentHits.isEmpty {
-                    momentHeader("Text Content", icon: "doc.text.magnifyingglass", count: documentHits.count)
+                if !visibleDocumentHits.isEmpty {
+                    momentHeader("Text Content", icon: "doc.text.magnifyingglass", count: visibleDocumentHits.count)
                     VStack(spacing: AppTheme.Spacing.sm) {
-                        ForEach(documentHits) { documentRow($0) }
+                        ForEach(visibleDocumentHits) { documentRow($0) }
                     }
                     .padding(.bottom, AppTheme.Spacing.sm)
                 }
@@ -36,7 +39,10 @@ extension MediaTab {
                     momentHeader("Files", icon: "doc", count: nameMatches.count)
                     resultsGrid { ForEach(nameMatches) { fileCard($0) } }
                 }
-                if visualHits.isEmpty, spokenHits.isEmpty, documentHits.isEmpty, nameMatches.isEmpty {
+                if visibleVisualHits.isEmpty,
+                   visibleSpokenHits.isEmpty,
+                   visibleDocumentHits.isEmpty,
+                   nameMatches.isEmpty {
                     Text("No matches for “\(trimmedSearchQuery)”")
                         .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
@@ -47,6 +53,18 @@ extension MediaTab {
             .padding(.top, AppTheme.Spacing.sm)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    private func hitPassesFilters(_ hit: VisualSearch.Hit) -> Bool {
+        editor.mediaAssets.first(where: { $0.id == hit.assetID }).map(passesFilters) ?? false
+    }
+
+    private func hitPassesFilters(_ hit: TranscriptSearch.Hit) -> Bool {
+        editor.mediaAssets.first(where: { $0.id == hit.assetID }).map(passesFilters) ?? false
+    }
+
+    private func hitPassesFilters(_ hit: DocumentSearch.Hit) -> Bool {
+        editor.mediaAssets.first(where: { $0.id == hit.assetID }).map(passesFilters) ?? false
     }
 
     private func resultsGrid<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
@@ -262,6 +280,7 @@ extension MediaTab {
             visualHits = []
             documentHits = []
         }
+        let scope = searchScope
         let matchingAssets = editor.mediaAssets.filter(passesFilters)
         let timedAssets = matchingAssets
             .filter { $0.type == .video || $0.type == .audio }
@@ -277,7 +296,7 @@ extension MediaTab {
             let spoken: [TranscriptSearch.Hit]
             let visual: [VisualSearch.Hit]
             let text: [DocumentSearch.Hit]
-            switch searchScope {
+            switch scope {
             case .filename:
                 spoken = []
                 visual = []
@@ -313,15 +332,18 @@ enum DocumentSearch {
         query: String,
         assets: [(id: String, url: URL)]
     ) async -> [Hit] {
-        await Task.detached(priority: .userInitiated) {
-            let needle = query.lowercased()
-            return assets.compactMap { asset in
-                guard let handle = try? FileHandle(forReadingFrom: asset.url) else { return nil }
-                defer { try? handle.close() }
-                guard let data = try? handle.read(upToCount: maximumBytes),
-                      let text = String(data: data, encoding: .utf8),
-                      let match = text.lowercased().range(of: needle)
-                else { return nil }
+        let worker = Task.detached(priority: .userInitiated) {
+            var hits: [Hit] = []
+            for asset in assets {
+                guard !Task.isCancelled else { return hits }
+                guard let read = try? BoundedTextFileReader.readUTF8Prefix(
+                    from: asset.url,
+                    maximumBytes: maximumBytes
+                ), let match = read.text.range(
+                    of: query,
+                    options: [.caseInsensitive, .diacriticInsensitive]
+                ) else { continue }
+                let text = read.text
                 let lower = text.index(match.lowerBound, offsetBy: -snippetRadius, limitedBy: text.startIndex)
                     ?? text.startIndex
                 let upper = text.index(match.upperBound, offsetBy: snippetRadius, limitedBy: text.endIndex)
@@ -329,9 +351,15 @@ enum DocumentSearch {
                 let snippet = text[lower..<upper]
                     .replacingOccurrences(of: "\n", with: " ")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                return Hit(assetID: asset.id, snippet: snippet)
+                hits.append(Hit(assetID: asset.id, snippet: snippet))
             }
-        }.value
+            return hits
+        }
+        return await withTaskCancellationHandler {
+            await worker.value
+        } onCancel: {
+            worker.cancel()
+        }
     }
 }
 

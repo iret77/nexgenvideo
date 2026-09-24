@@ -52,6 +52,11 @@ final class EditorViewModel {
         }
     }
 
+    enum MediaCommandFocus: Equatable, Sendable {
+        case folderTree
+        case browser
+    }
+
     /// The top-level workspace. Workspaces rearrange canonical panels without changing project data.
     enum WorkspaceFocus: String, CaseIterable, Sendable {
         case media, production, edit, postproduction, export
@@ -891,6 +896,7 @@ final class EditorViewModel {
             mediaFolderId: mediaPanelCurrentFolderId
         )
         workspaceFocus = focus
+        mediaCommandFocus = nil
         let state = workspacePresentationStates[focus] ?? Self.defaultWorkspacePresentation()
         isRestoringWorkspacePresentation = true
         defer { isRestoringWorkspacePresentation = false }
@@ -921,9 +927,11 @@ final class EditorViewModel {
         }
         currentFrame = max(0, min(state.timelineFrame, timeline.totalFrames))
         var restoredSourceFrame = max(0, state.sourceFrame)
-        if let purpose = mediaLibraryPurpose(for: focus),
-           let asset = activeSourceAsset {
+        let restoredPurpose = mediaLibraryPurpose(for: focus)
+        activeMediaLibraryPurpose = activeSourceAsset == nil ? nil : restoredPurpose
+        if let purpose = restoredPurpose, let asset = activeSourceAsset {
             let sourceState = mediaLibrarySession(for: purpose).sourceStates[asset.id]
+                ?? sourcePreviewStates[asset.id]
                 ?? SourcePreviewState(playheadFrame: restoredSourceFrame)
             let duration = secondsToFrame(seconds: asset.duration, fps: timeline.fps)
             let restored = sourceState.clamped(to: duration)
@@ -931,7 +939,6 @@ final class EditorViewModel {
             restoredSourceFrame = restored.playheadFrame
         }
         sourcePlayheadFrame = restoredSourceFrame
-        activeMediaLibraryPurpose = activeSourceAsset == nil ? nil : mediaLibraryPurpose(for: focus)
         mediaPanelTab = state.mediaPanelTab
         mediaPanelCurrentFolderId = state.mediaFolderId
         videoEngine?.activateTab(activePreviewTab)
@@ -1190,6 +1197,8 @@ final class EditorViewModel {
     var mediaPanelOpenFolderId: String?
     var mediaPanelCurrentFolderId: String?
     var mediaPanelPasteRequestTick: Int = 0
+    var mediaPanelDeleteFolderRequest: Set<String> = []
+    var mediaCommandFocus: MediaCommandFocus?
     var mediaPanelToast: MediaPanelToast?
     var mediaImportProgress: MediaImportProgress?
     @ObservationIgnored var mediaImportTail: Task<MediaImportSummary, Never>?
@@ -1199,7 +1208,12 @@ final class EditorViewModel {
     @ObservationIgnored var songAttachInProgress = false
 
     func mediaLibrarySession(for purpose: MediaLibraryPurpose) -> MediaLibrarySession {
-        if let session = mediaLibrarySessions[purpose] { return session }
+        if let session = mediaLibrarySessions[purpose] {
+            if let folderID = session.folderID, folder(id: folderID) == nil {
+                session.folderID = nil
+            }
+            return session
+        }
         let session = MediaLibrarySession(purpose: purpose)
         mediaLibrarySessions[purpose] = session
         return session
@@ -1207,6 +1221,7 @@ final class EditorViewModel {
 
     func selectMediaAsset(_ asset: MediaAsset, for purpose: MediaLibraryPurpose) {
         rememberActiveMediaLibrarySource()
+        activeMediaLibraryPurpose = nil
         let session = mediaLibrarySession(for: purpose)
         session.activeAssetID = asset.id
         session.selectedAssetIDs = [asset.id]
@@ -1216,6 +1231,9 @@ final class EditorViewModel {
         sourcePreviewStates[asset.id] = restored.clamped(to: duration)
         selectMediaAsset(asset)
         activeMediaLibraryPurpose = purpose
+        if purpose == .workspace || purpose == .editSource {
+            mediaCommandFocus = .browser
+        }
     }
 
     func activateMediaAsset(
@@ -1224,6 +1242,7 @@ final class EditorViewModel {
         for purpose: MediaLibraryPurpose
     ) {
         rememberActiveMediaLibrarySource()
+        activeMediaLibraryPurpose = nil
         let session = mediaLibrarySession(for: purpose)
         session.activeAssetID = asset.id
         session.scrollAnchorID = asset.id
@@ -1232,6 +1251,9 @@ final class EditorViewModel {
         activateMediaAsset(asset, preservingSelection: preservingSelection)
         session.selectedAssetIDs = selectedMediaAssetIds
         activeMediaLibraryPurpose = purpose
+        if purpose == .workspace || purpose == .editSource {
+            mediaCommandFocus = .browser
+        }
     }
 
     func toggleMediaAssetSelection(_ asset: MediaAsset, for purpose: MediaLibraryPurpose) {
@@ -1265,20 +1287,40 @@ final class EditorViewModel {
     private func snapshotMediaLibrarySession(for workspace: WorkspaceFocus) {
         guard let purpose = mediaLibraryPurpose(for: workspace) else { return }
         let session = mediaLibrarySession(for: purpose)
-        session.selectedAssetIDs = selectedMediaAssetIds
-        session.folderID = mediaPanelCurrentFolderId
-        guard activeMediaLibraryPurpose == purpose, let asset = activeSourceAsset else { return }
+        if purpose == .workspace || purpose == .editSource {
+            session.selectedAssetIDs = selectedMediaAssetIds
+            session.folderID = mediaPanelCurrentFolderId
+        }
+        guard let asset = activeSourceAsset,
+              activeMediaLibraryPurpose == purpose || activeMediaLibraryPurpose == nil else { return }
         session.activeAssetID = asset.id
         session.rememberSourceState(sourcePreviewState(for: asset.id), for: asset.id)
     }
 
+    func normalizeMediaLibraryFolderSessions() {
+        let folderIDs = Set(folders.map(\.id))
+        for session in mediaLibrarySessions.values {
+            if let folderID = session.folderID, !folderIDs.contains(folderID) {
+                session.folderID = nil
+            }
+        }
+    }
+
     func revealMediaAsset(id: String) {
+        guard let asset = mediaAssets.first(where: { $0.id == id }) else { return }
+        let session = mediaLibrarySession(for: .workspace)
+        session.folderID = asset.folderId
+        session.scrollAnchorID = id
+        session.selectedAssetIDs = [id]
+        session.activeAssetID = id
         setWorkspaceFocus(.media)
         theaterActive = false
         mediaPanelVisible = true
         maximizedPanel = nil
         focusedPanel = .media
+        mediaCommandFocus = .browser
         showMediaPanelMediaTab()
+        selectMediaAsset(asset, for: .workspace)
         mediaPanelRevealAssetId = id
     }
 

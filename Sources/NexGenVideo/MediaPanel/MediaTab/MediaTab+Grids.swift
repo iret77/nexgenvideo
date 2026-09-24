@@ -36,6 +36,7 @@ extension MediaTab {
 
     func listScroll(cells: [MediaCell]) -> some View {
         let orderedIDs = cells.map(\.id)
+        let session = editor.mediaLibrarySession(for: mediaPurpose)
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: AppTheme.Spacing.xs) {
@@ -45,7 +46,15 @@ extension MediaTab {
                     }
                 }
                 .padding(AppTheme.Spacing.md)
+                .scrollTargetLayout()
             }
+            .scrollPosition(
+                id: Binding(
+                    get: { session.scrollAnchorID },
+                    set: { session.scrollAnchorID = $0 }
+                ),
+                anchor: .center
+            )
             .onAppear {
                 publishOrderedIds(orderedIDs)
                 if editor.mediaPanelColumnCount != 1 { editor.mediaPanelColumnCount = 1 }
@@ -117,6 +126,7 @@ extension MediaTab {
         topPadding: CGFloat,
         @ViewBuilder cellView: @escaping (Cell) -> Content
     ) -> some View where Cell.ID == String {
+        let session = editor.mediaLibrarySession(for: mediaPurpose)
         ScrollViewReader { proxy in
             ScrollView(showsIndicators: false) {
                 let columns = Array(repeating: GridItem(.fixed(tileWidth), spacing: spacing), count: max(cols, 1))
@@ -130,7 +140,15 @@ extension MediaTab {
                 .padding(AppTheme.Spacing.md)
                 .padding(.top, topPadding)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .scrollTargetLayout()
             }
+            .scrollPosition(
+                id: Binding(
+                    get: { session.scrollAnchorID },
+                    set: { session.scrollAnchorID = $0 }
+                ),
+                anchor: .center
+            )
             .coordinateSpace(name: "mediaGrid")
             .onPreferenceChange(AssetFramePreferenceKey.self) { frames in
                 guard workspace == editor.workspaceFocus else { return }
@@ -209,6 +227,7 @@ extension MediaTab {
 
 extension MediaTab {
     var groupedGridView: some View {
+        let session = editor.mediaLibrarySession(for: mediaPurpose)
         // Bucket once so each section is O(1).
         let bucketed = editor.mediaAssets.reduce(into: [String?: [MediaAsset]]()) { dict, asset in
             dict[asset.folderId, default: []].append(asset)
@@ -248,7 +267,15 @@ extension MediaTab {
                         }
                     }
                     .padding(AppTheme.Spacing.md)
+                    .scrollTargetLayout()
                 }
+                .scrollPosition(
+                    id: Binding(
+                        get: { session.scrollAnchorID },
+                        set: { session.scrollAnchorID = $0 }
+                    ),
+                    anchor: .center
+                )
                 .coordinateSpace(name: "mediaGrid")
                 .onPreferenceChange(AssetFramePreferenceKey.self) { frames in
                     guard workspace == editor.workspaceFocus else { return }

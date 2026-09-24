@@ -73,7 +73,7 @@ def valid_media_surface(row):
         and contains_frame(center_panel, source)
         and vertically_separate
         and row.get("mediaAssetCount", 0) >= 523
-        and row.get("bulkThumbnailsLoaded") == 0
+        and row.get("bulkFilesUnavailable") == 0
         and row.get("bulkIntakeAssignments") == 0
     )
 
@@ -194,6 +194,8 @@ def run_scale(executable, output, scale):
     narrow = [row for row in rows if row.get("event") == "narrow-production"]
     pinned = [row for row in rows if row.get("event") == "narrow-production-pinned"]
     selection_source = [row for row in rows if row.get("event") == "selection-source"]
+    media_picker = [row for row in rows if row.get("event") == "media-picker"]
+    media_keyboard = [row for row in rows if row.get("event") == "media-keyboard"]
     selection_timeline = [row for row in rows if row.get("event") == "selection-timeline"]
     invariants = [row for row in rows if row.get("event") == "invariants"]
     inspector = [row for row in rows if row.get("event") == "inspector"]
@@ -231,6 +233,21 @@ def run_scale(executable, output, scale):
         and len(narrow) == 1
         and len(pinned) == 1
         and len(selection_source) == 1
+        and len(media_picker) == 1
+        and len(media_keyboard) == 1
+        and media_keyboard[0].get("browserArrowSelected") == "selection-secondary"
+        and media_keyboard[0].get("treeDeletePreservedAsset") is True
+        and media_keyboard[0].get("treeDeleteRequestedConfirmation") is True
+        and 0 < media_picker[0].get("renderedRows", 0) < media_picker[0].get("eligibleRows", 0)
+        and media_picker[0].get("activeAsset") == "acceptance-bulk-0"
+        and media_picker[0].get("folder") == "acceptance-folder-0"
+        and media_picker[0].get("sourceIn", -1) >= 0
+        and media_picker[0].get("sourceOut", -1) > media_picker[0].get("sourceIn", -1)
+        and media_picker[0].get("timelineStable") is True
+        and media_picker[0].get("nativeFilterSelected") is True
+        and media_picker[0].get("nativeScrollAnchored") is True
+        and media_picker[0].get("postPurposeSelectedSameAsset") is True
+        and media_picker[0].get("productionPurposeRestored") is True
         and selection_source[0].get("activeAsset") == "selection-source"
         and selection_source[0].get("sourceFrame") == 42
         and selection_source[0].get("sourceIn") == 18

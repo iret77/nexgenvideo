@@ -4,23 +4,30 @@ import SwiftUI
 /// Transparent native AppKit drop target.
 struct DropTargetOverlay: NSViewRepresentable {
     @Binding var isTargeted: Bool
+    var helpText: String
+    var onClick: () -> Void
     var onDrop: (String) -> Void
 
     func makeNSView(context: Context) -> DropTargetNSView {
         let view = DropTargetNSView()
+        view.toolTip = helpText
         view.onTargetChanged = { isTargeted = $0 }
+        view.onClick = onClick
         view.onDrop = onDrop
         return view
     }
 
     func updateNSView(_ nsView: DropTargetNSView, context: Context) {
+        nsView.toolTip = helpText
         nsView.onTargetChanged = { isTargeted = $0 }
+        nsView.onClick = onClick
         nsView.onDrop = onDrop
     }
 }
 
 final class DropTargetNSView: NSView {
     var onTargetChanged: ((Bool) -> Void)?
+    var onClick: (() -> Void)?
     var onDrop: ((String) -> Void)?
 
     override init(frame: NSRect) {
@@ -29,6 +36,10 @@ final class DropTargetNSView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    override func mouseDown(with event: NSEvent) {
+        onClick?()
+    }
 
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
         onTargetChanged?(true)

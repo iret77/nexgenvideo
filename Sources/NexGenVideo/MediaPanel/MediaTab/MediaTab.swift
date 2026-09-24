@@ -132,6 +132,11 @@ struct MediaTab: View {
             .layoutPriority(1)
             .onChange(of: searchQuery) { _, _ in scheduleMomentSearch() }
             .onChange(of: searchScope) { _, _ in scheduleMomentSearch() }
+            .onChange(of: filterTypes) { _, _ in scheduleMomentSearch() }
+            .onChange(of: filterAI) { _, _ in scheduleMomentSearch() }
+            .onChange(of: currentFolderId) { _, _ in scheduleMomentSearch() }
+            .onChange(of: viewMode) { _, _ in scheduleMomentSearch() }
+            .onChange(of: momentSearchAssetRevision) { _, _ in scheduleMomentSearch() }
 
             if editor.showGenerationPanel && !mediaAreaCollapsed {
                 GenerationView(
@@ -150,6 +155,11 @@ struct MediaTab: View {
         }
         .onExitCommand { if editor.pendingSwapClipId != nil { editor.cancelMediaSwap() } }
         .background(KeyCommandSink(onNewFolder: createNewFolderInCurrent, onNavigateUp: navigateUp))
+        .simultaneousGesture(TapGesture().onEnded {
+            guard workspace == editor.workspaceFocus else { return }
+            editor.focusedPanel = .media
+            editor.mediaCommandFocus = .browser
+        })
         .background {
             if WorkspaceUIAcceptance.isRequested {
                 AppRelaunchClickProbe(
@@ -161,7 +171,7 @@ struct MediaTab: View {
             }
         }
         .onChange(of: editor.folders.map(\.id)) { _, _ in pruneStaleFolderState() }
-        .onChange(of: editor.mediaPanelRevealAssetId, initial: true) { _, target in
+        .onChange(of: editor.mediaPanelRevealAssetId) { _, target in
             guard workspace == editor.workspaceFocus, let target else { return }
             revealAsset(id: target)
             editor.mediaPanelRevealAssetId = nil
@@ -171,7 +181,7 @@ struct MediaTab: View {
             if target == MediaWorkspaceNavigation.rootRouteID {
                 navigateToFolder(nil)
             } else {
-                openFolder(id: target)
+                openFolder(id: target, preservingSelection: true)
             }
             editor.mediaPanelOpenFolderId = nil
         }
@@ -195,7 +205,10 @@ struct MediaTab: View {
             assetLayout = session.layout
             currentFolderId = session.folderID ?? editor.mediaPanelCurrentFolderId
             editor.publishMediaPanelFolder(currentFolderId, for: workspace)
-            if let anchor = session.scrollAnchorID {
+            if let target = editor.mediaPanelRevealAssetId, workspace == editor.workspaceFocus {
+                revealAsset(id: target)
+                editor.mediaPanelRevealAssetId = nil
+            } else if let anchor = session.scrollAnchorID {
                 DispatchQueue.main.async { editor.mediaPanelScrollTarget = anchor }
             }
         }
@@ -300,17 +313,21 @@ struct MediaTab: View {
         if viewMode == .grouped {
             collapsedGroupedKeys.remove(asset.folderId ?? "")
         }
+        let session = editor.mediaLibrarySession(for: mediaPurpose)
+        session.folderID = asset.folderId
+        session.scrollAnchorID = id
+        editor.selectMediaAsset(asset, for: mediaPurpose)
         editor.mediaPanelScrollTarget = id
     }
 
-    func openFolder(id: String) {
+    func openFolder(id: String, preservingSelection: Bool = false) {
         guard editor.folder(id: id) != nil else { return }
         if viewMode != .folder {
             folderReturnViewMode = viewMode
         }
         currentFolderId = id
         viewMode = .folder
-        editor.selectedFolderIds.removeAll()
+        if !preservingSelection { editor.selectedFolderIds.removeAll() }
     }
 
     // MARK: - Toolbar
@@ -589,13 +606,20 @@ struct MediaTab: View {
     }
 
     func passesFilters(_ asset: MediaAsset) -> Bool {
+        let folderOk = viewMode != .folder || currentFolderId == nil || asset.folderId == currentFolderId
         let typeOk = filterTypes.isEmpty || filterTypes.contains(asset.type)
         let aiOk = !filterAI || asset.isGenerated
         let q = searchQuery.trimmingCharacters(in: .whitespaces)
         let nameOk = q.isEmpty || searchScope != .filename
             || asset.userFacingFilename.localizedCaseInsensitiveContains(q)
             || asset.name.localizedCaseInsensitiveContains(q)
-        return typeOk && aiOk && nameOk
+        return folderOk && typeOk && aiOk && nameOk
+    }
+
+    var momentSearchAssetRevision: [String] {
+        editor.mediaAssets.map {
+            "\($0.id)|\($0.folderId ?? "")|\($0.type.rawValue)|\($0.isGenerated)"
+        }
     }
 
     func sortAndFilter(_ assets: [MediaAsset]) -> [MediaAsset] {

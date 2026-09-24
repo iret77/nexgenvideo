@@ -19,6 +19,10 @@ struct MediaWorkspaceCenterView: View {
                                 .allowsHitTesting(false)
                         }
                     }
+                    .simultaneousGesture(TapGesture().onEnded {
+                        editor.focusedPanel = .media
+                        editor.mediaCommandFocus = .browser
+                    })
                 PreviewContainerView()
                     .frame(minHeight: AppTheme.Layout.previewMinHeight)
                     .accessibilityIdentifier("media.workspace.sourcePreview")
@@ -29,6 +33,10 @@ struct MediaWorkspaceCenterView: View {
                                 .allowsHitTesting(false)
                         }
                     }
+                    .simultaneousGesture(TapGesture().onEnded {
+                        editor.focusedPanel = .preview
+                        editor.mediaCommandFocus = nil
+                    })
             }
         }
     }
@@ -149,6 +157,16 @@ private func compactLibraryDisclosure(
         .buttonStyle(.plain)
         .hoverHighlight()
         .accessibilityLabel(showsLibrary.wrappedValue ? "Hide Library" : "Show Library")
+        .background {
+            if WorkspaceUIAcceptance.isRequested {
+                AppRelaunchClickProbe(
+                    identifier: "mediaPicker.toggle.\(purpose.accessibilitySuffix)",
+                    acceptanceState: showsLibrary.wrappedValue
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
+            }
+        }
 
         if showsLibrary.wrappedValue {
             CompactMediaSourcePicker(purpose: purpose, title: title)
