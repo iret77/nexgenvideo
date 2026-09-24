@@ -5,6 +5,15 @@ import Testing
 @Suite("export_project tool", .serialized)
 @MainActor
 struct ExportProjectToolTests {
+    private func openProject(_ harness: ToolHarness, name: String = "Project") throws -> URL {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("export-tool-project-\(UUID().uuidString)", isDirectory: true)
+        let package = root.appendingPathComponent("\(name).ngv", isDirectory: true)
+        try Fixtures.prepareProjectPackage(at: package, timeline: harness.editor.timeline)
+        harness.editor.projectURL = package
+        return root
+    }
+
     @Test func rejectsInvalidArguments() async {
         let h = ToolHarness(timeline: Fixtures.timeline(tracks: [
             Fixtures.videoTrack(clips: [Fixtures.clip(mediaRef: "missing", start: 0, duration: 30)]),
@@ -33,10 +42,16 @@ struct ExportProjectToolTests {
         #expect(ToolHarness.textOf(emptyTimeline).contains("timeline is empty"))
     }
 
-    @Test func handlesDestinationsAndExportGate() async throws {
+    @Test func handlesDestinations() async throws {
         let h = ToolHarness(timeline: Fixtures.timeline(tracks: [
             Fixtures.videoTrack(clips: [Fixtures.clip(mediaRef: "missing", start: 0, duration: 30)]),
         ]))
+        let base = "export-tool-\(UUID().uuidString)"
+        let projectRoot = try openProject(h, name: base)
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: projectRoot)
+        }
 
         let existingVideo = FileManager.default.temporaryDirectory
             .appendingPathComponent("export-tool-existing-\(UUID().uuidString).mp4")
@@ -51,8 +66,6 @@ struct ExportProjectToolTests {
         #expect(ToolHarness.textOf(overwriteFalse).contains("already exists"))
 
         let downloads = try #require(FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first)
-        let base = "export-tool-\(UUID().uuidString)"
-        h.editor.projectURL = URL(fileURLWithPath: "/tmp/\(base).\(Project.fileExtension)")
         let existingXML = downloads.appendingPathComponent("\(base).xml")
         try Data("existing".utf8).write(to: existingXML)
         defer { try? FileManager.default.removeItem(at: existingXML) }
@@ -64,60 +77,50 @@ struct ExportProjectToolTests {
         #expect(uniqueURL.deletingLastPathComponent().standardizedFileURL == downloads.standardizedFileURL)
         #expect(uniqueURL.lastPathComponent == "\(base) 2.xml")
 
-        await ExportCoordinator.acquireExport()
-        defer { ExportCoordinator.endExport() }
-
-        let uiActiveXML = FileManager.default.temporaryDirectory
-            .appendingPathComponent("export-tool-ui-active-\(UUID().uuidString).xml")
-        defer { try? FileManager.default.removeItem(at: uiActiveXML) }
-        let uiActiveXMLResult = await h.runRaw("export_project", args: [
-            "mode": "xml",
-            "outputPath": uiActiveXML.path,
-        ])
-        #expect(uiActiveXMLResult.isError)
-        #expect(ToolHarness.textOf(uiActiveXMLResult).contains("Another export"))
-        #expect(!FileManager.default.fileExists(atPath: uiActiveXML.path))
-
-        let uiActiveFCPXML = FileManager.default.temporaryDirectory
-            .appendingPathComponent("export-tool-ui-active-\(UUID().uuidString).fcpxml")
-        defer { try? FileManager.default.removeItem(at: uiActiveFCPXML) }
-        let uiActiveFCPXMLResult = await h.runRaw("export_project", args: [
-            "mode": "fcpxml",
-            "outputPath": uiActiveFCPXML.path,
-        ])
-        #expect(uiActiveFCPXMLResult.isError)
-        #expect(ToolHarness.textOf(uiActiveFCPXMLResult).contains("Another export"))
-        #expect(!FileManager.default.fileExists(atPath: uiActiveFCPXML.path))
-
-        let uiActiveVideo = FileManager.default.temporaryDirectory
-            .appendingPathComponent("export-tool-ui-active-\(UUID().uuidString).mp4")
-        let uiActiveResult = await h.runRaw("export_project", args: [
-            "mode": "video",
-            "outputPath": uiActiveVideo.path,
-        ])
-        #expect(uiActiveResult.isError)
-        #expect(ToolHarness.textOf(uiActiveResult).contains("Another export"))
-        #expect(!FileManager.default.fileExists(atPath: uiActiveVideo.path))
     }
 
     @Test func exportsXML() async throws {
         let h = ToolHarness(timeline: Fixtures.timeline(tracks: [
             Fixtures.videoTrack(clips: [Fixtures.clip(mediaRef: "missing", start: 0, duration: 30)]),
         ]))
+        let projectRoot = try openProject(h)
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: projectRoot)
+        }
         let xmlURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("export-tool-\(UUID().uuidString).xml")
         defer { try? FileManager.default.removeItem(at: xmlURL) }
+        let requestID = UUID().uuidString
         let xml = try await h.runOK("export_project", args: [
             "mode": "xml",
             "outputPath": xmlURL.path,
+            "requestID": requestID,
+        ]) as? [String: Any]
+        var changed = h.editor.timeline
+        changed.width += 100
+        changed.tracks[0].clips[0].durationFrames = 90
+        h.editor.timeline = changed
+        let joined = try await h.runOK("export_project", args: [
+            "mode": "xml",
+            "outputPath": xmlURL.path,
+            "requestID": requestID,
         ]) as? [String: Any]
         #expect(xml?["status"] as? String == "exported")
         #expect(xml?["mode"] as? String == "xml")
+        #expect((xml?["jobID"] as? String) == (joined?["jobID"] as? String))
+        #expect((xml?["width"] as? Int) == (joined?["width"] as? Int))
+        #expect((joined?["durationFrames"] as? Int) == 30)
         #expect(try String(contentsOf: xmlURL, encoding: .utf8).contains("<xmeml version=\"4\">"))
     }
 
     @Test func exportsVersionedFCPXMLWithEvidence() async throws {
         let h = ToolHarness(timeline: Fixtures.timeline())
+        let projectRoot = try openProject(h)
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: projectRoot)
+        }
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("export-tool-\(UUID().uuidString).fcpxml")
         defer { try? FileManager.default.removeItem(at: outputURL) }

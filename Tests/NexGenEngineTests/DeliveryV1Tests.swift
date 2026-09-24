@@ -52,6 +52,7 @@ struct DeliveryV1Tests {
             audioLayout: "none", captionMode: "none", disclosureMode: "project-record")
         let running = DeliveryAttemptV1(id: "attempt-1", spec: spec,
             finishedTimelineSHA256: hash("finish"), status: .running,
+            outputPath: "/tmp/master.mp4",
             createdAt: "2026-09-09T00:00:00Z")
         try DeliveryValidatorV1.validate(attempt: running)
 

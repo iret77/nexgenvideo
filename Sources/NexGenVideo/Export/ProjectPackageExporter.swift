@@ -24,8 +24,10 @@ enum ProjectPackageExporter {
         generationLog: GenerationLog,
         sourceProjectURL: URL?,
         to destURL: URL,
+        isCancelled: (@Sendable () -> Bool)? = nil,
         progress: (@Sendable (Double) -> Void)? = nil
     ) throws -> Report {
+        if isCancelled?() == true { throw CancellationError() }
         let fm = FileManager.default
         let parent = destURL.deletingLastPathComponent()
         try fm.createDirectory(at: parent, withIntermediateDirectories: true)
@@ -35,7 +37,12 @@ enum ProjectPackageExporter {
         )
         defer { try? fm.removeItem(at: staging) }
         if let sourceProjectURL {
-            try fm.copyItem(at: sourceProjectURL, to: staging)
+            try copyDirectory(
+                from: sourceProjectURL,
+                to: staging,
+                isCancelled: isCancelled
+            )
+            if isCancelled?() == true { throw CancellationError() }
             try ProjectWorkingCopy.sanitizePackageStaging(staging, fm: fm)
         } else {
             try fm.createDirectory(at: staging, withIntermediateDirectories: true)
@@ -50,6 +57,7 @@ enum ProjectPackageExporter {
         let total = max(1, manifest.entries.count)
 
         for (index, entry) in manifest.entries.enumerated() {
+            if isCancelled?() == true { throw CancellationError() }
             defer { progress?(Double(index + 1) / Double(total)) }
 
             guard let srcURL = sourceURL(for: entry.source, projectURL: sourceProjectURL),
@@ -65,7 +73,7 @@ enum ProjectPackageExporter {
                 relativePath = existing
             } else {
                 let dest = uniqueURL(in: mediaDir, preferredName: filename(for: entry, sourceURL: srcURL), fm: fm)
-                try fm.copyItem(at: srcURL, to: dest)
+                try copyFile(from: srcURL, to: dest, isCancelled: isCancelled)
                 relativePath = "\(Project.mediaDirectoryName)/\(dest.lastPathComponent)"
                 relativePathBySource[key] = relativePath
                 report.totalBytes += fileSize(dest, fm: fm)
@@ -86,6 +94,7 @@ enum ProjectPackageExporter {
         try encoder.encode(newManifest).write(to: staging.appendingPathComponent(Project.manifestFilename))
         try encoder.encode(generationLog).write(to: staging.appendingPathComponent(Project.generationLogFilename))
 
+        if isCancelled?() == true { throw CancellationError() }
         let sourceKey = ProjectIdentity.existingKey(for: staging)
         try ProjectIdentity.regenerate(at: staging)
         guard let exportedKey = ProjectIdentity.existingKey(for: staging),
@@ -93,11 +102,74 @@ enum ProjectPackageExporter {
             throw ProjectWorkingCopy.PersistError.identityNotRegenerated
         }
 
+        if isCancelled?() == true { throw CancellationError() }
         try ProjectWorkingCopy.commitStagedPackage(staging, to: destURL, fm: fm)
         return report
     }
 
     // MARK: - Helpers
+
+    private static func copyFile(
+        from source: URL,
+        to destination: URL,
+        isCancelled: (@Sendable () -> Bool)?
+    ) throws {
+        let fm = FileManager.default
+        guard fm.createFile(atPath: destination.path, contents: nil) else {
+            throw ToolError("The project export couldn't create a media copy.")
+        }
+        let reader = try FileHandle(forReadingFrom: source)
+        defer { try? reader.close() }
+        let writer = try FileHandle(forWritingTo: destination)
+        defer { try? writer.close() }
+        while true {
+            if isCancelled?() == true { throw CancellationError() }
+            guard let data = try reader.read(upToCount: 1_048_576), !data.isEmpty else {
+                break
+            }
+            try writer.write(contentsOf: data)
+        }
+    }
+
+    private static func copyDirectory(
+        from source: URL,
+        to destination: URL,
+        isCancelled: (@Sendable () -> Bool)?
+    ) throws {
+        let fm = FileManager.default
+        try fm.createDirectory(at: destination, withIntermediateDirectories: true)
+        guard let enumerator = fm.enumerator(
+            at: source,
+            includingPropertiesForKeys: [
+                .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey,
+            ],
+            options: []
+        ) else {
+            throw ToolError("The project source couldn't be enumerated for export.")
+        }
+        for case let item as URL in enumerator {
+            if isCancelled?() == true { throw CancellationError() }
+            let relative = String(item.path.dropFirst(source.path.count + 1))
+            let target = destination.appendingPathComponent(relative)
+            let values = try item.resourceValues(
+                forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey]
+            )
+            guard values.isSymbolicLink != true else {
+                throw ToolError("The project source contains a symbolic link.")
+            }
+            if values.isDirectory == true {
+                try fm.createDirectory(at: target, withIntermediateDirectories: true)
+            } else if values.isRegularFile == true {
+                try fm.createDirectory(
+                    at: target.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                try copyFile(from: item, to: target, isCancelled: isCancelled)
+            } else {
+                throw ToolError("The project source contains an unsupported file.")
+            }
+        }
+    }
 
     private static func sourceURL(for source: MediaSource, projectURL: URL?) -> URL? {
         switch source {

@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 
 struct ExportView: View {
     @Environment(EditorViewModel.self) var editor
-    @State private var service = ExportService()
+    @State private var queue = ExportQueue.shared
     @State private var mode: ExportMode = .video
     @State private var codec: VideoCodec = .h264
     @State private var resolution: ExportResolution = .matchTimeline
@@ -15,6 +15,8 @@ struct ExportView: View {
     @State private var requireSequenceReview = false
     @State private var preparingDelivery = false
     @State private var preview: NSImage?
+    @State private var selectedJobID: String?
+    @State private var exportError: String?
     @State private var ngvResult: String?
     @State private var ngvSummary: (collect: Int, missing: Int, bytes: Int64) = (0, 0, 0)
 
@@ -38,6 +40,11 @@ struct ExportView: View {
         .task {
             loadPreview()
             ngvSummary = computeNGVSummary()
+            let recovered = queue.loadPersistedDeliveryJobs(
+                ownerKey: editor.openWorkingCopyKey,
+                dataRoot: editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) }
+            )
+            if recovered { editor.onPipelineChanged?() }
         }
     }
 
@@ -77,7 +84,8 @@ struct ExportView: View {
         VStack(spacing: AppTheme.Spacing.none) {
             panelHeader("Export")
 
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
             // Settings rows
             VStack(spacing: AppTheme.Spacing.none) {
                 settingRow(label: "Format") {
@@ -209,12 +217,23 @@ struct ExportView: View {
                 }
             }
 
-            // Progress
-            if service.isExporting {
+            if !projectJobs.isEmpty {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+                    Text("Queue")
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                    ForEach(projectJobs) { job in
+                        exportJobRow(job)
+                    }
+                }
+                .padding(.top, AppTheme.Spacing.md)
+            }
+
+            if let job = activeJob {
                 VStack(spacing: AppTheme.Spacing.xs) {
-                    ProgressView(value: service.progress)
+                    ProgressView(value: job.progress)
                         .progressViewStyle(.linear)
-                    Text("\(Int(service.progress * 100))%")
+                    Text("\(job.detail) · \(Int(job.progress * 100))%")
                         .interfaceFont(size: AppTheme.Typography.ui)
                         .monospacedDigit()
                         .foregroundStyle(AppTheme.Text.secondaryColor)
@@ -222,7 +241,7 @@ struct ExportView: View {
                 .padding(.top, AppTheme.Spacing.md)
             }
 
-            if let error = service.error {
+            if let error = exportError ?? selectedJob?.failure {
                 Text(error)
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Status.errorColor)
@@ -236,7 +255,16 @@ struct ExportView: View {
                     .padding(.top, AppTheme.Spacing.sm)
             }
 
-            if let report = service.lastFCPXMLReport {
+            if selectedJob?.fcpxmlReport == nil {
+                ForEach(Array((selectedJob?.warnings ?? []).enumerated()), id: \.offset) { _, warning in
+                    Text(warning)
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .foregroundStyle(AppTheme.Status.warningColor)
+                        .padding(.top, AppTheme.Spacing.sm)
+                }
+            }
+
+            if let report = selectedJob?.fcpxmlReport {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                     Text("Validated Apple DTD · FCPXML \(report.version.rawValue) · \(ByteCountFormatter.string(fromByteCount: report.outputByteCount, countStyle: .file))")
                         .interfaceFont(size: AppTheme.Typography.ui)
@@ -261,9 +289,10 @@ struct ExportView: View {
                 .padding(.top, AppTheme.Spacing.sm)
             }
 
-            Spacer()
+                Spacer()
+                }
+                .padding(AppTheme.Spacing.xl)
             }
-            .padding(AppTheme.Spacing.xl)
         }
     }
 
@@ -299,22 +328,121 @@ struct ExportView: View {
 
             Spacer()
 
-            Button(service.isExporting ? "Cancel Export" : "Cancel") {
-                if service.isExporting {
-                    service.cancel()
+            Button(activeJob?.status == .cancelling ? "Cancelling" : (activeJob != nil ? "Cancel Export" : "Cancel")) {
+                if let activeJob {
+                    queue.cancel(jobID: activeJob.id)
                 } else {
                     editor.showExportDialog = false
                 }
             }
-                .keyboardShortcut(.cancelAction)
+            .buttonStyle(.capsule(.secondary, size: .regular))
+            .disabled(activeJob?.status == .cancelling)
+            .keyboardShortcut(.cancelAction)
             Button("Export") { startExport() }
                 .buttonStyle(.glassProminent)
                 .buttonBorderShape(.capsule)
-                .disabled(service.isExporting || preparingDelivery)
+                .disabled(preparingDelivery)
                 .keyboardShortcut(.defaultAction)
         }
         .padding(.horizontal, AppTheme.Spacing.xl)
         .padding(.vertical, AppTheme.Spacing.lg)
+    }
+
+    private var projectJobs: [ExportJob] {
+        let jobs = queue.jobs(ownerKey: editor.openWorkingCopyKey)
+        guard let activeJob = queue.activeJob(ownerKey: editor.openWorkingCopyKey),
+              !jobs.prefix(4).contains(where: { $0.id == activeJob.id }) else {
+            return Array(jobs.prefix(4))
+        }
+        return [activeJob] + Array(jobs.filter { $0.id != activeJob.id }.prefix(3))
+    }
+
+    private var selectedJob: ExportJob? {
+        if let selectedJobID,
+           let selected = projectJobs.first(where: { $0.id == selectedJobID }) {
+            return selected
+        }
+        return projectJobs.first
+    }
+
+    private var activeJob: ExportJob? {
+        queue.activeJob(ownerKey: editor.openWorkingCopyKey)
+    }
+
+    private func exportJobRow(_ job: ExportJob) -> some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+            HStack(spacing: AppTheme.Spacing.sm) {
+                Image(systemName: statusSymbol(job.status))
+                    .foregroundStyle(statusColor(job.status))
+                    .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.sm)
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                    Text(job.title)
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
+                        .foregroundStyle(AppTheme.Text.primaryColor)
+                        .lineLimit(1)
+                    Text("\(job.detail) · \(job.id.prefix(8))")
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                }
+                Spacer()
+            }
+
+            HStack(spacing: AppTheme.Spacing.sm) {
+                Button("Cancel") { queue.cancel(jobID: job.id) }
+                    .disabled(!job.canCancel)
+                Button("Retry") {
+                    do {
+                        let retry = try queue.retry(jobID: job.id)
+                        selectedJobID = retry.id
+                        exportError = nil
+                    } catch {
+                        exportError = error.localizedDescription
+                    }
+                }
+                .disabled(!queue.canRetry(jobID: job.id))
+                Button("Reveal") {
+                    if let url = job.destinationURL {
+                        NSWorkspace.shared.activateFileViewerSelecting([url])
+                    }
+                }
+                .disabled(!job.canReveal)
+                Spacer()
+            }
+            .buttonStyle(.capsule(.secondary, size: .small))
+        }
+        .padding(AppTheme.Spacing.sm)
+        .background(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                .fill(
+                    selectedJob?.id == job.id
+                        ? AppTheme.Background.prominentColor
+                        : AppTheme.Background.raisedColor
+                )
+        )
+        .contentShape(Rectangle())
+        .onTapGesture { selectedJobID = job.id }
+    }
+
+    private func statusSymbol(_ status: ExportJobStatus) -> String {
+        switch status {
+        case .pending: "clock"
+        case .preparing: "gearshape"
+        case .exporting: "arrow.up.circle"
+        case .cancelling: "xmark.circle"
+        case .completed: "checkmark.circle.fill"
+        case .failed: "exclamationmark.triangle.fill"
+        case .cancelled: "xmark.circle.fill"
+        case .interrupted: "pause.circle.fill"
+        }
+    }
+
+    private func statusColor(_ status: ExportJobStatus) -> Color {
+        switch status {
+        case .completed: AppTheme.Status.successColor
+        case .failed: AppTheme.Status.errorColor
+        case .cancelled, .interrupted: AppTheme.Status.warningColor
+        case .pending, .preparing, .exporting, .cancelling: AppTheme.Text.secondaryColor
+        }
     }
 
     // MARK: - Helpers
@@ -406,24 +534,24 @@ struct ExportView: View {
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
             Task {
-                if mode == .xml || mode == .fcpxml {
-                    await service.export(
-                        timeline: editor.timeline,
-                        resolver: editor.mediaResolver,
-                        format: format,
-                        resolution: resolution,
-                        outputURL: url,
-                        projectName: editor.projectURL?.deletingPathExtension().lastPathComponent ?? "Timeline Export",
-                        fcpxmlVersion: fcpxmlVersion,
-                        fcpxmlTarget: fcpxmlTarget
-                    )
-                    if mode == .xml, service.error == nil { editor.showExportDialog = false }
-                    return
-                }
                 preparingDelivery = true
-                service.error = nil
+                exportError = nil
                 ngvResult = nil
+                defer { preparingDelivery = false }
                 do {
+                    if mode == .xml || mode == .fcpxml {
+                        let job = try queue.enqueueInterchange(
+                            editor: editor,
+                            format: format,
+                            outputURL: url,
+                            projectName: editor.projectURL?.deletingPathExtension().lastPathComponent ?? "Timeline Export",
+                            fcpxmlVersion: fcpxmlVersion,
+                            fcpxmlTarget: fcpxmlTarget
+                        )
+                        selectedJobID = job.id
+                        ngvResult = "Queued · \(job.id.prefix(8))"
+                        return
+                    }
                     _ = try PipelineDeliveryStore.adoptCurrentTimeline(
                         editor: editor,
                         requireSequenceReview: requireSequenceReview
@@ -437,22 +565,17 @@ struct ExportView: View {
                         resolution: resolution,
                         requireSequenceReview: requireSequenceReview
                     )
-                    preparingDelivery = false
-                    let attempt = try await PipelineDeliveryStore.export(
+                    let job = try queue.enqueueDelivery(
                         editor: editor,
                         spec: spec,
                         format: format,
                         resolution: resolution,
-                        outputURL: url,
-                        service: service
+                        outputURL: url
                     )
-                    let outputSize = attempt.outputByteCount.map {
-                        ByteCountFormatter.string(fromByteCount: $0, countStyle: .file)
-                    } ?? "exported"
-                    ngvResult = "QC passed · \(outputSize) · \(attempt.id.prefix(8))"
+                    selectedJobID = job.id
+                    ngvResult = "Queued · \(job.id.prefix(8))"
                 } catch {
-                    preparingDelivery = false
-                    service.error = error.localizedDescription
+                    exportError = error.localizedDescription
                 }
             }
         }
@@ -460,6 +583,7 @@ struct ExportView: View {
 
     private func startNGVExport() {
         ngvResult = nil
+        exportError = nil
         let panel = NSSavePanel()
         panel.allowedContentTypes = [UTType(Project.typeIdentifier) ?? .package]
         let base = editor.projectURL?.deletingPathExtension().lastPathComponent ?? Project.defaultProjectName
@@ -468,20 +592,17 @@ struct ExportView: View {
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
             Task {
-                let report = await service.exportProjectPackage(
-                    timeline: editor.timeline,
-                    manifest: editor.mediaManifest,
-                    generationLog: editor.generationLog,
-                    sourceProjectURL: editor.workingRoot,
-                    outputURL: url
-                )
-                guard let report, service.error == nil else { return }
-                if report.missing.isEmpty {
-                    NSWorkspace.shared.activateFileViewerSelecting([url])
-                    editor.showExportDialog = false
-                } else {
-                    // Keep the dialog open so the user sees what couldn't be included.
-                    ngvResult = "Exported, but \(report.missing.count) media file\(report.missing.count == 1 ? "" : "s") were missing and couldn't be included."
+                preparingDelivery = true
+                defer { preparingDelivery = false }
+                do {
+                    let job = try queue.enqueueProjectPackage(
+                        editor: editor,
+                        outputURL: url
+                    )
+                    selectedJobID = job.id
+                    ngvResult = "Queued · \(job.id.prefix(8))"
+                } catch {
+                    exportError = error.localizedDescription
                 }
             }
         }

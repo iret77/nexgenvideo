@@ -19,6 +19,17 @@ enum ExportCoordinator {
         exportActive = true
     }
 
+    static func acquireExport(
+        isCancelled: @Sendable () -> Bool
+    ) async throws {
+        while exportActive {
+            if isCancelled() { throw CancellationError() }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        if isCancelled() { throw CancellationError() }
+        exportActive = true
+    }
+
     static func endExport() {
         exportActive = false
     }

@@ -436,16 +436,25 @@ final class EditorViewModel {
         let phaseIsRunning = dataRoot.map {
             phaseCoordinator.runningPhase(projectRoot: $0) != nil
         } ?? false
+        let exportIsRunning = ExportQueue.shared.jobs(ownerKey: key).contains {
+            !$0.status.isTerminal
+        }
+        if exportIsRunning {
+            ExportQueue.shared.cancelAll(ownerKey: key)
+        }
         workingCopyHome = nil
         activeWorkingCopyKey = nil
         activeWorkingCopyGeneration = nil
-        if importTail != nil || phaseIsRunning {
+        if importTail != nil || phaseIsRunning || exportIsRunning {
             Task { @MainActor [phaseCoordinator] in
                 _ = await importTail?.value
                 if let dataRoot, phaseIsRunning {
                     await phaseCoordinator.waitUntilIdle(
                         projectRoot: dataRoot
                     )
+                }
+                if exportIsRunning {
+                    await ExportQueue.shared.waitUntilIdle(ownerKey: key)
                 }
                 ProjectWorkingCopy.discard(
                     key: key,

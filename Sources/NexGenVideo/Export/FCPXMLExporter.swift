@@ -91,6 +91,7 @@ enum FCPXMLExporter {
         version: FCPXMLVersion = .default,
         target: FCPXMLTarget = .default,
         outputURL: URL,
+        publishedOutputURL: URL? = nil,
         isCancelled: @escaping @MainActor @Sendable () -> Bool = { Task.isCancelled },
         progress: @escaping @MainActor @Sendable (Double) -> Void = { _ in }
     ) async throws -> FCPXMLExportReport {
@@ -121,6 +122,12 @@ enum FCPXMLExporter {
                 isCancelled: isCancelled,
                 progress: { value in progress(0.45 + value * 0.35) }
             )
+            let publishedMediaDirectory = mediaDirectory(
+                for: publishedOutputURL ?? outputURL
+            )
+            let emittedRelinkURLs = staged.urls.mapValues {
+                publishedMediaDirectory.appendingPathComponent($0.lastPathComponent)
+            }
             let document = try render(
                 timeline: timeline,
                 resolver: resolver,
@@ -130,6 +137,7 @@ enum FCPXMLExporter {
                 sourceTimecodes: timing.compactMapValues(\.timecode),
                 sourceDurations: timing.compactMapValues(\.duration),
                 relinkURLs: staged.urls,
+                emittedRelinkURLs: emittedRelinkURLs,
                 mediaSHA256: evidence.sha256,
                 mediaByteCounts: evidence.byteCounts
             )
@@ -299,10 +307,7 @@ enum FCPXMLExporter {
             )
         }
 
-        let directory = outputURL.deletingLastPathComponent().appendingPathComponent(
-            "\(outputURL.deletingPathExtension().lastPathComponent) Media",
-            isDirectory: true
-        )
+        let directory = mediaDirectory(for: outputURL)
         let directoryExisted = FileManager.default.fileExists(atPath: directory.path)
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -409,7 +414,11 @@ enum FCPXMLExporter {
 
                 let temporary = directory.appendingPathComponent(".fcpxml-\(UUID().uuidString).tmp")
                 defer { try? FileManager.default.removeItem(at: temporary) }
-                try FileManager.default.copyItem(at: source, to: temporary)
+                try await copyFile(
+                    from: source,
+                    to: temporary,
+                    isCancelled: isCancelled
+                )
                 try await checkCancellation(isCancelled)
                 if FileManager.default.fileExists(atPath: destination.path) {
                     _ = try FileManager.default.replaceItemAt(destination, withItemAt: temporary)
@@ -539,12 +548,45 @@ enum FCPXMLExporter {
         return .init(sha256: digests, byteCounts: byteCounts)
     }
 
+    private static func copyFile(
+        from source: URL,
+        to destination: URL,
+        isCancelled: @escaping @MainActor @Sendable () -> Bool
+    ) async throws {
+        guard FileManager.default.createFile(atPath: destination.path, contents: nil) else {
+            throw ExportError.xmlWriteFailed(
+                destination: destination,
+                reason: "The staged media file could not be created."
+            )
+        }
+        let reader = try FileHandle(forReadingFrom: source)
+        defer { try? reader.close() }
+        let writer = try FileHandle(forWritingTo: destination)
+        defer { try? writer.close() }
+        while true {
+            try await checkCancellation(isCancelled)
+            guard let data = try reader.read(upToCount: 1_048_576), !data.isEmpty else {
+                break
+            }
+            try writer.write(contentsOf: data)
+            await Task.yield()
+        }
+        try await checkCancellation(isCancelled)
+    }
+
     private static func cleanup(_ staged: StagedMedia) {
         for url in staged.createdFiles { try? FileManager.default.removeItem(at: url) }
         if let directory = staged.createdDirectory,
            (try? FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty) == true {
             try? FileManager.default.removeItem(at: directory)
         }
+    }
+
+    static func mediaDirectory(for outputURL: URL) -> URL {
+        outputURL.deletingLastPathComponent().appendingPathComponent(
+            "\(outputURL.deletingPathExtension().lastPathComponent) Media",
+            isDirectory: true
+        )
     }
 
     static func render(
@@ -556,9 +598,13 @@ enum FCPXMLExporter {
         sourceTimecodes: [String: SourceTimecode] = [:],
         sourceDurations: [String: RationalSeconds] = [:],
         relinkURLs: [String: URL] = [:],
+        emittedRelinkURLs: [String: URL] = [:],
         mediaSHA256: [String: String] = [:],
         mediaByteCounts: [String: Int64] = [:]
     ) throws -> RenderedDocument {
+        let outputRelinkURLs = emittedRelinkURLs.isEmpty
+            ? relinkURLs
+            : emittedRelinkURLs
         let built = try Builder(
             timeline: timeline,
             resolver: resolver,
@@ -568,6 +614,7 @@ enum FCPXMLExporter {
             sourceTimecodes: sourceTimecodes,
             sourceDurations: sourceDurations,
             relinkURLs: relinkURLs,
+            emittedRelinkURLs: outputRelinkURLs,
             mediaSHA256: mediaSHA256,
             mediaByteCounts: mediaByteCounts
         ).build()
@@ -592,6 +639,7 @@ enum FCPXMLExporter {
         private let sourceTimecodes: [String: SourceTimecode]
         private let sourceDurations: [String: RationalSeconds]
         private let relinkURLs: [String: URL]
+        private let emittedRelinkURLs: [String: URL]
         private let mediaSHA256: [String: String]
         private let mediaByteCounts: [String: Int64]
         private let fps: Int
@@ -644,6 +692,7 @@ enum FCPXMLExporter {
             sourceTimecodes: [String: SourceTimecode],
             sourceDurations: [String: RationalSeconds],
             relinkURLs: [String: URL],
+            emittedRelinkURLs: [String: URL],
             mediaSHA256: [String: String],
             mediaByteCounts: [String: Int64]
         ) {
@@ -655,6 +704,7 @@ enum FCPXMLExporter {
             self.sourceTimecodes = sourceTimecodes
             self.sourceDurations = sourceDurations
             self.relinkURLs = relinkURLs
+            self.emittedRelinkURLs = emittedRelinkURLs
             self.mediaSHA256 = mediaSHA256
             self.mediaByteCounts = mediaByteCounts
             fps = max(1, timeline.fps)
@@ -1299,19 +1349,22 @@ enum FCPXMLExporter {
                         reason: "Media \"\(originalFilename)\" has no finite, representable duration."
                     )
                 }
-                let mediaURL = relinkURLs[identity] ?? resolvedURL
+                let evidenceURL = relinkURLs[identity] ?? resolvedURL
+                let mediaURL = emittedRelinkURLs[identity]
+                    ?? resolver.interchangeURL(for: preferredRef)
+                    ?? resolvedURL
                 let values: URLResourceValues
                 let mediaDigest: String
                 do {
-                    values = try mediaURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+                    values = try evidenceURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
                     guard values.isRegularFile == true, values.fileSize != nil else {
-                        throw ExportError.xmlMediaReadFailed(source: mediaURL, reason: "The media is not a regular file.")
+                        throw ExportError.xmlMediaReadFailed(source: evidenceURL, reason: "The media is not a regular file.")
                     }
-                    mediaDigest = try mediaSHA256[identity] ?? FileDigest.sha256(of: mediaURL)
+                    mediaDigest = try mediaSHA256[identity] ?? FileDigest.sha256(of: evidenceURL)
                 } catch let error as ExportError {
                     throw error
                 } catch {
-                    throw ExportError.xmlMediaReadFailed(source: mediaURL, reason: error.localizedDescription)
+                    throw ExportError.xmlMediaReadFailed(source: evidenceURL, reason: error.localizedDescription)
                 }
                 let resource = MediaResource(
                     mediaRefs: mediaRefs,

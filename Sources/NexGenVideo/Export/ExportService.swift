@@ -50,9 +50,32 @@ struct ExportRunReport {
     let unprocessableMediaRefs: Set<String>
 }
 
+final class ExportCancellationFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+
+    func reset() {
+        lock.withLock { value = false }
+    }
+
+    func cancel() {
+        lock.withLock { value = true }
+    }
+
+    var isCancelled: Bool {
+        lock.withLock { value }
+    }
+}
+
 @Observable
 @MainActor
 final class ExportService {
+    enum Event: Sendable, Equatable {
+        case preparing
+        case exporting
+        case progress(Double)
+    }
+
     var progress: Double = 0
     var isExporting = false
     var error: String?
@@ -61,6 +84,7 @@ final class ExportService {
 
     func cancel() {
         cancelRequested = true
+        cancellationFlag.cancel()
         activeExportSession?.cancelExport()
     }
 
@@ -73,14 +97,18 @@ final class ExportService {
         projectName: String = "Timeline Export",
         fcpxmlVersion: FCPXMLVersion = .default,
         fcpxmlTarget: FCPXMLTarget = .default,
-        acquireSlot: Bool = true
+        referenceOutputURL: URL? = nil,
+        acquireSlot: Bool = true,
+        event: (@MainActor @Sendable (Event) -> Void)? = nil
     ) async {
         error = nil
         lastReport = nil
         lastFCPXMLReport = nil
         cancelRequested = false
+        cancellationFlag.reset()
         isExporting = true
         progress = 0
+        event?(.preparing)
         defer { isExporting = false }
         let resolver = liveResolver.snapshot()
         if acquireSlot {
@@ -109,8 +137,17 @@ final class ExportService {
                 ]
             )
             do {
+                event?(.exporting)
                 if format == .xml {
-                    try XMLExporter.export(timeline: timeline, resolver: resolver, outputURL: outputURL)
+                    let cancellationFlag = cancellationFlag
+                    try await Task.detached(priority: .userInitiated) {
+                        try XMLExporter.export(
+                            timeline: timeline,
+                            resolver: resolver,
+                            outputURL: outputURL,
+                            isCancelled: { cancellationFlag.isCancelled }
+                        )
+                    }.value
                 } else {
                     lastFCPXMLReport = try await FCPXMLExporter.export(
                         timeline: timeline,
@@ -119,11 +156,16 @@ final class ExportService {
                         version: fcpxmlVersion,
                         target: fcpxmlTarget,
                         outputURL: outputURL,
+                        publishedOutputURL: referenceOutputURL,
                         isCancelled: { [weak self] in self?.cancelRequested ?? true },
-                        progress: { [weak self] value in self?.progress = value }
+                        progress: { [weak self] value in
+                            self?.progress = value
+                            event?(.progress(value))
+                        }
                     )
                 }
                 progress = 1.0
+                event?(.progress(1.0))
                 var evidence: [String: Any] = ["format": formatName]
                 if let report = lastFCPXMLReport {
                     evidence["version"] = report.version.rawValue
@@ -168,11 +210,14 @@ final class ExportService {
         )
 
         do {
+            if cancelRequested { throw CancellationError() }
             try await TimelineStyleReview.revalidate(styleReview, timeline: timeline, resolver: resolver)
+            if cancelRequested { throw CancellationError() }
             let prepared = try await makeExportSession(
                 timeline: timeline, resolver: resolver,
                 format: format, resolution: resolution
             )
+            if cancelRequested { throw CancellationError() }
             if styleReview != nil {
                 guard prepared.result.offlineMediaRefs.isEmpty, prepared.result.unprocessableMediaRefs.isEmpty else {
                     throw ToolError("The export cannot reproduce the reviewed cut because media is offline or unprocessable. Repair the media and review the resulting cut again.")
@@ -188,11 +233,15 @@ final class ExportService {
             try? FileManager.default.removeItem(at: outputURL)
 
             nonisolated(unsafe) let unsafeSession = session
+            event?(.exporting)
             let progressTask = Task { @MainActor in
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .milliseconds(200))
                     let p = Double(unsafeSession.progress)
-                    if p != self.progress { self.progress = p }
+                    if p != self.progress {
+                        self.progress = p
+                        event?(.progress(p))
+                    }
                 }
             }
 
@@ -206,6 +255,7 @@ final class ExportService {
                     unprocessableMediaRefs: prepared.result.unprocessableMediaRefs
                 )
                 progress = 1.0
+                event?(.progress(1.0))
                 Log.export.notice(
                     "export ok",
                     telemetry: "Export finished",
@@ -260,12 +310,16 @@ final class ExportService {
         generationLog: GenerationLog,
         sourceProjectURL: URL?,
         outputURL: URL,
-        acquireSlot: Bool = true
+        acquireSlot: Bool = true,
+        event: (@MainActor @Sendable (Event) -> Void)? = nil
     ) async -> ProjectPackageExporter.Report? {
         isExporting = true
         progress = 0
         error = nil
         lastReport = nil
+        cancelRequested = false
+        cancellationFlag.reset()
+        event?(.preparing)
         defer { isExporting = false }
 
         if acquireSlot {
@@ -274,6 +328,8 @@ final class ExportService {
         defer { if acquireSlot { ExportCoordinator.endExport() } }
 
         do {
+            event?(.exporting)
+            let cancellationFlag = cancellationFlag
             Log.export.notice(
                 "ngv export start url=\(outputURL.lastPathComponent)",
                 telemetry: "NexGenVideo project export started",
@@ -288,10 +344,17 @@ final class ExportService {
                 try ProjectPackageExporter.export(
                     timeline: timeline, manifest: manifest, generationLog: generationLog,
                     sourceProjectURL: sourceProjectURL, to: outputURL,
-                    progress: { p in Task { @MainActor in self.progress = p } }
+                    isCancelled: { cancellationFlag.isCancelled },
+                    progress: { p in
+                        Task { @MainActor in
+                            self.progress = p
+                            event?(.progress(p))
+                        }
+                    }
                 )
             }.value
             progress = 1.0
+            event?(.progress(1.0))
             Log.export.notice(
                 "ngv export ok collected=\(report.collected.count) missing=\(report.missing.count)",
                 telemetry: "NexGenVideo project export finished",
@@ -386,4 +449,5 @@ final class ExportService {
 
     private var activeExportSession: AVAssetExportSession?
     private var cancelRequested = false
+    private let cancellationFlag = ExportCancellationFlag()
 }

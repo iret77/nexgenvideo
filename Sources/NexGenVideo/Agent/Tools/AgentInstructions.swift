@@ -175,9 +175,11 @@ enum AgentInstructions {
           for a self-contained .nexgen package. For FCPXML, pass the requested version and target; \
           report every returned warning and the output hash. If the user did \
           not name a destination, omit outputPath; the export writes a unique project-named file \
-          to ~/Downloads. Provide outputPath only when the user named a destination. \
-          video renders in the background, tell the user it is rendering and that they'll get \
-          a notification when it finishes. xml, fcpxml, and nexgen finish inline, so report their result directly.
+          to ~/Downloads. Provide outputPath only when the user named a destination. Use one stable \
+          UUID requestID for reconnect retries of the same request; changed inputs require a new ID. \
+          video joins the host export queue and renders in the background, so report its jobID and \
+          that a notification will report completion. xml, fcpxml, and nexgen also use that queue \
+          but finish before the tool returns, so report their result directly.
 
         # Generation
         - Costs real money and is not undoable. Propose the prompt, model, duration, and \

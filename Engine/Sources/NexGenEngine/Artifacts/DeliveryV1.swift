@@ -464,7 +464,7 @@ public enum DeliveryValidatorV1 {
         }
         switch attempt.status {
         case .queued, .running:
-            guard attempt.outputPath == nil,
+            guard attempt.outputPath.map(text) ?? true,
                   attempt.outputSHA256 == nil,
                   attempt.outputByteCount == nil,
                   attempt.probeQC == nil,
