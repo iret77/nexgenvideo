@@ -51,10 +51,11 @@ struct ProjectStateData: Codable, Sendable, Equatable {
         nextPhase = try c.decodeIfPresent(String.self, forKey: .nextPhase)
     }
 
-    /// The phase the project is currently working toward (first not-yet-approved), if any.
+    /// Host-reported executable phase; missing state never falls back to a UI-derived phase.
     var nextPhaseName: String? {
-        if let nextPhase, !nextPhase.trimmingCharacters(in: .whitespaces).isEmpty { return nextPhase }
-        return phases.first { !$0.approved }?.phase
+        guard let nextPhase,
+              !nextPhase.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
+        return nextPhase
     }
 
     var isComplete: Bool { !phases.isEmpty && phases.allSatisfy(\.approved) }
@@ -77,6 +78,77 @@ struct ProjectStateData: Codable, Sendable, Equatable {
     var spentFraction: Double {
         guard budgetEur > 0 else { return budgetSpentEur > 0 ? 1 : 0 }
         return min(1, max(0, budgetSpentEur / budgetEur))
+    }
+}
+
+struct ProductionNavigationData: Sendable, Equatable {
+    let contract: ContractData
+    let state: ProjectStateData?
+
+    static func validated(
+        contract: ContractData,
+        state: ProjectStateData?
+    ) throws -> ProductionNavigationData {
+        let order = contract.phaseOrder
+        guard !order.isEmpty,
+              Set(order).count == order.count,
+              Set(contract.phases.keys) == Set(order),
+              order.allSatisfy({ !$0.trimmingCharacters(in: .whitespaces).isEmpty }),
+              order.allSatisfy({ phase in
+                  guard let entry = contract.phases[phase],
+                        let selector = entry.artifactSelector else { return false }
+                  return !entry.surface.trimmingCharacters(in: .whitespaces).isEmpty
+                      && !entry.taskClass.trimmingCharacters(in: .whitespaces).isEmpty
+                      && !selector.trimmingCharacters(in: .whitespaces).isEmpty
+              }) else {
+            throw ValidationError.invalidContract
+        }
+        guard let state else {
+            return ProductionNavigationData(contract: contract, state: nil)
+        }
+        let stateOrder = state.phases.map(\.phase)
+        guard stateOrder == order else { throw ValidationError.phaseOrderMismatch }
+        let expectedNext = state.phases.first { !$0.approved }?.phase
+        guard state.nextPhaseName == expectedNext else {
+            throw ValidationError.nextPhaseMismatch
+        }
+        return ProductionNavigationData(contract: contract, state: state)
+    }
+
+    enum ValidationError: Error, Equatable {
+        case invalidContract
+        case phaseOrderMismatch
+        case nextPhaseMismatch
+    }
+}
+
+enum PipelineNavigationSelection {
+    static func normalized(
+        requestedPhase: String?,
+        requestedTab: CockpitTab,
+        requestedPackSurfaceID: String?,
+        state: ProjectStateData,
+        contract: ContractData,
+        availablePackSurfaces: [CockpitSurfaceData]
+    ) -> String? {
+        let ids = Set(state.phases.map(\.phase))
+        if let requestedPhase, ids.contains(requestedPhase) { return requestedPhase }
+        if requestedTab != .pipeline || requestedPackSurfaceID != nil {
+            if let match = state.phases.first(where: { phase in
+                guard let route = PipelineSurfaceRouting.route(
+                    for: phase.phase,
+                    contract: contract,
+                    availablePackSurfaces: availablePackSurfaces
+                ) else { return false }
+                if let requestedPackSurfaceID {
+                    return route.destination == .pack(requestedPackSurfaceID)
+                }
+                return route.destination == .tab(requestedTab)
+            }) {
+                return match.phase
+            }
+        }
+        return state.nextPhaseName ?? state.phases.last?.phase
     }
 }
 

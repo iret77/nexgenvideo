@@ -190,17 +190,22 @@ struct TreatmentData: Decodable, Sendable, Equatable {
     }
 }
 
-/// The per-phase UI contract (surface + task class) — drives phase routing in the Pipeline panel —
-/// plus any pack-contributed cockpit surfaces.
+/// Resolved phase navigation contract plus pack-contributed cockpit surfaces.
 struct ContractData: Decodable, Sendable, Equatable {
     var phases: [String: ContractEntry]
+    var phaseOrder: [String]
     var cockpitSurfaces: [CockpitSurfaceData]
 
-    enum CodingKeys: String, CodingKey { case phases; case cockpitSurfaces = "cockpit_surfaces" }
+    enum CodingKeys: String, CodingKey {
+        case phases
+        case phaseOrder = "phase_order"
+        case cockpitSurfaces = "cockpit_surfaces"
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         phases = try c.decodeIfPresent([String: ContractEntry].self, forKey: .phases) ?? [:]
+        phaseOrder = try c.decodeIfPresent([String].self, forKey: .phaseOrder) ?? []
         let declared = try c.decodeIfPresent(
             [CockpitSurfaceData].self,
             forKey: .cockpitSurfaces
@@ -339,15 +344,21 @@ enum CockpitSurfacePrimitiveData: Decodable, Sendable, Equatable {
 struct ContractEntry: Decodable, Sendable, Equatable {
     var surface: String
     var taskClass: String
+    var artifactSelector: String?
+    var displayLabel: String?
 
     enum CodingKeys: String, CodingKey {
         case surface
         case taskClass = "task_class"
+        case artifactSelector = "artifact_selector"
+        case displayLabel = "display_label"
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         surface = try c.decodeIfPresent(String.self, forKey: .surface) ?? ""
         taskClass = try c.decodeIfPresent(String.self, forKey: .taskClass) ?? ""
+        artifactSelector = try c.decodeIfPresent(String.self, forKey: .artifactSelector)
+        displayLabel = try c.decodeIfPresent(String.self, forKey: .displayLabel)
     }
 }

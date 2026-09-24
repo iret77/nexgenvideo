@@ -46,6 +46,49 @@ private struct CockpitErrorEnvelope: Decodable {
 
 enum CockpitDataService {
 
+    @MainActor
+    static func productionNavigation(
+        projectDir: URL,
+        declaredPack: String?,
+        declaredBinding: ProjectPackBinding?
+    ) -> Result<ProductionNavigationData, CockpitError> {
+        do {
+            let activePack = try ProjectPackGate.requireLiveMutation(
+                projectURL: projectDir,
+                declaredPack: declaredPack,
+                declaredBinding: declaredBinding
+            )
+            let revalidateBinding = {
+                let current = try ProjectPackGate.requireLiveMutation(
+                    projectURL: projectDir,
+                    declaredPack: declaredPack,
+                    declaredBinding: declaredBinding
+                )
+                guard current == activePack else {
+                    throw CockpitError.decode("The production workflow binding changed while loading.")
+                }
+            }
+            let contractBytes = try NativeCockpitReader.contractJSON(activePack: activePack)
+            let contract = try JSONDecoder().decode(ContractData.self, from: contractBytes)
+            guard let root = NativeCockpitReader.dataRoot(of: projectDir) else {
+                try revalidateBinding()
+                return .success(try ProductionNavigationData.validated(contract: contract, state: nil))
+            }
+            let stateBytes: Data
+            do {
+                stateBytes = try NativeCockpitReader.stateJSON(dataRoot: root, activePack: activePack)
+            } catch NativeCockpitReader.NativeError.notInitialized {
+                try revalidateBinding()
+                return .success(try ProductionNavigationData.validated(contract: contract, state: nil))
+            }
+            let state = try JSONDecoder().decode(ProjectStateData.self, from: stateBytes)
+            try revalidateBinding()
+            return .success(try ProductionNavigationData.validated(contract: contract, state: state))
+        } catch {
+            return .failure(.decode("The production workflow contract could not be verified. Reopen the project and try again."))
+        }
+    }
+
     /// Fetch and decode the Bible for a project. Returns `.success(nil)` when the project simply has
     /// no Bible yet (the CLI prints literal `null`); `.success(data)` when present; `.failure` for
     /// engine-not-ready, a structured engine error, a process failure, or a decode mismatch.

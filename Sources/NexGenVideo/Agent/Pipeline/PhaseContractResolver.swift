@@ -176,6 +176,10 @@ struct PhaseContractHostRegistry: Sendable {
     let writerSelectors: [String: WriterSelector]
     let hostRunnerSelectors: [String: String]
 
+    func artifactSelector(for phase: String) -> String? {
+        artifactSelectors.first { $0.value == phase }?.key
+    }
+
     static let live = PhaseContractHostRegistry(
         artifactSelectors: [
             "host.project_track": "project_init",

@@ -39,20 +39,40 @@ enum NativeCockpitReader {
         try PhaseContractRuntime.order(activePack: activePack)
     }
 
-    /// `read.py` "contract": `{surfaces:[...], phases:{phase:{surface, task_class}}}`.
-    /// `core.ui_contract.full_contract()` overlaid with the active pack's entries.
+    /// Resolved UI contract, phase order, artifact selectors, and pack cockpit surfaces.
     static func contractJSON(activePack: String? = nil) throws -> Data {
         let registry = PackCatalog.registry(activePack: activePack)
         let contract = UIContract.fullContract(packEntries: registry.uiContracts)
+        let resolved = try PhaseContractRuntime.contract(activePack: activePack)
+        let phaseOrder = resolved?.order ?? coreGatePhases
         var phases: [String: Any] = [:]
-        for (phase, entry) in contract {
-            phases[phase] = ["surface": entry.surface, "task_class": entry.taskClass]
+        for phase in phaseOrder {
+            guard let entry = contract[phase] else {
+                throw NativeError.load("contract")
+            }
+            let declaration = resolved?.phase(phase)?.declaration
+            guard let artifactSelector = declaration?.selectors.artifact
+                    ?? PhaseContractHostRegistry.live.artifactSelector(for: phase) else {
+                throw NativeError.load("contract")
+            }
+            var value: [String: Any] = [
+                "surface": entry.surface,
+                "task_class": entry.taskClass,
+                "artifact_selector": artifactSelector,
+            ]
+            if let label = declaration?.display?.label {
+                value["display_label"] = label
+            }
+            phases[phase] = value
         }
         let surface = registry.declarativeCockpitSurface
             ?? registry.cockpitSurfaces.first.flatMap(legacyCockpitSurface)
         let cockpitSurfaces = surface.map { [cockpitSurfaceDictionary($0)] } ?? []
         return try serialize([
-            "surfaces": UIContract.surfaces, "phases": phases, "cockpit_surfaces": cockpitSurfaces,
+            "surfaces": UIContract.surfaces,
+            "phases": phases,
+            "phase_order": phaseOrder,
+            "cockpit_surfaces": cockpitSurfaces,
         ])
     }
 

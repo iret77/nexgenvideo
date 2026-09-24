@@ -2,6 +2,7 @@ import NexGenEngine
 import SwiftUI
 
 struct PipelineStoryboardReviewSheet: View {
+    var embedded = false
     @Environment(EditorViewModel.self) private var editor
     @Environment(\.dismiss) private var dismiss
 
@@ -20,7 +21,7 @@ struct PipelineStoryboardReviewSheet: View {
             case .loading:
                 statusState(title: "Storyboard", message: nil, isLoading: true)
             case .loaded(let storyboard):
-                StoryboardReviewSheet(storyboard: storyboard)
+                StoryboardReviewSheet(storyboard: storyboard, embedded: embedded)
             case .missing:
                 statusState(
                     title: "No Storyboard",
@@ -72,9 +73,11 @@ struct PipelineStoryboardReviewSheet: View {
                         .interfaceFont(size: AppTheme.Typography.title, weight: AppTheme.FontWeight.semibold)
                 }
                 Spacer()
-                Button("Done") { dismiss() }
-                    .buttonStyle(.capsule(.secondary, size: .regular))
-                    .keyboardShortcut(.cancelAction)
+                if !embedded {
+                    Button("Done") { dismiss() }
+                        .buttonStyle(.capsule(.secondary, size: .regular))
+                        .keyboardShortcut(.cancelAction)
+                }
             }
             if isLoading {
                 ProgressView("Loading Storyboard…")
@@ -89,8 +92,8 @@ struct PipelineStoryboardReviewSheet: View {
         }
         .padding(AppTheme.Spacing.xlXxl)
         .frame(
-            minWidth: AppTheme.ComponentSize.formatSheetWidth,
-            minHeight: AppTheme.ComponentSize.formatSheetCardListMinHeight,
+            minWidth: embedded ? nil : AppTheme.ComponentSize.formatSheetWidth,
+            minHeight: embedded ? nil : AppTheme.ComponentSize.formatSheetCardListMinHeight,
             alignment: .topLeading
         )
     }

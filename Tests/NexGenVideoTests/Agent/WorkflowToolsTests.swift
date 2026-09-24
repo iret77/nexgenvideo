@@ -1324,7 +1324,7 @@ struct WorkflowToolsTests {
         #expect(blocked2.isError == true)
         #expect(ToolHarness.textOf(blocked2).contains("run_phase"))
 
-        _ = try writeMeasuredAnalysis(dataRoot: dataRoot)
+        let analysisURL = try writeMeasuredAnalysis(dataRoot: dataRoot)
         _ = try await h.runOK(
             "write_analysis_interpretation",
             args: [
@@ -1355,6 +1355,20 @@ struct WorkflowToolsTests {
         ).approval
         #expect(ready.isReady)
         #expect(ready.blocker == nil)
+
+        try FileManager.default.removeItem(at: analysisURL)
+        do {
+            try await NativeGateWriter.approve(
+                projectDir: FrameInventory.projectHome(of: dataRoot),
+                phase: "analysis",
+                declaredPack: "musicvideo",
+                declaredBinding: binding,
+                executionCoordinator: h.editor.pipelinePhaseRunCoordinator
+            )
+            Issue.record("Native approval did not revalidate the artifact after readiness was displayed")
+        } catch {
+            #expect(error.localizedDescription.contains("analysis artifact"))
+        }
     }
 
     @Test("gate mutations are refused while a phase runner is active")
@@ -1485,7 +1499,7 @@ struct WorkflowToolsTests {
         #expect(settledReadiness.approval.isReady)
     }
 
-    @Test("completed pipeline keeps rewind controls available without an approval target")
+    @Test("completed pipeline rewind preserves takes and timeline clips")
     func completedPipelineKeepsRewindAvailable() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
@@ -1506,6 +1520,38 @@ struct WorkflowToolsTests {
         #expect(readiness.mutations.isReady)
         #expect(!readiness.approval.isReady)
         #expect(readiness.approval.blocker?.contains("already approved") == true)
+
+        let home = FrameInventory.projectHome(of: dataRoot)
+        let timelineURL = home.appendingPathComponent(Project.timelineFilename)
+        let retainedClip = Clip(
+            mediaRef: "retained-media",
+            startFrame: 0,
+            durationFrames: 24
+        )
+        let retainedTimeline = Fixtures.timeline(
+            tracks: [Fixtures.videoTrack(clips: [retainedClip])]
+        )
+        try JSONEncoder().encode(retainedTimeline).write(to: timelineURL)
+        let timelineBefore = try Data(contentsOf: timelineURL)
+        let takeURL = dataRoot
+            .appendingPathComponent(PipelineLayout.rendersDir, isDirectory: true)
+            .appendingPathComponent("shot-001/take-002.mp4")
+        try FileManager.default.createDirectory(
+            at: takeURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let takeBytes = Data("retained-take".utf8)
+        try takeBytes.write(to: takeURL)
+
+        try NativeGateWriter.rewind(
+            projectDir: home,
+            targetPhase: "brief",
+            declaredPack: nil,
+            executionCoordinator: h.editor.pipelinePhaseRunCoordinator
+        )
+
+        #expect(try Data(contentsOf: takeURL) == takeBytes)
+        #expect(try Data(contentsOf: timelineURL) == timelineBefore)
     }
 
     @Test("Brief work is structurally blocked until its host-owned intake is resolved")

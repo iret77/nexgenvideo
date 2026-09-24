@@ -253,7 +253,8 @@ struct PackSurfaceTests {
     func contractCockpitSurfaces() throws {
         let json = """
         {"surfaces":["choice","prose","review"],
-         "phases":{"analysis":{"surface":"choice","task_class":"classification"}},
+         "phase_order":["analysis"],
+         "phases":{"analysis":{"surface":"choice","task_class":"classification","artifact_selector":"host.analysis"}},
          "cockpit_surfaces":[{
            "id":"analysis","title":"Analysis","symbol":"waveform","phase":"analysis",
            "data_file":"analysis/{songStem}.json",
@@ -284,12 +285,12 @@ struct PackSurfaceTests {
                 for: "analysis",
                 contract: c,
                 availablePackSurfaces: []
-            )?.destination == .chat
+            )?.destination == .interaction
         )
 
         let reviewContract = try JSONDecoder().decode(
             ContractData.self,
-            from: Data(#"{"phases":{"production_design":{"surface":"review","task_class":"review"},"storyboard":{"surface":"review","task_class":"review"},"bible":{"surface":"review","task_class":"review"},"shotlist":{"surface":"review","task_class":"review"},"sanity":{"surface":"review","task_class":"review"},"frames":{"surface":"review","task_class":"review"}}}"#.utf8)
+            from: Data(#"{"phase_order":["production_design","storyboard","bible","shotlist","sanity","frames"],"phases":{"production_design":{"surface":"review","task_class":"review","artifact_selector":"host.production_design"},"storyboard":{"surface":"review","task_class":"review","artifact_selector":"host.storyboard"},"bible":{"surface":"review","task_class":"review","artifact_selector":"host.bible"},"shotlist":{"surface":"review","task_class":"review","artifact_selector":"host.shotlist"},"sanity":{"surface":"review","task_class":"review","artifact_selector":"host.sanity_report"},"frames":{"surface":"review","task_class":"review","artifact_selector":"host.frames_manifest"}}}"#.utf8)
         )
         #expect(PipelineSurfaceRouting.route(for: "storyboard", contract: reviewContract,
             availablePackSurfaces: [])?.destination == .storyboard)
@@ -298,13 +299,13 @@ struct PackSurfaceTests {
         #expect(PipelineSurfaceRouting.route(for: "shotlist", contract: reviewContract,
             availablePackSurfaces: [])?.destination == .tab(.shotlist))
         #expect(PipelineSurfaceRouting.route(for: "sanity", contract: reviewContract,
-            availablePackSurfaces: [])?.destination == .tab(.review))
+            availablePackSurfaces: [])?.destination == .sanity)
         #expect(PipelineSurfaceRouting.route(for: "frames", contract: reviewContract,
             availablePackSurfaces: [])?.destination == .tab(.review))
         let unavailable = try #require(PipelineSurfaceRouting.route(for: "production_design",
             contract: reviewContract, availablePackSurfaces: []))
-        #expect(unavailable.destination == .chat)
-        #expect(unavailable.label == "In chat")
+        #expect(unavailable.destination == .productionDesign)
+        #expect(unavailable.label == "Production Design")
 
         let legacy = try JSONDecoder().decode(ContractData.self, from: Data(#"{"phases":{}}"#.utf8))
         #expect(legacy.cockpitSurfaces.isEmpty)
@@ -319,6 +320,94 @@ struct PackSurfaceTests {
         #expect(surface.id == "analysis")
         #expect(surface.dataFile == "analysis/{songStem}.json")
         #expect(surface.layout.count == 3)
+        #expect(contract.phaseOrder == PipelineAgentContract.musicvideoPhases)
+        #expect(contract.phases["analysis"]?.artifactSelector == "host.analysis")
+    }
+
+    @Test("generic and Musicvideo navigation use their resolved native phase contracts")
+    func nativeContractPhaseOrders() throws {
+        PackCatalog.register(MusicvideoPack())
+        let generic = try JSONDecoder().decode(
+            ContractData.self,
+            from: NativeCockpitReader.contractJSON()
+        )
+        let musicvideo = try JSONDecoder().decode(
+            ContractData.self,
+            from: NativeCockpitReader.contractJSON(activePack: "musicvideo")
+        )
+
+        #expect(generic.phaseOrder == coreGatePhases)
+        #expect(!generic.phaseOrder.contains("analysis"))
+        #expect(musicvideo.phaseOrder == PipelineAgentContract.musicvideoPhases)
+        #expect(musicvideo.phaseOrder.firstIndex(of: "analysis") == 1)
+    }
+
+    @Test("artifact selectors route renamed phases without a host phase-name switch")
+    func routesByArtifactSelector() throws {
+        let contract = try JSONDecoder().decode(
+            ContractData.self,
+            from: Data(#"{"phase_order":["pack_story"],"phases":{"pack_story":{"surface":"review","task_class":"review","artifact_selector":"host.storyboard"}}}"#.utf8)
+        )
+        #expect(PipelineSurfaceRouting.route(
+            for: "pack_story",
+            contract: contract,
+            availablePackSurfaces: []
+        )?.destination == .storyboard)
+    }
+
+    @Test("navigation validation rejects stale state and selection keeps browsing separate from execution")
+    func validatesNavigationAndSelection() throws {
+        let contract = try JSONDecoder().decode(
+            ContractData.self,
+            from: Data(#"{"phase_order":["project_init","brief"],"phases":{"project_init":{"surface":"choice","task_class":"classification","artifact_selector":"host.project_track"},"brief":{"surface":"prose","task_class":"creative_long","artifact_selector":"host.brief"}}}"#.utf8)
+        )
+        let state = try JSONDecoder().decode(
+            ProjectStateData.self,
+            from: Data(#"{"project":"demo","mode":"default","phases":[{"phase":"project_init","approved":true,"state":"approved"},{"phase":"brief","approved":false,"state":"pending"}],"next_phase":"brief"}"#.utf8)
+        )
+        let navigation = try ProductionNavigationData.validated(contract: contract, state: state)
+        #expect(navigation.state?.nextPhaseName == "brief")
+        #expect(PipelineNavigationSelection.normalized(
+            requestedPhase: "project_init",
+            requestedTab: .pipeline,
+            requestedPackSurfaceID: nil,
+            state: state,
+            contract: contract,
+            availablePackSurfaces: []
+        ) == "project_init")
+        #expect(PipelineNavigationSelection.normalized(
+            requestedPhase: "removed_phase",
+            requestedTab: .pipeline,
+            requestedPackSurfaceID: nil,
+            state: state,
+            contract: contract,
+            availablePackSurfaces: []
+        ) == "brief")
+        #expect(PipelineNavigationSelection.normalized(
+            requestedPhase: nil,
+            requestedTab: .story,
+            requestedPackSurfaceID: nil,
+            state: state,
+            contract: contract,
+            availablePackSurfaces: []
+        ) == "brief")
+
+        let missingNext = try JSONDecoder().decode(
+            ProjectStateData.self,
+            from: Data(#"{"project":"demo","mode":"default","phases":[{"phase":"project_init","approved":true,"state":"approved"},{"phase":"brief","approved":false,"state":"pending"}]}"#.utf8)
+        )
+        #expect(missingNext.nextPhaseName == nil)
+        #expect(throws: ProductionNavigationData.ValidationError.self) {
+            try ProductionNavigationData.validated(contract: contract, state: missingNext)
+        }
+
+        let staleOrder = try JSONDecoder().decode(
+            ProjectStateData.self,
+            from: Data(#"{"project":"demo","mode":"default","phases":[{"phase":"brief","approved":false,"state":"pending"},{"phase":"project_init","approved":true,"state":"approved"}],"next_phase":"brief"}"#.utf8)
+        )
+        #expect(throws: ProductionNavigationData.ValidationError.self) {
+            try ProductionNavigationData.validated(contract: contract, state: staleOrder)
+        }
     }
 
     @Test("pack data resolver is project-local, JSON-only, and unambiguous")

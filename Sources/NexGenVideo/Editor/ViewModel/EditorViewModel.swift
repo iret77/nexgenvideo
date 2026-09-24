@@ -279,6 +279,7 @@ final class EditorViewModel {
             if !keepsLiveDeclaration {
                 capturePluginDeclaration(from: projectURL)
             }
+            viewedPipelinePhaseID = nil
             pipelineAgentHarness.reset()
             workflowHandoffPending = false
             // Identity is the package UUID (travels with the file), resolved once here so the working
@@ -960,13 +961,26 @@ final class EditorViewModel {
     func refreshProjectState() async {
         guard let dir = workingRoot else {
             projectState = nil
+            uiContract = nil
             return
         }
         projectStateLoadToken += 1
         let token = projectStateLoadToken
-        let result = await CockpitDataService.projectState(projectDir: dir)
+        let result = CockpitDataService.productionNavigation(
+            projectDir: dir,
+            declaredPack: declaredPluginName,
+            declaredBinding: declaredPluginBinding
+        )
         guard token == projectStateLoadToken else { return }
-        projectState = (try? result.get()) ?? nil
+        switch result {
+        case .success(let navigation):
+            projectState = navigation.state
+            uiContract = navigation.contract
+        case .failure(let error):
+            projectState = nil
+            uiContract = nil
+            Log.project.error("Production navigation unavailable: \(error.message)")
+        }
     }
 
     /// Best-effort snapshots of the Bible and shotlist for object inspection and name-resolved
@@ -1039,6 +1053,11 @@ final class EditorViewModel {
         activePluginName = snapshot.binding?.id
         declaredPluginName = snapshot.binding?.id
         declaredPluginBinding = snapshot.binding
+        if let bytes = try? NativeCockpitReader.contractJSON(activePack: snapshot.binding?.id) {
+            uiContract = try? JSONDecoder().decode(ContractData.self, from: bytes)
+        } else {
+            uiContract = nil
+        }
         engineStateRevision = snapshot.revision
         hasProductionPipeline = snapshot.pipeline != nil
         setWorkspaceFocus(WorkspaceFocus(persistedValue: snapshot.workspaceFocus))
@@ -1071,9 +1090,8 @@ final class EditorViewModel {
         async let shotlistResult = CockpitDataService.shotlist(projectDir: dir)
         async let ledgerResult = CockpitDataService.ledger(projectDir: dir)
         async let briefResult = CockpitDataService.brief(projectDir: dir)
-        async let contractResult = CockpitDataService.contract(projectDir: dir)
         async let stateRefresh: Void = refreshProjectState()
-        let (b, s, l, br, ct, _) = await (bibleResult, shotlistResult, ledgerResult, briefResult, contractResult, stateRefresh)
+        let (b, s, l, br, _) = await (bibleResult, shotlistResult, ledgerResult, briefResult, stateRefresh)
         guard token == engineArtifactsLoadToken else { return }
         bible = (try? b.get()) ?? nil
         shotlist = (try? s.get()) ?? nil
@@ -1088,7 +1106,6 @@ final class EditorViewModel {
             // only a real read/decode failure means an EXISTING brief we can't parse.
             briefUnreadable = !(error == .notInitialized || error == .noProject)
         }
-        uiContract = (try? ct.get()) ?? nil
         engineStateRevision += 1
         let reconciliation = pipelineAgentHarness.reconcile(editor: self)
         if let failure = reconciliation.failure {
@@ -1522,5 +1539,8 @@ final class EditorViewModel {
 
     private var workspacePresentationStates = EditorViewModel.initialWorkspacePresentations()
     @ObservationIgnored private var isRestoringWorkspacePresentation = false
+
+    /// Inspected phase; `ProjectStateData.nextPhaseName` remains the sole executable phase.
+    var viewedPipelinePhaseID: String?
 
 }

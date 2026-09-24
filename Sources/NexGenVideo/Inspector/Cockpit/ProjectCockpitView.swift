@@ -1,22 +1,13 @@
-import AppKit
 import SwiftUI
 
-/// Tabs of the Project cockpit. Pipeline (status + gates + budget) is the control room and leads as the
-/// default landing tab; the rest follow the production timeline left→right — Story (brief + treatment),
-/// Bible, Shotlist, Review (frames + sanity findings). `project` is the settings view, reached via the
-/// trailing gear, never a peer tab.
-enum CockpitTab: String, Hashable, CaseIterable {
+/// Legacy deep-link targets; the production navigator resolves artifacts through the active contract.
+enum CockpitTab: String, Hashable {
     case pipeline = "Pipeline"
     case story = "Story"
     case bible = "Bible"
     case shotlist = "Shotlist"
     case review = "Review"
     case project = "Project"
-
-    // Tab budget stays ≤5 (Fable's width math): sanity findings live inside Review — both are
-    // quality-control surfaces over the same shots. Order: the control room first, then the artifacts
-    // in phase order (brief/treatment → bible → shotlist → frames/sanity).
-    static let visibleTabs: [CockpitTab] = [.pipeline, .story, .bible, .shotlist, .review]
 }
 
 /// The Project cockpit — the canonical home for project-level artifacts (the engine-read Bible /
@@ -27,59 +18,40 @@ struct ProjectCockpitView: View {
     @Environment(EditorViewModel.self) private var editor
 
     var body: some View {
-        @Bindable var editor = editor
-        let packSurfaces = editor.availableCockpitPackSurfaces
-        var titles = CockpitTab.visibleTabs.map(\.rawValue)
-        titles.insert(contentsOf: packSurfaces.map(\.title), at: min(1, titles.count))
-        let selectedSurface = packSurfaces.first { $0.id == editor.cockpitPackSurfaceID }
-        let selectedTitle = selectedSurface?.title ?? editor.cockpitTab.rawValue
-
-        return VStack(spacing: AppTheme.Spacing.none) {
+        VStack(spacing: AppTheme.Spacing.none) {
             HStack(spacing: AppTheme.Spacing.none) {
-                SegmentedTabBar(
-                    titles: titles,
-                    selected: selectedTitle
-                ) { title in
-                    if let surface = packSurfaces.first(where: { $0.title == title }) {
-                        editor.cockpitPackSurfaceID = surface.id
-                    } else if let tab = CockpitTab(rawValue: title) {
-                        editor.cockpitTab = tab
+                if editor.cockpitTab == .project {
+                    Button {
+                        editor.cockpitTab = .pipeline
                         editor.cockpitPackSurfaceID = nil
+                    } label: {
+                        Label("Production", systemImage: "chevron.left")
+                            .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
+                            .foregroundStyle(AppTheme.Text.secondaryColor)
                     }
+                    .buttonStyle(.plain)
+                } else {
+                    Text("Production")
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+                        .foregroundStyle(AppTheme.Text.primaryColor)
                 }
+                Spacer(minLength: AppTheme.Spacing.none)
                 settingsButton
             }
+            .padding(.leading, AppTheme.Spacing.md)
             .panelHeaderBar()
             Group {
-                if let surface = selectedSurface {
-                    packSurfaceView(surface)
-                } else {
-                    switch editor.cockpitTab {
-                    case .story: StoryPanelView()
-                    case .bible: BiblePanelView()
-                    case .pipeline: PipelinePanelView()
-                    case .shotlist: ShotlistPanelView()
-                    case .review: ReviewPanelView()
-                    case .project: ProjectSettingsView()
-                    }
-                }
+                if editor.cockpitTab == .project { ProjectSettingsView() }
+                else { PipelinePanelView() }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .clipped()  // a panel may never paint over the cockpit tab bar
+            .clipped()
         }
         .task(id: editor.projectURL) {
             applyPackSurfaces([])
             await resolvePackSurface()
         }
         .onChange(of: editor.engineStateRevision) { _, _ in Task { await resolvePackSurface() } }
-    }
-
-    private func packSurfaceView(_ surface: CockpitSurfaceData) -> some View {
-        DeclarativePackSurfaceView(surface: surface) {
-            applyPackSurfaces(
-                editor.availableCockpitPackSurfaces.filter { $0.id != surface.id }
-            )
-        }
     }
 
     private func resolvePackSurface() async {

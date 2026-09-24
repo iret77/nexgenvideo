@@ -183,6 +183,68 @@ struct ProjectPackGateTests {
         #expect(ProjectPackGate.evaluate(projectURL: project) == .unreadable)
     }
 
+    @Test func productionNavigationNeverFallsBackForInvalidPackState() throws {
+        let project = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "navigation-pack-gate-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(
+            at: project,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: project) }
+        let binding = try #require(ProjectPackBinding(
+            id: "musicvideo",
+            version: "0.0.4",
+            projectSchema: "musicvideo/legacy"
+        ))
+
+        let missing = CockpitDataService.productionNavigation(
+            projectDir: project,
+            declaredPack: binding.id,
+            declaredBinding: binding
+        )
+        if case .success = missing { Issue.record("Missing pack settings degraded to generic navigation") }
+
+        let unavailableBinding = try #require(ProjectPackBinding(
+            id: "missingpack",
+            version: "1.0.0",
+            projectSchema: "missingpack/1.0.0"
+        ))
+        try ProjectPluginSettings.setActivePlugin(
+            unavailableBinding,
+            projectURL: project
+        )
+        let unavailable = CockpitDataService.productionNavigation(
+            projectDir: project,
+            declaredPack: unavailableBinding.id,
+            declaredBinding: unavailableBinding
+        )
+        if case .success = unavailable { Issue.record("An unavailable pack degraded to generic navigation") }
+
+        try Data("{not-json".utf8).write(
+            to: project.appendingPathComponent(ProjectPluginSettings.filename)
+        )
+        let unreadable = CockpitDataService.productionNavigation(
+            projectDir: project,
+            declaredPack: nil,
+            declaredBinding: nil
+        )
+        if case .success = unreadable { Issue.record("Unreadable pack settings degraded to generic navigation") }
+
+        try Data(#"{"activePlugin":"other"}"#.utf8).write(
+            to: project.appendingPathComponent(ProjectPluginSettings.filename),
+            options: .atomic
+        )
+        let mismatched = CockpitDataService.productionNavigation(
+            projectDir: project,
+            declaredPack: binding.id,
+            declaredBinding: binding
+        )
+        if case .success = mismatched { Issue.record("Mismatched pack settings degraded to generic navigation") }
+    }
+
     @Test func registeredPackOpens() {
         #expect(ProjectPackGate.requirement(packID: "musicvideo", isRegistered: true, record: record(state: .loaded))
                 == .satisfied)

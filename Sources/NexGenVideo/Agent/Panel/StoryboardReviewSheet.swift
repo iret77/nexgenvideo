@@ -3,6 +3,7 @@ import SwiftUI
 
 struct StoryboardReviewSheet: View {
     let storyboard: Storyboard
+    var embedded = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -11,9 +12,11 @@ struct StoryboardReviewSheet: View {
                 Text("Storyboard")
                     .interfaceFont(size: AppTheme.Typography.title, weight: AppTheme.FontWeight.semibold)
                 Spacer()
-                Button("Done") { dismiss() }
-                    .buttonStyle(.capsule(.secondary, size: .regular))
-                    .keyboardShortcut(.cancelAction)
+                if !embedded {
+                    Button("Done") { dismiss() }
+                        .buttonStyle(.capsule(.secondary, size: .regular))
+                        .keyboardShortcut(.cancelAction)
+                }
             }
             Text(storyboard.meta.summaryOneline)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
@@ -57,9 +60,9 @@ struct StoryboardReviewSheet: View {
         }
         .interfaceFont(size: AppTheme.Typography.reading)
         .padding(AppTheme.Spacing.xlXxl)
-        .frame(minWidth: AppTheme.ComponentSize.formatSheetWidth,
-               idealWidth: AppTheme.ComponentSize.storyboardReviewWidth,
-               minHeight: AppTheme.ComponentSize.formatSheetCardListMinHeight)
+        .frame(minWidth: embedded ? nil : AppTheme.ComponentSize.formatSheetWidth,
+               idealWidth: embedded ? nil : AppTheme.ComponentSize.storyboardReviewWidth,
+               minHeight: embedded ? nil : AppTheme.ComponentSize.formatSheetCardListMinHeight)
     }
 
     private func describe(_ values: [String: String]) -> String {
