@@ -75,6 +75,13 @@ enum WorkspaceUIAcceptance {
                     && editor.workspaceFocus == .media
                     && visiblePanelIDs(in: host) == expectedPanels(for: .media)
                     && defaultPanelWidthsAreValid(workspace: .media, frames: frames)
+                    && mediaWorkspaceSurfaceIsValid(in: host)
+                    && editor.mediaAssets.count >= 523
+                    && editor.mediaAssets
+                        .filter { $0.id.hasPrefix("acceptance-bulk-") }
+                        .allSatisfy { $0.thumbnail == nil }
+                    && editor.mediaManifest.intakeRoleByAssetID.keys
+                        .allSatisfy { !$0.hasPrefix("acceptance-bulk-") }
                     && previewTimecodeIsSingleLine(in: window, scale: scale)
             }) else {
                 fail("could not prepare large media layout", scale: scale)
@@ -84,6 +91,19 @@ enum WorkspaceUIAcceptance {
             host.layoutSubtreeIfNeeded()
             guard visiblePanelFrames(in: host) == preparedMediaFrames else {
                 fail("large media layout did not settle", scale: scale)
+            }
+            guard click(identifier: "media.folder.row.acceptance-folder-0", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.mediaPanelCurrentFolderId == "acceptance-folder-0"
+                          && editor.mediaLibrarySession(for: .workspace).folderID
+                              == "acceptance-folder-0"
+                  }),
+                  click(identifier: "media.folder.library", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.mediaPanelCurrentFolderId == nil
+                          && editor.mediaLibrarySession(for: .workspace).folderID == nil
+                  }) else {
+                fail("native folder tree did not route the shared media library", scale: scale)
             }
             resetSplitAutosaveDefaults()
             editor.setWorkspaceFocus(.production)
@@ -137,6 +157,7 @@ enum WorkspaceUIAcceptance {
                         && probeState(identifier: identifier, in: window) == true
                         && visiblePanelIDs(in: host) == expectedPanels(for: workspace)
                         && defaultPanelWidthsAreValid(workspace: workspace, frames: frames)
+                        && (workspace != .media || mediaWorkspaceSurfaceIsValid(in: host))
                         && previewTimecodeIsSingleLine(in: window, scale: scale)
                         && (workspace != .production || agentControlsAreContained(in: window))
                 }) else {
@@ -176,6 +197,7 @@ enum WorkspaceUIAcceptance {
                       visiblePanelIDs(in: host) == expectedPanels(for: workspace),
                       visiblePanelFrames(in: host) == renderedFrames,
                       defaultPanelWidthsAreValid(workspace: workspace, frames: renderedFrames),
+                      workspace != .media || mediaWorkspaceSurfaceIsValid(in: host),
                       previewTimecodeIsSingleLine(in: window, scale: scale),
                       workspace != .production || agentControlsAreContained(in: window) else {
                     fail("workspace layout did not settle for \(workspace.rawValue)", scale: scale)
@@ -186,15 +208,27 @@ enum WorkspaceUIAcceptance {
                 guard snapshot(host, at: evidenceURL.appendingPathComponent("\(name).png")) else {
                     fail("could not capture \(name)", scale: scale)
                 }
+                var fields: [String: Any] = [
+                    "workspace": workspace.rawValue,
+                    "screenshot": "\(name).png",
+                    "panels": visiblePanels.sorted(),
+                    "frames": renderedFrames.mapValues { frameDescription($0) },
+                ]
+                if workspace == .media {
+                    fields["mediaAssetCount"] = editor.mediaAssets.count
+                    fields["mediaSurface"] = mediaWorkspaceSurfaceDiagnostics(in: host)
+                    fields["bulkThumbnailsLoaded"] = editor.mediaAssets
+                        .filter { $0.id.hasPrefix("acceptance-bulk-") }
+                        .filter { $0.thumbnail != nil }
+                        .count
+                    fields["bulkIntakeAssignments"] = editor.mediaManifest.intakeRoleByAssetID.keys
+                        .filter { $0.hasPrefix("acceptance-bulk-") }
+                        .count
+                }
                 emit(
                     "workspace",
                     scale: scale,
-                    fields: [
-                        "workspace": workspace.rawValue,
-                        "screenshot": "\(name).png",
-                        "panels": visiblePanels.sorted(),
-                        "frames": renderedFrames.mapValues { frameDescription($0) },
-                    ]
+                    fields: fields
                 )
             }
 
@@ -644,8 +678,21 @@ enum WorkspaceUIAcceptance {
                           && editor.activeSourceAsset?.id == "selection-source"
                           && editor.inspectedObject == .mediaAsset("selection-source")
                           && editor.isPlaying
-                  }) else {
+            }) else {
                 fail("filtering changed or interrupted the active source context", scale: scale)
+            }
+            scheduleKeySequence(
+                [(115, "\u{F729}"), (125, "\u{F701}"), (36, "\r")],
+                in: window
+            )
+            guard click(identifier: "media.layout", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      probeState(identifier: "media.layout", in: window) == true
+                          && editor.activeSourceAsset?.id == "selection-source"
+                          && editor.inspectedObject == .mediaAsset("selection-source")
+                          && editor.isPlaying
+                  }) else {
+                fail("grid/list layout changed or interrupted the active source context", scale: scale)
             }
             guard click(identifier: "preview.playPause", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), { !editor.isPlaying }) else {
@@ -1088,6 +1135,7 @@ enum WorkspaceUIAcceptance {
                     "sameSourceReactivationPreservedPlayback": true,
                     "nativeSearchPreservedPlayback": true,
                     "sortAndFilterPreservedPlayback": true,
+                    "nativeGridListToggle": true,
                     "listModePreserved": true,
                     "contextClickRoutingVerified": true,
                     "offlineSourceHandled": true,
@@ -1516,6 +1564,13 @@ enum WorkspaceUIAcceptance {
             options: .atomic
         )
         var manifest = MediaManifest()
+        manifest.folders = (0..<12).map { index in
+            MediaFolder(
+                id: "acceptance-folder-\(index)",
+                name: "Folder \(index)",
+                parentFolderId: index < 4 ? nil : "acceptance-folder-\((index - 4) % 4)"
+            )
+        }
         manifest.entries = [
             MediaManifestEntry(
                 id: "selection-source",
@@ -1554,6 +1609,30 @@ enum WorkspaceUIAcceptance {
                 originalFilename: "Offline Source.mov"
             ),
         ]
+        let bulkTypes: [ClipType] = [.video, .audio, .image, .document, .lottie]
+        let bulkFolderCount = manifest.folders.count
+        manifest.entries.append(contentsOf: (0..<520).map { index in
+            let type = bulkTypes[index % bulkTypes.count]
+            let fileExtension = switch type {
+            case .video: "mov"
+            case .audio: "wav"
+            case .image: "png"
+            case .document: "md"
+            case .lottie: "json"
+            case .text: "txt"
+            }
+            return MediaManifestEntry(
+                id: "acceptance-bulk-\(index)",
+                name: "Storage \(index)",
+                type: type,
+                source: .project(
+                    relativePath: "\(Project.mediaDirectoryName)/missing-bulk-\(index).\(fileExtension)"
+                ),
+                duration: type == .video || type == .audio ? Double((index % 30) + 1) : 0,
+                folderId: "acceptance-folder-\(index % bulkFolderCount)",
+                originalFilename: "Original \(index).\(fileExtension)"
+            )
+        })
         try JSONEncoder().encode(manifest).write(
             to: projectURL.appendingPathComponent(Project.manifestFilename),
             options: .atomic
@@ -1659,7 +1738,10 @@ enum WorkspaceUIAcceptance {
             return abs(frame.width - width) <= tolerance
         }
         switch workspace {
-        case .media, .edit:
+        case .media:
+            return matches("mediaPanel", AppTheme.Layout.mediaFolderTreeDefault)
+                && matches("inspectorPanel", AppTheme.Layout.inspectorDefault)
+        case .edit:
             return matches("mediaPanel", AppTheme.Layout.mediaPanelDefault)
                 && matches("inspectorPanel", AppTheme.Layout.inspectorDefault)
         case .production:
@@ -1670,6 +1752,49 @@ enum WorkspaceUIAcceptance {
             return matches("projectPanel", AppTheme.Layout.mediaPanelDefault)
                 && matches("inspectorPanel", AppTheme.Layout.inspectorDefault)
         }
+    }
+
+    private static func mediaWorkspaceSurfaceIsValid(in root: NSView) -> Bool {
+        let diagnostics = mediaWorkspaceSurfaceDiagnostics(in: root)
+        guard diagnostics["folderTree"] != nil,
+              diagnostics["browser"] != nil,
+              diagnostics["sourcePreview"] != nil,
+              let mediaPanel = visiblePanelFrames(in: root)["mediaPanel"],
+              let centerPanel = visiblePanelFrames(in: root)["previewPanel"],
+              let folder = probeFrame("media.workspace.folderTree", in: root),
+              let browser = probeFrame("media.workspace.browser", in: root),
+              let source = probeFrame("media.workspace.sourcePreview", in: root)
+        else { return false }
+        let tolerance = AppTheme.BorderWidth.thin
+        return mediaPanel.insetBy(dx: -tolerance, dy: -tolerance).contains(folder)
+            && centerPanel.insetBy(dx: -tolerance, dy: -tolerance).contains(browser)
+            && centerPanel.insetBy(dx: -tolerance, dy: -tolerance).contains(source)
+            && browser.height >= AppTheme.Layout.mediaBrowserMinHeight - tolerance
+            && source.height >= AppTheme.Layout.previewMinHeight - tolerance
+            && (browser.maxY <= source.minY + tolerance || source.maxY <= browser.minY + tolerance)
+    }
+
+    private static func mediaWorkspaceSurfaceDiagnostics(in root: NSView) -> [String: Any] {
+        var result: [String: Any] = [:]
+        for (key, identifier) in [
+            ("folderTree", "media.workspace.folderTree"),
+            ("browser", "media.workspace.browser"),
+            ("sourcePreview", "media.workspace.sourcePreview"),
+        ] {
+            if let frame = probeFrame(identifier, in: root) {
+                result[key] = frameDescription(frame)
+            }
+        }
+        return result
+    }
+
+    private static func probeFrame(_ identifier: String, in root: NSView) -> NSRect? {
+        guard let probe = findProbe(in: root, identifier: identifier),
+              probe.window != nil,
+              !probe.isHiddenOrHasHiddenAncestor else { return nil }
+        let frame = probe.convert(probe.bounds, to: root)
+        guard frame.width > 0, frame.height > 0 else { return nil }
+        return frame
     }
 
     private static func narrowProductionWidthsAreValid(_ frames: [String: NSRect]) -> Bool {

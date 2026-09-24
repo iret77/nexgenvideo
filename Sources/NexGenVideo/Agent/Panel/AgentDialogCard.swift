@@ -263,6 +263,7 @@ struct AgentDialogCard: View {
                     .foregroundStyle(AppTheme.Text.mutedColor)
                 LibraryAssetPicker(
                     assets: picks,
+                    purpose: .workflowIntake(dialog.id),
                     showsSearch: true,
                     showsTypeTabs: Set(picks.map(\.type.rawValue)).count > 1
                 ) { addPicked($0.url, intake) }

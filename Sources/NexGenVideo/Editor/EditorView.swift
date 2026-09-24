@@ -115,7 +115,7 @@ private enum SplitAutosave {
     static let productionRoot   = "editor.produce.root"
     static let productionCenter = "editor.produce.center"
     static let productionRight  = "editor.produce.right"
-    static let mediaRoot     = "editor.workspace.media.root.v1"
+    static let mediaRoot     = "editor.workspace.media.root.v2"
     static let postRoot      = "editor.workspace.postproduction.root.v1"
     static let postCenter    = "editor.workspace.postproduction.center.v1"
     static let exportRoot    = "editor.workspace.export.root.v1"
@@ -146,19 +146,23 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
     private var panelHosts: [any PanelFocusUpdating] = []
 
     private lazy var mediaWorkspaceHC: NSViewController = makeHosting(
-        MediaWorkspaceSidebar(workspace: .media),
+        MediaWorkspaceNavigation(),
         panel: .media
+    )
+    private lazy var mediaCenterHC: NSViewController = makeHosting(
+        MediaWorkspaceCenterView(),
+        panel: .preview
     )
     private lazy var editMediaHC: NSViewController = makeHosting(
         MediaWorkspaceSidebar(workspace: .edit),
         panel: .media
     )
-    private lazy var agentHC: NSViewController     = makeHosting(AgentPanelView(), panel: .agent)
+    private lazy var agentHC: NSViewController     = makeHosting(ProductionWorkspaceSidebar(), panel: .agent)
     private lazy var previewHC: NSViewController   = makeHosting(PreviewContainerView(), panel: .preview)
     private lazy var inspectorHC: NSViewController = makeHosting(InspectorView(), panel: .inspector)
     private lazy var cockpitHC: NSViewController   = makeHosting(ProjectCockpitView(), panel: .project)
     private lazy var timelineHC: NSViewController  = makeHosting(TimelinePanel(), panel: .timeline)
-    private lazy var reviewHC: NSViewController     = makeHosting(FinishReviewPane(), panel: .project)
+    private lazy var reviewHC: NSViewController     = makeHosting(PostproductionWorkspaceSidebar(), panel: .project)
     private lazy var exportHC: NSViewController     = makeHosting(ExportWorkspaceSidebar(), panel: .project)
 
     init(editor: EditorViewModel) {
@@ -364,15 +368,15 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
 
     private func buildMediaWorkspace(into target: NSSplitViewController) {
         target.splitView.isVertical = true
-        target.addSplitViewItem(makeSidebarItem(host: mediaWorkspaceHC, minimumThickness: AppTheme.Layout.mediaPanelMin))
-        target.addSplitViewItem(makePreviewItem())
+        target.addSplitViewItem(makeSidebarItem(host: mediaWorkspaceHC, minimumThickness: AppTheme.Layout.mediaFolderTreeMin))
+        target.addSplitViewItem(makePreviewItem(host: mediaCenterHC))
         target.addSplitViewItem(makeInspectorItem())
 
         applyAfterLayout { [weak self, weak target] in
             guard let self, let target else { return }
             let width = target.view.bounds.width
             self.positionIfUnsaved(target) {
-                $0.setPosition(AppTheme.Layout.mediaPanelDefault, ofDividerAt: 0)
+                $0.setPosition(AppTheme.Layout.mediaFolderTreeDefault, ofDividerAt: 0)
                 $0.setPosition(width - AppTheme.Layout.inspectorDefault, ofDividerAt: 1)
             }
         }
@@ -617,7 +621,11 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
     }
 
     private func makePreviewItem() -> NSSplitViewItem {
-        let item = NSSplitViewItem(viewController: previewHC)
+        makePreviewItem(host: previewHC)
+    }
+
+    private func makePreviewItem(host: NSViewController) -> NSSplitViewItem {
+        let item = NSSplitViewItem(viewController: host)
         item.minimumThickness = AppTheme.Layout.previewMinWidth
         previewSplitItem = item
         return item

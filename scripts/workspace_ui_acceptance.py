@@ -51,6 +51,33 @@ def matching_frame(first, second, tolerance=1):
     return all(abs(first[key] - second[key]) <= tolerance for key in first)
 
 
+def valid_media_surface(row):
+    surface = row.get("mediaSurface")
+    panels = row.get("frames")
+    if not isinstance(surface, dict) or not isinstance(panels, dict):
+        return False
+    folder = surface.get("folderTree")
+    browser = surface.get("browser")
+    source = surface.get("sourcePreview")
+    media_panel = panels.get("mediaPanel")
+    center_panel = panels.get("previewPanel")
+    if not all(valid_frame(frame) for frame in [folder, browser, source, media_panel, center_panel]):
+        return False
+    vertically_separate = (
+        browser["y"] + browser["height"] <= source["y"] + 1
+        or source["y"] + source["height"] <= browser["y"] + 1
+    )
+    return (
+        contains_frame(media_panel, folder)
+        and contains_frame(center_panel, browser)
+        and contains_frame(center_panel, source)
+        and vertically_separate
+        and row.get("mediaAssetCount", 0) >= 523
+        and row.get("bulkThumbnailsLoaded") == 0
+        and row.get("bulkIntakeAssignments") == 0
+    )
+
+
 def valid_keyframe_layout(layout, expected_mode, expected_lanes):
     inspector = layout.get("inspectorFrame")
     panel = layout.get("panelFrame")
@@ -160,6 +187,7 @@ def run_scale(executable, output, scale):
             rows.append(row)
 
     workspace_rows = [row for row in rows if row.get("event") == "workspace"]
+    media_rows = [row for row in workspace_rows if row.get("workspace") == "media"]
     workspaces = {row.get("workspace") for row in workspace_rows}
     completed = any(row.get("event") == "completed" for row in rows)
     hidden = [row for row in rows if row.get("event") == "panels-hidden"]
@@ -197,6 +225,8 @@ def run_scale(executable, output, scale):
         and completed
         and workspaces == EXPECTED_WORKSPACES
         and len(workspace_rows) == len(EXPECTED_WORKSPACES)
+        and len(media_rows) == 1
+        and valid_media_surface(media_rows[0])
         and len(hidden) == 1
         and len(narrow) == 1
         and len(pinned) == 1
@@ -220,6 +250,7 @@ def run_scale(executable, output, scale):
         and selection_source[0].get("sameSourceReactivationPreservedPlayback") is True
         and selection_source[0].get("nativeSearchPreservedPlayback") is True
         and selection_source[0].get("sortAndFilterPreservedPlayback") is True
+        and selection_source[0].get("nativeGridListToggle") is True
         and selection_source[0].get("listModePreserved") is True
         and selection_source[0].get("contextClickRoutingVerified") is True
         and selection_source[0].get("offlineSourceHandled") is True

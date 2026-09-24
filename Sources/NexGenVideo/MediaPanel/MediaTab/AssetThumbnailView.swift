@@ -1,8 +1,12 @@
 import SwiftUI
 
 struct AssetThumbnailView: View {
+    enum Style { case grid, list }
+
     let asset: MediaAsset
     var onMoveToFolderMenu: AnyView? = nil
+    var style: Style = .grid
+    var libraryPurpose: MediaLibraryPurpose?
 
     @Environment(EditorViewModel.self) var editor
     @State private var isRenaming = false
@@ -11,6 +15,33 @@ struct AssetThumbnailView: View {
     @State private var isHovering = false
 
     var body: some View {
+        Group {
+            switch style {
+            case .grid: gridBody
+            case .list: listBody
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .background {
+            if WorkspaceUIAcceptance.isRequested {
+                AppRelaunchClickProbe(identifier: "selection.asset.\(asset.id)")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(count: 1) {
+            handleTap(modifiers: NSApp.currentEvent?.modifierFlags ?? [])
+        }
+        .contextMenu {
+            contextActivation
+            contextMenuItems
+        }
+        .opacity(isSwapDimmed ? AppTheme.Opacity.muted : AppTheme.Opacity.opaque)
+        .allowsHitTesting(!isSwapDimmed)
+    }
+
+    private var gridBody: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
             ZStack {
                 Rectangle().fill(AppTheme.Background.overlayColor)
@@ -48,7 +79,7 @@ struct AssetThumbnailView: View {
                         }
                         .onExitCommand { isRenaming = false }
                 } else {
-                    Text(asset.name)
+                    Text(asset.libraryDisplayName)
                         .interfaceFont(size: AppTheme.Typography.ui)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -67,24 +98,66 @@ struct AssetThumbnailView: View {
                     .fill(isRenaming ? AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.faint) : AppTheme.Background.clearColor)
             )
         }
-        .frame(maxWidth: .infinity)
-        .background {
-            if WorkspaceUIAcceptance.isRequested {
-                AppRelaunchClickProbe(identifier: "selection.asset.\(asset.id)")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .allowsHitTesting(false)
+    }
+
+    private var listBody: some View {
+        HStack(spacing: AppTheme.Spacing.md) {
+            ZStack {
+                Rectangle().fill(AppTheme.Background.overlayColor)
+                thumbnailContent
+            }
+            .aspectRatio(16.0 / 9.0, contentMode: .fit)
+            .frame(width: AppTheme.ComponentSize.searchThumbnailWidth)
+            .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
+            .overlay(
+                RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                    .strokeBorder(borderColor, lineWidth: borderWidth)
+            )
+
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                if isRenaming {
+                    TextField("Name", text: $renameDraft)
+                        .textFieldStyle(.plain)
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
+                        .focused($isRenameFieldFocused)
+                        .onSubmit { commitRename() }
+                        .onExitCommand { isRenaming = false }
+                } else {
+                    Text(asset.libraryDisplayName)
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
+                        .foregroundStyle(isSelected || isActiveSource ? AppTheme.Text.primaryColor : AppTheme.Text.secondaryColor)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .onTapGesture(count: 2) { beginRename() }
+                }
+                HStack(spacing: AppTheme.Spacing.sm) {
+                    Text(asset.type.trackLabel)
+                    if showsDurationBadge { Text(formatDuration(asset.duration)).monospacedDigit() }
+                    if asset.isGenerated { Label("AI", systemImage: "sparkles") }
+                    if isOnTimeline { Label("Used", systemImage: "timeline.selection") }
+                }
+                .interfaceFont(size: AppTheme.Typography.metadata)
+                .foregroundStyle(AppTheme.Text.tertiaryColor)
+            }
+
+            Spacer(minLength: AppTheme.Spacing.sm)
+            if isMissing {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(AppTheme.Status.errorColor)
+                    .help("Media Offline")
             }
         }
-        .contentShape(Rectangle())
-        .onTapGesture(count: 1) {
-            handleTap(modifiers: NSApp.currentEvent?.modifierFlags ?? [])
+        .padding(.horizontal, AppTheme.Spacing.sm)
+        .padding(.vertical, AppTheme.Spacing.xs)
+        .background(
+            isSelected || isActiveSource
+                ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.faint)
+                : AppTheme.Background.clearColor,
+            in: RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+        )
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: AppTheme.Anim.quick)) { isHovering = hovering }
         }
-        .contextMenu {
-            contextActivation
-            contextMenuItems
-        }
-        .opacity(isSwapDimmed ? AppTheme.Opacity.muted : AppTheme.Opacity.opaque)
-        .allowsHitTesting(!isSwapDimmed)
     }
 
     @ViewBuilder
@@ -92,7 +165,11 @@ struct AssetThumbnailView: View {
         AppTheme.Background.clearColor
             .frame(width: AppTheme.Spacing.none, height: AppTheme.Spacing.none)
             .onAppear {
-                editor.activateMediaAsset(asset, preservingSelection: true)
+                if let libraryPurpose {
+                    editor.activateMediaAsset(asset, preservingSelection: true, for: libraryPurpose)
+                } else {
+                    editor.activateMediaAsset(asset, preservingSelection: true)
+                }
             }
     }
 
@@ -142,7 +219,11 @@ struct AssetThumbnailView: View {
     }
 
     private func performSourceAction(_ action: (EditorViewModel) -> Void) {
-        editor.activateMediaAsset(asset, preservingSelection: true)
+        if let libraryPurpose {
+            editor.activateMediaAsset(asset, preservingSelection: true, for: libraryPurpose)
+        } else {
+            editor.activateMediaAsset(asset, preservingSelection: true)
+        }
         action(editor)
     }
 
@@ -408,7 +489,13 @@ struct AssetThumbnailView: View {
         let shiftHeld = modifiers.contains(.shift)
 
         if shiftHeld {
-            editor.toggleMediaAssetSelection(asset)
+            if let libraryPurpose {
+                editor.toggleMediaAssetSelection(asset, for: libraryPurpose)
+            } else {
+                editor.toggleMediaAssetSelection(asset)
+            }
+        } else if let libraryPurpose {
+            editor.selectMediaAsset(asset, for: libraryPurpose)
         } else {
             editor.selectMediaAsset(asset)
         }

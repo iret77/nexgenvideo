@@ -106,6 +106,7 @@ extension EditorViewModel {
     var canActivateNextSource: Bool { adjacentSourceAsset(offset: 1) != nil }
 
     func selectMediaAsset(_ asset: MediaAsset, atSourceFrame frame: Int? = nil) {
+        activeMediaLibraryPurpose = nil
         selectedFolderIds.removeAll()
         selectedMediaAssetIds = [asset.id]
         openPreviewTab(for: asset, atSourceFrame: frame)
@@ -138,6 +139,7 @@ extension EditorViewModel {
     }
 
     func activateMediaAsset(_ asset: MediaAsset, preservingSelection: Bool) {
+        activeMediaLibraryPurpose = nil
         selectedFolderIds.removeAll()
         if !preservingSelection {
             selectedMediaAssetIds = [asset.id]
@@ -193,12 +195,20 @@ extension EditorViewModel {
 
     func activatePreviousSource() {
         guard let asset = adjacentSourceAsset(offset: -1) else { return }
-        activateMediaAsset(asset, preservingSelection: false)
+        if let activeMediaLibraryPurpose {
+            activateMediaAsset(asset, preservingSelection: false, for: activeMediaLibraryPurpose)
+        } else {
+            activateMediaAsset(asset, preservingSelection: false)
+        }
     }
 
     func activateNextSource() {
         guard let asset = adjacentSourceAsset(offset: 1) else { return }
-        activateMediaAsset(asset, preservingSelection: false)
+        if let activeMediaLibraryPurpose {
+            activateMediaAsset(asset, preservingSelection: false, for: activeMediaLibraryPurpose)
+        } else {
+            activateMediaAsset(asset, preservingSelection: false)
+        }
     }
 
     func markSourceIn() {

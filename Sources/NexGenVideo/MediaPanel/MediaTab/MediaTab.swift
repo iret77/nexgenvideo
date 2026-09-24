@@ -4,13 +4,20 @@ struct MediaTab: View {
     @Environment(EditorViewModel.self) var editor
     let workspace: EditorViewModel.WorkspaceFocus
 
+    var mediaPurpose: MediaLibraryPurpose {
+        workspace == .media ? .workspace : .editSource
+    }
+
     // Toolbar state
     @State var sortMode: SortMode = .dateAdded
     @State var filterTypes: Set<ClipType> = []
     @State var filterAI = false
     @State var searchQuery: String = ""
-    @State var thumbnailSize: Double = 80
+    @State var searchScope: MediaLibrarySearchScope = .filename
+    @State var thumbnailSize: Double = Double(AppTheme.MediaPanel.thumbnailSmall)
     @State var viewMode: ViewMode = .folder
+    @State var assetLayout: MediaLibraryLayout = .grid
+    @State var sortAscending = true
 
     // Navigation + selection state
     @State var currentFolderId: String? = nil
@@ -27,6 +34,7 @@ struct MediaTab: View {
     @State var isDropTargeted = false
     @State var visualHits: [VisualSearch.Hit] = []
     @State var spokenHits: [TranscriptSearch.Hit] = []
+    @State var documentHits: [DocumentSearch.Hit] = []
     @State var collapsedSearchSections: Set<String> = []
     @State var momentSearchTask: Task<Void, Never>?
     @State var assetFrames: [String: CGRect] = [:]
@@ -56,7 +64,7 @@ struct MediaTab: View {
 
     /// Only media types that can actually appear in the panel. ClipType.text
     /// exists for timeline clips but is never assigned to a MediaAsset.
-    private static let filterableTypes: [ClipType] = [.video, .audio, .image]
+    private static let filterableTypes: [ClipType] = [.video, .audio, .image, .document, .lottie]
 
     private enum ThumbnailPreset: String, CaseIterable, Identifiable {
         case small, medium, large, xlarge
@@ -71,10 +79,10 @@ struct MediaTab: View {
         }
         var size: Double {
             switch self {
-            case .small: 80
-            case .medium: 110
-            case .large: 150
-            case .xlarge: 200
+            case .small: Double(AppTheme.MediaPanel.thumbnailSmall)
+            case .medium: Double(AppTheme.MediaPanel.thumbnailMedium)
+            case .large: Double(AppTheme.MediaPanel.thumbnailLarge)
+            case .xlarge: Double(AppTheme.MediaPanel.thumbnailExtraLarge)
             }
         }
     }
@@ -100,10 +108,12 @@ struct MediaTab: View {
                         } else if !trimmedSearchQuery.isEmpty {
                             searchResults
                         } else {
-                            switch viewMode {
-                            case .folder: mediaGridView
-                            case .flat: flatGridView
-                            case .grouped: groupedGridView
+                            switch (viewMode, assetLayout) {
+                            case (.folder, .grid): mediaGridView
+                            case (.folder, .list): mediaListView
+                            case (.flat, .grid): flatGridView
+                            case (.flat, .list): flatListView
+                            case (.grouped, _): groupedGridView
                             }
                         }
                     }
@@ -121,6 +131,7 @@ struct MediaTab: View {
             }
             .layoutPriority(1)
             .onChange(of: searchQuery) { _, _ in scheduleMomentSearch() }
+            .onChange(of: searchScope) { _, _ in scheduleMomentSearch() }
 
             if editor.showGenerationPanel && !mediaAreaCollapsed {
                 GenerationView(
@@ -157,17 +168,55 @@ struct MediaTab: View {
         }
         .onChange(of: editor.mediaPanelOpenFolderId, initial: true) { _, target in
             guard workspace == editor.workspaceFocus, let target else { return }
-            openFolder(id: target)
+            if target == MediaWorkspaceNavigation.rootRouteID {
+                navigateToFolder(nil)
+            } else {
+                openFolder(id: target)
+            }
             editor.mediaPanelOpenFolderId = nil
         }
         .onChange(of: editor.mediaPanelPasteRequestTick) { _, _ in
             guard workspace == editor.workspaceFocus else { return }
             handleClipboardPaste()
         }
-        .onChange(of: currentFolderId, initial: true) { _, folderId in
+        .onChange(of: currentFolderId) { _, folderId in
             editor.publishMediaPanelFolder(folderId, for: workspace)
+            editor.mediaLibrarySession(for: mediaPurpose).folderID = folderId
         }
-        .onAppear { editor.publishMediaPanelFolder(currentFolderId, for: workspace) }
+        .onAppear {
+            let session = editor.mediaLibrarySession(for: mediaPurpose)
+            searchQuery = session.query
+            searchScope = session.searchScope
+            filterTypes = session.filterTypes
+            filterAI = session.aiOnly
+            sortMode = SortMode(session.sort)
+            sortAscending = session.sortAscending
+            thumbnailSize = session.thumbnailSize
+            assetLayout = session.layout
+            currentFolderId = session.folderID ?? editor.mediaPanelCurrentFolderId
+            editor.publishMediaPanelFolder(currentFolderId, for: workspace)
+            if let anchor = session.scrollAnchorID {
+                DispatchQueue.main.async { editor.mediaPanelScrollTarget = anchor }
+            }
+        }
+        .onChange(of: searchQuery) { _, value in editor.mediaLibrarySession(for: mediaPurpose).query = value }
+        .onChange(of: searchScope) { _, value in editor.mediaLibrarySession(for: mediaPurpose).searchScope = value }
+        .onChange(of: filterTypes) { _, value in editor.mediaLibrarySession(for: mediaPurpose).filterTypes = value }
+        .onChange(of: filterAI) { _, value in editor.mediaLibrarySession(for: mediaPurpose).aiOnly = value }
+        .onChange(of: sortMode) { _, value in editor.mediaLibrarySession(for: mediaPurpose).sort = value.librarySort }
+        .onChange(of: sortAscending) { _, value in editor.mediaLibrarySession(for: mediaPurpose).sortAscending = value }
+        .onChange(of: thumbnailSize) { _, value in editor.mediaLibrarySession(for: mediaPurpose).thumbnailSize = value }
+        .onChange(of: assetLayout) { _, value in editor.mediaLibrarySession(for: mediaPurpose).layout = value }
+        .onChange(of: editor.selectedMediaAssetIds) { _, value in
+            guard workspace == editor.workspaceFocus else { return }
+            editor.mediaLibrarySession(for: mediaPurpose).selectedAssetIDs = value
+        }
+        .onChange(of: editor.sourcePreviewStates) { _, _ in
+            guard workspace == editor.workspaceFocus, let asset = editor.activeSourceAsset else { return }
+            let session = editor.mediaLibrarySession(for: mediaPurpose)
+            session.activeAssetID = asset.id
+            session.rememberSourceState(editor.sourcePreviewState(for: asset.id), for: asset.id)
+        }
     }
 
     private var swapBanner: some View {
@@ -366,7 +415,24 @@ struct MediaTab: View {
 
     @ViewBuilder
     private var displayControls: some View {
-        toolbarMenuIcon(systemName: "rectangle.grid.2x2") {
+        toolbarMenuIcon(
+            systemName: "rectangle.grid.2x2",
+            acceptanceIdentifier: "media.layout",
+            acceptanceState: assetLayout == .list
+        ) {
+            Section("Layout") {
+                Button {
+                    assetLayout = .grid
+                } label: {
+                    Label("Grid", systemImage: assetLayout == .grid ? "checkmark" : "rectangle.grid.2x2")
+                }
+                Button {
+                    assetLayout = .list
+                } label: {
+                    Label("List", systemImage: assetLayout == .list ? "checkmark" : "list.bullet")
+                }
+            }
+            Divider() // app-theme: native-menu-divider
             Section("View") {
                 ForEach(ViewMode.allCases, id: \.self) { mode in
                     Button {
@@ -393,13 +459,18 @@ struct MediaTab: View {
             acceptanceIdentifier: "media.sort",
             acceptanceState: sortMode == .name
         ) {
-            ForEach(SortMode.allCases, id: \.self) { mode in
-                Button {
-                    sortMode = mode
-                } label: {
-                    Label(mode.title, systemImage: sortMode == mode ? "checkmark" : "")
+                ForEach(SortMode.allCases, id: \.self) { mode in
+                    Button {
+                        if sortMode == mode {
+                            sortAscending.toggle()
+                        } else {
+                            sortMode = mode
+                            sortAscending = true
+                        }
+                    } label: {
+                        Label(mode.title, systemImage: sortMode == mode ? "checkmark" : "")
+                    }
                 }
-            }
         }
 
         toolbarMenuIcon(
@@ -410,7 +481,10 @@ struct MediaTab: View {
         ) {
             ForEach(Self.filterableTypes, id: \.self) { type in
                 Button { toggleFilter(type) } label: {
-                    Label(type.trackLabel, systemImage: filterTypes.contains(type) ? "checkmark" : "")
+                    Label(
+                        type == .document ? "Text" : type.trackLabel,
+                        systemImage: filterTypes.contains(type) ? "checkmark" : ""
+                    )
                 }
             }
             Divider() // app-theme: native-menu-divider
@@ -466,6 +540,24 @@ struct MediaTab: View {
             case .type: "Type"
             }
         }
+
+        init(_ sort: MediaLibrarySort) {
+            switch sort {
+            case .name: self = .name
+            case .dateAdded: self = .dateAdded
+            case .duration: self = .duration
+            case .type: self = .type
+            }
+        }
+
+        var librarySort: MediaLibrarySort {
+            switch self {
+            case .name: .name
+            case .dateAdded: .dateAdded
+            case .duration: .duration
+            case .type: .type
+            }
+        }
     }
 
     private var hasActiveFilters: Bool {
@@ -496,22 +588,26 @@ struct MediaTab: View {
         return folders.filter { $0.name.localizedCaseInsensitiveContains(q) }
     }
 
-    private func passesFilters(_ asset: MediaAsset) -> Bool {
+    func passesFilters(_ asset: MediaAsset) -> Bool {
         let typeOk = filterTypes.isEmpty || filterTypes.contains(asset.type)
         let aiOk = !filterAI || asset.isGenerated
         let q = searchQuery.trimmingCharacters(in: .whitespaces)
-        let nameOk = q.isEmpty || asset.name.localizedCaseInsensitiveContains(q)
+        let nameOk = q.isEmpty || searchScope != .filename
+            || asset.userFacingFilename.localizedCaseInsensitiveContains(q)
+            || asset.name.localizedCaseInsensitiveContains(q)
         return typeOk && aiOk && nameOk
     }
 
     func sortAndFilter(_ assets: [MediaAsset]) -> [MediaAsset] {
         let filtered = assets.filter(passesFilters)
-        return switch sortMode {
+        var sorted = switch sortMode {
         case .dateAdded: filtered
-        case .name: filtered.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        case .duration: filtered.sorted { $0.duration > $1.duration }
+        case .name: filtered.sorted { $0.userFacingFilename.localizedCaseInsensitiveCompare($1.userFacingFilename) == .orderedAscending }
+        case .duration: filtered.sorted { $0.duration < $1.duration }
         case .type: filtered.sorted { $0.type.rawValue < $1.type.rawValue }
         }
+        if !sortAscending { sorted.reverse() }
+        return sorted
     }
 
     private var currentFolderItemCount: Int {
@@ -558,6 +654,23 @@ struct MediaTab: View {
                 .focusable(false)
                 .help("Clear search")
             }
+            Menu {
+                ForEach(MediaLibrarySearchScope.allCases, id: \.self) { scope in
+                    Button {
+                        searchScope = scope
+                    } label: {
+                        Label(scope.label, systemImage: searchScope == scope ? "checkmark" : "")
+                    }
+                }
+            } label: {
+                Text(searchScope.label)
+                    .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium)
+                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Search scope")
         }
         .padding(.leading, AppTheme.Spacing.smMd)
         .padding(.trailing, AppTheme.Spacing.xs)

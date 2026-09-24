@@ -968,7 +968,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .deleteFolder,
-            description: "Deletes folders and everything inside them (subfolders and assets). Clips referencing any deleted asset are removed from the timeline in the same undoable action.",
+            description: "Removes folders and nested subfolders. Their assets move to the root Imports folder in the same undoable action; asset IDs, intake assignments, and timeline clip references remain unchanged.",
             inputSchema: objectSchema(
                 properties: [
                     "folderIds": [

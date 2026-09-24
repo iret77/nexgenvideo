@@ -277,6 +277,7 @@ struct AgentInputBox<LeadingTools: View>: View {
         .popover(isPresented: $showReferencePicker, arrowEdge: .bottom) {
             LibraryAssetPicker(
                 assets: pickableLibraryAssets,
+                purpose: .agentReference,
                 showsSearch: true,
                 showsTypeTabs: true,
                 scrollHeight: AppTheme.ComponentSize.agentAssetPickerHeight,

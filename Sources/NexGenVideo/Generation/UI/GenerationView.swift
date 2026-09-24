@@ -67,6 +67,7 @@ struct GenerationView: View {
 
     @State private var dropError: String? = nil
     @State private var dropErrorTask: Task<Void, Never>? = nil
+    @State private var activeLibraryPickerID: String?
 
     @AppStorage("generationPromptExtra") private var promptExtra: Double = 0
     @State private var liveExtra: Double?
@@ -742,6 +743,7 @@ struct GenerationView: View {
     private var audioVideoStrip: some View {
         frameSlot(
             label: "Source Video",
+            pickerID: "audio-source-video",
             asset: audioVideoSource,
             isTargeted: $audioVideoTargeted,
             accepting: [.video],
@@ -1003,10 +1005,10 @@ struct GenerationView: View {
 
     private var videoFrameStrip: some View {
         HStack(spacing: AppTheme.Spacing.xs) {
-            frameSlot(label: "First Frame", asset: firstFrame, isTargeted: $firstFrameTargeted,
+            frameSlot(label: "First Frame", pickerID: "first-frame", asset: firstFrame, isTargeted: $firstFrameTargeted,
                       onDrop: { firstFrame = $0 }, onClear: { firstFrame = nil })
             if selectedVideoCapabilities?.supportsLastFrame == true {
-                frameSlot(label: "Last Frame", asset: lastFrame, isTargeted: $lastFrameTargeted,
+                frameSlot(label: "Last Frame", pickerID: "last-frame", asset: lastFrame, isTargeted: $lastFrameTargeted,
                           onDrop: { lastFrame = $0 }, onClear: { lastFrame = nil })
             }
         }
@@ -1069,8 +1071,9 @@ struct GenerationView: View {
                 }
                 if !isRefCapReached {
                     dropZone(
+                        pickerID: "video-references",
                         isTargeted: $refsTargeted,
-                        accepting: Set(ClipType.allCases),
+                        accepting: Set(ClipType.allCases.filter { refCap(for: $0) > 0 }),
                         iconName: "plus"
                     ) { asset in
                         addRefAsset(asset)
@@ -1169,14 +1172,16 @@ struct GenerationView: View {
     }
 
     private func validatedDropZone(
+        pickerID: String,
         isTargeted: Binding<Bool>,
         expects: Set<ClipType>,
         iconName: String,
         onDrop: @escaping (MediaAsset) -> Void
     ) -> some View {
         dropZone(
+            pickerID: pickerID,
             isTargeted: isTargeted,
-            accepting: Set(ClipType.allCases),
+            accepting: expects,
             iconName: iconName
         ) { asset in
             if expects.contains(asset.type) {
@@ -1249,7 +1254,9 @@ struct GenerationView: View {
     }
 
     private func frameSlot(
-        label: String, asset: MediaAsset?,
+        label: String,
+        pickerID: String,
+        asset: MediaAsset?,
         isTargeted: Binding<Bool>,
         accepting acceptedTypes: Set<ClipType> = [.image],
         iconName: String = "photo.badge.plus",
@@ -1286,6 +1293,7 @@ struct GenerationView: View {
                 }
             } else {
                 validatedDropZone(
+                    pickerID: pickerID,
                     isTargeted: isTargeted,
                     expects: acceptedTypes,
                     iconName: iconName,
@@ -1314,6 +1322,7 @@ struct GenerationView: View {
                     }
                 }
                 validatedDropZone(
+                    pickerID: "image-references",
                     isTargeted: $imageRefTargeted,
                     expects: [.image],
                     iconName: "photo.badge.plus"
@@ -1376,6 +1385,7 @@ struct GenerationView: View {
         HStack(spacing: AppTheme.Spacing.xs) {
             frameSlot(
                 label: "Source Video",
+                pickerID: "edit-source-video",
                 asset: sourceVideo,
                 isTargeted: $sourceVideoTargeted,
                 accepting: [.video],
@@ -1386,6 +1396,7 @@ struct GenerationView: View {
             if selectedVideoCapabilities?.supportsReferences == true {
                 frameSlot(
                     label: "Reference Image",
+                    pickerID: "edit-reference-image",
                     asset: imageReferences.first,
                     isTargeted: $motionReferenceTargeted,
                     accepting: [.image],
@@ -1400,34 +1411,60 @@ struct GenerationView: View {
     // MARK: - Shared drop zone
 
     private func dropZone(
+        pickerID: String,
         isTargeted: Binding<Bool>,
         accepting acceptedTypes: Set<ClipType> = [.image],
         iconName: String = "photo.badge.plus",
         onDrop: @escaping (MediaAsset) -> Void
     ) -> some View {
-        Image(systemName: iconName)
-            .interfaceFont(size: AppTheme.Typography.ui)
-            .foregroundStyle(isTargeted.wrappedValue ? AppTheme.Accent.primary : AppTheme.Text.mutedColor)
-            .frame(width: AppTheme.GenerationPanel.referenceTileWidth, height: AppTheme.GenerationPanel.referenceTileHeight)
-            .background(
-                RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                    .fill(isTargeted.wrappedValue ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.faint) : AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.subtle))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                    .strokeBorder(
-                        isTargeted.wrappedValue ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.strong) : AppTheme.Border.primaryColor,
-                        style: StrokeStyle(lineWidth: AppTheme.BorderWidth.thin, dash: AppTheme.Border.compactDash)
-                    )
-            )
-            .overlay {
-                DropTargetOverlay(isTargeted: isTargeted) { payload in
-                    for asset in editor.assetsFromDragPayload(payload)
-                    where acceptedTypes.contains(asset.type) {
-                        onDrop(asset)
-                    }
+        Button {
+            activeLibraryPickerID = pickerID
+        } label: {
+            Image(systemName: iconName)
+                .interfaceFont(size: AppTheme.Typography.ui)
+                .foregroundStyle(isTargeted.wrappedValue ? AppTheme.Accent.primary : AppTheme.Text.mutedColor)
+                .frame(width: AppTheme.GenerationPanel.referenceTileWidth, height: AppTheme.GenerationPanel.referenceTileHeight)
+                .background(
+                    RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                        .fill(isTargeted.wrappedValue ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.faint) : AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.subtle))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                        .strokeBorder(
+                            isTargeted.wrappedValue ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.strong) : AppTheme.Border.primaryColor,
+                            style: StrokeStyle(lineWidth: AppTheme.BorderWidth.thin, dash: AppTheme.Border.compactDash)
+                        )
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Choose from Media or drop a source")
+        .overlay {
+            DropTargetOverlay(isTargeted: isTargeted) { payload in
+                for asset in editor.assetsFromDragPayload(payload)
+                where acceptedTypes.contains(asset.type) {
+                    onDrop(asset)
                 }
             }
+        }
+        .popover(isPresented: Binding(
+            get: { activeLibraryPickerID == pickerID },
+            set: { if !$0 { activeLibraryPickerID = nil } }
+        ), arrowEdge: .bottom) {
+            LibraryAssetPicker(
+                assets: editor.agentPickableMediaAssets.filter { acceptedTypes.contains($0.type) },
+                purpose: .generationInput(pickerID),
+                showsSearch: true,
+                showsTypeTabs: acceptedTypes.count > 1,
+                scrollHeight: AppTheme.ComponentSize.agentAssetPickerHeight,
+                emptyLabel: "No compatible media"
+            ) { asset in
+                onDrop(asset)
+                activeLibraryPickerID = nil
+            }
+            .frame(width: AppTheme.ComponentSize.agentAssetPickerWidth)
+            .padding(AppTheme.Spacing.sm)
+        }
     }
 
     // MARK: - Submit button

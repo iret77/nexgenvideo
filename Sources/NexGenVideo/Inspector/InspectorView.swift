@@ -530,7 +530,7 @@ struct InspectorView: View {
         var names: [String: String] = [:]
         var paths: [String: String] = [:]
         for asset in editor.mediaAssets {
-            names[asset.id] = asset.name
+            names[asset.id] = asset.userFacingFilename
             paths[asset.id] = asset.url.path
         }
         return ObjectGraph.from(

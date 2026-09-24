@@ -6,6 +6,7 @@ struct PreviewContainerView: View {
 
     private var isTimeline: Bool { editor.activePreviewTab == .timeline }
     private var isImage: Bool { editor.activePreviewTab.clipType == .image }
+    private var isDocument: Bool { editor.activePreviewTab.clipType == .document }
 
     var body: some View {
         VStack(spacing: AppTheme.Spacing.none) {
@@ -25,6 +26,9 @@ struct PreviewContainerView: View {
                     PreviewView()
                     if isImage {
                         imagePreview
+                    }
+                    if isDocument, let asset = activeMediaAsset {
+                        ReadOnlyDocumentPreview(url: asset.url)
                     }
                     if let error = activeFailedError {
                         failedPreview(error: error)
@@ -584,7 +588,7 @@ struct PreviewContainerView: View {
     }
 
     private var activeObjectName: String {
-        if let asset = activeMediaAsset { return asset.name }
+        if let asset = activeMediaAsset { return asset.userFacingFilename }
         if let id = editor.activeTimelineInspectionClipID, let location = editor.findClip(id: id) {
             return editor.clipDisplayLabel(for: editor.timeline.tracks[location.trackIndex].clips[location.clipIndex])
         }
@@ -740,6 +744,57 @@ struct PreviewContainerView: View {
                     .allowsHitTesting(false)
             }
         }
+    }
+}
+
+private struct ReadOnlyDocumentPreview: View {
+    let url: URL
+    @State private var text = ""
+    @State private var error: String?
+
+    var body: some View {
+        ScrollView {
+            Group {
+                if let error {
+                    ContentUnavailableView(
+                        "Couldn't Read Text",
+                        systemImage: "doc.badge.ellipsis",
+                        description: Text(error)
+                    )
+                } else {
+                    Text(text)
+                        .interfaceFont(size: AppTheme.Typography.reading)
+                        .foregroundStyle(AppTheme.Text.primaryColor)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(AppTheme.Spacing.lg)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(AppTheme.Background.previewCanvasColor)
+        .task(id: url) {
+            let result = await Self.load(url)
+            text = result.text
+            error = result.error
+        }
+        .accessibilityIdentifier("preview.readOnlyDocument")
+    }
+
+    nonisolated private static func load(_ url: URL) async -> (text: String, error: String?) {
+        await Task.detached(priority: .userInitiated) {
+            do {
+                let handle = try FileHandle(forReadingFrom: url)
+                defer { try? handle.close() }
+                let data = try handle.read(upToCount: 2_000_000) ?? Data()
+                guard let value = String(data: data, encoding: .utf8) else {
+                    throw CocoaError(.fileReadInapplicableStringEncoding)
+                }
+                return (value, nil)
+            } catch {
+                return ("", error.localizedDescription)
+            }
+        }.value
     }
 }
 

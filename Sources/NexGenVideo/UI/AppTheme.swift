@@ -443,6 +443,10 @@ enum AppTheme {
         static let safeDimensionCeiling: CGFloat = 10_000
         static let mediaPanelDefault: CGFloat = 500
         static let mediaPanelMin: CGFloat = 280
+        static let mediaFolderTreeDefault: CGFloat = 220
+        static let mediaFolderTreeMin: CGFloat = 180
+        static let mediaBrowserMinHeight: CGFloat = 260
+        static let compactMediaPickerMinHeight: CGFloat = 180
         static let inspectorDefault: CGFloat = 260
         static let inspectorMin: CGFloat = 150
         static let inspectorMinHeight: CGFloat = 120
@@ -571,6 +575,10 @@ enum AppTheme {
 
     enum MediaPanel {
         static let contextRowHeight: CGFloat = IconSize.md
+        static let thumbnailSmall: CGFloat = 80
+        static let thumbnailMedium: CGFloat = 110
+        static let thumbnailLarge: CGFloat = 150
+        static let thumbnailExtraLarge: CGFloat = 200
     }
 
     enum Generating {

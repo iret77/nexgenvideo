@@ -32,13 +32,6 @@ extension EditorViewModel {
             .map(\.id))
     }
 
-    private func clipIdsReferencingAssets(_ assetIds: Set<String>) -> Set<String> {
-        Set(timeline.tracks
-            .flatMap(\.clips)
-            .filter { assetIds.contains($0.mediaRef) }
-            .map(\.id))
-    }
-
     // MARK: - Mutations
 
     @discardableResult
@@ -65,8 +58,7 @@ extension EditorViewModel {
     }
 
     func canDeleteFolders(ids: Set<String>) -> Bool {
-        let allFolderIds = MediaFolderIndex(mediaManifest.folders).idsIncludingDescendants(ids)
-        return canDeleteMediaAssets(ids: assetIds(inFolderIds: allFolderIds))
+        mediaManifest.folders.contains { ids.contains($0.id) }
     }
 
     func deleteFolders(ids: Set<String>) {
@@ -76,35 +68,32 @@ extension EditorViewModel {
         guard canDeleteFolders(ids: ids) else { return }
 
         let before = mediaLibraryUndoSnapshot()
-        let assetIdsToDelete = assetIds(inFolderIds: allFolderIds)
-        let clipIdsToRemove = clipIdsReferencingAssets(assetIdsToDelete)
-        guard !clipIdsToRemove.contains(where: isClipEditLocked) else { return }
-
-        if !clipIdsToRemove.isEmpty {
-            selectedClipIds.subtract(clipIdsToRemove)
-            for i in timeline.tracks.indices {
-                timeline.tracks[i].clips.removeAll { clipIdsToRemove.contains($0.id) }
+        let affectedAssetIds = assetIds(inFolderIds: allFolderIds)
+        var destinationFolderId: String?
+        if !affectedAssetIds.isEmpty {
+            if let imports = mediaManifest.folders.first(where: {
+                $0.parentFolderId == nil
+                    && $0.name.localizedCaseInsensitiveCompare("Imports") == .orderedSame
+                    && !allFolderIds.contains($0.id)
+            }) {
+                destinationFolderId = imports.id
+            } else {
+                let imports = MediaFolder(name: "Imports")
+                mediaManifest.folders.append(imports)
+                destinationFolderId = imports.id
             }
-            pruneEmptyTracks()
+            for assetId in affectedAssetIds {
+                setAssetFolderId(destinationFolderId, forAssetId: assetId)
+            }
         }
 
-        mediaAssets.removeAll { assetIdsToDelete.contains($0.id) }
-        mediaManifest.entries.removeAll { assetIdsToDelete.contains($0.id) }
-        mediaManifest.intakeRoleByAssetID = mediaManifest.intakeRoleByAssetID.filter {
-            !assetIdsToDelete.contains($0.key)
-        }
         mediaManifest.folders.removeAll { allFolderIds.contains($0.id) }
         selectedFolderIds.subtract(allFolderIds)
-        selectedMediaAssetIds.subtract(assetIdsToDelete)
-        for id in assetIdsToDelete { closePreviewTab(id: PreviewTab.mediaAssetTabId(for: id)) }
 
         undoManager?.registerUndo(withTarget: self) { vm in
             vm.restoreMediaLibraryUndoSnapshot(before, actionName: "Delete Folder")
         }
         undoManager?.setActionName("Delete Folder")
-        if !clipIdsToRemove.isEmpty {
-            notifyTimelineChanged()
-        }
     }
 
     func moveAssetsToFolder(assetIds: Set<String>, folderId: String?) {

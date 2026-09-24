@@ -155,7 +155,7 @@ struct AgentMention: Identifiable, Hashable, Codable {
 extension MediaAsset {
     // Collapses spaces and hyphens so the inserted `@token` stays a single word.
     var mentionDisplayName: String {
-        AgentMention.makeDisplayName(from: name)
+        AgentMention.makeDisplayName(from: libraryDisplayName)
     }
 }
 

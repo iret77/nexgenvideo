@@ -604,16 +604,16 @@ struct ToolExecutorClipTests {
         #expect(remove.isError)
         #expect(title.isError)
         #expect(deleteMedia.isError)
-        #expect(deleteFolder.isError)
+        #expect(deleteFolder.isError == false)
         #expect(h.editor.timeline == original)
         #expect(h.editor.mediaAssets.contains { $0.id == asset.id })
-        #expect(h.editor.folder(id: folderID) != nil)
+        #expect(h.editor.folder(id: folderID) == nil)
         #expect(ToolHarness.textOf(add).contains("locked"))
         #expect(ToolHarness.textOf(change).contains("locked"))
         #expect(ToolHarness.textOf(remove).contains("locked"))
         #expect(ToolHarness.textOf(title).contains("locked"))
         #expect(ToolHarness.textOf(deleteMedia).contains("locked"))
-        #expect(ToolHarness.textOf(deleteFolder).contains("locked"))
+        #expect(ToolHarness.textOf(deleteFolder).contains("preserved"))
     }
 
     @Test func effectToolsRejectMixedLockedTargetsBeforeMutationOrLUTIO() async {

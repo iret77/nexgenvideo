@@ -720,7 +720,7 @@ struct DeleteFoldersTests {
         #expect(e.folder(id: grand) == nil)
     }
 
-    @Test func deleteRemovesAssetsAndReferencingClips() {
+    @Test func deleteMovesAssetsToImportsAndPreservesReferencingClips() {
         let e = editor()
         let folder = e.createFolder(name: "Trash")
         let a = asset(name: "doomed", folderId: folder)
@@ -731,10 +731,11 @@ struct DeleteFoldersTests {
 
         e.deleteFolders(ids: [folder])
 
-        #expect(e.mediaAssets.contains(where: { $0.id == a.id }) == false)
-        #expect(e.mediaManifest.entries.contains(where: { $0.id == a.id }) == false)
-        // Empty track is pruned after the only clip referencing the deleted asset goes.
-        #expect(e.timeline.tracks.flatMap(\.clips).contains(where: { $0.id == "c1" }) == false)
+        let imports = e.folders.first { $0.name == "Imports" && $0.parentFolderId == nil }
+        #expect(imports != nil)
+        #expect(e.mediaAssets.first(where: { $0.id == a.id })?.folderId == imports?.id)
+        #expect(e.mediaManifest.entries.first(where: { $0.id == a.id })?.folderId == imports?.id)
+        #expect(e.timeline.tracks.flatMap(\.clips).contains(where: { $0.id == "c1" }))
     }
 
     @Test func deleteSubtractsFromSelectedFolderIds() {
@@ -838,7 +839,7 @@ struct FolderEdgeCaseTests {
         #expect(e.folder(id: other) != nil)
     }
 
-    @Test func deleteSubtractsFromSelectedMediaAssetIds() {
+    @Test func deletePreservesSelectedMediaAssetIds() {
         let e = editor()
         let folder = e.createFolder(name: "Doomed")
         let inside = asset(name: "in", folderId: folder)
@@ -849,7 +850,33 @@ struct FolderEdgeCaseTests {
 
         e.deleteFolders(ids: [folder])
 
-        #expect(e.selectedMediaAssetIds == [outside.id])
+        #expect(e.selectedMediaAssetIds == [inside.id, outside.id])
+    }
+
+    @Test func deleteUndoRedoPreservesAssetAndClipIdentity() {
+        let e = editor()
+        let undo = UndoManager()
+        e.undoManager = undo
+        let folder = e.createFolder(name: "Camera")
+        undo.removeAllActions()
+        let source = asset(name: "take", folderId: folder)
+        e.importMediaAsset(source)
+        let clip = Fixtures.clip(id: "clip-stable", mediaRef: source.id, start: 0, duration: 30)
+        e.timeline = Fixtures.timeline(tracks: [Fixtures.videoTrack(clips: [clip])])
+
+        e.deleteFolders(ids: [folder])
+        #expect(e.mediaAssets.contains { $0.id == source.id })
+        #expect(e.timeline.tracks.flatMap(\.clips).first?.mediaRef == source.id)
+
+        undo.undo()
+        #expect(e.folder(id: folder) != nil)
+        #expect(e.mediaAssets.first(where: { $0.id == source.id })?.folderId == folder)
+        #expect(e.timeline.tracks.flatMap(\.clips).first?.id == "clip-stable")
+
+        undo.redo()
+        #expect(e.folder(id: folder) == nil)
+        #expect(e.mediaAssets.contains { $0.id == source.id })
+        #expect(e.timeline.tracks.flatMap(\.clips).first?.mediaRef == source.id)
     }
 
     @Test func renameFolderIgnoresUnknownId() {

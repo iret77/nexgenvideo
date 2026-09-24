@@ -872,6 +872,7 @@ final class EditorViewModel {
     /// Restore the target workspace's UI context without mutating project, pipeline, or undo state.
     func setWorkspaceFocus(_ focus: WorkspaceFocus) {
         guard focus != workspaceFocus else { return }
+        snapshotMediaLibrarySession(for: workspaceFocus)
         workspacePresentationStates[workspaceFocus] = WorkspacePresentationState(
             sidebarVisible: mediaPanelVisible,
             inspectorVisible: inspectorPanelVisible,
@@ -919,7 +920,18 @@ final class EditorViewModel {
             explicitTimelineInspectionClipID = nil
         }
         currentFrame = max(0, min(state.timelineFrame, timeline.totalFrames))
-        sourcePlayheadFrame = max(0, state.sourceFrame)
+        var restoredSourceFrame = max(0, state.sourceFrame)
+        if let purpose = mediaLibraryPurpose(for: focus),
+           let asset = activeSourceAsset {
+            let sourceState = mediaLibrarySession(for: purpose).sourceStates[asset.id]
+                ?? SourcePreviewState(playheadFrame: restoredSourceFrame)
+            let duration = secondsToFrame(seconds: asset.duration, fps: timeline.fps)
+            let restored = sourceState.clamped(to: duration)
+            sourcePreviewStates[asset.id] = restored
+            restoredSourceFrame = restored.playheadFrame
+        }
+        sourcePlayheadFrame = restoredSourceFrame
+        activeMediaLibraryPurpose = activeSourceAsset == nil ? nil : mediaLibraryPurpose(for: focus)
         mediaPanelTab = state.mediaPanelTab
         mediaPanelCurrentFolderId = state.mediaFolderId
         videoEngine?.activateTab(activePreviewTab)
@@ -1185,6 +1197,90 @@ final class EditorViewModel {
     @ObservationIgnored var mediaImportSequence: Int = 0
     @ObservationIgnored var mediaImportCancellationGeneration: Int = 0
     @ObservationIgnored var songAttachInProgress = false
+
+    func mediaLibrarySession(for purpose: MediaLibraryPurpose) -> MediaLibrarySession {
+        if let session = mediaLibrarySessions[purpose] { return session }
+        let session = MediaLibrarySession(purpose: purpose)
+        mediaLibrarySessions[purpose] = session
+        return session
+    }
+
+    func selectMediaAsset(_ asset: MediaAsset, for purpose: MediaLibraryPurpose) {
+        rememberActiveMediaLibrarySource()
+        let session = mediaLibrarySession(for: purpose)
+        session.activeAssetID = asset.id
+        session.selectedAssetIDs = [asset.id]
+        session.scrollAnchorID = asset.id
+        let duration = secondsToFrame(seconds: asset.duration, fps: timeline.fps)
+        let restored = session.sourceStates[asset.id] ?? SourcePreviewState()
+        sourcePreviewStates[asset.id] = restored.clamped(to: duration)
+        selectMediaAsset(asset)
+        activeMediaLibraryPurpose = purpose
+    }
+
+    func activateMediaAsset(
+        _ asset: MediaAsset,
+        preservingSelection: Bool,
+        for purpose: MediaLibraryPurpose
+    ) {
+        rememberActiveMediaLibrarySource()
+        let session = mediaLibrarySession(for: purpose)
+        session.activeAssetID = asset.id
+        session.scrollAnchorID = asset.id
+        let duration = secondsToFrame(seconds: asset.duration, fps: timeline.fps)
+        sourcePreviewStates[asset.id] = session.sourceState(for: asset.id).clamped(to: duration)
+        activateMediaAsset(asset, preservingSelection: preservingSelection)
+        session.selectedAssetIDs = selectedMediaAssetIds
+        activeMediaLibraryPurpose = purpose
+    }
+
+    func toggleMediaAssetSelection(_ asset: MediaAsset, for purpose: MediaLibraryPurpose) {
+        selectedFolderIds.removeAll()
+        if selectedMediaAssetIds.contains(asset.id) {
+            selectedMediaAssetIds.remove(asset.id)
+        } else {
+            selectedMediaAssetIds.insert(asset.id)
+        }
+        activateMediaAsset(asset, preservingSelection: true, for: purpose)
+    }
+
+    private func rememberActiveMediaLibrarySource() {
+        guard let activeMediaLibraryPurpose, let activeAsset = activeSourceAsset else { return }
+        mediaLibrarySession(for: activeMediaLibraryPurpose).rememberSourceState(
+            sourcePreviewState(for: activeAsset.id),
+            for: activeAsset.id
+        )
+    }
+
+    func mediaLibraryPurpose(for workspace: WorkspaceFocus) -> MediaLibraryPurpose? {
+        switch workspace {
+        case .media: .workspace
+        case .production: .productionSource
+        case .edit: .editSource
+        case .postproduction: .postproductionSource
+        case .export: nil
+        }
+    }
+
+    private func snapshotMediaLibrarySession(for workspace: WorkspaceFocus) {
+        guard let purpose = mediaLibraryPurpose(for: workspace) else { return }
+        let session = mediaLibrarySession(for: purpose)
+        session.selectedAssetIDs = selectedMediaAssetIds
+        session.folderID = mediaPanelCurrentFolderId
+        guard activeMediaLibraryPurpose == purpose, let asset = activeSourceAsset else { return }
+        session.activeAssetID = asset.id
+        session.rememberSourceState(sourcePreviewState(for: asset.id), for: asset.id)
+    }
+
+    func revealMediaAsset(id: String) {
+        setWorkspaceFocus(.media)
+        theaterActive = false
+        mediaPanelVisible = true
+        maximizedPanel = nil
+        focusedPanel = .media
+        showMediaPanelMediaTab()
+        mediaPanelRevealAssetId = id
+    }
 
     func showMediaPanelMediaTab() {
         setMediaPanelTab(.assets, for: workspaceFocus)
@@ -1570,7 +1666,11 @@ final class EditorViewModel {
     private var workspacePresentationStates = EditorViewModel.initialWorkspacePresentations()
     @ObservationIgnored private var isRestoringWorkspacePresentation = false
 
-    var sourcePreviewStates: [String: SourcePreviewState] = [:]
+    var sourcePreviewStates: [String: SourcePreviewState] = [:] {
+        didSet { rememberActiveMediaLibrarySource() }
+    }
     var explicitTimelineInspectionClipID: String?
+    @ObservationIgnored private var mediaLibrarySessions: [MediaLibraryPurpose: MediaLibrarySession] = [:]
+    @ObservationIgnored var activeMediaLibraryPurpose: MediaLibraryPurpose?
 
 }

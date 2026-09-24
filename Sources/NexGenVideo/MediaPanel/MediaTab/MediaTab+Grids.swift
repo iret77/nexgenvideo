@@ -33,6 +33,33 @@ extension MediaTab {
         let tileWidth: CGFloat
         let spacing: CGFloat
     }
+
+    func listScroll(cells: [MediaCell]) -> some View {
+        let orderedIDs = cells.map(\.id)
+        return ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: AppTheme.Spacing.xs) {
+                    ForEach(cells) { cell in
+                        listCellView(for: cell)
+                            .id(cell.id)
+                    }
+                }
+                .padding(AppTheme.Spacing.md)
+            }
+            .onAppear {
+                publishOrderedIds(orderedIDs)
+                if editor.mediaPanelColumnCount != 1 { editor.mediaPanelColumnCount = 1 }
+            }
+            .onChange(of: orderedIDs) { _, ids in publishOrderedIds(ids) }
+            .onChange(of: editor.mediaPanelScrollTarget) { _, target in
+                guard workspace == editor.workspaceFocus, let target else { return }
+                withAnimation(.easeOut(duration: AppTheme.Anim.hover)) {
+                    proxy.scrollTo(target, anchor: .center)
+                }
+                editor.mediaPanelScrollTarget = nil
+            }
+        }
+    }
 }
 
 // MARK: - Layout math
@@ -144,6 +171,12 @@ extension MediaTab {
             }
         }
     }
+
+    var mediaListView: some View {
+        let cells = subfoldersInCurrentFolder.map { MediaCell(kind: .folder($0)) }
+            + assetsInCurrentFolder.map { MediaCell(kind: .asset($0)) }
+        return listScroll(cells: cells)
+    }
 }
 
 // MARK: - Flat mode (every asset, no folders)
@@ -165,6 +198,10 @@ extension MediaTab {
                 assetCellView(for: asset)
             }
         }
+    }
+
+    var flatListView: some View {
+        listScroll(cells: sortAndFilter(editor.mediaAssets).map { MediaCell(kind: .asset($0)) })
     }
 }
 
@@ -315,12 +352,21 @@ extension MediaTab {
                         .foregroundStyle(AppTheme.Text.mutedColor)
                         .padding(.vertical, AppTheme.Spacing.sm)
                 } else {
-                    let columns = [GridItem(.adaptive(minimum: thumbnailSize), spacing: spacing)]
-                    LazyVGrid(columns: columns, alignment: .leading, spacing: spacing) {
-                        ForEach(assets) { asset in
-                            assetCellView(for: asset)
-                                .frame(width: tileWidth)
-                                .id(asset.id)
+                    if assetLayout == .list {
+                        LazyVStack(spacing: AppTheme.Spacing.xs) {
+                            ForEach(assets) { asset in
+                                assetListCellView(for: asset)
+                                    .id(asset.id)
+                            }
+                        }
+                    } else {
+                        let columns = [GridItem(.adaptive(minimum: thumbnailSize), spacing: spacing)]
+                        LazyVGrid(columns: columns, alignment: .leading, spacing: spacing) {
+                            ForEach(assets) { asset in
+                                assetCellView(for: asset)
+                                    .frame(width: tileWidth)
+                                    .id(asset.id)
+                            }
                         }
                     }
                 }
@@ -377,12 +423,63 @@ extension MediaTab {
     func assetCellView(for asset: MediaAsset) -> some View {
         AssetThumbnailView(
             asset: asset,
-            onMoveToFolderMenu: AnyView(moveToFolderMenu(for: asset))
+            onMoveToFolderMenu: AnyView(moveToFolderMenu(for: asset)),
+            libraryPurpose: mediaPurpose
         )
         .draggable(dragPayload(for: asset)) {
             dragPreview(for: asset)
         }
         .background(assetFrameReader(for: asset.id))
+    }
+
+    func assetListCellView(for asset: MediaAsset) -> some View {
+        AssetThumbnailView(
+            asset: asset,
+            onMoveToFolderMenu: AnyView(moveToFolderMenu(for: asset)),
+            style: .list,
+            libraryPurpose: mediaPurpose
+        )
+        .draggable(dragPayload(for: asset)) { dragPreview(for: asset) }
+        .background(assetFrameReader(for: asset.id))
+    }
+
+    @ViewBuilder
+    func listCellView(for cell: MediaCell) -> some View {
+        switch cell.kind {
+        case .folder(let folder):
+            folderListRow(folder)
+                .background(assetFrameReader(for: cell.id))
+        case .asset(let asset):
+            assetListCellView(for: asset)
+        }
+    }
+
+    private func folderListRow(_ folder: MediaFolder) -> some View {
+        let dropHover = Binding<Bool>(
+            get: { dropTargetFolderId == folder.id },
+            set: { dropTargetFolderId = $0 ? folder.id : nil }
+        )
+        return MediaFolderListRow(
+            folder: folder,
+            childCount: editor.subfolders(of: folder.id).count + editor.assetsIn(folderId: folder.id).count,
+            isSelected: editor.selectedFolderIds.contains(folder.id),
+            isDropTargeted: dropTargetFolderId == folder.id,
+            isRenaming: Binding(
+                get: { renamingFolderId == folder.id },
+                set: { renamingFolderId = $0 ? folder.id : nil }
+            ),
+            onSelect: { handleFolderTap(folder) },
+            onOpen: { openFolder(id: folder.id) },
+            onRename: { editor.renameFolder(id: folder.id, name: $0) },
+            onDelete: { editor.deleteFolders(ids: [folder.id]) }
+        )
+        .draggable(MediaTab.folderDragString(forFolderId: folder.id)) {
+            FolderDragPreview(name: folder.name)
+        }
+        .onDrop(of: [.fileURL, .text], isTargeted: dropHover) { providers in
+            handleProviderDrop(providers, into: folder.id)
+            return true
+        }
     }
 
     @ViewBuilder
@@ -479,6 +576,93 @@ extension MediaTab {
                 key: AssetFramePreferenceKey.self,
                 value: [id: geo.frame(in: .named("mediaGrid"))]
             )
+        }
+    }
+}
+
+private struct MediaFolderListRow: View {
+    let folder: MediaFolder
+    let childCount: Int
+    let isSelected: Bool
+    let isDropTargeted: Bool
+    @Binding var isRenaming: Bool
+    let onSelect: () -> Void
+    let onOpen: () -> Void
+    let onRename: (String) -> Void
+    let onDelete: () -> Void
+
+    @State private var draft = ""
+    @FocusState private var renameFocused: Bool
+    @State private var lastClickTime: Date?
+
+    var body: some View {
+        HStack(spacing: AppTheme.Spacing.md) {
+            Image(systemName: "folder.fill")
+                .interfaceFont(size: AppTheme.Typography.title)
+                .foregroundStyle(AppTheme.Accent.primary.opacity(AppTheme.Opacity.emphasis))
+                .frame(width: AppTheme.ComponentSize.searchThumbnailWidth)
+            if isRenaming {
+                TextField("Folder", text: $draft)
+                    .textFieldStyle(.plain)
+                    .focused($renameFocused)
+                    .onSubmit { commitRename() }
+                    .onExitCommand { isRenaming = false }
+            } else {
+                Text(folder.name)
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
+                    .foregroundStyle(AppTheme.Text.primaryColor)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: AppTheme.Spacing.sm)
+            Text("\(childCount)")
+                .monospacedDigit()
+                .foregroundStyle(AppTheme.Text.mutedColor)
+        }
+        .padding(.horizontal, AppTheme.Spacing.sm)
+        .padding(.vertical, AppTheme.Spacing.xs)
+        .background(
+            isSelected || isDropTargeted
+                ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.faint)
+                : AppTheme.Background.clearColor,
+            in: RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture { handleClick() }
+        .contextMenu {
+            Button("Open", action: onOpen)
+            Button("Rename") { beginRename() }
+            Divider()
+            Button("Remove", role: .destructive, action: onDelete)
+        }
+        .onChange(of: isRenaming) { _, value in
+            if value { beginRename() }
+        }
+        .onChange(of: renameFocused) { _, value in
+            if !value { commitRename() }
+        }
+    }
+
+    private func beginRename() {
+        draft = folder.name
+        isRenaming = true
+        renameFocused = true
+    }
+
+    private func commitRename() {
+        guard isRenaming else { return }
+        let name = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty, name != folder.name { onRename(name) }
+        isRenaming = false
+    }
+
+    private func handleClick() {
+        let now = Date()
+        if let lastClickTime, now.timeIntervalSince(lastClickTime) < NSEvent.doubleClickInterval {
+            onOpen()
+            self.lastClickTime = nil
+        } else {
+            onSelect()
+            lastClickTime = now
         }
     }
 }

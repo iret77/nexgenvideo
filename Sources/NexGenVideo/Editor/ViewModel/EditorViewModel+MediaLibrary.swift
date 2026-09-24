@@ -1235,7 +1235,11 @@ extension EditorViewModel {
         }
         guard let asset = mediaAssets.first(where: { $0.id == key }) else { return }
         mediaPanelScrollTarget = key
-        selectMediaAsset(asset)
+        if let purpose = mediaLibraryPurpose(for: workspaceFocus) {
+            selectMediaAsset(asset, for: purpose)
+        } else {
+            selectMediaAsset(asset)
+        }
     }
 
     func renameMediaAsset(id: String, name: String) {

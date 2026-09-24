@@ -110,6 +110,10 @@ final class MediaAsset: Identifiable {
             storageURL: url
         )
     }
+
+    var libraryDisplayName: String {
+        MediaFilename.isContentAddressed(name) ? userFacingFilename : name
+    }
     /// Agent-facing token for get_media. The persisted manifest carries no status, so the
     /// library (this object) is the only source that knows an asset is mid-flight or failed.
     var generationStatusToken: String {

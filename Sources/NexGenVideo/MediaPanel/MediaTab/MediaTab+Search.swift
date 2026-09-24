@@ -7,7 +7,7 @@ extension MediaTab {
     }
 
     var searchResults: some View {
-        let nameMatches = sortAndFilter(editor.mediaAssets)
+        let nameMatches = searchScope == .filename ? sortAndFilter(editor.mediaAssets) : []
         return ScrollView {
             LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
                 if !visualHits.isEmpty {
@@ -17,19 +17,26 @@ extension MediaTab {
                     }
                 }
                 if !spokenHits.isEmpty {
-                    momentHeader("Spoken", icon: "waveform", count: spokenHits.count, collapsible: true)
-                    if !collapsedSearchSections.contains("Spoken") {
+                    momentHeader("Transcript", icon: "waveform", count: spokenHits.count, collapsible: true)
+                    if !collapsedSearchSections.contains("Transcript") {
                         VStack(spacing: AppTheme.Spacing.sm) {
                             ForEach(spokenHits.indices, id: \.self) { spokenRow(spokenHits[$0]) }
                         }
                         .padding(.bottom, AppTheme.Spacing.sm)
                     }
                 }
+                if !documentHits.isEmpty {
+                    momentHeader("Text Content", icon: "doc.text.magnifyingglass", count: documentHits.count)
+                    VStack(spacing: AppTheme.Spacing.sm) {
+                        ForEach(documentHits) { documentRow($0) }
+                    }
+                    .padding(.bottom, AppTheme.Spacing.sm)
+                }
                 if !nameMatches.isEmpty {
                     momentHeader("Files", icon: "doc", count: nameMatches.count)
                     resultsGrid { ForEach(nameMatches) { fileCard($0) } }
                 }
-                if visualHits.isEmpty, spokenHits.isEmpty, nameMatches.isEmpty {
+                if visualHits.isEmpty, spokenHits.isEmpty, documentHits.isEmpty, nameMatches.isEmpty {
                     Text("No matches for “\(trimmedSearchQuery)”")
                         .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
@@ -101,7 +108,7 @@ extension MediaTab {
                 .aspectRatio(16.0 / 9.0, contentMode: .fit)
                 .frame(maxWidth: .infinity)
                 .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
-            Text(asset?.name ?? "")
+            Text(asset?.libraryDisplayName ?? "")
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .lineLimit(1)
@@ -149,7 +156,7 @@ extension MediaTab {
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.primaryColor)
                     .lineLimit(3)
-                Text("\(asset?.name ?? "") · \(timecode(hit.start))")
+                Text("\(asset?.libraryDisplayName ?? "") · \(timecode(hit.start))")
                     .interfaceFont(size: AppTheme.Typography.metadata)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
                     .lineLimit(1)
@@ -180,18 +187,49 @@ extension MediaTab {
             .aspectRatio(16.0 / 9.0, contentMode: .fit)
             .frame(maxWidth: .infinity)
             .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
-            Text(asset.name)
+            Text(asset.libraryDisplayName)
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .lineLimit(1)
         }
         .draggable(dragPayload(for: asset)) { dragPreview(for: asset) }
-        .onTapGesture { editor.selectMediaPanelItem(asset.id) }
+        .onTapGesture { editor.selectMediaAsset(asset, for: mediaPurpose) }
+    }
+
+    private func documentRow(_ hit: DocumentSearch.Hit) -> some View {
+        let asset = editor.mediaAssets.first { $0.id == hit.assetID }
+        return Button {
+            guard let asset else { return }
+            editor.selectMediaAsset(asset, for: mediaPurpose)
+        } label: {
+            HStack(alignment: .top, spacing: AppTheme.Spacing.sm) {
+                Image(systemName: "doc.text")
+                    .interfaceFont(size: AppTheme.Typography.title)
+                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+                    .frame(width: AppTheme.ComponentSize.searchThumbnailWidth)
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                    Text(hit.snippet)
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .foregroundStyle(AppTheme.Text.primaryColor)
+                        .lineLimit(3)
+                    Text(asset?.libraryDisplayName ?? "")
+                        .interfaceFont(size: AppTheme.Typography.metadata)
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: AppTheme.Spacing.none)
+            }
+            .padding(.horizontal, AppTheme.Spacing.md)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .hoverHighlight(cornerRadius: AppTheme.Radius.sm)
     }
 
     private func previewMoment(assetID: String, atSeconds seconds: Double) {
         guard let asset = editor.mediaAssets.first(where: { $0.id == assetID }) else { return }
-        editor.selectMediaAsset(asset, atSourceFrame: secondsToFrame(seconds: seconds, fps: editor.timeline.fps))
+        editor.selectMediaAsset(asset, for: mediaPurpose)
+        editor.seekSourceToFrame(secondsToFrame(seconds: seconds, fps: editor.timeline.fps))
     }
 
     private func timecode(_ seconds: Double) -> String {
@@ -209,21 +247,91 @@ extension MediaTab {
         guard !query.isEmpty else {
             visualHits = []
             spokenHits = []
+            documentHits = []
             return
         }
-        let assets = editor.mediaAssets
+        switch searchScope {
+        case .filename:
+            visualHits = []
+            spokenHits = []
+            documentHits = []
+            return
+        case .content:
+            spokenHits = []
+        case .transcript:
+            visualHits = []
+            documentHits = []
+        }
+        let matchingAssets = editor.mediaAssets.filter(passesFilters)
+        let timedAssets = matchingAssets
             .filter { $0.type == .video || $0.type == .audio }
             .map { (id: $0.id, url: $0.url) }
+        let documents = matchingAssets
+            .filter { $0.type == .document }
+            .map { (id: $0.id, url: $0.url) }
+        let allowedIDs = Set(matchingAssets.map(\.id))
         let coordinator = editor.searchIndex
         momentSearchTask = Task {
             try? await Task.sleep(for: .milliseconds(250))
             guard !Task.isCancelled else { return }
-            let spoken = TranscriptSearch.search(query: query, assets: assets)
-            let visual = await coordinator.search(query: query)
+            let spoken: [TranscriptSearch.Hit]
+            let visual: [VisualSearch.Hit]
+            let text: [DocumentSearch.Hit]
+            switch searchScope {
+            case .filename:
+                spoken = []
+                visual = []
+                text = []
+            case .content:
+                spoken = []
+                visual = await coordinator.search(query: query).filter { allowedIDs.contains($0.assetID) }
+                text = await DocumentSearch.search(query: query, assets: documents)
+            case .transcript:
+                spoken = TranscriptSearch.search(query: query, assets: timedAssets)
+                visual = []
+                text = []
+            }
             guard !Task.isCancelled else { return }
             visualHits = visual
             spokenHits = spoken
+            documentHits = text
         }
+    }
+}
+
+enum DocumentSearch {
+    struct Hit: Identifiable, Sendable {
+        let assetID: String
+        let snippet: String
+        var id: String { assetID }
+    }
+
+    private static let maximumBytes = 2_000_000
+    private static let snippetRadius = 96
+
+    nonisolated static func search(
+        query: String,
+        assets: [(id: String, url: URL)]
+    ) async -> [Hit] {
+        await Task.detached(priority: .userInitiated) {
+            let needle = query.lowercased()
+            return assets.compactMap { asset in
+                guard let handle = try? FileHandle(forReadingFrom: asset.url) else { return nil }
+                defer { try? handle.close() }
+                guard let data = try? handle.read(upToCount: maximumBytes),
+                      let text = String(data: data, encoding: .utf8),
+                      let match = text.lowercased().range(of: needle)
+                else { return nil }
+                let lower = text.index(match.lowerBound, offsetBy: -snippetRadius, limitedBy: text.startIndex)
+                    ?? text.startIndex
+                let upper = text.index(match.upperBound, offsetBy: snippetRadius, limitedBy: text.endIndex)
+                    ?? text.endIndex
+                let snippet = text[lower..<upper]
+                    .replacingOccurrences(of: "\n", with: " ")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                return Hit(assetID: asset.id, snippet: snippet)
+            }
+        }.value
     }
 }
 

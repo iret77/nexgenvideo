@@ -115,11 +115,9 @@ extension ToolExecutor {
         for id in folderIds {
             guard editor.folder(id: id) != nil else { throw ToolError("folderId not found: \(id)") }
         }
-        guard editor.canDeleteFolders(ids: Set(folderIds)) else {
-            throw ToolError("Cannot delete a folder containing media referenced by an edit-locked track")
-        }
+        guard editor.canDeleteFolders(ids: Set(folderIds)) else { throw ToolError("Folder not found") }
         editor.deleteFolders(ids: Set(folderIds))
-        return .ok("Deleted \(folderIds.count) folder(s) with their contents. Any clips referencing deleted assets were removed from the timeline.")
+        return .ok("Deleted \(folderIds.count) folder(s). Their assets moved to Imports; asset IDs and timeline references were preserved.")
     }
 
     private func parseCreateFolderSpecs(
