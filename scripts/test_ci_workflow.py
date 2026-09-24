@@ -8,6 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CI = ROOT / ".github/workflows/ci.yml"
+DIAGNOSTIC_ACCEPTANCE = ROOT / ".github/workflows/diagnostic-acceptance.yml"
 
 
 class CIWorkflowTests(unittest.TestCase):
@@ -48,6 +49,12 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertIn("scripts/relaunch_selftest.sh", build)
         self.assertNotIn("render_agent_chat_spec.py", build)
         self.assertNotIn("pull_request:", (ROOT / ".github/workflows/bundle.yml").read_text())
+
+    def test_native_export_actions_run_on_the_current_macos_acceptance_host(self):
+        text = DIAGNOSTIC_ACCEPTANCE.read_text()
+        self.assertIn("runs-on: macos-26", text)
+        self.assertIn("scripts/export_actions_acceptance.py NexGenVideo.app", text)
+        self.assertIn("evidence/export-actions.json", text)
 
 
 if __name__ == "__main__":

@@ -23,6 +23,17 @@ enum PipelineDeliveryStore {
         let selectionWarning: String?
     }
 
+    private struct AdoptionPreparation: Sendable {
+        let metadata: ProjectMeta
+        let timelineData: Data
+        let timelineSHA256: String
+        let timelinePath: String
+        let plan: FinishPlanV1
+        let planData: Data
+        let media: [RenderPublishedArtifactV1]
+        let assemblyIsCurrent: Bool
+    }
+
     static let selectionPath = "delivery/selection.v1.json"
     private static let attemptsDirectory = "delivery/attempts"
     private static let jobsDirectory = "delivery/jobs"
@@ -32,86 +43,58 @@ enum PipelineDeliveryStore {
     static func adoptCurrentTimeline(
         editor: EditorViewModel,
         requireSequenceReview: Bool
-    ) throws -> FinishedState {
+    ) async throws -> FinishedState {
         guard let home = editor.workingRoot,
               let dataRoot = DataRootResolver.dataRoot(of: home),
               let workingCopyKey = editor.openWorkingCopyKey else {
             throw ToolError("Open a project before preparing delivery.")
         }
-        let metadata = try YAMLArtifactStore(dataRoot: dataRoot).load(
-            ProjectMeta.self,
-            at: PipelineLayout.projectFile
-        )
-        let timelineData = try PipelineAssemblyStore.canonical(editor.timeline)
-        guard editor.timeline.totalFrames > 0,
-              editor.timeline.tracks.contains(where: {
-                  $0.type == .video && !$0.hidden && !$0.clips.isEmpty
-              }) else {
-            throw ToolError("Add visible video to the timeline before preparing delivery.")
+        let boundTimeline = editor.timeline
+        let boundManifest = editor.mediaManifest
+        let boundResolver = editor.mediaResolver.snapshot()
+        let cancellationFlag = ExportCancellationFlag()
+        let prepared = try await withTaskCancellationHandler {
+            try await Task.detached(priority: .userInitiated) {
+                try prepareAdoption(
+                    dataRoot: dataRoot,
+                    timeline: boundTimeline,
+                    resolver: boundResolver,
+                    requireSequenceReview: requireSequenceReview,
+                    isCancelled: { cancellationFlag.isCancelled }
+                )
+            }.value
+        } onCancel: {
+            cancellationFlag.cancel()
         }
-        let timelineSHA256 = FileDigest.sha256(of: timelineData)
-        let timelinePath = "\(timelinesDirectory)/\(timelineSHA256).json"
-
-        let assembly = try PipelineAssemblyStore.load(dataRoot: dataRoot)
-        let assemblyIsCurrent = assembly.map {
-            $0.manifest.timelineFingerprint == timelineSHA256
-        } ?? false
-        let assemblyManifestSHA256: String? = if assemblyIsCurrent {
-            try FileDigest.sha256(of: ProjectLocalFile.resolve(
-                AssemblyManifestV1.relativePath,
-                dataRoot: dataRoot
-            ))
-        } else {
-            nil
+        guard editor.openWorkingCopyKey == workingCopyKey,
+              editor.workingRoot?.standardizedFileURL == home.standardizedFileURL,
+              editor.mediaManifest == boundManifest,
+              FileDigest.sha256(
+                  of: try PipelineAssemblyStore.canonical(editor.timeline)
+              ) == prepared.timelineSHA256,
+              try YAMLArtifactStore(dataRoot: dataRoot).load(
+                  ProjectMeta.self,
+                  at: PipelineLayout.projectFile
+              ) == prepared.metadata else {
+            throw CancellationError()
         }
-
-        let sequenceReviewSHA256: String?
-        do {
-            _ = try PipelineSequenceReviewStore.requireCurrent(
-                dataRoot: dataRoot,
-                timeline: editor.timeline
-            )
-            sequenceReviewSHA256 = try FileDigest.sha256(of: ProjectLocalFile.resolve(
-                SequenceReviewV1.relativePath,
-                dataRoot: dataRoot
-            ))
-        } catch {
-            if requireSequenceReview {
-                throw ToolError("Record a current sequence review without blocking findings before preparing this delivery.")
-            }
-            sequenceReviewSHA256 = nil
-        }
-
-        let plan = FinishPlanV1(
-            projectID: metadata.project,
-            sourceTimelineSHA256: timelineSHA256,
-            assemblyManifestSHA256: assemblyManifestSHA256,
-            sequenceReviewSHA256: sequenceReviewSHA256,
-            operations: []
-        )
-        try DeliveryValidatorV1.validate(plan: plan)
-        let planData = try PipelineAssemblyStore.canonical(plan)
-        let media = try currentMediaProofs(
-            timeline: editor.timeline,
-            resolver: editor.mediaResolver.snapshot()
-        )
         let manifest = FinishedTimelineManifestV1(
-            projectID: metadata.project,
-            finishPlanSHA256: FileDigest.sha256(of: planData),
-            timelinePath: timelinePath,
-            timelineSHA256: timelineSHA256,
-            media: media,
+            projectID: prepared.metadata.project,
+            finishPlanSHA256: FileDigest.sha256(of: prepared.planData),
+            timelinePath: prepared.timelinePath,
+            timelineSHA256: prepared.timelineSHA256,
+            media: prepared.media,
             operationProofs: [],
-            adoptedManualTimeline: !assemblyIsCurrent
+            adoptedManualTimeline: !prepared.assemblyIsCurrent
         )
         try DeliveryValidatorV1.validate(
             manifest: manifest,
-            plan: plan,
-            planSHA256: FileDigest.sha256(of: planData),
-            currentTimelineSHA256: timelineSHA256
+            plan: prepared.plan,
+            planSHA256: FileDigest.sha256(of: prepared.planData),
+            currentTimelineSHA256: prepared.timelineSHA256
         )
         let manifestData = try PipelineAssemblyStore.canonical(manifest)
-        let timelineURL = dataRoot.appendingPathComponent(timelinePath)
+        let timelineURL = dataRoot.appendingPathComponent(prepared.timelinePath)
         let planURL = dataRoot.appendingPathComponent(FinishPlanV1.relativePath)
         let manifestURL = dataRoot.appendingPathComponent(FinishedTimelineManifestV1.relativePath)
         try ProjectWorkingCopy.markDirty(key: workingCopyKey)
@@ -124,19 +107,19 @@ enum PipelineDeliveryStore {
                 withIntermediateDirectories: true
             )
             if FileManager.default.fileExists(atPath: timelineURL.path) {
-                guard try Data(contentsOf: timelineURL) == timelineData else {
+                guard try Data(contentsOf: timelineURL) == prepared.timelineData else {
                     throw ToolError("An immutable finished timeline has different bytes.")
                 }
             } else {
-                try timelineData.write(to: timelineURL, options: .atomic)
+                try prepared.timelineData.write(to: timelineURL, options: .atomic)
             }
-            try planData.write(to: planURL, options: .atomic)
+            try prepared.planData.write(to: planURL, options: .atomic)
             try manifestData.write(to: manifestURL, options: .atomic)
         }
         editor.onPipelineChanged?()
         return .init(
-            plan: plan,
-            planData: planData,
+            plan: prepared.plan,
+            planData: prepared.planData,
             manifest: manifest,
             manifestData: manifestData
         )
@@ -144,8 +127,10 @@ enum PipelineDeliveryStore {
 
     static func requireCurrentFinished(
         dataRoot: URL,
-        timeline: Timeline
+        timeline: Timeline,
+        isCancelled: @Sendable () -> Bool = { false }
     ) throws -> FinishedState {
+        if isCancelled() { throw CancellationError() }
         let planData = try Data(contentsOf: ProjectLocalFile.resolve(
             FinishPlanV1.relativePath,
             dataRoot: dataRoot
@@ -167,37 +152,44 @@ enum PipelineDeliveryStore {
             planSHA256: FileDigest.sha256(of: planData),
             currentTimelineSHA256: timelineSHA256
         )
-        let frozenTimeline = try ProjectLocalFile.requireHash(
+        let frozenTimeline = try requireCancellableHash(
             manifest.timelineSHA256,
             at: manifest.timelinePath,
-            dataRoot: dataRoot
+            dataRoot: dataRoot,
+            isCancelled: isCancelled
         )
         guard try Data(contentsOf: frozenTimeline) == timelineData else {
             throw ToolError("The finished timeline snapshot is stale.")
         }
         for item in manifest.media {
+            if isCancelled() { throw CancellationError() }
             let url = try boundURL(item.path, dataRoot: dataRoot)
-            guard try FileDigest.sha256(of: url) == item.sha256 else {
+            guard try cancellableSHA256(of: url, isCancelled: isCancelled) == item.sha256 else {
                 throw ToolError("Finished media changed or is offline: \(item.path)")
             }
         }
         for operation in plan.operations {
-            _ = try ProjectLocalFile.requireHash(
+            if isCancelled() { throw CancellationError() }
+            _ = try requireCancellableHash(
                 operation.settingsSHA256,
                 at: operation.settingsPath,
-                dataRoot: dataRoot
+                dataRoot: dataRoot,
+                isCancelled: isCancelled
             )
-            _ = try ProjectLocalFile.requireHash(
+            _ = try requireCancellableHash(
                 operation.outputSHA256,
                 at: operation.outputPath,
-                dataRoot: dataRoot
+                dataRoot: dataRoot,
+                isCancelled: isCancelled
             )
         }
         if let expectedAssembly = plan.assemblyManifestSHA256 {
-            let currentAssembly = try ProjectLocalFile.requireHash(
+            if isCancelled() { throw CancellationError() }
+            let currentAssembly = try requireCancellableHash(
                 expectedAssembly,
                 at: AssemblyManifestV1.relativePath,
-                dataRoot: dataRoot
+                dataRoot: dataRoot,
+                isCancelled: isCancelled
             )
             _ = currentAssembly
             guard let assembly = try PipelineAssemblyStore.load(dataRoot: dataRoot),
@@ -206,15 +198,18 @@ enum PipelineDeliveryStore {
             }
         }
         if let expectedReview = plan.sequenceReviewSHA256 {
-            _ = try ProjectLocalFile.requireHash(
+            if isCancelled() { throw CancellationError() }
+            _ = try requireCancellableHash(
                 expectedReview,
                 at: SequenceReviewV1.relativePath,
-                dataRoot: dataRoot
+                dataRoot: dataRoot,
+                isCancelled: isCancelled
             )
             _ = try PipelineSequenceReviewStore.requireCurrent(
                 dataRoot: dataRoot,
                 timeline: timeline
             )
+            if isCancelled() { throw CancellationError() }
         }
         return .init(
             plan: plan,
@@ -298,10 +293,11 @@ enum PipelineDeliveryStore {
               finished.planData == (try PipelineAssemblyStore.canonical(finished.plan)) else {
             throw ToolError("The bound delivery evidence is not canonical.")
         }
-        let frozenTimeline = try ProjectLocalFile.requireHash(
+        let frozenTimeline = try requireCancellableHash(
             finished.manifest.timelineSHA256,
             at: finished.manifest.timelinePath,
-            dataRoot: dataRoot
+            dataRoot: dataRoot,
+            isCancelled: isCancelled
         )
         guard try Data(contentsOf: frozenTimeline) == timelineData else {
             throw ToolError("The bound finished timeline snapshot changed.")
@@ -316,31 +312,35 @@ enum PipelineDeliveryStore {
         }
         for operation in finished.plan.operations {
             if isCancelled() { throw CancellationError() }
-            _ = try ProjectLocalFile.requireHash(
+            _ = try requireCancellableHash(
                 operation.settingsSHA256,
                 at: operation.settingsPath,
-                dataRoot: dataRoot
+                dataRoot: dataRoot,
+                isCancelled: isCancelled
             )
-            _ = try ProjectLocalFile.requireHash(
+            _ = try requireCancellableHash(
                 operation.outputSHA256,
                 at: operation.outputPath,
-                dataRoot: dataRoot
+                dataRoot: dataRoot,
+                isCancelled: isCancelled
             )
         }
         if let assemblySHA256 = finished.plan.assemblyManifestSHA256 {
             if isCancelled() { throw CancellationError() }
-            _ = try ProjectLocalFile.requireHash(
+            _ = try requireCancellableHash(
                 assemblySHA256,
                 at: AssemblyManifestV1.relativePath,
-                dataRoot: dataRoot
+                dataRoot: dataRoot,
+                isCancelled: isCancelled
             )
         }
         if let sequenceReviewSHA256 = finished.plan.sequenceReviewSHA256 {
             if isCancelled() { throw CancellationError() }
-            _ = try ProjectLocalFile.requireHash(
+            _ = try requireCancellableHash(
                 sequenceReviewSHA256,
                 at: SequenceReviewV1.relativePath,
-                dataRoot: dataRoot
+                dataRoot: dataRoot,
+                isCancelled: isCancelled
             )
         }
     }
@@ -369,7 +369,8 @@ enum PipelineDeliveryStore {
         resolution: ExportResolution,
         outputURL: URL,
         timeline: Timeline,
-        resolver: MediaResolver
+        resolver: MediaResolver,
+        bindingAlreadyValidated: Bool = false
     ) throws -> DeliveryAttemptV1 {
         try safeID(id)
         let currentURL = dataRoot.appendingPathComponent(
@@ -399,12 +400,14 @@ enum PipelineDeliveryStore {
               spec.fpsDenominator == 1 else {
             throw ToolError("The delivery spec does not match the bound timeline.")
         }
-        try requireBoundFinished(
-            dataRoot: dataRoot,
-            finished: finished,
-            timeline: timeline,
-            resolver: resolver
-        )
+        if !bindingAlreadyValidated {
+            try requireBoundFinished(
+                dataRoot: dataRoot,
+                finished: finished,
+                timeline: timeline,
+                resolver: resolver
+            )
+        }
         let requiresReview = spec.requirements.contains {
             $0.id == "core.sequence-review" && $0.required
         }
@@ -458,14 +461,14 @@ enum PipelineDeliveryStore {
         finished: FinishedState,
         outputURL: URL,
         evidence: OutputEvidence,
+        publishedState: ExportQueue.PathState,
         selectIfCurrent: Bool
     ) throws -> FinishResult {
-        guard try FileDigest.sha256(of: outputURL) == evidence.sha256 else {
+        guard case .file(let sha256, let byteCount) = publishedState,
+              sha256 == evidence.sha256 else {
             throw ToolError("The published delivery bytes do not match the verified export.")
         }
-        let values = try outputURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
-        guard values.isRegularFile == true,
-              values.fileSize == Int(evidence.byteCount) else {
+        guard byteCount == Int(evidence.byteCount) else {
             throw ToolError("The published delivery size changed before its receipt was recorded.")
         }
         let succeeded = copy(
@@ -553,10 +556,11 @@ enum PipelineDeliveryStore {
         service: ExportService
     ) async throws -> DeliveryAttemptV1 {
         guard let home = editor.workingRoot,
-              let dataRoot = DataRootResolver.dataRoot(of: home) else {
+              let dataRoot = DataRootResolver.dataRoot(of: home),
+              let ownerKey = editor.openWorkingCopyKey else {
             throw ToolError("Open a project before exporting a delivery.")
         }
-        let job = try ExportQueue.shared.enqueueDelivery(
+        let job = try await ExportQueue.shared.enqueueDelivery(
             editor: editor,
             spec: spec,
             format: format,
@@ -574,7 +578,24 @@ enum PipelineDeliveryStore {
             throw ToolError(reason)
         }
         service.progress = 1
-        return try loadAttempt(id: job.id, dataRoot: dataRoot)
+        let jobID = job.id
+        let cancellationFlag = ExportCancellationFlag()
+        let attempt = try await withTaskCancellationHandler {
+            try await Task.detached(priority: .userInitiated) {
+                try loadAttempt(
+                    id: jobID,
+                    dataRoot: dataRoot,
+                    isCancelled: { cancellationFlag.isCancelled }
+                )
+            }.value
+        } onCancel: {
+            cancellationFlag.cancel()
+        }
+        guard editor.openWorkingCopyKey == ownerKey,
+              editor.workingRoot?.standardizedFileURL == home.standardizedFileURL else {
+            throw CancellationError()
+        }
+        return attempt
     }
 
     @discardableResult
@@ -617,7 +638,12 @@ enum PipelineDeliveryStore {
         return recovered
     }
 
-    static func loadAttempt(id: String, dataRoot: URL) throws -> DeliveryAttemptV1 {
+    static func loadAttempt(
+        id: String,
+        dataRoot: URL,
+        isCancelled: @Sendable () -> Bool = { false }
+    ) throws -> DeliveryAttemptV1 {
+        if isCancelled() { throw CancellationError() }
         try safeID(id)
         let path = "\(attemptsDirectory)/\(id).v1.json"
         let bytes = try Data(contentsOf: ProjectLocalFile.resolve(path, dataRoot: dataRoot))
@@ -629,11 +655,101 @@ enum PipelineDeliveryStore {
         }
         if value.status == .succeeded {
             let output = try boundURL(value.outputPath ?? "", dataRoot: dataRoot)
-            guard try FileDigest.sha256(of: output) == value.outputSHA256 else {
+            guard try cancellableSHA256(
+                of: output,
+                isCancelled: isCancelled
+            ) == value.outputSHA256 else {
                 throw ToolError("The selected delivery output bytes changed.")
             }
         }
         return value
+    }
+
+    private static func prepareAdoption(
+        dataRoot: URL,
+        timeline: Timeline,
+        resolver: MediaResolver,
+        requireSequenceReview: Bool,
+        isCancelled: @Sendable () -> Bool
+    ) throws -> AdoptionPreparation {
+        if isCancelled() { throw CancellationError() }
+        guard timeline.totalFrames > 0,
+              timeline.tracks.contains(where: {
+                  $0.type == .video && !$0.hidden && !$0.clips.isEmpty
+              }) else {
+            throw ToolError("Add visible video to the timeline before preparing delivery.")
+        }
+        let metadata = try YAMLArtifactStore(dataRoot: dataRoot).load(
+            ProjectMeta.self,
+            at: PipelineLayout.projectFile
+        )
+        let timelineData = try PipelineAssemblyStore.canonical(timeline)
+        let timelineSHA256 = FileDigest.sha256(of: timelineData)
+        let timelinePath = "\(timelinesDirectory)/\(timelineSHA256).json"
+
+        let assembly = try PipelineAssemblyStore.load(dataRoot: dataRoot)
+        let assemblyIsCurrent = assembly.map {
+            $0.manifest.timelineFingerprint == timelineSHA256
+        } ?? false
+        let assemblyManifestSHA256: String? = if assemblyIsCurrent {
+            try cancellableSHA256(
+                of: ProjectLocalFile.resolve(
+                    AssemblyManifestV1.relativePath,
+                    dataRoot: dataRoot
+                ),
+                isCancelled: isCancelled
+            )
+        } else {
+            nil
+        }
+
+        let sequenceReviewSHA256: String?
+        do {
+            if isCancelled() { throw CancellationError() }
+            _ = try PipelineSequenceReviewStore.requireCurrent(
+                dataRoot: dataRoot,
+                timeline: timeline
+            )
+            if isCancelled() { throw CancellationError() }
+            sequenceReviewSHA256 = try cancellableSHA256(
+                of: ProjectLocalFile.resolve(
+                    SequenceReviewV1.relativePath,
+                    dataRoot: dataRoot
+                ),
+                isCancelled: isCancelled
+            )
+        } catch {
+            if isCancelled() { throw CancellationError() }
+            if requireSequenceReview {
+                throw ToolError("Record a current sequence review without blocking findings before preparing this delivery.")
+            }
+            sequenceReviewSHA256 = nil
+        }
+
+        let plan = FinishPlanV1(
+            projectID: metadata.project,
+            sourceTimelineSHA256: timelineSHA256,
+            assemblyManifestSHA256: assemblyManifestSHA256,
+            sequenceReviewSHA256: sequenceReviewSHA256,
+            operations: []
+        )
+        try DeliveryValidatorV1.validate(plan: plan)
+        let planData = try PipelineAssemblyStore.canonical(plan)
+        let media = try currentMediaProofs(
+            timeline: timeline,
+            resolver: resolver,
+            isCancelled: isCancelled
+        )
+        return .init(
+            metadata: metadata,
+            timelineData: timelineData,
+            timelineSHA256: timelineSHA256,
+            timelinePath: timelinePath,
+            plan: plan,
+            planData: planData,
+            media: media,
+            assemblyIsCurrent: assemblyIsCurrent
+        )
     }
 
     private static func currentMediaProofs(
@@ -768,6 +884,32 @@ enum PipelineDeliveryStore {
         )
         var paths = [currentURL, eventURL]
         if terminal { paths.append(attemptURL) }
+        if FileManager.default.fileExists(atPath: currentURL.path) {
+            let currentData = try Data(contentsOf: currentURL)
+            let current = try JSONDecoder().decode(DeliveryAttemptV1.self, from: currentData)
+            if ![.queued, .running].contains(current.status) {
+                guard currentData == bytes else {
+                    throw ToolError("A terminal delivery attempt cannot transition to another status.")
+                }
+                return
+            }
+            let allowed: Bool = switch (current.status, attempt.status) {
+            case (.queued, .queued), (.queued, .running), (.queued, .failed),
+                 (.queued, .cancelled), (.queued, .interrupted),
+                 (.running, .running), (.running, .succeeded), (.running, .failed),
+                 (.running, .cancelled), (.running, .interrupted):
+                true
+            default:
+                false
+            }
+            guard allowed else {
+                throw ToolError("Delivery attempt status cannot move backward.")
+            }
+        } else {
+            guard attempt.status == .queued else {
+                throw ToolError("A delivery attempt must begin in the queued state.")
+            }
+        }
         try ArtifactTransaction.perform(paths: paths, dataRoot: dataRoot) {
             try FileManager.default.createDirectory(
                 at: eventDirectory,
@@ -906,6 +1048,24 @@ enum PipelineDeliveryStore {
         }
         if isCancelled() { throw CancellationError() }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func requireCancellableHash(
+        _ expectedSHA256: String,
+        at relativePath: String,
+        dataRoot: URL,
+        isCancelled: @Sendable () -> Bool
+    ) throws -> URL {
+        let url = try ProjectLocalFile.resolve(relativePath, dataRoot: dataRoot)
+        let actual = try cancellableSHA256(of: url, isCancelled: isCancelled)
+        guard actual == expectedSHA256 else {
+            throw ProjectLocalFileError.hashMismatch(
+                path: relativePath,
+                expected: expectedSHA256,
+                actual: actual
+            )
+        }
+        return url
     }
 
     private static func boundURL(_ path: String, dataRoot: URL) throws -> URL {

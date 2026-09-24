@@ -456,12 +456,14 @@ final class EditorViewModel {
                 if exportIsRunning {
                     await ExportQueue.shared.waitUntilIdle(ownerKey: key)
                 }
+                ExportQueue.shared.release(ownerKey: key)
                 ProjectWorkingCopy.discard(
                     key: key,
                     ifGeneration: generation
                 )
             }
         } else {
+            ExportQueue.shared.release(ownerKey: key)
             ProjectWorkingCopy.discard(
                 key: key,
                 ifGeneration: generation
@@ -517,9 +519,11 @@ final class EditorViewModel {
         hasProductionPipeline = roots.contains { DataRootResolver.dataRoot(of: $0) != nil }
         if let dataRoot = workingCopyHome.flatMap({ DataRootResolver.dataRoot(of: $0) }) {
             do {
-                if try PipelineDeliveryStore.recoverInterruptedJobs(dataRoot: dataRoot),
-                   let key = openWorkingCopyKey {
-                    try ProjectWorkingCopy.markDirty(key: key)
+                if let key = openWorkingCopyKey,
+                   try ExportQueue.shared.recoverInterruptedDeliveries(
+                       ownerKey: key,
+                       dataRoot: dataRoot
+                   ) {
                     onPipelineChanged?()
                 }
             } catch {

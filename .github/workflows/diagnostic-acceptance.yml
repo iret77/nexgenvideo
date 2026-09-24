@@ -84,6 +84,8 @@ jobs:
           [ "$(sw_vers -productVersion | cut -d. -f1)" = 26 ]
       - name: Verify signed capture, replay, startup and retained key bytes
         run: python3 scripts/hang_diagnostic_acceptance.py NexGenVideo.app diagnostic-symbols/NexGenVideo.dSYM --output evidence
+      - name: Exercise native Export Cancel, Retry and Reveal actions
+        run: python3 scripts/export_actions_acceptance.py NexGenVideo.app --output evidence/export-actions.json
       - name: Record candidate identity
         run: |
           python3 - <<'PY'

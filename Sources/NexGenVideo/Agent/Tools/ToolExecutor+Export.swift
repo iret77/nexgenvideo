@@ -91,11 +91,11 @@ extension ToolExecutor {
         ) {
             job = joined
         } else {
-            _ = try PipelineDeliveryStore.adoptCurrentTimeline(
+            _ = try await PipelineDeliveryStore.adoptCurrentTimeline(
                 editor: editor,
                 requireSequenceReview: false
             )
-            job = try ExportQueue.shared.enqueueDelivery(
+            job = try await ExportQueue.shared.enqueueDelivery(
                 editor: editor,
                 spec: spec,
                 format: format,
@@ -105,19 +105,24 @@ extension ToolExecutor {
             )
         }
 
-        return try jsonResult([
-            "status": "started",
+        var result: [String: Any] = [
+            "status": job.status.rawValue,
             "jobID": job.id,
             "mode": ExportProjectMode.video.rawValue,
-            "path": outputURL.path,
+            "path": job.destinationURL?.path ?? outputURL.path,
             "codec": format.displayName,
             "resolution": resolution.rawValue,
             "durationFrames": job.durationFrames ?? timeline.totalFrames,
             "durationSeconds": Double(job.durationFrames ?? timeline.totalFrames)
                 / Double(max(1, job.fps ?? timeline.fps)),
             "fps": job.fps ?? timeline.fps,
-            "note": "Rendering in the background. A system notification will report completion or failure.",
-        ])
+            "note": videoExportNote(for: job),
+        ]
+        if let failure = job.failure { result["error"] = failure }
+        if let sha256 = job.outputSHA256 { result["outputSha256"] = sha256 }
+        if let byteCount = job.outputByteCount { result["outputByteCount"] = byteCount }
+        if !job.warnings.isEmpty { result["warnings"] = job.warnings }
+        return try jsonResult(result)
     }
 
     private func exportXML(
@@ -126,7 +131,7 @@ extension ToolExecutor {
         requestID: String?
     ) async throws -> ToolResult {
         let timeline = editor.timeline
-        let job = try ExportQueue.shared.enqueueInterchange(
+        let job = try await ExportQueue.shared.enqueueInterchange(
             editor: editor,
             format: .xml,
             outputURL: outputURL,
@@ -159,7 +164,7 @@ extension ToolExecutor {
         requestID: String?
     ) async throws -> ToolResult {
         let timeline = editor.timeline
-        let job = try ExportQueue.shared.enqueueInterchange(
+        let job = try await ExportQueue.shared.enqueueInterchange(
             editor: editor,
             format: .fcpxml,
             outputURL: outputURL,
@@ -233,7 +238,7 @@ extension ToolExecutor {
         outputURL: URL,
         requestID: String?
     ) async throws -> ToolResult {
-        let job = try ExportQueue.shared.enqueueProjectPackage(
+        let job = try await ExportQueue.shared.enqueueProjectPackage(
             editor: editor,
             outputURL: outputURL,
             requestID: requestID
@@ -262,13 +267,25 @@ extension ToolExecutor {
     }
 
     private func requireCompleted(_ job: ExportJob) async throws {
-        let completed = await withTaskCancellationHandler {
-            await ExportQueue.shared.waitForCompletion(jobID: job.id)
-        } onCancel: {
-            Task { @MainActor in ExportQueue.shared.cancel(jobID: job.id) }
+        let completed = await ExportQueue.shared.waitForCompletion(jobID: job.id)
+        if Task.isCancelled {
+            throw CancellationError()
         }
         guard let completed, completed.status == .completed else {
             throw ToolError("export_project: \(completed?.failure ?? "export did not complete")")
+        }
+    }
+
+    private func videoExportNote(for job: ExportJob) -> String {
+        switch job.status {
+        case .pending: "Waiting for earlier exports."
+        case .preparing: "Preparing the bound export sources."
+        case .exporting: "Rendering in the background."
+        case .cancelling: "Cancelling the export."
+        case .completed: "Export completed."
+        case .failed: "Export failed."
+        case .cancelled: "Export cancelled."
+        case .interrupted: "Export interrupted before completion."
         }
     }
 

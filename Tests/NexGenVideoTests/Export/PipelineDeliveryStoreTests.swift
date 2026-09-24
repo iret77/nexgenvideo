@@ -147,6 +147,14 @@ struct PipelineDeliveryStoreTests {
             id: running.id,
             dataRoot: dataRoot
         ) == recovered)
+        #expect(throws: (any Error).self) {
+            _ = try PipelineDeliveryStore.markRunning(running, dataRoot: dataRoot)
+        }
+        let currentAfterRejectedTransition = try JSONDecoder().decode(
+            DeliveryAttemptV1.self,
+            from: Data(contentsOf: job.appendingPathComponent("current.v1.json"))
+        )
+        #expect(currentAfterRejectedTransition == recovered)
     }
 
     @Test("a bound success receipt stays historical when the current finish changes")
@@ -274,6 +282,7 @@ struct PipelineDeliveryStoreTests {
                 byteCount: Int64(outputSize),
                 probeQC: qc
             ),
+            publishedState: try ExportQueue.PathState.capture(output),
             selectIfCurrent: true
         )
         let succeeded = result.attempt

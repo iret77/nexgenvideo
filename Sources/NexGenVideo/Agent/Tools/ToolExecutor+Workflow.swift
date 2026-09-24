@@ -3286,7 +3286,7 @@ extension ToolExecutor {
                     PipelineAssemblyStore.DriftAction(rawValue: $0)
                 }
                 if action == .adopt {
-                    let finished = try PipelineDeliveryStore.adoptCurrentTimeline(
+                    let finished = try await PipelineDeliveryStore.adoptCurrentTimeline(
                         editor: editor,
                         requireSequenceReview: false
                     )

@@ -16,9 +16,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let isRelaunchSelfTest = AppRelaunchSelfTest.isRequested
         let relaunchIntent = AppRelaunchIntentStore.consumeForLaunch(
-            isSelfTest: isRelaunchSelfTest
+            isSelfTest: isRelaunchSelfTest || ExportActionsSelfTest.isRequested
         )
-        if isRelaunchSelfTest {
+        if ExportActionsSelfTest.isRequested {
+            Task { @MainActor in
+                await Task.yield()
+                await ExportActionsSelfTest.runIfRequested()
+            }
+        } else if isRelaunchSelfTest {
             AppRelaunchSelfTest.checkpoint("home-controller-requested")
             let home = HomeWindowController.shared
             AppRelaunchSelfTest.checkpoint("home-controller-ready")
@@ -45,6 +50,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         Task.detached(priority: .utility) {
+            do {
+                try ExportPublishRecoveryStore.recoverAll()
+            } catch {
+                Log.export.error("publish recovery failed: \(error.localizedDescription)")
+            }
             Project.ensureStorageDirectory()
             ProjectStorageMigration.cleanUpProjectsFolder()
             // Retire idle working copies + caches (frees both stores). Open docs and still-present

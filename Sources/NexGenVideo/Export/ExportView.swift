@@ -336,7 +336,7 @@ struct ExportView: View {
                 }
             }
             .buttonStyle(.capsule(.secondary, size: .regular))
-            .disabled(activeJob?.status == .cancelling)
+            .disabled(activeJob != nil && activeJob?.canCancel != true)
             .keyboardShortcut(.cancelAction)
             Button("Export") { startExport() }
                 .buttonStyle(.glassProminent)
@@ -390,6 +390,8 @@ struct ExportView: View {
             HStack(spacing: AppTheme.Spacing.sm) {
                 Button("Cancel") { queue.cancel(jobID: job.id) }
                     .disabled(!job.canCancel)
+                    .accessibilityIdentifier("export.job.\(job.id).cancel")
+                    .background { exportActionProbe(job: job, action: "cancel") }
                 Button("Retry") {
                     do {
                         let retry = try queue.retry(jobID: job.id)
@@ -400,12 +402,17 @@ struct ExportView: View {
                     }
                 }
                 .disabled(!queue.canRetry(jobID: job.id))
+                .accessibilityIdentifier("export.job.\(job.id).retry")
+                .background { exportActionProbe(job: job, action: "retry") }
                 Button("Reveal") {
                     if let url = job.destinationURL {
                         NSWorkspace.shared.activateFileViewerSelecting([url])
+                        ExportActionsSelfTest.recordReveal(url)
                     }
                 }
                 .disabled(!job.canReveal)
+                .accessibilityIdentifier("export.job.\(job.id).reveal")
+                .background { exportActionProbe(job: job, action: "reveal") }
                 Spacer()
             }
             .buttonStyle(.capsule(.secondary, size: .small))
@@ -421,6 +428,15 @@ struct ExportView: View {
         )
         .contentShape(Rectangle())
         .onTapGesture { selectedJobID = job.id }
+    }
+
+    @ViewBuilder
+    private func exportActionProbe(job: ExportJob, action: String) -> some View {
+        if ExportActionsSelfTest.isRequested {
+            AppRelaunchClickProbe(identifier: "export.job.\(job.id).\(action)")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
+        }
     }
 
     private func statusSymbol(_ status: ExportJobStatus) -> String {
@@ -540,7 +556,7 @@ struct ExportView: View {
                 defer { preparingDelivery = false }
                 do {
                     if mode == .xml || mode == .fcpxml {
-                        let job = try queue.enqueueInterchange(
+                        let job = try await queue.enqueueInterchange(
                             editor: editor,
                             format: format,
                             outputURL: url,
@@ -552,7 +568,7 @@ struct ExportView: View {
                         ngvResult = "Queued · \(job.id.prefix(8))"
                         return
                     }
-                    _ = try PipelineDeliveryStore.adoptCurrentTimeline(
+                    _ = try await PipelineDeliveryStore.adoptCurrentTimeline(
                         editor: editor,
                         requireSequenceReview: requireSequenceReview
                     )
@@ -565,7 +581,7 @@ struct ExportView: View {
                         resolution: resolution,
                         requireSequenceReview: requireSequenceReview
                     )
-                    let job = try queue.enqueueDelivery(
+                    let job = try await queue.enqueueDelivery(
                         editor: editor,
                         spec: spec,
                         format: format,
@@ -595,7 +611,7 @@ struct ExportView: View {
                 preparingDelivery = true
                 defer { preparingDelivery = false }
                 do {
-                    let job = try queue.enqueueProjectPackage(
+                    let job = try await queue.enqueueProjectPackage(
                         editor: editor,
                         outputURL: url
                     )

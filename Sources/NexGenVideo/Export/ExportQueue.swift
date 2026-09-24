@@ -35,7 +35,7 @@ final class ExportJob: Identifiable {
     let ownerKey: String
     let projectID: String
     let kind: ExportJobKind
-    let destinationURL: URL?
+    fileprivate(set) var destinationURL: URL?
     let title: String
     let createdAt: Date
     let durationFrames: Int?
@@ -52,6 +52,7 @@ final class ExportJob: Identifiable {
     fileprivate(set) var outputByteCount: Int64?
     fileprivate(set) var fcpxmlReport: FCPXMLExportReport?
     fileprivate(set) var projectReport: ProjectPackageExporter.Report?
+    fileprivate(set) var acceptsCancellation = true
 
     init(
         id: String,
@@ -98,7 +99,7 @@ final class ExportJob: Identifiable {
     }
 
     var canCancel: Bool {
-        [.pending, .preparing, .exporting].contains(status)
+        acceptsCancellation && [.pending, .preparing, .exporting].contains(status)
     }
 
     var canReveal: Bool {
@@ -123,6 +124,11 @@ final class ExportQueue {
     @ObservationIgnored private var cancellationRequests: Set<String> = []
     @ObservationIgnored private var drainTask: Task<Void, Never>?
     @ObservationIgnored private var cancellationFlags: [String: ExportCancellationFlag] = [:]
+    @ObservationIgnored private var fingerprintsByID: [String: String] = [:]
+    @ObservationIgnored private var deliveryRootsByID: [String: URL] = [:]
+    @ObservationIgnored private var recoveredDeliveryIdentities: [String: RecoveredDeliveryIdentity] = [:]
+    @ObservationIgnored private var completionWaiters: [String: [UUID: CheckedContinuation<ExportJob?, Never>]] = [:]
+    @ObservationIgnored private var idleWaiters: [String: [UUID: CheckedContinuation<Void, Never>]] = [:]
 
     func jobs(ownerKey: String?) -> [ExportJob] {
         guard let ownerKey else { return [] }
@@ -138,7 +144,7 @@ final class ExportQueue {
            !current.status.isTerminal {
             return current
         }
-        return jobs.first { $0.ownerKey == ownerKey && $0.status == .pending }
+        return jobs.first { $0.ownerKey == ownerKey && !$0.status.isTerminal }
     }
 
     func joinedDeliveryJob(
@@ -151,13 +157,23 @@ final class ExportQueue {
     ) throws -> ExportJob? {
         guard let requestID, let ownerKey = editor.openWorkingCopyKey else { return nil }
         let id = try jobID(requestID)
-        return try joinedJob(
-            id: id,
-            fingerprint: fingerprint(
-                ownerKey, specID, String(describing: format), resolution.rawValue,
-                outputURL.standardizedFileURL.path
-            )
+        let expectedFingerprint = fingerprint(
+            ownerKey, specID, String(describing: format), resolution.rawValue,
+            outputURL.standardizedFileURL.path
         )
+        if jobsByID[id] == nil,
+           let dataRoot = editor.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }) {
+            _ = loadPersistedDeliveryJobs(ownerKey: ownerKey, dataRoot: dataRoot)
+        }
+        if let identity = recoveredDeliveryIdentities[id] {
+            guard identity.ownerKey == ownerKey,
+                  identity.specID == specID,
+                  identity.outputURL == outputURL.standardizedFileURL else {
+                throw ToolError("An export job with this ID is already bound to different inputs.")
+            }
+            return jobsByID[id]
+        }
+        return try joinedJob(id: id, fingerprint: expectedFingerprint)
     }
 
     func enqueueDelivery(
@@ -167,7 +183,7 @@ final class ExportQueue {
         resolution: ExportResolution,
         outputURL: URL,
         requestID: String? = nil
-    ) throws -> ExportJob {
+    ) async throws -> ExportJob {
         guard let root = editor.workingRoot,
               let dataRoot = DataRootResolver.dataRoot(of: root),
               let ownerKey = editor.openWorkingCopyKey else {
@@ -181,90 +197,133 @@ final class ExportQueue {
         if let existing = try joinedJob(id: id, fingerprint: fingerprint) {
             return existing
         }
-        try PipelineDeliveryStore.recoverInterruptedJobs(
-            dataRoot: dataRoot,
-            excludingIDs: activeDeliveryIDs(dataRoot: dataRoot),
-            willMutate: { try ProjectWorkingCopy.markDirty(key: ownerKey) },
-            didRecover: { cleanupTemporaryState(for: $0) }
-        )
         let timeline = editor.timeline
         let resolver = editor.mediaResolver.snapshot()
-        let finished = try PipelineDeliveryStore.requireCurrentFinished(
-            dataRoot: dataRoot,
-            timeline: timeline
-        )
-        try PipelineDeliveryStore.requireBoundFinished(
-            dataRoot: dataRoot,
-            finished: finished,
-            timeline: timeline,
-            resolver: resolver
-        )
-        let extensionFiles = try PipelineDeliveryStore.extensionFiles(
-            for: spec,
-            dataRoot: dataRoot
-        )
-        let source = try SourceBinding.video(
-            timeline: timeline,
-            resolver: resolver,
-            additionalFiles: extensionFiles
-        )
-        let destination = try DestinationBinding(
-            url: outputURL,
-            jobID: id,
-            expectsDirectory: false
-        )
-        try source.rejectDestination(destination.url)
-        try ProjectWorkingCopy.markDirty(key: ownerKey)
-        let attempt = try PipelineDeliveryStore.enqueueAttempt(
-            id: id,
-            dataRoot: dataRoot,
-            finished: finished,
-            spec: spec,
-            format: format,
-            resolution: resolution,
-            outputURL: destination.url,
-            timeline: timeline,
-            resolver: resolver
-        )
-        let changeHandler = projectChangeHandler(
-            editor: editor,
-            ownerKey: ownerKey,
-            root: root
-        )
-        let currentHandler = projectCurrentHandler(
-            editor: editor,
-            ownerKey: ownerKey,
-            root: root,
-            timelineSHA256: finished.manifest.timelineSHA256
-        )
-        let payload = DeliveryPayload(
-            dataRoot: dataRoot,
-            timeline: timeline,
-            resolver: resolver,
-            finished: finished,
-            spec: spec,
-            format: format,
-            resolution: resolution,
-            attempt: attempt
-        )
-        return register(Request(
+        let job = registerPreparing(
             id: id,
             ownerKey: ownerKey,
-            projectID: finished.plan.projectID,
+            projectID: editor.projectId ?? ownerKey,
             kind: .video,
-            title: destination.url.lastPathComponent,
-            durationFrames: timeline.totalFrames,
-            fps: timeline.fps,
-            width: timeline.width,
-            height: timeline.height,
+            title: outputURL.lastPathComponent,
+            timeline: timeline,
             fingerprint: fingerprint,
-            source: source,
-            destination: destination,
-            companionDestination: nil,
-            payload: .delivery(payload),
-            changeHandler: changeHandler,
-            currentHandler: currentHandler
-        ))
+            deliveryRoot: dataRoot
+        )
+        let cancellationFlag = cancellationFlags[id] ?? ExportCancellationFlag()
+        var preparedFrozen: FrozenSources?
+        do {
+            let prepared = try await withTaskCancellationHandler {
+                try await Task.detached(priority: .userInitiated) {
+                    try ExportPublishRecoveryStore.recoverAll()
+                    let finished = try PipelineDeliveryStore.requireCurrentFinished(
+                        dataRoot: dataRoot,
+                        timeline: timeline,
+                        isCancelled: { cancellationFlag.isCancelled }
+                    )
+                    let extensionFiles = try PipelineDeliveryStore.extensionFiles(
+                        for: spec,
+                        dataRoot: dataRoot
+                    )
+                    let source = try SourceBinding.video(
+                        timeline: timeline,
+                        resolver: resolver,
+                        additionalFiles: extensionFiles,
+                        isCancelled: { cancellationFlag.isCancelled }
+                    )
+                    let destination = try DestinationBinding(
+                        url: outputURL,
+                        jobID: id,
+                        expectsDirectory: false,
+                        isCancelled: { cancellationFlag.isCancelled }
+                    )
+                    try source.rejectDestination(destination.url)
+                    let frozen = try source.freeze(
+                        jobID: id,
+                        isCancelled: { cancellationFlag.isCancelled }
+                    )
+                    do {
+                        try source.verify(isCancelled: { cancellationFlag.isCancelled })
+                        try frozen.verify(isCancelled: { cancellationFlag.isCancelled })
+                        try PipelineDeliveryStore.requireBoundFinished(
+                            dataRoot: dataRoot,
+                            finished: finished,
+                            timeline: timeline,
+                            resolver: resolver,
+                            isCancelled: { cancellationFlag.isCancelled }
+                        )
+                    } catch {
+                        frozen.remove()
+                        throw error
+                    }
+                    return PreparedDelivery(
+                        source: source,
+                        frozen: frozen,
+                        destination: destination,
+                        finished: finished
+                    )
+                }.value
+            } onCancel: {
+                cancellationFlag.cancel()
+            }
+            preparedFrozen = prepared.frozen
+            try requireEnqueueContext(editor: editor, ownerKey: ownerKey, root: root, jobID: id)
+            try throwIfCancelled(id)
+            try recoverInterruptedDeliveries(ownerKey: ownerKey, dataRoot: dataRoot)
+            try ProjectWorkingCopy.markDirty(key: ownerKey)
+            let attempt = try PipelineDeliveryStore.enqueueAttempt(
+                id: id,
+                dataRoot: dataRoot,
+                finished: prepared.finished,
+                spec: spec,
+                format: format,
+                resolution: resolution,
+                outputURL: prepared.destination.url,
+                timeline: timeline,
+                resolver: resolver,
+                bindingAlreadyValidated: true
+            )
+            let payload = DeliveryPayload(
+                dataRoot: dataRoot,
+                timeline: timeline,
+                resolver: resolver,
+                finished: prepared.finished,
+                spec: spec,
+                format: format,
+                resolution: resolution,
+                attempt: attempt
+            )
+            install(Request(
+                id: id,
+                ownerKey: ownerKey,
+                projectID: prepared.finished.plan.projectID,
+                kind: .video,
+                title: prepared.destination.url.lastPathComponent,
+                durationFrames: timeline.totalFrames,
+                fps: timeline.fps,
+                width: timeline.width,
+                height: timeline.height,
+                fingerprint: fingerprint,
+                source: prepared.source,
+                frozenSources: prepared.frozen,
+                destination: prepared.destination,
+                companionDestination: nil,
+                payload: .delivery(payload),
+                changeHandler: projectChangeHandler(editor: editor, ownerKey: ownerKey, root: root),
+                currentHandler: projectCurrentHandler(
+                    editor: editor,
+                    ownerKey: ownerKey,
+                    root: root,
+                    timelineSHA256: prepared.finished.manifest.timelineSHA256
+                ),
+                ownershipHandler: projectOwnershipHandler(editor: editor, ownerKey: ownerKey, root: root)
+            ), for: job)
+            preparedFrozen = nil
+            return job
+        } catch {
+            preparedFrozen?.remove()
+            failPreparation(job, error: error)
+            throw error
+        }
     }
 
     func enqueueInterchange(
@@ -275,7 +334,7 @@ final class ExportQueue {
         fcpxmlVersion: FCPXMLVersion = .default,
         fcpxmlTarget: FCPXMLTarget = .default,
         requestID: String? = nil
-    ) throws -> ExportJob {
+    ) async throws -> ExportJob {
         guard format == .xml || format == .fcpxml else {
             throw ToolError("Interchange jobs require XML or FCPXML.")
         }
@@ -293,13 +352,6 @@ final class ExportQueue {
         }
         let timeline = editor.timeline
         let resolver = editor.mediaResolver.snapshot()
-        let source = try SourceBinding.interchange(timeline: timeline, resolver: resolver)
-        let destination = try DestinationBinding(
-            url: outputURL,
-            jobID: id,
-            expectsDirectory: false
-        )
-        try source.rejectDestination(destination.url)
         let payload = InterchangePayload(
             timeline: timeline,
             resolver: resolver,
@@ -308,44 +360,104 @@ final class ExportQueue {
             fcpxmlVersion: fcpxmlVersion,
             fcpxmlTarget: fcpxmlTarget
         )
-        let companionDestination: DestinationBinding?
-        if format == .fcpxml {
-            companionDestination = try DestinationBinding(
-                url: FCPXMLExporter.mediaDirectory(for: outputURL),
-                jobID: id,
-                expectsDirectory: true
-            )
-        } else {
-            companionDestination = nil
-        }
-        if let companionDestination {
-            try source.rejectDestination(companionDestination.url)
-        }
-        return register(Request(
+        let job = registerPreparing(
             id: id,
             ownerKey: ownerKey,
             projectID: editor.projectId ?? ownerKey,
             kind: format == .xml ? .xml : .fcpxml,
-            title: destination.url.lastPathComponent,
-            durationFrames: timeline.totalFrames,
-            fps: timeline.fps,
-            width: timeline.width,
-            height: timeline.height,
+            title: outputURL.lastPathComponent,
+            timeline: timeline,
             fingerprint: fingerprint,
-            source: source,
-            destination: destination,
-            companionDestination: companionDestination,
-            payload: .interchange(payload),
-            changeHandler: projectChangeHandler(editor: editor, ownerKey: ownerKey, root: root),
-            currentHandler: { false }
-        ))
+            deliveryRoot: nil
+        )
+        let cancellationFlag = cancellationFlags[id] ?? ExportCancellationFlag()
+        var preparedFrozen: FrozenSources?
+        do {
+            let prepared = try await withTaskCancellationHandler {
+                try await Task.detached(priority: .userInitiated) {
+                    try ExportPublishRecoveryStore.recoverAll()
+                    let source = try SourceBinding.interchange(
+                        timeline: timeline,
+                        resolver: resolver,
+                        isCancelled: { cancellationFlag.isCancelled }
+                    )
+                    let destination = try DestinationBinding(
+                        url: outputURL,
+                        jobID: id,
+                        expectsDirectory: false,
+                        isCancelled: { cancellationFlag.isCancelled }
+                    )
+                    try source.rejectDestination(destination.url)
+                    let companion: DestinationBinding?
+                    if format == .fcpxml {
+                        companion = try DestinationBinding(
+                            url: FCPXMLExporter.mediaDirectory(for: destination.url),
+                            jobID: id,
+                            expectsDirectory: true,
+                            isCancelled: { cancellationFlag.isCancelled }
+                        )
+                        try source.rejectDestination(companion!.url)
+                    } else {
+                        companion = nil
+                    }
+                    let frozen = try source.freeze(
+                        jobID: id,
+                        isCancelled: { cancellationFlag.isCancelled }
+                    )
+                    do {
+                        try source.verify(isCancelled: { cancellationFlag.isCancelled })
+                        try frozen.verify(isCancelled: { cancellationFlag.isCancelled })
+                    } catch {
+                        frozen.remove()
+                        throw error
+                    }
+                    return PreparedSources(
+                        source: source,
+                        frozen: frozen,
+                        destination: destination,
+                        companionDestination: companion
+                    )
+                }.value
+            } onCancel: {
+                cancellationFlag.cancel()
+            }
+            preparedFrozen = prepared.frozen
+            try requireEnqueueContext(editor: editor, ownerKey: ownerKey, root: root, jobID: id)
+            try throwIfCancelled(id)
+            install(Request(
+                id: id,
+                ownerKey: ownerKey,
+                projectID: editor.projectId ?? ownerKey,
+                kind: format == .xml ? .xml : .fcpxml,
+                title: prepared.destination.url.lastPathComponent,
+                durationFrames: timeline.totalFrames,
+                fps: timeline.fps,
+                width: timeline.width,
+                height: timeline.height,
+                fingerprint: fingerprint,
+                source: prepared.source,
+                frozenSources: prepared.frozen,
+                destination: prepared.destination,
+                companionDestination: prepared.companionDestination,
+                payload: .interchange(payload),
+                changeHandler: projectChangeHandler(editor: editor, ownerKey: ownerKey, root: root),
+                currentHandler: { false },
+                ownershipHandler: projectOwnershipHandler(editor: editor, ownerKey: ownerKey, root: root)
+            ), for: job)
+            preparedFrozen = nil
+            return job
+        } catch {
+            preparedFrozen?.remove()
+            failPreparation(job, error: error)
+            throw error
+        }
     }
 
     func enqueueProjectPackage(
         editor: EditorViewModel,
         outputURL: URL,
         requestID: String? = nil
-    ) throws -> ExportJob {
+    ) async throws -> ExportJob {
         guard let root = editor.workingRoot,
               let ownerKey = editor.openWorkingCopyKey else {
             throw ToolError("Open a project before exporting a NexGenVideo project.")
@@ -360,20 +472,10 @@ final class ExportQueue {
         let timeline = editor.timeline
         let manifest = editor.mediaManifest
         let generationLog = editor.generationLog
-        let source = try SourceBinding.projectPackage(
-            timeline: timeline,
-            manifest: manifest,
-            sourceRoot: root
-        )
-        let destination = try DestinationBinding(
-            url: outputURL,
-            jobID: id,
-            expectsDirectory: true
-        )
-        try source.rejectDestination(destination.url)
         let sourcePath = root.standardizedFileURL.path
-        guard destination.url.path != sourcePath,
-              !destination.url.path.hasPrefix(sourcePath + "/") else {
+        let standardizedOutput = outputURL.standardizedFileURL
+        guard standardizedOutput.path != sourcePath,
+              !standardizedOutput.path.hasPrefix(sourcePath + "/") else {
             throw ToolError("Export the project package outside its source working copy.")
         }
         let payload = ProjectPayload(
@@ -382,31 +484,101 @@ final class ExportQueue {
             generationLog: generationLog,
             sourceRoot: root
         )
-        return register(Request(
+        let job = registerPreparing(
             id: id,
             ownerKey: ownerKey,
             projectID: editor.projectId ?? ownerKey,
             kind: .project,
-            title: destination.url.lastPathComponent,
-            durationFrames: timeline.totalFrames,
-            fps: timeline.fps,
-            width: timeline.width,
-            height: timeline.height,
+            title: standardizedOutput.lastPathComponent,
+            timeline: timeline,
             fingerprint: fingerprint,
-            source: source,
-            destination: destination,
-            companionDestination: nil,
-            payload: .project(payload),
-            changeHandler: projectChangeHandler(editor: editor, ownerKey: ownerKey, root: root),
-            currentHandler: { false }
-        ))
+            deliveryRoot: nil
+        )
+        let cancellationFlag = cancellationFlags[id] ?? ExportCancellationFlag()
+        var preparedFrozen: FrozenSources?
+        do {
+            let prepared = try await withTaskCancellationHandler {
+                try await Task.detached(priority: .userInitiated) {
+                    try ExportPublishRecoveryStore.recoverAll()
+                    let source = try SourceBinding.projectPackage(
+                        timeline: timeline,
+                        manifest: manifest,
+                        sourceRoot: root,
+                        isCancelled: { cancellationFlag.isCancelled }
+                    )
+                    let destination = try DestinationBinding(
+                        url: standardizedOutput,
+                        jobID: id,
+                        expectsDirectory: true,
+                        isCancelled: { cancellationFlag.isCancelled }
+                    )
+                    let resolvedSource = root.standardizedFileURL.resolvingSymlinksInPath()
+                    guard destination.url != resolvedSource,
+                          !destination.url.path.hasPrefix(resolvedSource.path + "/") else {
+                        throw ToolError("Export the project package outside its source working copy.")
+                    }
+                    try source.rejectDestination(destination.url)
+                    let frozen = try source.freeze(
+                        jobID: id,
+                        isCancelled: { cancellationFlag.isCancelled }
+                    )
+                    do {
+                        try source.verify(isCancelled: { cancellationFlag.isCancelled })
+                        try frozen.verify(isCancelled: { cancellationFlag.isCancelled })
+                    } catch {
+                        frozen.remove()
+                        throw error
+                    }
+                    return PreparedSources(
+                        source: source,
+                        frozen: frozen,
+                        destination: destination,
+                        companionDestination: nil
+                    )
+                }.value
+            } onCancel: {
+                cancellationFlag.cancel()
+            }
+            preparedFrozen = prepared.frozen
+            try requireEnqueueContext(editor: editor, ownerKey: ownerKey, root: root, jobID: id)
+            try throwIfCancelled(id)
+            install(Request(
+                id: id,
+                ownerKey: ownerKey,
+                projectID: editor.projectId ?? ownerKey,
+                kind: .project,
+                title: prepared.destination.url.lastPathComponent,
+                durationFrames: timeline.totalFrames,
+                fps: timeline.fps,
+                width: timeline.width,
+                height: timeline.height,
+                fingerprint: fingerprint,
+                source: prepared.source,
+                frozenSources: prepared.frozen,
+                destination: prepared.destination,
+                companionDestination: nil,
+                payload: .project(payload),
+                changeHandler: projectChangeHandler(editor: editor, ownerKey: ownerKey, root: root),
+                currentHandler: { false },
+                ownershipHandler: projectOwnershipHandler(editor: editor, ownerKey: ownerKey, root: root)
+            ), for: job)
+            preparedFrozen = nil
+            return job
+        } catch {
+            preparedFrozen?.remove()
+            failPreparation(job, error: error)
+            throw error
+        }
     }
 
     func cancel(jobID: String) {
         guard let job = jobsByID[jobID], job.canCancel else { return }
         cancellationRequests.insert(jobID)
         cancellationFlags[jobID]?.cancel()
-        if job.status == .pending, currentID != jobID {
+        if currentID != jobID, job.status == .preparing {
+            job.status = .cancelling
+            job.detail = "Cancelling"
+        } else if job.status == .pending, currentID != jobID {
             do {
                 try recordCancellation(for: jobID, reason: "Export cancelled before preparation.")
                 job.status = .cancelled
@@ -420,6 +592,7 @@ final class ExportQueue {
             requests[jobID]?.changeHandler()
             cancellationFlags.removeValue(forKey: jobID)
             cancellationRequests.remove(jobID)
+            resumeWaiters(for: job)
         } else {
             job.status = .cancelling
             job.detail = "Cancelling"
@@ -430,6 +603,24 @@ final class ExportQueue {
     func cancelAll(ownerKey: String) {
         for job in jobs where job.ownerKey == ownerKey && job.canCancel {
             cancel(jobID: job.id)
+        }
+    }
+
+    func release(ownerKey: String) {
+        guard !hasActiveJobs(ownerKey: ownerKey) else { return }
+        let ids = jobs.filter { $0.ownerKey == ownerKey }.map(\.id)
+        let roots = Set(ids.compactMap { requests[$0]?.frozenSources.root })
+        for root in roots { try? FileManager.default.removeItem(at: root) }
+        jobs.removeAll { $0.ownerKey == ownerKey }
+        for id in ids {
+            jobsByID.removeValue(forKey: id)
+            requests.removeValue(forKey: id)
+            fingerprintsByID.removeValue(forKey: id)
+            deliveryRootsByID.removeValue(forKey: id)
+            recoveredDeliveryIdentities.removeValue(forKey: id)
+            cancellationFlags.removeValue(forKey: id)
+            cancellationRequests.remove(id)
+            pendingIDs.removeAll { $0 == id }
         }
     }
 
@@ -457,7 +648,8 @@ final class ExportQueue {
                 resolution: payload.resolution,
                 outputURL: retried.destination.url,
                 timeline: payload.timeline,
-                resolver: payload.resolver
+                resolver: payload.resolver,
+                bindingAlreadyValidated: true
             )
             retried.payload = .delivery(payload.withAttempt(attempt))
         }
@@ -465,15 +657,43 @@ final class ExportQueue {
     }
 
     func waitForCompletion(jobID: String) async -> ExportJob? {
-        while let job = jobsByID[jobID], !job.status.isTerminal {
-            try? await Task.sleep(for: .milliseconds(50))
+        if Task.isCancelled { return jobsByID[jobID] }
+        guard let job = jobsByID[jobID], !job.status.isTerminal else {
+            return jobsByID[jobID]
         }
-        return jobsByID[jobID]
+        let waiterID = UUID()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard !Task.isCancelled,
+                      let current = jobsByID[jobID],
+                      !current.status.isTerminal else {
+                    continuation.resume(returning: jobsByID[jobID])
+                    return
+                }
+                completionWaiters[jobID, default: [:]][waiterID] = continuation
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.cancelCompletionWaiter(jobID: jobID, waiterID: waiterID)
+            }
+        }
     }
 
     func waitUntilIdle(ownerKey: String) async {
-        while jobs.contains(where: { $0.ownerKey == ownerKey && !$0.status.isTerminal }) {
-            try? await Task.sleep(for: .milliseconds(50))
+        if Task.isCancelled || !hasActiveJobs(ownerKey: ownerKey) { return }
+        let waiterID = UUID()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard !Task.isCancelled, hasActiveJobs(ownerKey: ownerKey) else {
+                    continuation.resume()
+                    return
+                }
+                idleWaiters[ownerKey, default: [:]][waiterID] = continuation
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.cancelIdleWaiter(ownerKey: ownerKey, waiterID: waiterID)
+            }
         }
     }
 
@@ -482,11 +702,9 @@ final class ExportQueue {
         guard let ownerKey, let dataRoot else { return false }
         var recovered = false
         do {
-            recovered = try PipelineDeliveryStore.recoverInterruptedJobs(
-                dataRoot: dataRoot,
-                excludingIDs: activeDeliveryIDs(dataRoot: dataRoot),
-                willMutate: { try ProjectWorkingCopy.markDirty(key: ownerKey) },
-                didRecover: { cleanupTemporaryState(for: $0) }
+            recovered = try recoverInterruptedDeliveries(
+                ownerKey: ownerKey,
+                dataRoot: dataRoot
             )
             for attempt in try PipelineDeliveryStore.listAttempts(dataRoot: dataRoot) {
                 guard jobsByID[attempt.id] == nil else { continue }
@@ -498,6 +716,13 @@ final class ExportQueue {
                 case .queued, .running: .interrupted
                 }
                 let destination = attempt.outputPath.map { URL(fileURLWithPath: $0) }
+                let boundTimelineURL = dataRoot.appendingPathComponent(
+                    "delivery/timelines/\(attempt.finishedTimelineSHA256).json"
+                )
+                let boundTimeline = try? JSONDecoder().decode(
+                    Timeline.self,
+                    from: Data(contentsOf: boundTimelineURL)
+                )
                 let job = ExportJob(
                     id: attempt.id,
                     ownerKey: ownerKey,
@@ -505,6 +730,10 @@ final class ExportQueue {
                     kind: .video,
                     destinationURL: destination,
                     title: destination?.lastPathComponent ?? "Interrupted export",
+                    durationFrames: boundTimeline?.totalFrames,
+                    fps: boundTimeline?.fps ?? attempt.spec.fpsNumerator,
+                    width: boundTimeline?.width ?? attempt.spec.width,
+                    height: boundTimeline?.height ?? attempt.spec.height,
                     status: status,
                     progress: status == .completed ? 1 : 0,
                     detail: status == .completed ? "Completed" : status.rawValue.capitalized,
@@ -515,6 +744,11 @@ final class ExportQueue {
                 )
                 jobs.append(job)
                 jobsByID[job.id] = job
+                recoveredDeliveryIdentities[job.id] = .init(
+                    ownerKey: ownerKey,
+                    specID: attempt.spec.id,
+                    outputURL: destination?.standardizedFileURL
+                )
                 if attempt.status == .interrupted {
                     cleanupTemporaryState(for: attempt)
                 }
@@ -526,25 +760,63 @@ final class ExportQueue {
         }
     }
 
-    private func register(_ request: Request) -> ExportJob {
+    private func registerPreparing(
+        id: String,
+        ownerKey: String,
+        projectID: String,
+        kind: ExportJobKind,
+        title: String,
+        timeline: Timeline,
+        fingerprint: String,
+        deliveryRoot: URL?
+    ) -> ExportJob {
         let job = ExportJob(
+            id: id,
+            ownerKey: ownerKey,
+            projectID: projectID,
+            kind: kind,
+            destinationURL: nil,
+            title: title,
+            durationFrames: timeline.totalFrames,
+            fps: timeline.fps,
+            width: timeline.width,
+            height: timeline.height,
+            status: .preparing,
+            detail: "Preparing"
+        )
+        jobs.append(job)
+        jobsByID[job.id] = job
+        fingerprintsByID[id] = fingerprint
+        if let deliveryRoot { deliveryRootsByID[id] = deliveryRoot.standardizedFileURL }
+        cancellationFlags[job.id] = ExportCancellationFlag()
+        return job
+    }
+
+    private func install(_ request: Request, for job: ExportJob) {
+        guard jobsByID[job.id] === job, !job.status.isTerminal else {
+            request.frozenSources.remove()
+            return
+        }
+        requests[job.id] = request
+        job.destinationURL = request.destination.url
+        job.status = .pending
+        job.detail = "Waiting"
+        pendingIDs.append(job.id)
+        startDrainIfNeeded()
+    }
+
+    private func register(_ request: Request) -> ExportJob {
+        let job = registerPreparing(
             id: request.id,
             ownerKey: request.ownerKey,
             projectID: request.projectID,
             kind: request.kind,
-            destinationURL: request.destination.url,
             title: request.title,
-            durationFrames: request.durationFrames,
-            fps: request.fps,
-            width: request.width,
-            height: request.height
+            timeline: request.payload.timeline,
+            fingerprint: request.fingerprint,
+            deliveryRoot: request.payload.dataRoot
         )
-        jobs.append(job)
-        jobsByID[job.id] = job
-        requests[job.id] = request
-        cancellationFlags[job.id] = ExportCancellationFlag()
-        pendingIDs.append(job.id)
-        startDrainIfNeeded()
+        install(request, for: job)
         return job
     }
 
@@ -575,8 +847,6 @@ final class ExportQueue {
         }
         var deliveryAttempt: DeliveryAttemptV1?
         var published = false
-        var frozenSources: FrozenSources?
-        defer { frozenSources?.remove() }
         do {
             try throwIfCancelled(job.id)
             let cancellationFlag = cancellationFlags[job.id] ?? ExportCancellationFlag()
@@ -584,11 +854,13 @@ final class ExportQueue {
                 isCancelled: { cancellationFlag.isCancelled }
             )
             defer { ExportCoordinator.endExport() }
+            try requireCurrent(request, job: job)
             try throwIfCancelled(job.id)
 
             job.status = .preparing
             job.detail = "Preparing"
             await Task.yield()
+            try requireCurrent(request, job: job)
             try throwIfCancelled(job.id)
             if case .delivery(let payload) = request.payload {
                 try ProjectWorkingCopy.markDirty(key: request.ownerKey)
@@ -610,24 +882,16 @@ final class ExportQueue {
                         isCancelled: { cancellationFlag.isCancelled }
                     )
                 }.value
+                try requireCurrent(request, job: job)
             }
             let source = request.source
-            let jobID = job.id
-            try await Task.detached(priority: .userInitiated) {
-                try source.verify(isCancelled: { cancellationFlag.isCancelled })
-            }.value
-            let frozen = try await Task.detached(priority: .userInitiated) {
-                try source.freeze(
-                    jobID: jobID,
-                    isCancelled: { cancellationFlag.isCancelled }
-                )
-            }.value
-            frozenSources = frozen
-            try throwIfCancelled(job.id)
+            let frozen = request.frozenSources
             try await Task.detached(priority: .userInitiated) {
                 try source.verify(isCancelled: { cancellationFlag.isCancelled })
                 try frozen.verify(isCancelled: { cancellationFlag.isCancelled })
             }.value
+            try requireCurrent(request, job: job)
+            try throwIfCancelled(job.id)
 
             let service = ExportService()
             activeService = service
@@ -684,6 +948,7 @@ final class ExportQueue {
                     event: event
                 )
             }
+            try requireCurrent(request, job: job)
 
             if let error = service.error {
                 if cancellationRequests.contains(job.id) || error == "Export was cancelled" {
@@ -696,6 +961,7 @@ final class ExportQueue {
                 try source.verify(isCancelled: { cancellationFlag.isCancelled })
                 try frozen.verify(isCancelled: { cancellationFlag.isCancelled })
             }.value
+            try requireCurrent(request, job: job)
             if case .delivery(let payload) = request.payload {
                 let dataRoot = payload.dataRoot
                 let finished = payload.finished
@@ -710,6 +976,7 @@ final class ExportQueue {
                         isCancelled: { cancellationFlag.isCancelled }
                     )
                 }.value
+                try requireCurrent(request, job: job)
             }
 
             let deliveryEvidence: PipelineDeliveryStore.OutputEvidence?
@@ -723,11 +990,13 @@ final class ExportQueue {
             } else {
                 deliveryEvidence = nil
             }
+            try requireCurrent(request, job: job)
             try throwIfCancelled(job.id)
             try await Task.detached(priority: .userInitiated) {
                 try source.verify(isCancelled: { cancellationFlag.isCancelled })
                 try frozen.verify(isCancelled: { cancellationFlag.isCancelled })
             }.value
+            try requireCurrent(request, job: job)
             if case .delivery(let payload) = request.payload {
                 let dataRoot = payload.dataRoot
                 let finished = payload.finished
@@ -742,6 +1011,7 @@ final class ExportQueue {
                         isCancelled: { cancellationFlag.isCancelled }
                     )
                 }.value
+                try requireCurrent(request, job: job)
                 try ProjectWorkingCopy.markDirty(key: request.ownerKey)
             }
             var publications = [DestinationBinding.Publication(
@@ -756,8 +1026,22 @@ final class ExportQueue {
                     temporaryURL: companionTemporaryURL
                 ))
             }
-            try DestinationBinding.publish(publications)
+            job.acceptsCancellation = false
+            job.detail = "Publishing"
+            let publicationResult = try await Task.detached(priority: .userInitiated) {
+                try DestinationBinding.publish(
+                    publications,
+                    isCancelled: { cancellationFlag.isCancelled }
+                )
+            }.value
             published = true
+            try requireQueueIdentity(request, job: job)
+            try await Task.detached(priority: .userInitiated) {
+                try publicationResult.verifyPublished(
+                    isCancelled: { false }
+                )
+            }.value
+            try requireQueueIdentity(request, job: job)
 
             switch request.payload {
             case .delivery(let payload):
@@ -770,6 +1054,7 @@ final class ExportQueue {
                     finished: payload.finished,
                     outputURL: request.destination.url,
                     evidence: deliveryEvidence,
+                    publishedState: publicationResult.state(for: request.destination.url),
                     selectIfCurrent: request.currentHandler()
                 )
                 job.outputSHA256 = result.attempt.outputSHA256
@@ -779,18 +1064,17 @@ final class ExportQueue {
                 }
                 request.changeHandler()
             case .interchange:
-                let values = try request.destination.url.resourceValues(
-                    forKeys: [.fileSizeKey, .isRegularFileKey]
-                )
-                guard values.isRegularFile == true, let size = values.fileSize, size > 0 else {
+                guard case .file(let sha256, let size) = publicationResult.state(
+                    for: request.destination.url
+                ), size > 0 else {
                     throw ToolError("The exported interchange file is missing or empty.")
                 }
-                job.outputSHA256 = try FileDigest.sha256(of: request.destination.url)
+                job.outputSHA256 = sha256
                 job.outputByteCount = Int64(size)
                 job.fcpxmlReport = fcpxmlReport
                 job.warnings = fcpxmlReport?.warnings.map(\.message) ?? []
             case .project:
-                let state = try PathState.capture(request.destination.url)
+                let state = publicationResult.state(for: request.destination.url)
                 job.outputSHA256 = state.digest
                 job.outputByteCount = projectReport?.totalBytes
                 job.projectReport = projectReport
@@ -804,6 +1088,7 @@ final class ExportQueue {
             job.progress = 1
             job.status = .completed
             job.detail = "Completed"
+            resumeWaiters(for: job)
             AppNotifications.exportComplete(
                 name: job.title,
                 outputURL: request.destination.url,
@@ -841,6 +1126,7 @@ final class ExportQueue {
             if !cancelled {
                 AppNotifications.exportFailed(name: job.title, reason: reason)
             }
+            resumeWaiters(for: job)
         }
         cancellationRequests.remove(job.id)
         cancellationFlags.removeValue(forKey: job.id)
@@ -863,9 +1149,23 @@ final class ExportQueue {
         }
     }
 
+    private func requireCurrent(_ request: Request, job: ExportJob) throws {
+        try requireQueueIdentity(request, job: job)
+        guard request.ownershipHandler() else {
+            throw CancellationError()
+        }
+    }
+
+    private func requireQueueIdentity(_ request: Request, job: ExportJob) throws {
+        guard jobsByID[job.id] === job,
+              requests[job.id]?.fingerprint == request.fingerprint else {
+            throw CancellationError()
+        }
+    }
+
     private func joinedJob(id: String, fingerprint: String) throws -> ExportJob? {
         guard let existing = jobsByID[id] else { return nil }
-        guard requests[id]?.fingerprint == fingerprint else {
+        guard fingerprintsByID[id] == fingerprint else {
             throw ToolError("An export job with this ID is already bound to different inputs.")
         }
         return existing
@@ -883,15 +1183,85 @@ final class ExportQueue {
         FileDigest.sha256(of: Data(parts.joined(separator: "\u{0}").utf8))
     }
 
-    private func activeDeliveryIDs(dataRoot: URL) -> Set<String> {
-        Set(requests.compactMap { id, request in
-            guard let job = jobsByID[id], !job.status.isTerminal,
-                  case .delivery(let payload) = request.payload,
-                  payload.dataRoot.standardizedFileURL == dataRoot.standardizedFileURL else {
-                return nil
-            }
+    func activeDeliveryIDs(dataRoot: URL) -> Set<String> {
+        let root = dataRoot.standardizedFileURL
+        return Set(deliveryRootsByID.compactMap { id, candidate in
+            guard candidate == root,
+                  let job = jobsByID[id],
+                  !job.status.isTerminal else { return nil }
             return id
         })
+    }
+
+    @discardableResult
+    func recoverInterruptedDeliveries(ownerKey: String, dataRoot: URL) throws -> Bool {
+        try PipelineDeliveryStore.recoverInterruptedJobs(
+            dataRoot: dataRoot,
+            excludingIDs: activeDeliveryIDs(dataRoot: dataRoot),
+            willMutate: { try ProjectWorkingCopy.markDirty(key: ownerKey) },
+            didRecover: { cleanupTemporaryState(for: $0) }
+        )
+    }
+
+    private func requireEnqueueContext(
+        editor: EditorViewModel,
+        ownerKey: String,
+        root: URL,
+        jobID: String
+    ) throws {
+        guard jobsByID[jobID]?.status.isTerminal == false,
+              editor.openWorkingCopyKey == ownerKey,
+              editor.workingRoot?.standardizedFileURL == root.standardizedFileURL else {
+            throw CancellationError()
+        }
+    }
+
+    private func failPreparation(_ job: ExportJob, error: Error) {
+        guard !job.status.isTerminal else { return }
+        let cancelled = cancellationRequests.contains(job.id)
+            || cancellationFlags[job.id]?.isCancelled == true
+            || error is CancellationError
+        job.status = cancelled ? .cancelled : .failed
+        job.detail = cancelled ? "Cancelled" : "Failed"
+        job.failure = cancelled ? "Export cancelled" : error.localizedDescription
+        cancellationRequests.remove(job.id)
+        cancellationFlags.removeValue(forKey: job.id)
+        resumeWaiters(for: job)
+    }
+
+    private func hasActiveJobs(ownerKey: String) -> Bool {
+        jobs.contains { $0.ownerKey == ownerKey && !$0.status.isTerminal }
+    }
+
+    private func resumeWaiters(for job: ExportJob) {
+        guard job.status.isTerminal else { return }
+        let completions = completionWaiters.removeValue(forKey: job.id) ?? [:]
+        for continuation in completions.values {
+            continuation.resume(returning: job)
+        }
+        guard !hasActiveJobs(ownerKey: job.ownerKey) else { return }
+        let idle = idleWaiters.removeValue(forKey: job.ownerKey) ?? [:]
+        for continuation in idle.values { continuation.resume() }
+    }
+
+    private func cancelCompletionWaiter(jobID: String, waiterID: UUID) {
+        guard let continuation = completionWaiters[jobID]?.removeValue(forKey: waiterID) else {
+            return
+        }
+        if completionWaiters[jobID]?.isEmpty == true {
+            completionWaiters.removeValue(forKey: jobID)
+        }
+        continuation.resume(returning: jobsByID[jobID])
+    }
+
+    private func cancelIdleWaiter(ownerKey: String, waiterID: UUID) {
+        guard let continuation = idleWaiters[ownerKey]?.removeValue(forKey: waiterID) else {
+            return
+        }
+        if idleWaiters[ownerKey]?.isEmpty == true {
+            idleWaiters.removeValue(forKey: ownerKey)
+        }
+        continuation.resume()
     }
 
     private func cleanupTemporaryState(for attempt: DeliveryAttemptV1) {
@@ -939,9 +1309,41 @@ final class ExportQueue {
             return FileDigest.sha256(of: timelineData) == timelineSHA256
         }
     }
+
+    private func projectOwnershipHandler(
+        editor: EditorViewModel,
+        ownerKey: String,
+        root: URL
+    ) -> @MainActor () -> Bool {
+        { [weak editor] in
+            guard let editor else { return false }
+            return editor.openWorkingCopyKey == ownerKey
+                && editor.workingRoot?.standardizedFileURL == root.standardizedFileURL
+        }
+    }
 }
 
-private extension ExportQueue {
+extension ExportQueue {
+    struct RecoveredDeliveryIdentity {
+        let ownerKey: String
+        let specID: String
+        let outputURL: URL?
+    }
+
+    struct PreparedSources: Sendable {
+        let source: SourceBinding
+        let frozen: FrozenSources
+        let destination: DestinationBinding
+        let companionDestination: DestinationBinding?
+    }
+
+    struct PreparedDelivery: Sendable {
+        let source: SourceBinding
+        let frozen: FrozenSources
+        let destination: DestinationBinding
+        let finished: PipelineDeliveryStore.FinishedState
+    }
+
     struct Request {
         var id: String
         let ownerKey: String
@@ -954,11 +1356,13 @@ private extension ExportQueue {
         let height: Int
         let fingerprint: String
         let source: SourceBinding
+        let frozenSources: FrozenSources
         var destination: DestinationBinding
         var companionDestination: DestinationBinding?
         var payload: Payload
         let changeHandler: @MainActor () -> Void
         let currentHandler: @MainActor () -> Bool
+        let ownershipHandler: @MainActor () -> Bool
 
         func withID(_ id: String) -> Request {
             var copy = self
@@ -973,6 +1377,19 @@ private extension ExportQueue {
         case delivery(DeliveryPayload)
         case interchange(InterchangePayload)
         case project(ProjectPayload)
+
+        var timeline: Timeline {
+            switch self {
+            case .delivery(let value): value.timeline
+            case .interchange(let value): value.timeline
+            case .project(let value): value.timeline
+            }
+        }
+
+        var dataRoot: URL? {
+            if case .delivery(let value) = self { return value.dataRoot }
+            return nil
+        }
     }
 
     struct DeliveryPayload {
@@ -1027,11 +1444,16 @@ private extension ExportQueue {
         let media: [Media]
         let rootURL: URL?
         let rootState: PathState?
+        let rootExclusions: Set<String>
+        let separatelyCapturedPaths: Set<String>
+        let excludesWorkingCopyRuntime: Bool
+        let verifyLiveRoot: Bool
 
         static func video(
             timeline: Timeline,
             resolver: MediaResolver,
-            additionalFiles: [(path: String, url: URL)]
+            additionalFiles: [(path: String, url: URL)],
+            isCancelled: @Sendable () -> Bool = { false }
         ) throws -> SourceBinding {
             let tracks = timeline.tracks.filter {
                 !$0.hidden && ($0.type != .audio || !$0.muted)
@@ -1041,24 +1463,31 @@ private extension ExportQueue {
                 refs: mediaRefs(timeline.tracks),
                 requiredRefs: mediaRefs(tracks),
                 resolver: resolver,
-                additionalFiles: additionalFiles
+                additionalFiles: additionalFiles,
+                isCancelled: isCancelled
             )
         }
 
-        static func interchange(timeline: Timeline, resolver: MediaResolver) throws -> SourceBinding {
+        static func interchange(
+            timeline: Timeline,
+            resolver: MediaResolver,
+            isCancelled: @Sendable () -> Bool = { false }
+        ) throws -> SourceBinding {
             try make(
                 timeline: timeline,
                 refs: mediaRefs(timeline.tracks),
                 requiredRefs: [],
                 resolver: resolver,
-                additionalFiles: []
+                additionalFiles: [],
+                isCancelled: isCancelled
             )
         }
 
         static func projectPackage(
             timeline: Timeline,
             manifest: MediaManifest,
-            sourceRoot: URL
+            sourceRoot: URL,
+            isCancelled: @Sendable () -> Bool = { false }
         ) throws -> SourceBinding {
             let resolver = MediaResolver(manifest: { manifest }, projectURL: { sourceRoot })
             let refs = Set(manifest.entries.compactMap { entry in
@@ -1070,13 +1499,35 @@ private extension ExportQueue {
                 refs: refs,
                 requiredRefs: [],
                 resolver: resolver,
-                additionalFiles: []
+                additionalFiles: [],
+                isCancelled: isCancelled
             )
+            var separatelyCapturedPaths: Set<String> = []
+            if let dataRoot = DataRootResolver.dataRoot(of: sourceRoot) {
+                let source = sourceRoot.standardizedFileURL
+                let data = dataRoot.standardizedFileURL
+                let relative = data == source
+                    ? ""
+                    : String(data.path.dropFirst(source.path.count + 1))
+                separatelyCapturedPaths.insert(
+                    relative.isEmpty ? "delivery" : "\(relative)/delivery"
+                )
+            }
+            let exclusions = separatelyCapturedPaths
             return .init(
                 timelineSHA256: binding.timelineSHA256,
                 media: binding.media,
                 rootURL: sourceRoot,
-                rootState: try PathState.capture(sourceRoot)
+                rootState: try PathState.capture(
+                    sourceRoot,
+                    excluding: exclusions,
+                    excludingWorkingCopyRuntime: true,
+                    isCancelled: isCancelled
+                ),
+                rootExclusions: exclusions,
+                separatelyCapturedPaths: separatelyCapturedPaths,
+                excludesWorkingCopyRuntime: true,
+                verifyLiveRoot: false
             )
         }
 
@@ -1087,8 +1538,13 @@ private extension ExportQueue {
                     throw ToolError("Export source changed or is offline: \(item.ref)")
                 }
             }
-            if let rootURL, let rootState,
-               try PathState.capture(rootURL, isCancelled: isCancelled) != rootState {
+            if verifyLiveRoot, let rootURL, let rootState,
+               try PathState.capture(
+                   rootURL,
+                   excluding: rootExclusions,
+                   excludingWorkingCopyRuntime: excludesWorkingCopyRuntime,
+                   isCancelled: isCancelled
+               ) != rootState {
                 throw ToolError("The project source changed after this export was queued.")
             }
         }
@@ -1107,16 +1563,18 @@ private extension ExportQueue {
             refs: Set<String>,
             requiredRefs: Set<String>,
             resolver: MediaResolver,
-            additionalFiles: [(path: String, url: URL)]
+            additionalFiles: [(path: String, url: URL)],
+            isCancelled: @Sendable () -> Bool
         ) throws -> SourceBinding {
             let timelineData = try PipelineAssemblyStore.canonical(timeline)
             var media = try refs.sorted().compactMap { ref in
+                if isCancelled() { throw CancellationError() }
                 guard let url = resolver.expectedURL(for: ref) else {
                     if !requiredRefs.contains(ref) { return nil }
                     throw ToolError("Export source is unresolved: \(resolver.displayName(for: ref))")
                 }
                 let resolved = url.standardizedFileURL.resolvingSymlinksInPath()
-                let state = try PathState.capture(resolved)
+                let state = try PathState.capture(resolved, isCancelled: isCancelled)
                 if state == .absent, requiredRefs.contains(ref) {
                     throw ToolError("Export source is offline: \(resolver.displayName(for: ref))")
                 }
@@ -1131,8 +1589,9 @@ private extension ExportQueue {
                 )
             }
             media += try additionalFiles.map { item in
+                if isCancelled() { throw CancellationError() }
                 let resolved = item.url.standardizedFileURL.resolvingSymlinksInPath()
-                let state = try PathState.capture(resolved)
+                let state = try PathState.capture(resolved, isCancelled: isCancelled)
                 guard case .file = state else {
                     throw ToolError("A required delivery extension is missing: \(item.path)")
                 }
@@ -1147,7 +1606,11 @@ private extension ExportQueue {
                 timelineSHA256: FileDigest.sha256(of: timelineData),
                 media: media,
                 rootURL: nil,
-                rootState: nil
+                rootState: nil,
+                rootExclusions: [],
+                separatelyCapturedPaths: [],
+                excludesWorkingCopyRuntime: false,
+                verifyLiveRoot: true
             )
         }
 
@@ -1203,6 +1666,8 @@ private extension ExportQueue {
                     try Self.copyDirectory(
                         from: rootURL,
                         to: destination,
+                        excluding: rootExclusions,
+                        excludingWorkingCopyRuntime: excludesWorkingCopyRuntime,
                         isCancelled: isCancelled
                     )
                     guard try PathState.capture(
@@ -1210,6 +1675,21 @@ private extension ExportQueue {
                         isCancelled: isCancelled
                     ) == rootState else {
                         throw ToolError("The project source changed while it was being frozen.")
+                    }
+                    guard try PathState.capture(
+                        rootURL,
+                        excluding: rootExclusions,
+                        excludingWorkingCopyRuntime: excludesWorkingCopyRuntime,
+                        isCancelled: isCancelled
+                    ) == rootState else {
+                        throw ToolError("The project source changed while it was being frozen.")
+                    }
+                    for relative in separatelyCapturedPaths.sorted() {
+                        try Self.copyConsistentDirectory(
+                            from: rootURL.appendingPathComponent(relative),
+                            to: destination.appendingPathComponent(relative),
+                            isCancelled: isCancelled
+                        )
                     }
                     frozenProjectRoot = destination
                 } else {
@@ -1219,7 +1699,9 @@ private extension ExportQueue {
                     root: root,
                     files: frozenFiles,
                     projectRoot: frozenProjectRoot,
-                    projectState: rootState
+                    projectState: frozenProjectRoot.map {
+                        try PathState.capture($0, isCancelled: isCancelled)
+                    }
                 )
             } catch {
                 try? fm.removeItem(at: root)
@@ -1258,6 +1740,8 @@ private extension ExportQueue {
         private static func copyDirectory(
             from source: URL,
             to destination: URL,
+            excluding exclusions: Set<String> = [],
+            excludingWorkingCopyRuntime: Bool = false,
             isCancelled: @Sendable () -> Bool
         ) throws {
             let fm = FileManager.default
@@ -1274,6 +1758,12 @@ private extension ExportQueue {
             for case let item as URL in enumerator {
                 if isCancelled() { throw CancellationError() }
                 let relative = String(item.path.dropFirst(source.path.count + 1))
+                if isExcluded(relative, exclusions: exclusions)
+                    || (excludingWorkingCopyRuntime
+                        && ProjectWorkingCopy.isPackageRuntimePath(relative)) {
+                    enumerator.skipDescendants()
+                    continue
+                }
                 let target = destination.appendingPathComponent(relative)
                 let values = try item.resourceValues(
                     forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey]
@@ -1295,6 +1785,29 @@ private extension ExportQueue {
             }
         }
 
+        private static func copyConsistentDirectory(
+            from source: URL,
+            to destination: URL,
+            isCancelled: @Sendable () -> Bool
+        ) throws {
+            let fm = FileManager.default
+            guard fm.fileExists(atPath: source.path) else { return }
+            for _ in 0..<5 {
+                if isCancelled() { throw CancellationError() }
+                let before = try PathState.capture(source, isCancelled: isCancelled)
+                try? fm.removeItem(at: destination)
+                try copyDirectory(from: source, to: destination, isCancelled: isCancelled)
+                let copied = try PathState.capture(destination, isCancelled: isCancelled)
+                let after = try PathState.capture(source, isCancelled: isCancelled)
+                if before == after, copied == before { return }
+            }
+            throw ToolError("The project delivery history changed while it was being frozen.")
+        }
+
+        private static func isExcluded(_ relative: String, exclusions: Set<String>) -> Bool {
+            exclusions.contains { relative == $0 || relative.hasPrefix($0 + "/") }
+        }
+
         private static func mediaRefs(_ tracks: [Track]) -> Set<String> {
             Set(tracks.flatMap { track in
                 track.clips.compactMap { clip in
@@ -1304,32 +1817,43 @@ private extension ExportQueue {
         }
     }
 
-    struct DestinationBinding {
-        struct Publication {
+    struct DestinationBinding: Sendable {
+        struct Publication: Sendable {
             let binding: DestinationBinding
             let temporaryURL: URL
         }
 
         let url: URL
         let initialState: PathState
+        let initialIdentity: ExportFileIdentity?
         let jobID: String
         let temporaryURL: URL
         let expectsDirectory: Bool
 
-        init(url: URL, jobID: String, expectsDirectory: Bool) throws {
-            let standardized = url.standardizedFileURL
-            let parent = standardized.deletingLastPathComponent()
+        init(
+            url: URL,
+            jobID: String,
+            expectsDirectory: Bool,
+            isCancelled: @Sendable () -> Bool = { false }
+        ) throws {
+            let requested = url.standardizedFileURL
+            let parent = requested.deletingLastPathComponent().resolvingSymlinksInPath()
+            let standardized = parent.appendingPathComponent(requested.lastPathComponent)
             let values = try parent.resourceValues(forKeys: [.isDirectoryKey])
             guard values.isDirectory == true else {
                 throw ToolError("The export destination directory does not exist.")
             }
-            let initialState = try PathState.capture(standardized)
+            let initialState = try PathState.capture(
+                standardized,
+                isCancelled: isCancelled
+            )
             guard !initialState.exists
                     || initialState.isDirectory == expectsDirectory else {
                 throw ToolError("The export destination has the wrong file type.")
             }
             self.url = standardized
             self.initialState = initialState
+            self.initialIdentity = try ExportFileIdentity.capture(standardized)
             self.jobID = jobID
             self.temporaryURL = Self.makeTemporaryURL(url: standardized, jobID: jobID)
             self.expectsDirectory = expectsDirectory
@@ -1352,100 +1876,76 @@ private extension ExportQueue {
             .init(
                 url: url,
                 initialState: initialState,
+                initialIdentity: initialIdentity,
                 jobID: jobID,
                 expectsDirectory: expectsDirectory
             )
         }
 
-        func publish(temporaryURL: URL) throws {
-            try Self.publish([.init(binding: self, temporaryURL: temporaryURL)])
+        func publish(
+            temporaryURL: URL,
+            isCancelled: @Sendable () -> Bool = { false }
+        ) throws -> ExportPublishRecoveryStore.Result {
+            try Self.publish(
+                [.init(binding: self, temporaryURL: temporaryURL)],
+                isCancelled: isCancelled
+            )
         }
 
-        static func publish(_ publications: [Publication]) throws {
+        static func publish(
+            _ publications: [Publication],
+            isCancelled: @Sendable () -> Bool = { false }
+        ) throws -> ExportPublishRecoveryStore.Result {
             guard Set(publications.map { $0.binding.url }).count == publications.count else {
                 throw ToolError("An export cannot publish two results to the same destination.")
             }
+            if isCancelled() { throw CancellationError() }
+            var prepared: [ExportPublishRecoveryStore.Publication] = []
             for publication in publications {
                 let binding = publication.binding
-                guard try PathState.capture(binding.url) == binding.initialState else {
+                guard try PathState.capture(
+                    binding.url,
+                    isCancelled: isCancelled
+                ) == binding.initialState else {
                     throw ToolError("The export destination changed after this job was queued.")
                 }
-                let temporaryValues = try publication.temporaryURL.resourceValues(
-                    forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey]
+                let temporaryState = try PathState.capture(
+                    publication.temporaryURL,
+                    isCancelled: isCancelled
                 )
-                let typeMatches = binding.expectsDirectory
-                    ? temporaryValues.isDirectory == true
-                    : temporaryValues.isRegularFile == true
-                guard temporaryValues.isSymbolicLink != true,
-                      typeMatches else {
+                guard temporaryState.exists,
+                      temporaryState.isDirectory == binding.expectsDirectory else {
                     throw ToolError("The export produced no temporary result.")
                 }
+                prepared.append(.init(
+                    targetURL: binding.url,
+                    temporaryURL: publication.temporaryURL,
+                    initialState: binding.initialState,
+                    initialIdentity: binding.initialIdentity,
+                    publishedState: temporaryState,
+                    publishedIdentity: try ExportFileIdentity.capture(
+                        publication.temporaryURL
+                    ),
+                    jobID: binding.jobID,
+                    expectsDirectory: binding.expectsDirectory
+                ))
             }
-
-            let fm = FileManager.default
-            if let publication = publications.first, publications.count == 1 {
-                let binding = publication.binding
-                if binding.initialState.exists {
-                    _ = try fm.replaceItemAt(
-                        binding.url,
-                        withItemAt: publication.temporaryURL
-                    )
-                } else {
-                    try fm.moveItem(at: publication.temporaryURL, to: binding.url)
-                }
-                return
-            }
-            var backups: [(target: URL, backup: URL)] = []
-            var installed: [URL] = []
-            do {
-                for publication in publications {
-                    let binding = publication.binding
-                    if binding.initialState.exists {
-                        let backup = binding.url.deletingLastPathComponent()
-                            .appendingPathComponent(
-                                ".\(binding.url.lastPathComponent).\(binding.jobID).backup"
-                            )
-                        guard !fm.fileExists(atPath: backup.path) else {
-                            throw ToolError("An export backup already exists for this job and destination.")
-                        }
-                        try fm.moveItem(at: binding.url, to: backup)
-                        backups.append((binding.url, backup))
-                    }
-                    try fm.moveItem(at: publication.temporaryURL, to: binding.url)
-                    installed.append(binding.url)
-                }
-            } catch {
-                let failure = error
-                var rollbackFailures: [String] = []
-                for target in installed.reversed() where fm.fileExists(atPath: target.path) {
-                    do { try fm.removeItem(at: target) }
-                    catch { rollbackFailures.append(target.lastPathComponent) }
-                }
-                for item in backups.reversed() where fm.fileExists(atPath: item.backup.path) {
-                    do { try fm.moveItem(at: item.backup, to: item.target) }
-                    catch { rollbackFailures.append(item.target.lastPathComponent) }
-                }
-                guard rollbackFailures.isEmpty else {
-                    throw ToolError(
-                        "Export publish failed and rollback could not restore: "
-                            + rollbackFailures.joined(separator: ", ")
-                    )
-                }
-                throw failure
-            }
-            for item in backups where fm.fileExists(atPath: item.backup.path) {
-                try? fm.removeItem(at: item.backup)
-            }
+            return try ExportPublishRecoveryStore.publish(
+                prepared,
+                isCancelled: isCancelled
+            )
         }
 
         private init(
             url: URL,
             initialState: PathState,
+            initialIdentity: ExportFileIdentity?,
             jobID: String,
             expectsDirectory: Bool
         ) {
             self.url = url
             self.initialState = initialState
+            self.initialIdentity = initialIdentity
             self.jobID = jobID
             self.temporaryURL = Self.makeTemporaryURL(url: url, jobID: jobID)
             self.expectsDirectory = expectsDirectory
@@ -1506,7 +2006,7 @@ private extension ExportQueue {
         }
     }
 
-    enum PathState: Equatable, Sendable {
+    enum PathState: Equatable, Sendable, Codable {
         case absent
         case file(sha256: String, byteCount: Int)
         case directory(sha256: String)
@@ -1524,6 +2024,8 @@ private extension ExportQueue {
         }
         static func capture(
             _ url: URL,
+            excluding exclusions: Set<String> = [],
+            excludingWorkingCopyRuntime: Bool = false,
             isCancelled: @Sendable () -> Bool = { false }
         ) throws -> PathState {
             if isCancelled() { throw CancellationError() }
@@ -1556,10 +2058,17 @@ private extension ExportQueue {
             var entries: [String] = []
             for case let child as URL in enumerator {
                 if isCancelled() { throw CancellationError() }
+                let relative = String(child.path.dropFirst(url.path.count + 1))
+                if exclusions.contains(where: {
+                    relative == $0 || relative.hasPrefix($0 + "/")
+                }) || (excludingWorkingCopyRuntime
+                    && ProjectWorkingCopy.isPackageRuntimePath(relative)) {
+                    enumerator.skipDescendants()
+                    continue
+                }
                 let childValues = try child.resourceValues(
                     forKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey]
                 )
-                let relative = String(child.path.dropFirst(url.path.count + 1))
                 if childValues.isSymbolicLink == true {
                     throw ToolError("Export directories cannot contain symbolic links.")
                 } else if childValues.isDirectory == true {

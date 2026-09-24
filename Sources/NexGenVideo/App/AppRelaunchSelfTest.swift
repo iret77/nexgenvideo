@@ -264,7 +264,7 @@ enum AppRelaunchSelfTest {
         return predicate()
     }
 
-    private static func postMouseClick(
+    static func postMouseClick(
         identifier: String,
         in window: NSWindow?
     ) -> String? {
@@ -321,7 +321,7 @@ enum AppRelaunchSelfTest {
         return nil
     }
 
-    private static func isClickProbeReady(identifier: String, in window: NSWindow?) -> Bool {
+    static func isClickProbeReady(identifier: String, in window: NSWindow?) -> Bool {
         guard let window,
               window.isVisible,
               window.isKeyWindow,
