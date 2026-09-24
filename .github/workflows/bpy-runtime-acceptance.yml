@@ -271,6 +271,9 @@ jobs:
             and .resourceScanErrorState == "crashed"
             and .containerSiblingWriteDenied == true
             and .supervisorSignalDenied == true
+            and .supervisorSignalRecovered == true
+            and .supervisorIdentityWriteFailureState == "failed"
+            and .supervisorIdentityWriteFailureRecovered == true
             and .resourceSupervisorRecovered == true
             and .crashState == "crashed"
             and .serviceRecoveryRevision == "revision-e"
@@ -288,6 +291,13 @@ jobs:
             and .trustedVerification.secretEnvironmentAbsent == true
             and .trustedVerification.autorunTextPresent == true
             and .trustedVerification.autorunMarkerAbsent == true
+            and .trustedVerification.blenderBuildHash == "d13f752e3b9c"
+            and .trustedVerification.libraryVersions.alembic.version == [1, 8, 3]
+            and .trustedVerification.libraryVersions.ocio.version == [2, 5, 0]
+            and .trustedVerification.libraryVersions.oiio.version == [3, 1, 13]
+            and .trustedVerification.libraryVersions.opensubdiv.version == [3, 7, 0]
+            and .trustedVerification.libraryVersions.openvdb.version == [13, 0, 0]
+            and .trustedVerification.libraryVersions.usd.version == [0, 26, 3]
             and (.trustedVerification.modifiers.NGV_Room | index("BEVEL")) != null
             and (.trustedVerification.executable | startswith($app + "/"))
             and (.trustedVerification.bpyModule | startswith($app + "/"))

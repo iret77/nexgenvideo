@@ -97,6 +97,11 @@ def validate(archive_path, manifest_path, require_distributable=False):
             or binary.get("wheelSize") != bpy["size"] \
             or binary.get("metadataSHA256") != plan["wheelMetadataSHA256"] \
             or binary.get("metadataSourceCodeURLs") != bpy["metadata"]["sourceCodeURLs"] \
+            or binary.get("officialReleaseCommit") != plan["officialReleaseCommit"] \
+            or binary.get("expectedRuntimeBinaryEvidence", {}).get("buildHash") \
+            != plan["expectedBuildHash"] \
+            or binary.get("expectedRuntimeBinaryEvidence", {}).get("libraryVersions") \
+            != plan["expectedLibraryVersions"] \
             or binary.get("nativeSourceCandidates") \
             != lock["bpyWheelLayout"]["candidateSourceFamilies"] \
             or binary.get("releaseSourceSHA256") != plan["releaseSourceSHA256"]:
@@ -237,22 +242,34 @@ def validate(archive_path, manifest_path, require_distributable=False):
         "processBoundaryTreatedAsGPLException": False,
     }:
         fail("source-distribution boundary drift")
-    if manifest.get("provenanceComplete"):
-        provenance_data = members.read(manifest.get("provenanceEvidence"))
-        if provenance_data is None:
-            fail("completed provenance evidence is missing")
-        provenance = json.loads(provenance_data)
-        if provenance.get("schema") != "nexgenvideo/bpy-wheel-build-provenance/1" \
-                or provenance.get("wheelSHA256") != plan["wheelSHA256"] \
-                or provenance.get("releaseSourceSHA256") != plan["releaseSourceSHA256"] \
-                or provenance.get("releaseBuildManifestSHA256") != plan["releaseBuildManifestSHA256"] \
-                or set(provenance.get("closureComponents", [])) != expected_components:
-            fail("completed provenance evidence does not bind the source closure")
-        build_inputs = provenance.get("buildInputComponents", [])
+    if manifest.get("correspondenceComplete"):
+        correspondence_data = members.read(manifest.get("correspondenceEvidence"))
+        if correspondence_data is None:
+            fail("completed binary/source correspondence evidence is missing")
+        correspondence = json.loads(correspondence_data)
+        evidence = correspondence.get("evidence", [])
+        if correspondence.get("schema") \
+                != "nexgenvideo/bpy-binary-source-correspondence/1" \
+                or correspondence.get("wheelSHA256") != plan["wheelSHA256"] \
+                or correspondence.get("wheelMetadataSHA256") != plan["wheelMetadataSHA256"] \
+                or correspondence.get("officialReleaseCommit") \
+                != plan["officialReleaseCommit"] \
+                or correspondence.get("blenderBuildHash") != plan["expectedBuildHash"] \
+                or correspondence.get("libraryVersions") != plan["expectedLibraryVersions"] \
+                or correspondence.get("releaseSourceSHA256") \
+                != plan["releaseSourceSHA256"] \
+                or correspondence.get("releaseBuildManifestSHA256") \
+                != plan["releaseBuildManifestSHA256"] \
+                or set(correspondence.get("closureComponents", [])) != expected_components \
+                or correspondence.get("unresolvedFacts") != [] \
+                or not evidence \
+                or any(not item.get("kind") or not item.get("source") for item in evidence):
+            fail("completed binary/source correspondence evidence does not bind the source closure")
+        build_inputs = correspondence.get("buildInputComponents", [])
         if not build_inputs or len(build_inputs) != len(set(build_inputs)) \
                 or not set(build_inputs).issubset(expected_components) \
                 or "wheel:bpy" not in build_inputs:
-            fail("completed provenance evidence does not identify exact build inputs")
+            fail("completed binary/source correspondence does not identify actual build inputs")
     if manifest.get("noticeComplete"):
         coverage_data = members.read(manifest.get("noticeCoverageEvidence"))
         if coverage_data is None:
@@ -264,11 +281,11 @@ def validate(archive_path, manifest_path, require_distributable=False):
     if require_distributable:
         if lock.get("distributionStatus") != "ready":
             fail("runtime lock remains fail-closed for public distribution")
-        if not manifest.get("provenanceComplete"):
-            fail("upstream per-wheel build-input provenance remains unresolved")
+        if not manifest.get("correspondenceComplete"):
+            fail("binary/source correspondence facts remain unresolved")
         if not manifest.get("noticeComplete"):
             fail("required notice text still contains candidate-only entries")
-        if binary.get("status") != "official per-wheel build-input correspondence preserved":
+        if binary.get("status") != "binary/source correspondence evidence preserved":
             fail("binary/source correspondence status remains unresolved")
     expected_members = {
         "manifest.json",
@@ -278,7 +295,10 @@ def validate(archive_path, manifest_path, require_distributable=False):
     }
     expected_members.update(source["archivePath"] for source in sources)
     expected_members.update(notice["path"] for notice in notices)
-    for evidence in [manifest.get("provenanceEvidence"), manifest.get("noticeCoverageEvidence")]:
+    for evidence in [
+        manifest.get("correspondenceEvidence"),
+        manifest.get("noticeCoverageEvidence"),
+    ]:
         if evidence:
             expected_members.add(evidence)
     if members.names != expected_members:
@@ -297,7 +317,7 @@ def main():
     print(json.dumps({
         "sources": len(value["sources"]),
         "notices": len(value["notices"]),
-        "provenanceComplete": value["provenanceComplete"],
+        "correspondenceComplete": value["correspondenceComplete"],
         "noticeComplete": value["noticeComplete"],
     }, sort_keys=True))
 

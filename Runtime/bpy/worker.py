@@ -173,6 +173,30 @@ def denial_contract(paths):
     return denied, network
 
 
+def text_value(value):
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="strict")
+    return str(value)
+
+
+def blender_binary_evidence(bpy):
+    libraries = {}
+    for name in ("alembic", "ocio", "oiio", "opensubdiv", "openvdb", "sdl", "usd"):
+        library = getattr(bpy.app, name)
+        libraries[name] = {
+            "supported": bool(library.supported),
+            "version": list(library.version),
+            "versionString": text_value(library.version_string),
+        }
+    return {
+        "blenderBuildHash": text_value(bpy.app.build_hash),
+        "blenderBuildBranch": text_value(bpy.app.build_branch),
+        "blenderBuildType": text_value(bpy.app.build_type),
+        "blenderBuildSystem": text_value(bpy.app.build_system),
+        "libraryVersions": libraries,
+    }
+
+
 def verify_scene(config):
     started = time.monotonic()
     bpy, _, _ = load_runtime(config["sitePackages"])
@@ -180,7 +204,7 @@ def verify_scene(config):
     objects, vertices, polygons = evaluated_geometry(bpy, config["limits"])
     scenes = render_contract(bpy, config["limits"])
     denied, network = denial_contract(config.get("diagnosticDeniedPaths", []))
-    write_manifest(config["manifest"], {
+    manifest = {
         "schema": "nexgenvideo/bpy-verification/1",
         "jobID": config["jobID"],
         "fingerprint": config["fingerprint"],
@@ -214,7 +238,9 @@ def verify_scene(config):
         ),
         "blenderUserConfig": os.environ.get("BLENDER_USER_CONFIG"),
         "sessionRoot": config["sessionRoot"],
-    })
+    }
+    manifest.update(blender_binary_evidence(bpy))
+    write_manifest(config["manifest"], manifest)
 
 
 def autoexec_positive_control(config):

@@ -28,7 +28,7 @@ if [ "$(jq -r .distributionStatus "$ROOT/Runtime/bpy/runtime-lock.json")" = read
     EVIDENCE="$RUNTIME/licenses/distribution/$(basename "$relative")"
     test -f "$EVIDENCE"
     test "$(shasum -a 256 "$EVIDENCE" | awk '{print $1}')" = "$sha"
-  done < <(jq -r '[(.distributionClosure.wheelBinaryProvenance), (.distributionClosure.noticeCoverage), .distributionClosure.noticeFiles[]] | .[] | [.path,.sha256] | @tsv' "$ROOT/Runtime/bpy/runtime-lock.json")
+  done < <(jq -r '[(.distributionClosure.wheelBinaryCorrespondence), (.distributionClosure.noticeCoverage), .distributionClosure.noticeFiles[]] | .[] | [.path,.sha256] | @tsv' "$ROOT/Runtime/bpy/runtime-lock.json")
 fi
 
 codesign --verify --strict --verbose=2 "$PYTHON"

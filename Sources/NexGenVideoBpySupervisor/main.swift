@@ -30,6 +30,7 @@ private func requestTermination(_ signal: Int32) {
 private enum SupervisorError: Error {
     case invalidArguments
     case invalidParent
+    case injectedIdentityWriteFailure
     case processLaunch
     case sandboxUnavailable
     case sandboxRejected(String)
@@ -95,7 +96,7 @@ private func applyWorkerSandbox(writeRoot: URL) throws {
     (allow default)
     (deny network*)
     (deny process-fork)
-    (deny process-signal)
+    (deny signal)
     (deny file-write*)
     (allow file-write* (literal "\(root)"))
     (allow file-write* (subpath "\(root)"))
@@ -135,7 +136,28 @@ private func execPython(arguments: [String]) throws -> Never {
     throw POSIXError(.init(rawValue: errno) ?? .EIO)
 }
 
-private func supervise(arguments: [String]) throws -> Never {
+private func terminateAndReapOwnedChild(_ process: Process, startAbsoluteTime: UInt64?) {
+    guard process.isRunning else {
+        process.waitUntilExit()
+        return
+    }
+    let processIdentifier = process.processIdentifier
+    if let startAbsoluteTime {
+        guard processStartAbsoluteTime(processIdentifier) == startAbsoluteTime else {
+            process.waitUntilExit()
+            return
+        }
+        _ = Darwin.kill(processIdentifier, SIGSTOP)
+        if processStartAbsoluteTime(processIdentifier) == startAbsoluteTime {
+            _ = Darwin.kill(processIdentifier, SIGKILL)
+        }
+    } else {
+        process.terminate()
+    }
+    process.waitUntilExit()
+}
+
+private func supervise(arguments: [String]) throws -> Int32 {
     guard arguments.count == 10,
           let servicePID = Int32(arguments[0]),
           let serviceStart = UInt64(arguments[1]),
@@ -155,7 +177,7 @@ private func supervise(arguments: [String]) throws -> Never {
     _ = Darwin.signal(SIGTERM, requestTermination)
     _ = Darwin.signal(SIGINT, requestTermination)
     while !isAuthorized(at: authorizationURL, token: authorizationToken) {
-        if terminationRequested != 0 { Darwin.exit(0) }
+        if terminationRequested != 0 { return 0 }
         guard parentIsAlive(servicePID, startAbsoluteTime: serviceStart) else {
             throw SupervisorError.invalidParent
         }
@@ -164,7 +186,7 @@ private func supervise(arguments: [String]) throws -> Never {
     guard parentIsAlive(servicePID, startAbsoluteTime: serviceStart) else {
         throw SupervisorError.invalidParent
     }
-    if terminationRequested != 0 { Darwin.exit(0) }
+    if terminationRequested != 0 { return 0 }
 
     let process = Process()
     process.executableURL = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
@@ -175,35 +197,37 @@ private func supervise(arguments: [String]) throws -> Never {
     process.standardError = FileHandle.standardError
     try process.run()
     let childPID = process.processIdentifier
+    var childReaped = false
     var childStart: UInt64?
+    defer {
+        if !childReaped {
+            terminateAndReapOwnedChild(process, startAbsoluteTime: childStart)
+        }
+    }
     for _ in 0..<20 where childStart == nil && process.isRunning {
         childStart = processStartAbsoluteTime(childPID)
         if childStart == nil { usleep(5_000) }
     }
-    guard let childStart else {
-        _ = Darwin.kill(childPID, SIGKILL)
-        process.waitUntilExit()
-        throw SupervisorError.processLaunch
+    guard let confirmedChildStart = childStart else { throw SupervisorError.processLaunch }
+    childStart = confirmedChildStart
+    if ProcessInfo.processInfo.environment["NGV_BPY_SUPERVISOR_FAIL_AFTER_CHILD_START"] == "1" {
+        throw SupervisorError.injectedIdentityWriteFailure
     }
     let identity = try JSONEncoder().encode(
-        WorkerIdentity(processIdentifier: childPID, startAbsoluteTime: childStart)
+        WorkerIdentity(processIdentifier: childPID, startAbsoluteTime: confirmedChildStart)
     )
     try identity.write(to: identityURL, options: .atomic)
 
     while process.isRunning {
         if terminationRequested != 0
             || !parentIsAlive(servicePID, startAbsoluteTime: serviceStart) {
-            _ = Darwin.kill(childPID, SIGSTOP)
-            if processStartAbsoluteTime(childPID) == childStart {
-                _ = Darwin.kill(childPID, SIGKILL)
-            }
-            process.waitUntilExit()
-            Darwin.exit(terminationRequested != 0 ? 0 : 70)
+            return terminationRequested != 0 ? 0 : 70
         }
         usleep(10_000)
     }
     process.waitUntilExit()
-    Darwin.exit(process.terminationStatus)
+    childReaped = true
+    return process.terminationStatus
 }
 
 @main
@@ -214,7 +238,7 @@ private enum BpySupervisorMain {
             let arguments = Array(CommandLine.arguments.dropFirst(2))
             switch CommandLine.arguments[1] {
             case "supervise":
-                try supervise(arguments: arguments)
+                Darwin.exit(try supervise(arguments: arguments))
             case "launch":
                 try execPython(arguments: arguments)
             default:

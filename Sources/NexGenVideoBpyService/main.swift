@@ -174,7 +174,7 @@ private func fingerprint(
         withUnsafeBytes(of: &length) { digest.update(data: Data($0)) }
         digest.update(data: data)
     }
-    add("nexgenvideo/bpy-job/2")
+    add("nexgenvideo/bpy-job/3")
     add(request.expectedRevision)
     add(request.timeoutSeconds.map(String.init))
     add(String(timeoutSeconds))
@@ -186,6 +186,7 @@ private func fingerprint(
     }
     request.diagnosticDeniedPaths.forEach { add($0) }
     add(request.diagnosticAutoexecPositiveControl ? "1" : "0")
+    add(request.diagnosticSupervisorIdentityWriteFailure ? "1" : "0")
     return digest.finalize().map { String(format: "%02x", $0) }.joined()
 }
 
@@ -251,6 +252,7 @@ private final class JobRecord: @unchecked Sendable {
     var metrics: [String: Double] = [:]
     var terminalAt: Date?
     var resultExpired = false
+    let diagnosticSupervisorIdentityWriteFailure: Bool
 
     init(request: BpyRunJobRequest, timeoutSeconds: Int) {
         id = request.jobID
@@ -261,6 +263,7 @@ private final class JobRecord: @unchecked Sendable {
         fingerprint = request.fingerprint
         diagnosticDeniedPaths = request.diagnosticDeniedPaths
         diagnosticAutoexecPositiveControl = request.diagnosticAutoexecPositiveControl
+        diagnosticSupervisorIdentityWriteFailure = request.diagnosticSupervisorIdentityWriteFailure
     }
 
     func expireResult() {
@@ -298,6 +301,12 @@ private struct DenialResult: Codable {
     let errno: Int?
 }
 
+private struct RuntimeLibraryVersion: Codable {
+    let supported: Bool
+    let version: [Int]
+    let versionString: String
+}
+
 private struct VerificationManifest: Codable {
     let schema: String
     let jobID: String
@@ -321,6 +330,11 @@ private struct VerificationManifest: Codable {
     let secretEnvironmentAbsent: Bool
     let blenderUserConfig: String?
     let sessionRoot: String
+    let blenderBuildHash: String
+    let blenderBuildBranch: String
+    let blenderBuildType: String
+    let blenderBuildSystem: String
+    let libraryVersions: [String: RuntimeLibraryVersion]
 }
 
 private struct AutoexecManifest: Decodable {
@@ -815,7 +829,8 @@ private final class ServiceSession: @unchecked Sendable {
                 configuration: jobConfig,
                 processRoot: writableRoot,
                 deadline: deadline,
-                job: job
+                job: job,
+                injectSupervisorIdentityWriteFailure: job.diagnosticSupervisorIdentityWriteFailure
             )
             try requireSuccessful(worker, job: job)
             try enforceStoredResources(job)
@@ -1025,6 +1040,13 @@ private final class ServiceSession: @unchecked Sendable {
               manifest.processIdentifier == result.workerProcessIdentifier,
               manifest.pythonVersion == "3.13.15",
               manifest.bpyVersion == "5.2.2",
+              manifest.blenderBuildHash == "d13f752e3b9c",
+              manifest.libraryVersions["alembic"]?.version == [1, 8, 3],
+              manifest.libraryVersions["ocio"]?.version == [2, 5, 0],
+              manifest.libraryVersions["oiio"]?.version == [3, 1, 13],
+              manifest.libraryVersions["opensubdiv"]?.version == [3, 7, 0],
+              manifest.libraryVersions["openvdb"]?.version == [13, 0, 0],
+              manifest.libraryVersions["usd"]?.version == [0, 26, 3],
               URL(fileURLWithPath: manifest.executable).resolvingSymlinksInPath()
                 == pythonURL.resolvingSymlinksInPath(),
               URL(fileURLWithPath: manifest.bpyModule).resolvingSymlinksInPath()
@@ -1111,7 +1133,8 @@ private final class ServiceSession: @unchecked Sendable {
         configuration: URL,
         processRoot: URL,
         deadline: Double,
-        job: JobRecord?
+        job: JobRecord?,
+        injectSupervisorIdentityWriteFailure: Bool = false
     ) throws -> ManagedProcessResult {
         guard FileManager.default.isExecutableFile(atPath: pythonURL.path),
               FileManager.default.isExecutableFile(atPath: supervisorURL.path),
@@ -1171,7 +1194,7 @@ private final class ServiceSession: @unchecked Sendable {
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = output
         process.standardError = errors
-        process.environment = [
+        var environment = [
             "HOME": processRoot.appendingPathComponent("home").path,
             "TMPDIR": processRoot.appendingPathComponent("tmp").path,
             "LANG": "C.UTF-8",
@@ -1183,6 +1206,10 @@ private final class ServiceSession: @unchecked Sendable {
             "BLENDER_USER_SCRIPTS": processRoot.appendingPathComponent("blender-scripts").path,
             "BLENDER_USER_DATAFILES": processRoot.appendingPathComponent("blender-data").path,
         ]
+        if injectSupervisorIdentityWriteFailure {
+            environment["NGV_BPY_SUPERVISOR_FAIL_AFTER_CHILD_START"] = "1"
+        }
+        process.environment = environment
         let began = ProcessInfo.processInfo.systemUptime
         try process.run()
         let supervisorProcessIdentifier = process.processIdentifier

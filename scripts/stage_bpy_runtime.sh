@@ -126,7 +126,7 @@ if [ "$(jq -r .distributionStatus "$LOCK")" = ready ]; then
   done < <(jq -r '.distributionClosure.sourceArchives[] | [.filename,.url,.sha256,.size] | @tsv' "$LOCK")
   while IFS= read -r relative; do
     cp "$ROOT/$relative" "$DESTINATION/licenses/distribution/$(basename "$relative")"
-  done < <(jq -r '[.distributionClosure.wheelBinaryProvenance.path, .distributionClosure.noticeCoverage.path] + [.distributionClosure.noticeFiles[].path] | .[]' "$LOCK")
+  done < <(jq -r '[.distributionClosure.wheelBinaryCorrespondence.path, .distributionClosure.noticeCoverage.path] + [.distributionClosure.noticeFiles[].path] | .[]' "$LOCK")
 fi
 printf '%s\n' "$(shasum -a 256 "$LOCK" | awk '{print $1}')" > "$DESTINATION/.complete"
 

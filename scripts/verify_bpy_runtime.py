@@ -92,14 +92,14 @@ def validate_distribution_closure(lock, families):
         if not SAFE_FILENAME.fullmatch(filename) or filename in filenames:
             fail("distribution source filenames must be safe and unique")
         filenames.add(filename)
-    provenance = closure.get("wheelBinaryProvenance", {})
-    validate_repository_evidence(provenance, "bpy wheel binary provenance")
+    correspondence = closure.get("wheelBinaryCorrespondence", {})
+    validate_repository_evidence(correspondence, "bpy binary/source correspondence")
     notices = closure.get("noticeFiles", [])
     if not notices:
         fail("ready distribution must include a notice inventory")
     coverage = closure.get("noticeCoverage", {})
     evidence_names = [
-        Path(provenance.get("path", "")).name,
+        Path(correspondence.get("path", "")).name,
         Path(coverage.get("path", "")).name,
     ]
     evidence_names += [Path(item.get("path", "")).name for item in notices]
@@ -135,7 +135,7 @@ def validate(lock):
                        for path in native_libraries):
         fail("bpy native-library inventory is incomplete or unstable")
     if not layout.get("inventoryEvidence") or not layout.get("sourceMappingStatus"):
-        fail("bpy native-library provenance status is missing")
+        fail("bpy native-library correspondence status is missing")
     if layout.get("officialBuildManifest") != (
         "https://raw.githubusercontent.com/blender/blender/v5.2.2/"
         "build_files/build_environment/cmake/versions.cmake"
@@ -145,6 +145,30 @@ def validate(lock):
         "df53e363d5b1af1a5b085b66d9465d0349145168233b4cd15a5658fa4f7b7fb1"
     ):
         fail("unexpected Blender dependency-manifest hash")
+    if layout.get("officialReleaseCommit") != (
+        "d13f752e3b9c4f8c261cda552b1021f8bcc0382c"
+    ) or layout.get("officialReleaseCommitURL") != (
+        "https://github.com/blender/blender/commit/"
+        "d13f752e3b9c4f8c261cda552b1021f8bcc0382c"
+    ):
+        fail("unexpected Blender release commit evidence")
+    expected_binary_evidence = {
+        "buildHash": "d13f752e3b9c",
+        "libraryVersions": {
+            "alembic": [1, 8, 3],
+            "ocio": [2, 5, 0],
+            "oiio": [3, 1, 13],
+            "opensubdiv": [3, 7, 0],
+            "openvdb": [13, 0, 0],
+            "usd": [0, 26, 3],
+        },
+        "scope": (
+            "bpy.app build identity and Blender-exposed LibraryVersion subset; "
+            "not proof of every wheel build input"
+        ),
+    }
+    if layout.get("expectedRuntimeBinaryEvidence") != expected_binary_evidence:
+        fail("unexpected bpy runtime binary-evidence contract")
     families = layout.get("candidateSourceFamilies", [])
     family_names = [family.get("name") for family in families]
     if not family_names or len(family_names) != len(set(family_names)):
@@ -195,6 +219,9 @@ def validate(lock):
         "wheel": bpy["filename"],
         "wheelSHA256": bpy["sha256"],
         "wheelMetadataSHA256": bpy["metadata"]["sha256"],
+        "officialReleaseCommit": layout["officialReleaseCommit"],
+        "expectedBuildHash": expected_binary_evidence["buildHash"],
+        "expectedLibraryVersions": expected_binary_evidence["libraryVersions"],
         "releaseSourceSHA256": bpy["source"]["sha256"],
         "releaseBuildManifestSHA256": layout["officialBuildManifestSHA256"],
     }:

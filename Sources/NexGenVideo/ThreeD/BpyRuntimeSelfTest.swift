@@ -488,6 +488,30 @@ enum BpyRuntimeSelfTest {
             throw BpyRuntimeError.invalidOutput("The worker crash was not reported.")
         }
 
+        let identityWriteFailure = try sessionA.runJob(
+            id: UUID(),
+            expectedRevision: "revision-e",
+            source: "import time; time.sleep(120)",
+            timeoutSeconds: 30,
+            diagnosticSupervisorIdentityWriteFailure: true
+        )
+        guard identityWriteFailure.response.state == .failed else {
+            throw BpyRuntimeError.invalidOutput(
+                "The injected supervisor identity-write failure was not reported."
+            )
+        }
+        let afterIdentityWriteFailureID = UUID()
+        let afterIdentityWriteFailure = try sessionA.runJob(
+            id: afterIdentityWriteFailureID,
+            expectedRevision: "revision-e",
+            source: inspectionSource(
+                label: "after-supervisor-identity-write-failure",
+                requiredObject: "FORK_BLOCKED"
+            )
+        )
+        try assertRecovered(afterIdentityWriteFailure, label: "supervisor identity-write failure")
+        _ = try sessionA.cancel(jobID: afterIdentityWriteFailureID)
+
         let parentDeathID = UUID()
         let parentDeathSource = """
         import os
@@ -572,6 +596,7 @@ enum BpyRuntimeSelfTest {
             source: """
             import errno
             import os
+            import signal
             sibling = session_root.parent / 'hostile-container-sibling'
             try:
                 sibling.write_bytes(b'escaped')
@@ -580,13 +605,16 @@ enum BpyRuntimeSelfTest {
                     raise
             else:
                 raise RuntimeError('worker wrote outside its per-process Seatbelt root')
-            try:
-                os.kill(os.getppid(), 0)
-            except OSError as error:
-                if error.errno not in (errno.EPERM, errno.EACCES):
-                    raise
-            else:
-                raise RuntimeError('worker signalled its native supervisor')
+            for attempted_signal in (0, signal.SIGSTOP, signal.SIGKILL):
+                try:
+                    os.kill(os.getppid(), attempted_signal)
+                except OSError as error:
+                    if error.errno not in (errno.EPERM, errno.EACCES):
+                        raise
+                else:
+                    raise RuntimeError(
+                        f'worker signalled its native supervisor with {attempted_signal}'
+                    )
             bpy.data.objects.new('CONTAINER_SIBLING_AND_SIGNAL_BLOCKED', None)
             bpy.context.scene.render.resolution_x = 64
             bpy.context.scene.render.resolution_y = 64
@@ -602,6 +630,21 @@ enum BpyRuntimeSelfTest {
             throw BpyRuntimeError.invalidOutput("The OS-boundary probe omitted its Job ID.")
         }
         _ = try constrained.cancel(jobID: containerScopeID)
+        let signalRecovery = try constrained.runJob(
+            id: UUID(),
+            expectedRevision: nil,
+            source: """
+            bpy.context.scene.render.resolution_x = 64
+            bpy.context.scene.render.resolution_y = 64
+            """
+        )
+        guard signalRecovery.response.state == .awaitingConfirmation,
+              let signalRecoveryID = signalRecovery.response.jobID else {
+            throw BpyRuntimeError.invalidOutput(
+                "The supervisor did not recover after the signal-denial probe."
+            )
+        }
+        _ = try constrained.cancel(jobID: signalRecoveryID)
         let structuralLimit = try constrained.runJob(
             id: UUID(),
             expectedRevision: nil,
@@ -720,6 +763,9 @@ enum BpyRuntimeSelfTest {
             "resourceScanErrorState": scanError.response.state?.rawValue ?? "",
             "containerSiblingWriteDenied": true,
             "supervisorSignalDenied": true,
+            "supervisorSignalRecovered": true,
+            "supervisorIdentityWriteFailureState": identityWriteFailure.response.state?.rawValue ?? "",
+            "supervisorIdentityWriteFailureRecovered": true,
             "resourceSupervisorRecovered": true,
             "crashState": crashed.response.state?.rawValue ?? "",
             "duplicateJoined": duplicate.response.joinedExistingJob,

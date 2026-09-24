@@ -1,0 +1,91 @@
+name: Managed bpy Source Closure Candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact commit whose source and notice candidate is assembled
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bpy-source-closure-candidate-${{ inputs.source_sha }}
+  cancel-in-progress: false
+
+jobs:
+  source-notice-candidate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+      - name: Bind the candidate to one commit
+        env:
+          EXPECTED_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [ "$(git rev-parse HEAD)" = "$EXPECTED_SHA" ]
+      - name: Assemble and independently validate the source and notice candidate
+        env:
+          EXPECTED_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          OUTPUT="$RUNNER_TEMP/bpy-source-closure-candidate"
+          ARCHIVE="$OUTPUT/NexGenVideo-bpy-5.2.2-corresponding-source.tar"
+          MANIFEST="$OUTPUT/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json"
+          VALIDATION="$OUTPUT/NexGenVideo-bpy-5.2.2-candidate-validation.json"
+          HASHES="$OUTPUT/NexGenVideo-bpy-5.2.2-candidate-hashes.json"
+          mkdir -p "$OUTPUT"
+          python3 scripts/assemble_bpy_source_closure.py --output-directory "$OUTPUT"
+          python3 scripts/verify_bpy_source_closure.py "$ARCHIVE" "$MANIFEST" | tee "$VALIDATION"
+          archive_sha="$(sha256sum "$ARCHIVE" | awk '{print $1}')"
+          archive_size="$(stat -c %s "$ARCHIVE")"
+          manifest_sha="$(sha256sum "$MANIFEST" | awk '{print $1}')"
+          validation_sha="$(sha256sum "$VALIDATION" | awk '{print $1}')"
+          jq -n \
+            --arg sourceSHA "$EXPECTED_SHA" \
+            --arg distributionStatus "$(jq -r .distributionStatus Runtime/bpy/runtime-lock.json)" \
+            --arg archiveFilename "$(basename "$ARCHIVE")" \
+            --arg archiveSHA256 "$archive_sha" \
+            --argjson archiveSize "$archive_size" \
+            --arg manifestFilename "$(basename "$MANIFEST")" \
+            --arg manifestSHA256 "$manifest_sha" \
+            --arg validationFilename "$(basename "$VALIDATION")" \
+            --arg validationSHA256 "$validation_sha" \
+            '{
+              schema: "nexgenvideo/bpy-source-closure-candidate/1",
+              classification: "candidate-only",
+              publicDistributionAuthorized: false,
+              sourceSHA: $sourceSHA,
+              distributionStatus: $distributionStatus,
+              archive: {
+                filename: $archiveFilename,
+                sha256: $archiveSHA256,
+                size: $archiveSize
+              },
+              manifest: {
+                filename: $manifestFilename,
+                sha256: $manifestSHA256
+              },
+              independentValidation: {
+                filename: $validationFilename,
+                sha256: $validationSHA256
+              }
+            }' > "$HASHES"
+          jq -e '
+            .classification == "candidate-only"
+            and .publicDistributionAuthorized == false
+            and .sourceSHA == $sha
+            and (.distributionStatus | type) == "string"
+          ' --arg sha "$EXPECTED_SHA" "$HASHES"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: managed-bpy-source-closure-candidate-${{ inputs.source_sha }}
+          path: ${{ runner.temp }}/bpy-source-closure-candidate/*
+          if-no-files-found: error
+          retention-days: 7

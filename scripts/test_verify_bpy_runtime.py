@@ -62,7 +62,10 @@ class BpyRuntimeLockTests(unittest.TestCase):
     def test_distribution_blockers_name_facts_not_generic_legal_approval(self):
         blockers = "\n".join(self.lock["distributionBlockers"]).lower()
         self.assertNotIn("legal review", blockers)
-        self.assertIn("per-wheel build record", blockers)
+        self.assertNotIn("does not publish a per-wheel build record", blockers)
+        self.assertIn("bpy.app.build_hash", blockers)
+        self.assertIn("notice-candidate", blockers)
+        self.assertIn("without requiring a special per-wheel attestation", blockers)
 
 
 if __name__ == "__main__":

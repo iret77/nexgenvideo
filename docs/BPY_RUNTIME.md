@@ -14,7 +14,7 @@ exception entitlement. The Python executable is signed only with App Sandbox inh
 keys are absent from its allowlisted environment. A worker receives private staged inputs and an
 in-memory-confirmed scene copy; it receives no project path and cannot write canonical project truth.
 Before Python starts, a signed native supervisor applies an additional Seatbelt profile that denies
-network, fork, outbound process signals, and every write outside that process's private write root.
+network, fork, the SBPL `signal` operation, and every write outside that process's private write root.
 The inherited XPC container is therefore not the worker's write boundary.
 
 Native stdout and stderr are bounded diagnostic streams only. The service derives state from the
@@ -47,7 +47,10 @@ parent, so an in-place `execve` does not change ownership; it also verifies the 
 and start time and kills/reaps its exact child if that parent dies. On XPC invalidation the service
 terminates the supervisor through its live `Process` handle; the host can independently send SIGTERM
 only after rechecking the in-memory lease's PID, XNU start time, and executable. The supervisor owns
-the only SIGKILL path and validates its unreaped direct child's PID/start identity first. No
+the only SIGKILL path and validates its unreaped direct child's PID/start identity first. Every
+post-launch error unwinds through direct-child cleanup; before a start identity is observable it uses
+the live Foundation `Process` handle it just launched, and afterward it signals only the matching
+PID/start identity. No
 worker-writable registry, global process scan, unrelated PID, or app configuration participates, and
 an app restart does not need the lost in-memory lease to reap an old worker.
 
@@ -59,6 +62,8 @@ Primary platform references:
 - <https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_resource.c>
 - <https://github.com/apple-oss-distributions/xnu/blob/main/osfmk/vm/vm_map_xnu.h>
 - <https://github.com/apple-oss-distributions/xnu/blob/main/libsyscall/wrappers/libproc/libproc.h>
+- <https://chromium.googlesource.com/chromium/src/+/refs/heads/main/sandbox/policy/mac/common.sb>
+- <https://github.com/anthropics/sandbox-runtime/blob/main/src/sandbox/macos-sandbox-utils.ts>
 
 ## Inputs, identity, and confirmation
 
@@ -102,18 +107,21 @@ and native library against its wheel `RECORD` hash and size. CI extracts wheels 
 absent from assembly and from the installed app.
 
 Public distribution remains fail-closed while `distributionStatus` is
-`blocked-pending-corresponding-source-provenance`. The lock maps all 43 paths exactly once to candidate
+`blocked-pending-corresponding-source-evidence`. The lock maps all 43 paths exactly once to candidate
 source families, versions, URLs, SPDX licenses, and archive checksums from Blender v5.2.2's official
 dependency manifest. Those MD5 or SHA-256 values identify Blender's candidates but are not accepted
-as the final SHA-256 distribution closure. That is research evidence, not binary provenance: the remaining work is to prove the
-pinned wheel used those exact candidates, then hash-pin and ship the matching Corresponding Source
-plus required notices. The Blender source tarball alone is not
-treated as proof of that closure.
+as the final SHA-256 distribution closure. The official wheel METADATA links Blender's source, the
+v5.2.2 tag resolves to commit `d13f752e3b9c4f8c261cda552b1021f8bcc0382c`, and the lock pins the
+release tar, `versions.cmake`, recipes, and patches. That linkage does not prove every actual wheel
+build input. The remaining work is to bind the pinned wheel to the actual source archives,
+recipes/patches, and configuration, then hash-pin and ship the matching Corresponding Source plus
+required notices. Filename or version matching alone is insufficient.
 
 Changing `distributionStatus` to `ready` also requires a complete `distributionClosure`: one
 SHA-256- and size-pinned archive mapping every Python-build-standalone source, wheel source, CPython
 build input, and bpy native candidate exactly once (shared archives may name multiple components),
-repository-hashed wheel-provenance and notice/coverage evidence, plus the exact public source asset.
+repository-hashed binary/source-correspondence and notice/coverage evidence, plus the exact public
+source asset.
 Declared URLs and existing SHA-256 pins must match the lock; MD5-only Blender-manifest
 candidates gain a final SHA-256 pin in this closure. Staging then embeds all archives and evidence,
 and bundle verification rehashes them.
@@ -121,7 +129,7 @@ and bundle verification rehashes them.
 Each `sourceArchives` entry carries `components`, `filename`, `url`, `sha256`, and `size`.
 Component IDs are `python-build-standalone`, `wheel:<lock name>`,
 `python-build-input:<lock name>`, and `bpy-native:<candidate-family name>`. The remaining closure
-keys are `wheelBinaryProvenance`, `noticeCoverage`, and nonempty `noticeFiles` entries (`path`,
+keys are `wheelBinaryCorrespondence`, `noticeCoverage`, and nonempty `noticeFiles` entries (`path`,
 `sha256`), plus `publicSourceAsset` (`filename`, `manifestFilename`, `sha256`, `size`,
 `manifestSHA256`). Evidence paths live under `Runtime/bpy/compliance/`.
 
@@ -129,7 +137,9 @@ The deterministic source builder additionally preserves every dependency in the 
 release manifest, including static/transitive candidates, the complete release build recipe/patch
 inventory, every installed wheel source and notice, and python-build-standalone/CPython inputs. Its
 validator binds these to the exact wheel hash, metadata hash, and `RECORD`. This establishes real
-release/build-input correspondence without imposing a bit-identical rebuilt-binary hash requirement.
+release-input linkage but remains candidate-only until evidence identifies the actual binary inputs.
+The ready-state correspondence record may use any robust primary evidence; it does not require a
+special upstream per-wheel attestation or a bit-identical rebuilt-binary hash.
 The stable release tag itself targets the exact build commit and supplies NexGenVideo's GPL source;
 the managed-runtime archive supplies the third-party closure not contained in that repository snapshot.
 
@@ -140,6 +150,17 @@ CI-only bundle mode that omits the runtime and embeds an omission marker. Normal
 and release bundles continue to require the runtime; readiness is never synthesized.
 
 ## Prepared Actions acceptance
+
+`.github/workflows/bpy-source-closure-candidate.yml` is a separate manual, SHA-bound Ubuntu path.
+It performs only source/notice assembly, independent source-archive validation, and hash-manifest
+publication. It does not build or run binaries, access providers or generation services, use secrets,
+or bypass the public distribution guard. Its artifacts state `candidate-only` and
+`publicDistributionAuthorized: false`.
+
+`.github/workflows/bpy-binary-evidence-candidate.yml` is a separate manual, SHA-bound `macos-26`
+path. It downloads the pinned runtime artifacts without building the app, imports only the exact
+RECORD-verified `bpy` module, and records `bpy.app.build_hash` plus Blender's exposed library versions.
+It uses no provider, generation service, or secret and also emits a non-distributable candidate.
 
 `.github/workflows/bpy-runtime-acceptance.yml` is manual and SHA-bound. Once the source/notice gate is
 truthfully ready, its Linux preflight first rebuilds and independently validates the exact pinned
@@ -154,11 +175,17 @@ thread, ctypes stdout, a kernel-blocked fork, in-place `execve`, memory over-all
 cancellation, worker crash, service and host kill/reopen cleanup, denied-file host positive controls,
 network and cross-container denials, disabled autorun plus isolated positive control, BMesh/modifier
 geometry, package-hidden file counts, aggregate writes outside outputs, resource-scan failure/recovery,
-and a perspective Cycles render.
+the exact `signal` denial for probes 0/SIGSTOP/SIGKILL followed by a healthy job, a supervisor failure
+after child start but before identity write followed by a healthy job, and a perspective Cycles render.
 
 Evidence separates host-observed open-to-ready and job durations from service-observed cold start,
 worker/verifier wall times, worker/verifier/service footprints, disk/file peaks, and descendant peak.
 It also records the host process peak through `getrusage`, package size, OS, hardware, exact runtime
-identity, renderer/device result, and distinct worker/verifier PIDs. Until the distribution blocker
-is resolved and an owner explicitly dispatches the workflow, these are prepared assertions, not
-claimed PASS results.
+identity, renderer/device result, exact `bpy.app.build_hash`, the Blender-exposed `LibraryVersion`
+subset, and distinct worker/verifier PIDs. The build hash must match the official v5.2.2 tag commit;
+the exposed library versions must reconcile with the pinned `versions.cmake`. This is evidence for a
+subset: the OpenImageIO tuple is less granular than the pinned `v3.1.13.1`, and SDL is not exposed as
+a supported library version. It is not an assertion that the release source equals every source
+actually used for the wheel.
+Until the distribution blocker is resolved and an owner explicitly dispatches the workflow, these
+are prepared assertions, not claimed PASS results.

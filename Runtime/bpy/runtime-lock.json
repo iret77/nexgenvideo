@@ -53,7 +53,21 @@
     "inventoryEvidence": "Pinned-wheel ZIP central directory and RECORD, verified 2026-09-24",
     "officialBuildManifest": "https://raw.githubusercontent.com/blender/blender/v5.2.2/build_files/build_environment/cmake/versions.cmake",
     "officialBuildManifestSHA256": "df53e363d5b1af1a5b085b66d9465d0349145168233b4cd15a5658fa4f7b7fb1",
-    "sourceMappingStatus": "official-v5.2.2-release-input candidates; upstream wheel metadata links Blender 5.2.2 source but does not publish a per-wheel dependency/build-input attestation",
+    "officialReleaseCommit": "d13f752e3b9c4f8c261cda552b1021f8bcc0382c",
+    "officialReleaseCommitURL": "https://github.com/blender/blender/commit/d13f752e3b9c4f8c261cda552b1021f8bcc0382c",
+    "expectedRuntimeBinaryEvidence": {
+      "buildHash": "d13f752e3b9c",
+      "libraryVersions": {
+        "alembic": [1, 8, 3],
+        "ocio": [2, 5, 0],
+        "oiio": [3, 1, 13],
+        "opensubdiv": [3, 7, 0],
+        "openvdb": [13, 0, 0],
+        "usd": [0, 26, 3]
+      },
+      "scope": "bpy.app build identity and Blender-exposed LibraryVersion subset; not proof of every wheel build input"
+    },
+    "sourceMappingStatus": "official bpy METADATA links Blender source; v5.2.2 tag commit, release archive, versions.cmake, recipes, and patches are pinned, while actual build-input correspondence for every wheel binary remains to be evidenced",
     "candidateSourceFamilies": [
       {"name":"OpenEXR","version":"3.4.10","license":"BSD-3-Clause","url":"https://github.com/AcademySoftwareFoundation/openexr/archive/v3.4.10.tar.gz","manifestHash":"8926ba09c4e4cd21c7a0fa2d2b39fa82","manifestHashType":"MD5","libraries":["bpy/lib/libIex.dylib","bpy/lib/libIlmThread.dylib","bpy/lib/libOpenEXR.dylib","bpy/lib/libOpenEXRCore.dylib","bpy/lib/libOpenEXRUtil.dylib"]},
       {"name":"Imath","version":"3.2.2","license":"BSD-3-Clause","url":"https://github.com/AcademySoftwareFoundation/Imath/archive/v3.2.2.tar.gz","manifestHash":"e29f25ce926ac53d8e0a52197299f61b","manifestHashType":"MD5","libraries":["bpy/lib/libImath.dylib"]},
@@ -75,7 +89,7 @@
       {"name":"OpenUSD","version":"26.03","license":"TOST-1.0","url":"https://github.com/PixarAnimationStudios/OpenUSD/archive/v26.03.tar.gz","manifestHash":"cc6d6bffdcdd038f60e2fe4726b08673","manifestHashType":"MD5","libraries":["bpy/lib/libusd_ms.dylib"]}
     ]
   },
-  "distributionStatus": "blocked-pending-corresponding-source-provenance",
+  "distributionStatus": "blocked-pending-corresponding-source-evidence",
   "verifiedAt": "2026-09-24",
   "runtime": {
     "name": "python-build-standalone",
@@ -130,6 +144,16 @@
       "wheel": "bpy-5.2.2-cp313-cp313-macosx_11_0_arm64.whl",
       "wheelSHA256": "e447dba63ea14ac6a3f10ea23fa7828c6af2a3d5b2ba206ad2262a54d5aa7cf7",
       "wheelMetadataSHA256": "05dd2ee5cd404396aec5d1888c64aabed7cb42ecd5c6c7c881a079ee91f0b084",
+      "officialReleaseCommit": "d13f752e3b9c4f8c261cda552b1021f8bcc0382c",
+      "expectedBuildHash": "d13f752e3b9c",
+      "expectedLibraryVersions": {
+        "alembic": [1, 8, 3],
+        "ocio": [2, 5, 0],
+        "oiio": [3, 1, 13],
+        "opensubdiv": [3, 7, 0],
+        "openvdb": [13, 0, 0],
+        "usd": [0, 26, 3]
+      },
       "releaseSourceSHA256": "56a3b1ec97479ff24dce65d2f09f8a1895005cece279b701fe4fcf74bce3f77e",
       "releaseBuildManifestSHA256": "df53e363d5b1af1a5b085b66d9465d0349145168233b4cd15a5658fa4f7b7fb1"
     },
@@ -144,7 +168,7 @@
     "publication": "Publish the validated source archive and manifest beside every public binary artifact and retain matching version/hash instructions. Bit-identical rebuild output is not required."
   },
   "distributionBlockers": [
-    "Blender's published bpy 5.2.2 metadata links the exact release source, but upstream does not publish a per-wheel build record that identifies the dependency archives, patches, and build flags used for the pinned macOS arm64 wheel. Resolve that actual provenance gap against official release/build records; filename-family matching is insufficient.",
-    "Run the prepared source-closure builder in Actions, commit the resulting archive/manifest SHA-256 and size pins plus notice/provenance evidence, validate it against the exact pinned wheel RECORD, and publish the Corresponding Source archive and manifest beside every public binary artifact."
+    "Run the prepared Actions evidence for the exact pinned wheel: bpy.app.build_hash must match the official v5.2.2 tag commit, and Blender-exposed LibraryVersion values must reconcile with the exact versions.cmake. For native families that Blender does not expose, establish which source archives, recipes, patches, and configuration actually produced the wheel. Official METADATA and release sources are necessary linkage but do not alone prove every actual binary input; filename or version matching is insufficient. Strong primary evidence is accepted without requiring a special per-wheel attestation or bit-identical rebuild.",
+    "Run the SHA-bound source/notice candidate workflow, independently validate the archive against the pinned wheel METADATA and RECORD, replace every NOTICE-CANDIDATE entry with verified notice coverage, then commit the final archive/manifest SHA-256 and size pins plus binary/source correspondence and notice evidence. Public distribution remains blocked until those concrete facts are complete and the Corresponding Source archive and manifest are published beside every binary artifact."
   ]
 }

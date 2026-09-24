@@ -355,33 +355,55 @@ def main():
         for notice_path, payload in notice_payloads(wheel_path, "wheel-bpy-binary"):
             notices[notice_path] = payload
 
-        provenance_complete = False
+        correspondence_complete = False
         notice_complete = False
-        provenance_evidence = None
+        correspondence_evidence = None
         notice_coverage_evidence = None
         closure = lock.get("distributionClosure") or {}
         if lock.get("distributionStatus") == "ready":
-            provenance_item = closure.get("wheelBinaryProvenance", {})
-            provenance_path = ROOT / provenance_item.get("path", "")
-            provenance_data = provenance_path.read_bytes()
-            if hashlib.sha256(provenance_data).hexdigest() != provenance_item.get("sha256"):
-                raise ValueError("committed wheel provenance evidence drift")
-            provenance = json.loads(provenance_data)
+            correspondence_item = closure.get("wheelBinaryCorrespondence", {})
+            correspondence_path = ROOT / correspondence_item.get("path", "")
+            correspondence_data = correspondence_path.read_bytes()
+            if hashlib.sha256(correspondence_data).hexdigest() \
+                    != correspondence_item.get("sha256"):
+                raise ValueError("committed binary/source correspondence evidence drift")
+            correspondence = json.loads(correspondence_data)
             expected_components = sorted(item["component"] for item in sources)
-            if provenance.get("schema") != "nexgenvideo/bpy-wheel-build-provenance/1" \
-                    or provenance.get("wheelSHA256") != bpy["sha256"] \
-                    or provenance.get("releaseSourceSHA256") != bpy["source"]["sha256"] \
-                    or provenance.get("releaseBuildManifestSHA256") != expected_versions \
-                    or sorted(provenance.get("closureComponents", [])) != expected_components:
-                raise ValueError("committed wheel provenance does not bind the full source closure")
-            build_inputs = provenance.get("buildInputComponents", [])
+            evidence = correspondence.get("evidence", [])
+            if correspondence.get("schema") \
+                    != "nexgenvideo/bpy-binary-source-correspondence/1" \
+                    or correspondence.get("wheelSHA256") != bpy["sha256"] \
+                    or correspondence.get("wheelMetadataSHA256") \
+                    != bpy["metadata"]["sha256"] \
+                    or correspondence.get("officialReleaseCommit") \
+                    != lock["bpyWheelLayout"]["officialReleaseCommit"] \
+                    or correspondence.get("blenderBuildHash") \
+                    != lock["bpyWheelLayout"]["expectedRuntimeBinaryEvidence"]["buildHash"] \
+                    or correspondence.get("libraryVersions") \
+                    != lock["bpyWheelLayout"]["expectedRuntimeBinaryEvidence"][
+                        "libraryVersions"
+                    ] \
+                    or correspondence.get("releaseSourceSHA256") \
+                    != bpy["source"]["sha256"] \
+                    or correspondence.get("releaseBuildManifestSHA256") != expected_versions \
+                    or sorted(correspondence.get("closureComponents", [])) \
+                    != expected_components \
+                    or correspondence.get("unresolvedFacts") != [] \
+                    or not evidence \
+                    or any(not item.get("kind") or not item.get("source") for item in evidence):
+                raise ValueError(
+                    "committed binary/source correspondence does not bind the full source closure"
+                )
+            build_inputs = correspondence.get("buildInputComponents", [])
             if not build_inputs or len(build_inputs) != len(set(build_inputs)) \
                     or not set(build_inputs).issubset(expected_components) \
                     or "wheel:bpy" not in build_inputs:
-                raise ValueError("committed wheel provenance does not identify exact build inputs")
-            provenance_evidence = f"evidence/{provenance_path.name}"
-            artifacts[provenance_evidence] = provenance_data
-            provenance_complete = True
+                raise ValueError(
+                    "committed binary/source correspondence does not identify actual build inputs"
+                )
+            correspondence_evidence = f"evidence/{correspondence_path.name}"
+            artifacts[correspondence_evidence] = correspondence_data
+            correspondence_complete = True
 
             notice_items = closure.get("noticeFiles", [])
             notice_evidence = {}
@@ -429,15 +451,19 @@ def main():
                 "metadataSHA256": metadata_facts["sha256"],
                 "metadataPath": metadata_evidence_path,
                 "metadataSourceCodeURLs": bpy["metadata"]["sourceCodeURLs"],
+                "officialReleaseCommit": lock["bpyWheelLayout"]["officialReleaseCommit"],
+                "expectedRuntimeBinaryEvidence": lock["bpyWheelLayout"][
+                    "expectedRuntimeBinaryEvidence"
+                ],
                 "releaseSourceURL": bpy["source"]["url"],
                 "releaseSourceSHA256": bpy["source"]["sha256"],
                 "recordPath": record_evidence_path,
                 "recordEntries": record_evidence,
                 "nativeSourceCandidates": lock["bpyWheelLayout"]["candidateSourceFamilies"],
                 "status": (
-                    "official per-wheel build-input correspondence preserved"
-                    if provenance_complete else
-                    "release-linked; upstream per-wheel dependency/build-input attestation unresolved"
+                    "binary/source correspondence evidence preserved"
+                    if correspondence_complete else
+                    "candidate-only; actual wheel build inputs and notices remain unresolved"
                 ),
             },
             "releaseBuildManifest": {
@@ -452,8 +478,8 @@ def main():
                 for path, payload in sorted(notices.items())
             ],
             "noticeComplete": notice_complete,
-            "provenanceComplete": provenance_complete,
-            "provenanceEvidence": provenance_evidence,
+            "correspondenceComplete": correspondence_complete,
+            "correspondenceEvidence": correspondence_evidence,
             "noticeCoverageEvidence": notice_coverage_evidence,
             "legalBoundary": {
                 "sourceMustMatchBuildInputs": True,
@@ -474,7 +500,7 @@ def main():
             "size": archive_output.stat().st_size,
             "sourceCount": len(sources),
             "noticeCount": len(notices),
-            "provenanceComplete": provenance_complete,
+            "correspondenceComplete": correspondence_complete,
             "noticeComplete": notice_complete,
         }, sort_keys=True))
 

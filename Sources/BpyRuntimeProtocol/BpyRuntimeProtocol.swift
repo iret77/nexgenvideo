@@ -165,6 +165,7 @@ public struct BpyRunJobRequest: Codable, Sendable, Equatable {
     public let fingerprint: String
     public let diagnosticDeniedPaths: [String]
     public let diagnosticAutoexecPositiveControl: Bool
+    public let diagnosticSupervisorIdentityWriteFailure: Bool
 
     public init(
         sessionID: UUID,
@@ -175,7 +176,8 @@ public struct BpyRunJobRequest: Codable, Sendable, Equatable {
         timeoutSeconds: Int? = nil,
         fingerprint: String,
         diagnosticDeniedPaths: [String] = [],
-        diagnosticAutoexecPositiveControl: Bool = false
+        diagnosticAutoexecPositiveControl: Bool = false,
+        diagnosticSupervisorIdentityWriteFailure: Bool = false
     ) {
         self.sessionID = sessionID
         self.jobID = jobID
@@ -186,6 +188,7 @@ public struct BpyRunJobRequest: Codable, Sendable, Equatable {
         self.fingerprint = fingerprint
         self.diagnosticDeniedPaths = diagnosticDeniedPaths
         self.diagnosticAutoexecPositiveControl = diagnosticAutoexecPositiveControl
+        self.diagnosticSupervisorIdentityWriteFailure = diagnosticSupervisorIdentityWriteFailure
     }
 }
 

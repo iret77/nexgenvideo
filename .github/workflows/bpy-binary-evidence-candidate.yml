@@ -1,0 +1,83 @@
+name: Managed bpy Binary Evidence Candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact commit whose pinned wheel is inspected
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bpy-binary-evidence-candidate-${{ inputs.source_sha }}
+  cancel-in-progress: false
+
+jobs:
+  pinned-wheel-evidence:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+      - name: Bind the candidate to one commit and runner
+        env:
+          EXPECTED_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [ "$(git rev-parse HEAD)" = "$EXPECTED_SHA" ]
+          [ "$(sw_vers -productVersion | cut -d. -f1)" = 26 ]
+          [ "$(uname -m)" = arm64 ]
+      - name: Inspect only the exact pinned runtime artifacts
+        env:
+          EXPECTED_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          RUNTIME="$RUNNER_TEMP/bpy-binary-evidence-runtime"
+          OUTPUT="$RUNNER_TEMP/bpy-binary-evidence-candidate"
+          EVIDENCE="$OUTPUT/NexGenVideo-bpy-5.2.2-binary-evidence.json"
+          VALIDATION="$OUTPUT/NexGenVideo-bpy-5.2.2-binary-evidence-validation.json"
+          HASHES="$OUTPUT/NexGenVideo-bpy-5.2.2-binary-evidence-hashes.json"
+          mkdir -p "$OUTPUT"
+          scripts/stage_bpy_runtime.sh "$RUNTIME"
+          "$RUNTIME/python/bin/python3.13" -I -S scripts/collect_bpy_binary_evidence.py \
+            --site-packages "$RUNTIME/site-packages" \
+            --lock Runtime/bpy/runtime-lock.json \
+            --source-sha "$EXPECTED_SHA" \
+            --output "$EVIDENCE"
+          python3 scripts/verify_bpy_binary_evidence.py \
+            "$EVIDENCE" --source-sha "$EXPECTED_SHA" | tee "$VALIDATION"
+          evidence_sha="$(shasum -a 256 "$EVIDENCE" | awk '{print $1}')"
+          validation_sha="$(shasum -a 256 "$VALIDATION" | awk '{print $1}')"
+          jq -n \
+            --arg sourceSHA "$EXPECTED_SHA" \
+            --arg evidenceFilename "$(basename "$EVIDENCE")" \
+            --arg evidenceSHA256 "$evidence_sha" \
+            --arg validationFilename "$(basename "$VALIDATION")" \
+            --arg validationSHA256 "$validation_sha" \
+            '{
+              schema: "nexgenvideo/bpy-binary-evidence-candidate-hashes/1",
+              classification: "candidate-only",
+              publicDistributionAuthorized: false,
+              sourceSHA: $sourceSHA,
+              evidence: {filename: $evidenceFilename, sha256: $evidenceSHA256},
+              independentValidation: {
+                filename: $validationFilename,
+                sha256: $validationSHA256
+              }
+            }' > "$HASHES"
+          jq -e --arg sha "$EXPECTED_SHA" '
+            .classification == "candidate-only"
+            and .publicDistributionAuthorized == false
+            and .sourceSHA == $sha
+          ' "$HASHES"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: managed-bpy-binary-evidence-candidate-${{ inputs.source_sha }}
+          path: ${{ runner.temp }}/bpy-binary-evidence-candidate/*
+          if-no-files-found: error
+          retention-days: 7
