@@ -90,6 +90,15 @@ struct CompactMediaSourcePicker: View {
                 }
                 .buttonStyle(.capsule(.secondary))
                 .disabled(editor.mediaLibrarySession(for: purpose).activeAssetID == nil)
+                .background {
+                    if WorkspaceUIAcceptance.isRequested {
+                        AppRelaunchClickProbe(
+                            identifier: "mediaPicker.\(purpose.accessibilitySuffix).showInMedia"
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .allowsHitTesting(false)
+                    }
+                }
             }
             .padding(AppTheme.Spacing.sm)
             .overlay(alignment: .top) {

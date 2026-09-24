@@ -115,6 +115,46 @@ struct WorkspaceFocusTests {
         #expect(editor.maximizedPanel == .preview)
     }
 
+    @Test func mediaCommandOwnershipIsIndependentPerWorkspace() {
+        let restoreDefaults = preservePanelDefaults()
+        defer { restoreDefaults() }
+        let editor = EditorViewModel()
+
+        editor.setWorkspaceFocus(.media)
+        editor.mediaPanelVisible = true
+        editor.focusedPanel = .preview
+        editor.mediaCommandFocus = .browser
+
+        editor.setWorkspaceFocus(.edit)
+        editor.mediaPanelVisible = true
+        editor.focusedPanel = .media
+        editor.mediaCommandFocus = .browser
+
+        editor.setWorkspaceFocus(.production)
+        editor.setWorkspaceFocus(.media)
+        #expect(editor.focusedPanel == .preview)
+        #expect(editor.mediaCommandFocus == .browser)
+
+        editor.setWorkspaceFocus(.edit)
+        #expect(editor.focusedPanel == .media)
+        #expect(editor.mediaCommandFocus == .browser)
+    }
+
+    @Test func mediaCommandOwnershipDoesNotRestoreIntoAHiddenHost() {
+        let restoreDefaults = preservePanelDefaults()
+        defer { restoreDefaults() }
+        let editor = EditorViewModel()
+
+        editor.setWorkspaceFocus(.edit)
+        editor.mediaPanelVisible = false
+        editor.focusedPanel = .media
+        editor.mediaCommandFocus = .browser
+        editor.setWorkspaceFocus(.production)
+        editor.setWorkspaceFocus(.edit)
+
+        #expect(editor.mediaCommandFocus == nil)
+    }
+
     @Test func restoringWorkspacePanelsDoesNotRewriteUserDefaults() {
         let restoreDefaults = preservePanelDefaults()
         defer { restoreDefaults() }

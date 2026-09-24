@@ -151,7 +151,6 @@ struct LibraryAssetPicker: View {
         let button = Button {
             session.selectedAssetIDs = [asset.id]
             session.activeAssetID = asset.id
-            session.scrollAnchorID = asset.id
             onPick(asset)
         } label: {
             AssetRow(

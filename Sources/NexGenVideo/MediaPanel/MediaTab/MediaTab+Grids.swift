@@ -227,7 +227,6 @@ extension MediaTab {
 
 extension MediaTab {
     var groupedGridView: some View {
-        let session = editor.mediaLibrarySession(for: mediaPurpose)
         // Bucket once so each section is O(1).
         let bucketed = editor.mediaAssets.reduce(into: [String?: [MediaAsset]]()) { dict, asset in
             dict[asset.folderId, default: []].append(asset)
@@ -267,12 +266,11 @@ extension MediaTab {
                         }
                     }
                     .padding(AppTheme.Spacing.md)
-                    .scrollTargetLayout()
                 }
                 .scrollPosition(
                     id: Binding(
-                        get: { session.scrollAnchorID },
-                        set: { session.scrollAnchorID = $0 }
+                        get: { editor.mediaLibrarySession(for: mediaPurpose).scrollAnchorID },
+                        set: { editor.mediaLibrarySession(for: mediaPurpose).scrollAnchorID = $0 }
                     ),
                     anchor: .center
                 )
@@ -386,6 +384,7 @@ extension MediaTab {
                                     .id(asset.id)
                             }
                         }
+                        .scrollTargetLayout()
                     } else {
                         let columns = [GridItem(.adaptive(minimum: thumbnailSize), spacing: spacing)]
                         LazyVGrid(columns: columns, alignment: .leading, spacing: spacing) {
@@ -395,6 +394,7 @@ extension MediaTab {
                                     .id(asset.id)
                             }
                         }
+                        .scrollTargetLayout()
                     }
                 }
             }
@@ -500,6 +500,13 @@ extension MediaTab {
             onRename: { editor.renameFolder(id: folder.id, name: $0) },
             onDelete: { editor.deleteFolders(ids: [folder.id]) }
         )
+        .background {
+            if WorkspaceUIAcceptance.isRequested {
+                AppRelaunchClickProbe(identifier: "media.browser.folder.\(folder.id)")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
+            }
+        }
         .draggable(MediaTab.folderDragString(forFolderId: folder.id)) {
             FolderDragPreview(name: folder.name)
         }
@@ -547,6 +554,13 @@ extension MediaTab {
                 shouldAutoFocus: pendingFolderFocusId == folder.id,
                 onAutoFocusConsumed: { pendingFolderFocusId = nil }
             )
+            .background {
+                if WorkspaceUIAcceptance.isRequested {
+                    AppRelaunchClickProbe(identifier: "media.browser.folder.\(folder.id)")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .allowsHitTesting(false)
+                }
+            }
             .draggable(MediaTab.folderDragString(forFolderId: folder.id)) {
                 FolderDragPreview(name: folder.name)
             }
@@ -558,6 +572,7 @@ extension MediaTab {
     }
 
     fileprivate func handleFolderTap(_ folder: MediaFolder) {
+        focusMediaBrowser()
         let shift = NSEvent.modifierFlags.contains(.shift)
         if shift {
             if editor.selectedFolderIds.contains(folder.id) {

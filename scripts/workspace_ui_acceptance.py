@@ -196,6 +196,10 @@ def run_scale(executable, output, scale):
     selection_source = [row for row in rows if row.get("event") == "selection-source"]
     media_picker = [row for row in rows if row.get("event") == "media-picker"]
     media_keyboard = [row for row in rows if row.get("event") == "media-keyboard"]
+    media_reveal = [row for row in rows if row.get("event") == "media-reveal"]
+    media_command_restore = [
+        row for row in rows if row.get("event") == "media-command-restore"
+    ]
     selection_timeline = [row for row in rows if row.get("event") == "selection-timeline"]
     invariants = [row for row in rows if row.get("event") == "invariants"]
     inspector = [row for row in rows if row.get("event") == "inspector"]
@@ -235,11 +239,18 @@ def run_scale(executable, output, scale):
         and len(selection_source) == 1
         and len(media_picker) == 1
         and len(media_keyboard) == 1
+        and len(media_reveal) == 1
+        and len(media_command_restore) == 1
         and media_keyboard[0].get("browserArrowSelected") == "selection-secondary"
         and media_keyboard[0].get("hiddenSidebarBrowserCommands") is True
         and media_keyboard[0].get("browserLayoutPanel") == "preview"
         and media_keyboard[0].get("browserMaximizePreservedSurface") is True
         and media_keyboard[0].get("browserRestorePreservedSurface") is True
+        and media_keyboard[0].get("browserRoleRestoredAfterWorkspaceReturn") is True
+        and media_keyboard[0].get("browserFolderReturnOpened") is True
+        and media_keyboard[0].get("globalSearchReachedAnotherFolder") is True
+        and media_keyboard[0].get("browserDeleteExcludedTreeFolder") is True
+        and media_keyboard[0].get("browserAssetSelectionSurvivedOwnershipTransfer") is True
         and media_keyboard[0].get("sourcePreviewCommandsIsolated") is True
         and media_keyboard[0].get("treeDeletePreservedAsset") is True
         and media_keyboard[0].get("treeDeleteRequestedConfirmation") is True
@@ -251,9 +262,19 @@ def run_scale(executable, output, scale):
         and media_picker[0].get("sourceOut", -1) > media_picker[0].get("sourceIn", -1)
         and media_picker[0].get("timelineStable") is True
         and media_picker[0].get("nativeFilterSelected") is True
-        and media_picker[0].get("nativeScrollAnchored") is True
+        and media_picker[0].get("nativeScrollDistance", 0) > 1
+        and media_picker[0].get("fixtureAssetCount") == 520
+        and media_picker[0].get("fixtureTypeCounts")
+        == {"audio": 104, "document": 104, "image": 104, "lottie": 104, "video": 104}
         and media_picker[0].get("postPurposeSelectedSameAsset") is True
         and media_picker[0].get("productionPurposeRestored") is True
+        and media_reveal[0].get("activeAsset") == "acceptance-bulk-0"
+        and media_reveal[0].get("compatibleQueryPreserved") is True
+        and media_reveal[0].get("revealedFolder") == "acceptance-folder-0"
+        and media_reveal[0].get("rootSessionWasIntentional") is True
+        and media_command_restore[0].get("editBrowserArrowSelected") == "selection-secondary"
+        and media_command_restore[0].get("editBrowserRoleRestored") is True
+        and media_command_restore[0].get("mediaBrowserRoleRestored") is True
         and selection_source[0].get("activeAsset") == "selection-source"
         and selection_source[0].get("sourceFrame") == 42
         and selection_source[0].get("sourceIn") == 18

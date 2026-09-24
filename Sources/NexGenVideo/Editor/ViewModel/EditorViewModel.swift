@@ -89,6 +89,7 @@ final class EditorViewModel {
         var inspectorVisible: Bool
         var focusedPanel: FocusedPanel?
         var maximizedPanel: FocusedPanel?
+        var mediaCommandFocus: MediaCommandFocus?
         var selectedClipIds: Set<String>
         var selectedGap: GapSelection?
         var selectedTimelineRange: TimelineRangeSelection?
@@ -878,12 +879,14 @@ final class EditorViewModel {
     /// Restore the target workspace's UI context without mutating project, pipeline, or undo state.
     func setWorkspaceFocus(_ focus: WorkspaceFocus) {
         guard focus != workspaceFocus else { return }
+        let previousMediaLibraryPurpose = activeMediaLibraryPurpose
         snapshotMediaLibrarySession(for: workspaceFocus)
         workspacePresentationStates[workspaceFocus] = WorkspacePresentationState(
             sidebarVisible: mediaPanelVisible,
             inspectorVisible: inspectorPanelVisible,
             focusedPanel: focusedPanel,
             maximizedPanel: maximizedPanel,
+            mediaCommandFocus: mediaCommandFocus,
             selectedClipIds: selectedClipIds,
             selectedGap: selectedGap,
             selectedTimelineRange: selectedTimelineRange,
@@ -897,7 +900,6 @@ final class EditorViewModel {
             mediaFolderId: mediaPanelCurrentFolderId
         )
         workspaceFocus = focus
-        mediaCommandFocus = nil
         let state = workspacePresentationStates[focus] ?? Self.defaultWorkspacePresentation()
         isRestoringWorkspacePresentation = true
         defer { isRestoringWorkspacePresentation = false }
@@ -905,6 +907,7 @@ final class EditorViewModel {
         inspectorPanelVisible = state.inspectorVisible
         focusedPanel = state.focusedPanel
         maximizedPanel = state.maximizedPanel
+        mediaCommandFocus = restorableMediaCommandFocus(state.mediaCommandFocus)
         let clipIDs = Set(timeline.tracks.flatMap(\.clips).map(\.id))
         selectedClipIds = state.selectedClipIds.intersection(clipIDs)
         selectedGap = state.selectedGap.flatMap {
@@ -932,8 +935,8 @@ final class EditorViewModel {
         activeMediaLibraryPurpose = activeSourceAsset == nil ? nil : restoredPurpose
         if let purpose = restoredPurpose, let asset = activeSourceAsset {
             let sourceState = mediaLibrarySession(for: purpose).sourceStates[asset.id]
-                ?? sourcePreviewStates[asset.id]
-                ?? SourcePreviewState(playheadFrame: restoredSourceFrame)
+                ?? (previousMediaLibraryPurpose == nil ? sourcePreviewStates[asset.id] : nil)
+                ?? SourcePreviewState()
             let duration = secondsToFrame(seconds: asset.duration, fps: timeline.fps)
             let restored = sourceState.clamped(to: duration)
             sourcePreviewStates[asset.id] = restored
@@ -944,6 +947,23 @@ final class EditorViewModel {
         mediaPanelCurrentFolderId = state.mediaFolderId
         videoEngine?.activateTab(activePreviewTab)
         isMarqueeSelecting = false
+    }
+
+    private func restorableMediaCommandFocus(_ focus: MediaCommandFocus?) -> MediaCommandFocus? {
+        switch (workspaceFocus, focus) {
+        case (.media, .some(.folderTree)):
+            return focusedPanel == .media && isSidebarPresented ? .folderTree : nil
+        case (.media, .some(.browser)):
+            return focusedPanel == .preview
+                && (maximizedPanel == nil || maximizedPanel == .preview) ? .browser : nil
+        case (.media, .some(.sourcePreview)):
+            return focusedPanel == .preview
+                && (maximizedPanel == nil || maximizedPanel == .preview) ? .sourcePreview : nil
+        case (.edit, .some(.browser)):
+            return focusedPanel == .media && isSidebarPresented ? .browser : nil
+        default:
+            return nil
+        }
     }
 
     private func restorableInspectedObject(_ object: InspectedObject?) -> InspectedObject? {
@@ -964,6 +984,7 @@ final class EditorViewModel {
             inspectorVisible: UserDefaults.standard.object(forKey: "inspectorPanelVisible") as? Bool ?? true,
             focusedPanel: nil,
             maximizedPanel: nil,
+            mediaCommandFocus: nil,
             selectedClipIds: [],
             selectedGap: nil,
             selectedTimelineRange: nil,
@@ -1226,7 +1247,6 @@ final class EditorViewModel {
         let session = mediaLibrarySession(for: purpose)
         session.activeAssetID = asset.id
         session.selectedAssetIDs = [asset.id]
-        session.scrollAnchorID = asset.id
         let duration = secondsToFrame(seconds: asset.duration, fps: timeline.fps)
         let restored = session.sourceStates[asset.id] ?? SourcePreviewState()
         sourcePreviewStates[asset.id] = restored.clamped(to: duration)
@@ -1246,7 +1266,6 @@ final class EditorViewModel {
         activeMediaLibraryPurpose = nil
         let session = mediaLibrarySession(for: purpose)
         session.activeAssetID = asset.id
-        session.scrollAnchorID = asset.id
         let duration = secondsToFrame(seconds: asset.duration, fps: timeline.fps)
         sourcePreviewStates[asset.id] = session.sourceState(for: asset.id).clamped(to: duration)
         activateMediaAsset(asset, preservingSelection: preservingSelection)
@@ -1311,7 +1330,6 @@ final class EditorViewModel {
         guard let asset = mediaAssets.first(where: { $0.id == id }) else { return }
         let session = mediaLibrarySession(for: .workspace)
         session.folderID = asset.folderId
-        session.scrollAnchorID = id
         session.selectedAssetIDs = [id]
         session.activeAssetID = id
         setWorkspaceFocus(.media)

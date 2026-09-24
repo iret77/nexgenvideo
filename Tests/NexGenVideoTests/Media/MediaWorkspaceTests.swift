@@ -107,6 +107,37 @@ struct MediaWorkspaceTests {
         #expect(editor.mediaLibrarySession(for: .editSource).sourceState(for: source.id) == editState)
     }
 
+    @Test func workspaceRestoreDoesNotBorrowAnotherPurposesRange() {
+        let editor = EditorViewModel()
+        editor.timeline.fps = 30
+        let source = MediaAsset(
+            id: "purpose-restore-source",
+            url: URL(fileURLWithPath: "/tmp/purpose-restore.mov"),
+            type: .video,
+            name: "Purpose Restore",
+            duration: 10,
+            originalFilename: "Purpose Restore.mov"
+        )
+        editor.mediaAssets = [source]
+
+        editor.setWorkspaceFocus(.postproduction)
+        editor.selectMediaAsset(source)
+        editor.setWorkspaceFocus(.production)
+        editor.mediaLibrarySession(for: .postproductionSource).sourceStates[source.id] = nil
+        editor.selectMediaAsset(source, for: .productionSource)
+        editor.seekSourceToFrame(18)
+        editor.markSourceIn()
+        editor.seekSourceToFrame(72)
+        editor.markSourceOut()
+
+        editor.setWorkspaceFocus(.postproduction)
+
+        #expect(editor.activeSourceAsset?.id == source.id)
+        #expect(editor.activeSourcePreviewState == SourcePreviewState())
+        #expect(editor.mediaLibrarySession(for: .postproductionSource).sourceState(for: source.id)
+            == SourcePreviewState())
+    }
+
     @Test func sourceRangeSurvivesTimelineInspectionAndAnotherPicker() {
         let editor = EditorViewModel()
         editor.timeline.fps = 30
@@ -198,7 +229,55 @@ struct MediaWorkspaceTests {
         #expect(editor.focusedPanel == .preview)
         #expect(editor.mediaCommandFocus == .browser)
         #expect(session.folderID == folderID)
-        #expect(session.scrollAnchorID == source.id)
+        #expect(session.scrollAnchorID == nil)
+        #expect(editor.mediaPanelRevealAssetId == source.id)
+    }
+
+    @Test func selectionDoesNotOverwriteObservedScrollPosition() {
+        let editor = EditorViewModel()
+        let source = MediaAsset(
+            id: "scroll-independent-source",
+            url: URL(fileURLWithPath: "/tmp/scroll-independent.mov"),
+            type: .video,
+            name: "Scroll Independent"
+        )
+        editor.mediaAssets = [source]
+        let session = editor.mediaLibrarySession(for: .workspace)
+        session.scrollAnchorID = "observed-anchor"
+
+        editor.selectMediaAsset(source, for: .workspace)
+
+        #expect(session.scrollAnchorID == "observed-anchor")
+    }
+
+    @Test func intentionalRootFolderDoesNotFallBackToAWorkspaceFolder() {
+        let session = MediaLibrarySession(purpose: .workspace)
+        session.folderID = nil
+
+        session.initializeFolderIfNeeded("stale-workspace-folder")
+
+        #expect(session.folderID == nil)
+    }
+
+    @Test func librarySearchFiltersDoNotImplicitlyApplyTheBrowserFolder() {
+        let asset = MediaAsset(
+            id: "global-search-asset",
+            url: URL(fileURLWithPath: "/tmp/global-search.mov"),
+            type: .video,
+            name: "Interview",
+            originalFilename: "Interview.mov"
+        )
+        asset.folderId = "another-folder"
+
+        let matches = MediaLibraryProjection.matchesFilters(
+            asset,
+            query: "interview",
+            searchScope: .filename,
+            filterTypes: [.video],
+            aiOnly: false
+        )
+
+        #expect(matches)
     }
 
     @Test func documentSearchUsesOriginalStringIndicesAroundUnicodeCaseMappings() async throws {

@@ -63,7 +63,9 @@ final class MediaLibrarySession {
     let purpose: MediaLibraryPurpose
     var query = ""
     var searchScope: MediaLibrarySearchScope = .filename
-    var folderID: String?
+    var folderID: String? {
+        didSet { folderStateInitialized = true }
+    }
     var filterTypes: Set<ClipType> = []
     var aiOnly = false
     var sort: MediaLibrarySort = .dateAdded
@@ -74,6 +76,7 @@ final class MediaLibrarySession {
     var selectedAssetIDs: Set<String> = []
     var activeAssetID: String?
     var sourceStates: [String: SourcePreviewState] = [:]
+    private(set) var folderStateInitialized = false
 
     init(purpose: MediaLibraryPurpose) {
         self.purpose = purpose
@@ -86,24 +89,43 @@ final class MediaLibrarySession {
     func rememberSourceState(_ state: SourcePreviewState, for assetID: String) {
         sourceStates[assetID] = state
     }
+
+    func initializeFolderIfNeeded(_ folderID: String?) {
+        guard !folderStateInitialized else { return }
+        self.folderID = folderID
+    }
 }
 
 @MainActor
 enum MediaLibraryProjection {
+    static func matchesFilters(
+        _ asset: MediaAsset,
+        query: String,
+        searchScope: MediaLibrarySearchScope,
+        filterTypes: Set<ClipType>,
+        aiOnly: Bool
+    ) -> Bool {
+        guard filterTypes.isEmpty || filterTypes.contains(asset.type) else { return false }
+        guard !aiOnly || asset.isGenerated else { return false }
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return query.isEmpty || searchScope != .filename
+            || asset.userFacingFilename.localizedCaseInsensitiveContains(query)
+            || asset.name.localizedCaseInsensitiveContains(query)
+    }
+
     static func assets(
         from assets: [MediaAsset],
         session: MediaLibrarySession
     ) -> [MediaAsset] {
-        let query = session.query.trimmingCharacters(in: .whitespacesAndNewlines)
         var output = assets.filter { asset in
             guard session.folderID == nil || asset.folderId == session.folderID else { return false }
-            guard session.filterTypes.isEmpty || session.filterTypes.contains(asset.type) else { return false }
-            guard !session.aiOnly || asset.isGenerated else { return false }
-            guard query.isEmpty || session.searchScope != .filename
-                    || asset.userFacingFilename.localizedCaseInsensitiveContains(query)
-                    || asset.name.localizedCaseInsensitiveContains(query)
-            else { return false }
-            return true
+            return matchesFilters(
+                asset,
+                query: session.query,
+                searchScope: session.searchScope,
+                filterTypes: session.filterTypes,
+                aiOnly: session.aiOnly
+            )
         }
 
         switch session.sort {

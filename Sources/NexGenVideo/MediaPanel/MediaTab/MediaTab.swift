@@ -157,8 +157,7 @@ struct MediaTab: View {
         .background(KeyCommandSink(onNewFolder: createNewFolderInCurrent, onNavigateUp: navigateUp))
         .simultaneousGesture(TapGesture().onEnded {
             guard workspace == editor.workspaceFocus else { return }
-            editor.focusedPanel = workspace == .media ? .preview : .media
-            editor.mediaCommandFocus = .browser
+            focusMediaBrowser()
         })
         .background {
             if WorkspaceUIAcceptance.isRequested {
@@ -181,7 +180,10 @@ struct MediaTab: View {
             if target == MediaWorkspaceNavigation.rootRouteID {
                 navigateToFolder(nil)
             } else {
-                openFolder(id: target, preservingSelection: true)
+                openFolder(
+                    id: target,
+                    preservingSelection: editor.mediaCommandFocus == .folderTree
+                )
             }
             editor.mediaPanelOpenFolderId = nil
         }
@@ -203,7 +205,8 @@ struct MediaTab: View {
             sortAscending = session.sortAscending
             thumbnailSize = session.thumbnailSize
             assetLayout = session.layout
-            currentFolderId = session.folderID ?? editor.mediaPanelCurrentFolderId
+            session.initializeFolderIfNeeded(editor.mediaPanelCurrentFolderId)
+            currentFolderId = session.folderID
             editor.publishMediaPanelFolder(currentFolderId, for: workspace)
             if let target = editor.mediaPanelRevealAssetId, workspace == editor.workspaceFocus {
                 revealAsset(id: target)
@@ -302,7 +305,7 @@ struct MediaTab: View {
 
     private func revealAsset(id: String) {
         guard let asset = editor.mediaAssets.first(where: { $0.id == id }) else { return }
-        if !passesFilters(asset) {
+        if !assetMatchesRevealState(asset) {
             clearFilters()
             searchQuery = ""
         }
@@ -315,9 +318,22 @@ struct MediaTab: View {
         }
         let session = editor.mediaLibrarySession(for: mediaPurpose)
         session.folderID = asset.folderId
-        session.scrollAnchorID = id
         editor.selectMediaAsset(asset, for: mediaPurpose)
         editor.mediaPanelScrollTarget = id
+    }
+
+    private func assetMatchesRevealState(_ asset: MediaAsset) -> Bool {
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard query.isEmpty || searchScope == .filename else { return false }
+        return passesFilters(asset)
+    }
+
+    func focusMediaBrowser() {
+        if editor.mediaCommandFocus == .folderTree {
+            editor.selectedFolderIds.removeAll()
+        }
+        editor.focusedPanel = workspace == .media ? .preview : .media
+        editor.mediaCommandFocus = .browser
     }
 
     func openFolder(id: String, preservingSelection: Bool = false) {
@@ -606,14 +622,13 @@ struct MediaTab: View {
     }
 
     func passesFilters(_ asset: MediaAsset) -> Bool {
-        let folderOk = viewMode != .folder || currentFolderId == nil || asset.folderId == currentFolderId
-        let typeOk = filterTypes.isEmpty || filterTypes.contains(asset.type)
-        let aiOk = !filterAI || asset.isGenerated
-        let q = searchQuery.trimmingCharacters(in: .whitespaces)
-        let nameOk = q.isEmpty || searchScope != .filename
-            || asset.userFacingFilename.localizedCaseInsensitiveContains(q)
-            || asset.name.localizedCaseInsensitiveContains(q)
-        return folderOk && typeOk && aiOk && nameOk
+        MediaLibraryProjection.matchesFilters(
+            asset,
+            query: searchQuery,
+            searchScope: searchScope,
+            filterTypes: filterTypes,
+            aiOnly: filterAI
+        )
     }
 
     var momentSearchAssetRevision: [String] {

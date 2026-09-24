@@ -212,6 +212,13 @@ extension MediaTab {
         }
         .draggable(dragPayload(for: asset)) { dragPreview(for: asset) }
         .onTapGesture { editor.selectMediaAsset(asset, for: mediaPurpose) }
+        .background {
+            if WorkspaceUIAcceptance.isRequested {
+                AppRelaunchClickProbe(identifier: "media.search.asset.\(asset.id)")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
+            }
+        }
     }
 
     private func documentRow(_ hit: DocumentSearch.Hit) -> some View {
