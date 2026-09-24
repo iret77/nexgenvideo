@@ -250,6 +250,28 @@ struct CodexAppServerRuntimeAdapterTests {
         }
     }
 
+    @Test("runtime scratch rejects a Git ancestor instead of trusting a disabled project layer")
+    func scratchRootMustNotInheritProjectConfiguration() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "ngv-codex-git-ancestor-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let nested = root.appendingPathComponent("runtime", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent(".git", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        #expect(throws: CodexAppServerError.self) {
+            try CodexAppServerRuntimeAdapter.requireUnversionedScratchRoot(
+                nested,
+                fileManager: .default
+            )
+        }
+    }
+
     @Test("text, real image data, namespaced tool result, and usage preserve the host contract")
     func textImageAndToolRoundTrip() async throws {
         let driver = FakeCodexAppServerDriver()
@@ -325,8 +347,8 @@ struct CodexAppServerRuntimeAdapterTests {
         #expect(codexTerminals(events) == [.completed(.endTurn)])
     }
 
-    @Test("dialog or spend suspension returns the tool result and interrupts before continuation")
-    func hostSuspensionStopsTheTurn() async throws {
+    @Test("dialog or spend suspension replays the authoritative host result on a fresh thread")
+    func hostSuspensionReplaysResultWithoutRepeatingTool() async throws {
         let driver = FakeCodexAppServerDriver()
         var executions = 0
         driver.scriptedEvents = [
@@ -365,20 +387,54 @@ struct CodexAppServerRuntimeAdapterTests {
             currentMessage: current
         )))
 
-        #expect(driver.responses.count == 2)
+        #expect(driver.responses.count == 1)
         #expect(executions == 1)
-        #expect(driver.operations.filter { $0 == "respond" }.count == 1)
+        #expect(driver.operations.filter { $0 == "respond" }.isEmpty)
         #expect(driver.operations.filter { $0 == "respond:error" }.count == 1)
-        let interruptIndex = try #require(driver.operations.firstIndex(of: "request:turn/interrupt"))
-        let responseIndex = try #require(driver.operations.firstIndex(of: "respond"))
-        #expect(interruptIndex < responseIndex)
+        #expect(driver.operations.contains("request:turn/interrupt"))
+        #expect(events.map(\.event).contains(.providerSessionInvalidated))
         #expect(codexTerminals(events) == [.completed(.toolUse)])
+
+        let replayDriver = FakeCodexAppServerDriver()
+        replayDriver.scriptedEvents = [.notification(method: "turn/completed", params: [
+            "threadId": "thread-1",
+            "turn": ["id": "provider-turn-1", "status": "completed", "items": []],
+        ])]
+        let replayAdapter = makeAdapter(replayDriver)
+        try replayAdapter.resume(sessionRequest(sessionID: sessionID) { _, _, _ in
+            executions += 1
+            return .error("A replayed tool call must not execute again")
+        })
+        let earlierAssistant = AgentRuntimeMessage(role: .assistant, content: [
+            .toolUse(id: "dialog-1", name: "host_tool", inputJSON: "{}"),
+        ])
+        let authoritativeResult = AgentRuntimeMessage(role: .user, content: [
+            .toolResult(id: "dialog-1", content: [.text("Decision opened")], isError: false),
+        ])
+        let followUp = AgentRuntimeMessage(role: .user, content: [.text("Continue after the decision")])
+        let replayEvents = await collectCodexEvents(try replayAdapter.send(.init(
+            sessionID: sessionID,
+            turnID: UUID(),
+            messages: [current, earlierAssistant, authoritativeResult, followUp],
+            currentMessage: followUp
+        )))
+
+        let injection = try #require(replayDriver.calls.first { $0.method == "thread/injectItems" })
+        let items = try #require(injection.params["items"] as? [[String: Any]])
+        let output = try #require(items.first { $0["type"] as? String == "function_call_output" })
+        #expect(output["call_id"] as? String == "dialog-1")
+        #expect(output["name"] as? String == "host_tool")
+        #expect(output["namespace"] as? String == CodexAppServerContract.toolNamespace)
+        let blocks = try #require(output["output"] as? [[String: Any]])
+        #expect(blocks.contains { $0["text"] as? String == "Decision opened" })
+        #expect(executions == 1)
+        #expect(codexTerminals(replayEvents) == [.completed(.endTurn)])
     }
 
     @Test("Codex reaches AgentService, ToolExecutor, and the real dialog suspension consumer")
     func productConsumerOwnsDialogSuspension() async throws {
-        let driver = FakeCodexAppServerDriver()
-        driver.scriptedEvents = [
+        let firstDriver = FakeCodexAppServerDriver()
+        firstDriver.scriptedEvents = [
             .notification(method: "turn/started", params: [
                 "threadId": "thread-1",
                 "turn": ["id": "provider-turn-1", "status": "inProgress", "items": []],
@@ -403,11 +459,29 @@ struct CodexAppServerRuntimeAdapterTests {
                 ],
             ]),
         ]
-        let adapter = makeAdapter(driver)
+        let followUpDriver = FakeCodexAppServerDriver()
+        followUpDriver.scriptedEvents = [
+            .notification(method: "item/agentMessage/delta", params: [
+                "threadId": "thread-1",
+                "turnId": "provider-turn-1",
+                "itemId": "message-2",
+                "delta": "The host recorded Continue.",
+            ]),
+            .notification(method: "turn/completed", params: [
+                "threadId": "thread-1",
+                "turn": ["id": "provider-turn-1", "status": "completed", "items": []],
+            ]),
+        ]
+        let adapters = [makeAdapter(firstDriver), makeAdapter(followUpDriver)]
+        var adapterIndex = 0
         let service = AgentService(
             backend: .codexAppServer,
             refreshBackendStatusOnInit: false,
-            runtimeAdapterFactory: { _ in adapter },
+            runtimeAdapterFactory: { _ in
+                let adapter = adapters[adapterIndex]
+                adapterIndex += 1
+                return adapter
+            },
             runtimeReadinessOverride: { nil },
             runtimeHostContextOverride: { .hostOwned(tools: ToolDefinitions.all) }
         )
@@ -416,12 +490,50 @@ struct CodexAppServerRuntimeAdapterTests {
         service.loadSessions(from: nil)
 
         #expect(service.send(text: "Ask for the choice.", mentions: []))
-        for _ in 0..<1_000 where service.isStreaming { await Task.yield() }
+        var deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while service.isStreaming, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
 
         #expect(!service.isStreaming)
-        #expect(service.pendingDialog?.title == "Choose")
-        #expect(driver.operations.contains("request:turn/interrupt"))
-        #expect(driver.responses.count == 1)
+        let dialog = try #require(service.pendingDialog)
+        #expect(dialog.title == "Choose")
+        #expect(firstDriver.operations.contains("request:turn/interrupt"))
+        #expect(firstDriver.operations.filter { $0 == "respond" }.isEmpty)
+        service.submitDialog(
+            dialog,
+            result: AgentDialogResult(
+                selectedLabels: ["choice": ["Continue"]],
+                toggles: [:],
+                direction: ""
+            )
+        )
+        deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while service.isStreaming, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!service.isStreaming)
+
+        let injection = try #require(followUpDriver.calls.first { $0.method == "thread/injectItems" })
+        let items = try #require(injection.params["items"] as? [[String: Any]])
+        let replayedResult = try #require(items.first {
+            $0["type"] as? String == "function_call_output"
+        })
+        let output = try #require(replayedResult["output"] as? [[String: Any]])
+        #expect(output.contains {
+            ($0["text"] as? String)?.localizedCaseInsensitiveContains("dialog") == true
+        })
+        let dialogCalls = service.messages.flatMap(\.blocks).filter {
+            guard case .toolUse(_, let name, _) = $0 else { return false }
+            return name == "show_dialog"
+        }
+        #expect(dialogCalls.count == 1)
+        #expect(service.messages.contains { message in
+            message.blocks.contains {
+                guard case .text(let value) = $0 else { return false }
+                return value.contains("host recorded Continue")
+            }
+        })
         service.cancel()
     }
 
@@ -442,9 +554,14 @@ struct CodexAppServerRuntimeAdapterTests {
                 "arguments": [:],
             ]),
         ]
+        var followUps: [String] = []
         let service = AgentService(
             backend: .codexAppServer,
             refreshBackendStatusOnInit: false,
+            embeddedHostFollowUpSender: { text, _ in
+                followUps.append(text)
+                return true
+            },
             runtimeReadinessOverride: { nil }
         )
         let editor = EditorViewModel(agentService: service)
@@ -464,6 +581,7 @@ struct CodexAppServerRuntimeAdapterTests {
             requiresCatalogAvailability: false
         )
         let adapter = makeAdapter(driver)
+        var providerGenerationCalls = 0
         try adapter.start(sessionRequest(sessionID: sessionID) { _, _, _ in
             do {
                 return try service.requestSpendApproval(
@@ -475,7 +593,10 @@ struct CodexAppServerRuntimeAdapterTests {
                     ),
                     origin: .inAppChat(sessionID: sessionID),
                     editor: editor,
-                    execute: { _, _ in .ok("unexpected") }
+                    execute: { _, _ in
+                        providerGenerationCalls += 1
+                        return .ok("unexpected")
+                    }
                 )
             } catch {
                 return .error(error.localizedDescription)
@@ -492,6 +613,22 @@ struct CodexAppServerRuntimeAdapterTests {
         #expect(service.pendingSpendApproval?.id == "spend-approval")
         #expect(driver.operations.contains("request:turn/interrupt"))
         #expect(codexTerminals(events) == [.completed(.toolUse)])
+        service.declineSpend(reason: "Acceptance fixture declined before provider execution.")
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while followUps.isEmpty, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        let declinedWithoutGeneration = providerGenerationCalls == 0
+            && service.pendingSpendApproval == nil
+            && followUps.count == 1
+            && followUps[0].contains("declined before provider execution")
+        #expect(declinedWithoutGeneration)
+        if let evidencePath = ProcessInfo.processInfo.environment["NGV_CODEX_ACCEPTANCE_EVIDENCE"] {
+            try mergeLiveEvidence([
+                "spend_consumer_declined_without_provider_generation": declinedWithoutGeneration,
+                "provider_generation_calls": providerGenerationCalls,
+            ], at: evidencePath)
+        }
         service.cancel()
         adapter.end(sessionID: sessionID)
     }

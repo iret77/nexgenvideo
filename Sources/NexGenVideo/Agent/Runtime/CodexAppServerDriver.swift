@@ -369,6 +369,7 @@ final class CodexAppServerJSONRPCDriver: CodexAppServerDriving {
     private var terminationOwner: CodexAppServerJSONRPCDriver?
     private var terminationWaiters: [CheckedContinuation<Void, Never>] = []
     private(set) var requestedMethods: [String] = []
+    private(set) var requestedParameters: [(method: String, params: [String: Any])] = []
     private(set) var observedTurnStartedIDs: Set<String> = []
     private(set) var observedInterruptedTurnIDs: Set<String> = []
     private(set) var sentTypedImageToolResult = false
@@ -506,6 +507,9 @@ final class CodexAppServerJSONRPCDriver: CodexAppServerDriving {
 
     func request(method: String, params: [String: Any]) async throws -> [String: Any] {
         requestedMethods.append(method)
+        if CodexAppServerContract.isAcceptanceRun {
+            requestedParameters.append((method, params))
+        }
         let id = nextRequestID
         nextRequestID += 1
         return try await withCheckedThrowingContinuation { continuation in

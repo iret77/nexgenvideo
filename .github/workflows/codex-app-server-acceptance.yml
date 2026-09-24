@@ -59,6 +59,8 @@ jobs:
           ACTUAL_ACCEPTANCE_WORKFLOW_PATH: ${{ job.workflow_file_path }}
           EVENT_NAME: ${{ github.event_name }}
           ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
           REPOSITORY: ${{ github.repository }}
           REPOSITORY_OWNER: ${{ github.repository_owner }}
           RUN_PAID_LLM_SMOKE: ${{ inputs.run_paid_llm_smoke }}
@@ -70,8 +72,13 @@ jobs:
             echo "::error::Codex acceptance must originate from a manual workflow_dispatch." >&2
             exit 1
           fi
-          if test "$ACTOR" != "$REPOSITORY_OWNER"; then
+          if test "$ACTOR" != "$REPOSITORY_OWNER" \
+              || test "$TRIGGERING_ACTOR" != "$REPOSITORY_OWNER"; then
             echo "::error::Only the repository owner may approve Codex acceptance spend." >&2
+            exit 1
+          fi
+          if test "$RUN_ATTEMPT" != 1; then
+            echo "::error::Paid Codex acceptance cannot be re-run. Start a new owner-approved workflow dispatch." >&2
             exit 1
           fi
           if test "$RUN_PAID_LLM_SMOKE" != true || test "$APPROVAL" != APPROVE-CODEX-LLM-SMOKE; then
@@ -103,6 +110,13 @@ jobs:
           fi
 
   acceptance:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.actor == github.repository_owner &&
+      github.triggering_actor == github.repository_owner &&
+      github.run_attempt == 1 &&
+      inputs.run_paid_llm_smoke == true &&
+      inputs.approval == 'APPROVE-CODEX-LLM-SMOKE'
     needs: gate
     runs-on: xcode-27
     timeout-minutes: 25
@@ -137,6 +151,10 @@ jobs:
           test "$(codex --version)" = "codex-cli 0.156.0"
 
       - name: Prepare isolated keyring account
+        if: >-
+          github.actor == github.repository_owner &&
+          github.triggering_actor == github.repository_owner &&
+          github.run_attempt == 1
         shell: bash
         env:
           CODEX_ACCEPTANCE_API_KEY: ${{ secrets.CODEX_ACCEPTANCE_API_KEY }}
@@ -266,9 +284,17 @@ jobs:
           fi
 
       - name: Run real Codex consumer smoke
+        if: >-
+          github.actor == github.repository_owner &&
+          github.triggering_actor == github.repository_owner &&
+          github.run_attempt == 1
         shell: bash
         run: |
           set -euo pipefail
+          swift test \
+            --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
+            --skip-build \
+            --filter productConsumerOwnsSpendSuspension
           swift test \
             --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
             --skip-build \
@@ -287,21 +313,28 @@ jobs:
             .configuration_inventory_checks >= 2 and
             .account_verified_before_thread == true and
             .text == true and
-            .image_input == true and
+            .typed_image_input == true and
+            .image_content_exact_match == true and
             .typed_image_tool_result == true and
             .nexgen_tool_round_trip == true and
             .warm_dialogue == true and
-            .cancel_turn_started == true and
+            .cancel_turn_id_confirmed == true and
             .cancel_interrupted == true and
             .process_termination_confirmed == true and
             .scratch_removed == true and
             .cold_resume_rejected == true and
             .host_transcript_replay == true and
-            .phase_and_language_refresh == true and
+            .phase_instruction_observed == true and
+            .interface_language_detected == "de" and
             .default_model_has_text_and_image == true and
             .agent_service_consumer_exercised == true and
             .real_tool_executor_exercised == true and
-            .two_chats_and_project_boundary == true and
+            .dialog_consumer_follow_up == true and
+            .spend_consumer_declined_without_provider_generation == true and
+            .provider_generation_calls == 0 and
+            .distinct_project_roots_and_editors == true and
+            .stale_project_generation_rejected == true and
+            .first_chat_not_injected_into_second_project == true and
             .evidence_payload_redacted == true
           ' "$NGV_CODEX_ACCEPTANCE_EVIDENCE" >/dev/null
 

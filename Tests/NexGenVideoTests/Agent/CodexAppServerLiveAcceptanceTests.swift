@@ -1,4 +1,6 @@
+import AppKit
 import Foundation
+import NaturalLanguage
 import Testing
 @testable import NexGenVideo
 
@@ -87,14 +89,16 @@ struct CodexAppServerLiveAcceptanceTests {
             }
         )
         let sessionID = UUID()
-        let session = liveSession(sessionID: sessionID)
-        try firstAdapter.start(session)
-        let image = AgentRuntimeImage(
-            mediaType: "image/png",
-            base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nE4AAAAASUVORK5CYII="
+        let visualCode = randomAcceptanceCode()
+        let image = try renderedAcceptanceImage(code: visualCode)
+        let session = liveSession(
+            sessionID: sessionID,
+            expectedEchoValue: visualCode,
+            toolOutputImage: image
         )
+        try firstAdapter.start(session)
         let current = AgentRuntimeMessage(role: .user, content: [
-            .text("Inspect the attached image. Call the nexgen acceptance_echo tool exactly once with the lowercase luminance category light or dark, then briefly confirm completion."),
+            .text("Read the eight-character verification code printed in the attached image. Call the nexgen acceptance_echo tool exactly once with that exact code as value, then briefly confirm completion."),
             .image(image),
         ])
         let firstEvents = await collectLiveCodexEvents(try firstAdapter.send(.init(
@@ -108,16 +112,24 @@ struct CodexAppServerLiveAcceptanceTests {
             return value
         }.first)
         #expect(firstDriver.accountStatus == .init(billing: .apiKey))
-        #expect(firstEvents.contains { envelope in
-            guard case .toolCall(_, _, let name, _) = envelope.event else { return false }
-            return name == "acceptance_echo"
-        })
-        #expect(firstEvents.contains { envelope in
+        let imageToolCalls = firstEvents.compactMap { envelope -> (String, String)? in
+            guard case .toolCall(_, _, let name, let inputJSON) = envelope.event,
+                  let data = inputJSON.data(using: .utf8),
+                  let arguments = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let value = arguments["value"] as? String else { return nil }
+            return (name, value)
+        }
+        let imageContentExactMatch = imageToolCalls.count == 1
+            && imageToolCalls.first?.0 == "acceptance_echo"
+            && imageToolCalls.first?.1 == visualCode
+        #expect(imageContentExactMatch)
+        let typedToolResultObserved = firstEvents.contains { envelope in
             guard case .toolResult(_, let content, let isError) = envelope.event else { return false }
             return !isError
                 && content.contains(.text("controlled-result"))
                 && content.contains { if case .image = $0 { true } else { false } }
-        })
+        }
+        #expect(typedToolResultObserved)
         #expect(liveTerminals(firstEvents) == [.completed(.endTurn)])
         let modelResponse = try await firstDriver.request(
             method: "model/list",
@@ -138,33 +150,29 @@ struct CodexAppServerLiveAcceptanceTests {
             messages: [current, followUp],
             currentMessage: followUp
         )))
-        #expect(followUpEvents.contains { envelope in
+        let warmDialogueSucceeded = followUpEvents.contains { envelope in
             guard case .text(_, let value, _) = envelope.event else { return false }
             return value.localizedCaseInsensitiveContains("continued")
-        })
-        #expect(liveTerminals(followUpEvents) == [.completed(.endTurn)])
+        } && liveTerminals(followUpEvents) == [.completed(.endTurn)]
+        #expect(warmDialogueSucceeded)
 
         let cancelMessage = AgentRuntimeMessage(role: .user, content: [
             .text("Draft a detailed 5,000-word technical explanation of nonlinear editing history."),
         ])
-        let turnIDsBeforeCancel = firstDriver.observedTurnStartedIDs
         let cancelStream = try firstAdapter.send(.init(
             sessionID: sessionID,
             turnID: UUID(),
             messages: [current, cancelMessage],
             currentMessage: cancelMessage
         ))
-        for _ in 0..<1_000 where firstDriver.observedTurnStartedIDs.subtracting(turnIDsBeforeCancel).isEmpty {
-            await Task.yield()
-        }
-        let cancelTurnIDs = firstDriver.observedTurnStartedIDs.subtracting(turnIDsBeforeCancel)
-        #expect(!cancelTurnIDs.isEmpty)
+        let cancelTurnID = try #require(await waitForProviderTurn(
+            firstAdapter,
+            timeout: .seconds(30)
+        ))
         firstAdapter.cancel(sessionID: sessionID)
         #expect(liveTerminals(await collectLiveCodexEvents(cancelStream)) == [.cancelled])
         await firstDriver.waitForTermination()
-        let cancelledTurnWasInterrupted = !firstDriver.observedInterruptedTurnIDs
-            .intersection(cancelTurnIDs)
-            .isEmpty
+        let cancelledTurnWasInterrupted = firstDriver.observedInterruptedTurnIDs.contains(cancelTurnID)
         #expect(cancelledTurnWasInterrupted)
         #expect(firstDriver.terminationConfirmed)
         let scratchRemoved = !FileManager.default.fileExists(
@@ -192,20 +200,54 @@ struct CodexAppServerLiveAcceptanceTests {
             }
         )
         let replaySessionID = UUID()
+        let replayUserCode = randomAcceptanceCode()
+        let replayOutputCode = randomAcceptanceCode()
+        let replayToolValue = "call-\(randomAcceptanceCode().lowercased())"
+        let replayResultText = "archive-\(randomAcceptanceCode().lowercased())"
+        let phaseMarker = "continuity-\(randomAcceptanceCode().lowercased())"
         let replaySession = liveSession(
             sessionID: replaySessionID,
             interfaceLanguage: .init(identifier: "de-DE", displayName: "German"),
-            phase: "continuity",
-            phaseInstructions: "Begin every reply in this phase with the exact word Wiederaufnahme."
+            phase: phaseMarker,
+            phaseInstructions: "Use the replayed evidence, state the exact active phase identifier supplied by the host, and answer naturally in the interface language."
         )
         try replayAdapter.resume(replaySession)
+        let replayCallID = "replay-\(UUID().uuidString)"
+        let replayUserImage = try renderedAcceptanceImage(code: replayUserCode)
+        let replayOutputImage = try renderedAcceptanceImage(code: replayOutputCode)
         let replayHistory = [
-            AgentRuntimeMessage(role: .user, content: [.text("Remember the continuity code.")]),
-            AgentRuntimeMessage(role: .assistant, content: [.text("The continuity code is cobalt-47.")]),
+            AgentRuntimeMessage(role: .user, content: [
+                .text("Retain the code shown in this earlier user image."),
+                .image(replayUserImage),
+            ]),
+            AgentRuntimeMessage(role: .assistant, content: [
+                .text("I will preserve the host evidence."),
+                .toolUse(
+                    id: replayCallID,
+                    name: "acceptance_echo",
+                    inputJSON: try jsonString(["value": replayToolValue])
+                ),
+            ]),
+            AgentRuntimeMessage(role: .user, content: [
+                .toolResult(
+                    id: replayCallID,
+                    content: [
+                        .text(replayResultText),
+                        .image(
+                            base64: replayOutputImage.base64,
+                            mediaType: replayOutputImage.mediaType
+                        ),
+                    ],
+                    isError: false
+                ),
+            ]),
+            AgentRuntimeMessage(role: .assistant, content: [
+                .text("The namespaced host result is part of the conversation history."),
+            ]),
         ]
         let replayCurrent = AgentRuntimeMessage(
             role: .user,
-            content: [.text("State the continuity code from the earlier answer.")]
+            content: [.text("Using only the earlier conversation, report the user-image code, the host-tool argument, the host-result text, the tool-result-image code, and the active phase. Use several complete sentences and do not call a tool.")]
         )
         let replayEvents = await collectLiveCodexEvents(try replayAdapter.send(.init(
             sessionID: replaySessionID,
@@ -222,10 +264,43 @@ struct CodexAppServerLiveAcceptanceTests {
         let replayWasInjectedBeforeTurn = injectionIndex.map { injection in
             replayTurnIndex.map { injection < $0 } ?? false
         } ?? false
-        let transcriptReplaySucceeded = replayText.localizedCaseInsensitiveContains("cobalt-47")
-            && replayText.localizedCaseInsensitiveContains("Wiederaufnahme")
+        let injectedItems = replayDriver.requestedParameters.first {
+            $0.method == "thread/injectItems"
+        }?.params["items"] as? [[String: Any]] ?? []
+        let injectedCall = injectedItems.first {
+            $0["type"] as? String == "function_call" && $0["call_id"] as? String == replayCallID
+        }
+        let injectedOutput = injectedItems.first {
+            $0["type"] as? String == "function_call_output" && $0["call_id"] as? String == replayCallID
+        }
+        let injectedOutputBlocks = injectedOutput?["output"] as? [[String: Any]] ?? []
+        let replayStructureIsComplete = injectedCall?["namespace"] as? String
+                == CodexAppServerContract.toolNamespace
+            && injectedCall?["name"] as? String == "acceptance_echo"
+            && injectedOutput?["namespace"] as? String == CodexAppServerContract.toolNamespace
+            && injectedOutput?["name"] as? String == "acceptance_echo"
+            && injectedOutputBlocks.contains { $0["text"] as? String == replayResultText }
+            && injectedOutputBlocks.contains { $0["type"] as? String == "input_image" }
+            && injectedItems.contains { item in
+                guard item["type"] as? String == "message",
+                      item["role"] as? String == "user",
+                      let content = item["content"] as? [[String: Any]] else { return false }
+                return content.contains { $0["type"] as? String == "input_image" }
+            }
+        let transcriptReplaySucceeded = replayText.contains(replayUserCode)
+            && replayText.contains(replayToolValue)
+            && replayText.contains(replayResultText)
+            && replayText.contains(replayOutputCode)
             && replayWasInjectedBeforeTurn
+            && replayStructureIsComplete
+            && !replayEvents.contains { if case .toolCall = $0.event { true } else { false } }
+        let phaseInstructionObserved = replayText.contains(phaseMarker)
+        let languageRecognizer = NLLanguageRecognizer()
+        languageRecognizer.processString(replayText)
+        let detectedInterfaceLanguage = languageRecognizer.dominantLanguage?.rawValue ?? "unknown"
         #expect(transcriptReplaySucceeded)
+        #expect(phaseInstructionObserved)
+        #expect(detectedInterfaceLanguage == NLLanguage.german.rawValue)
         #expect(liveTerminals(replayEvents) == [.completed(.endTurn)])
         replayAdapter.end(sessionID: replaySessionID)
         await replayDriver.waitForTermination()
@@ -253,21 +328,31 @@ struct CodexAppServerLiveAcceptanceTests {
                 "configuration_inventory_checks": isolationChecks,
                 "account_verified_before_thread": accountIndex < threadIndex,
                 "text": firstEvents.contains { if case .text = $0.event { true } else { false } },
-                "image_input": firstEvents.contains { if case .toolCall = $0.event { true } else { false } },
+                "typed_image_input": firstDriver.requestedParameters.contains { request in
+                    guard request.method == "turn/start",
+                          let input = request.params["input"] as? [[String: Any]] else { return false }
+                    return input.contains {
+                        $0["type"] as? String == "image"
+                            && ($0["url"] as? String)?.hasPrefix("data:image/png;base64,") == true
+                    }
+                },
+                "image_content_exact_match": imageContentExactMatch,
                 "typed_image_tool_result": firstDriver.sentTypedImageToolResult,
-                "nexgen_tool_round_trip": firstDriver.sentTypedImageToolResult,
-                "warm_dialogue": liveTerminals(followUpEvents) == [.completed(.endTurn)],
-                "cancel_turn_started": !cancelTurnIDs.isEmpty,
+                "nexgen_tool_round_trip": imageContentExactMatch
+                    && typedToolResultObserved
+                    && firstDriver.sentTypedImageToolResult,
+                "warm_dialogue": warmDialogueSucceeded,
+                "cancel_turn_id_confirmed": !cancelTurnID.isEmpty,
                 "cancel_interrupted": cancelledTurnWasInterrupted,
                 "process_termination_confirmed": firstDriver.terminationConfirmed,
                 "scratch_removed": scratchRemoved,
                 "cold_resume_rejected": coldResumeRejected,
                 "host_transcript_replay": transcriptReplaySucceeded,
-                "phase_and_language_refresh": transcriptReplaySucceeded,
+                "phase_instruction_observed": phaseInstructionObserved,
+                "interface_language_detected": detectedInterfaceLanguage,
                 "model_catalog_count": models.count,
                 "default_model_has_text_and_image": modalities.contains("text") && modalities.contains("image"),
                 "model_visible_tool_inventory_captured": false,
-                "dialog_and_spend_consumers_exercised": false,
                 "evidence_payload_redacted": true,
             ], at: evidencePath)
         }
@@ -282,35 +367,94 @@ struct CodexAppServerLiveAcceptanceTests {
             fileURLWithPath: try #require(environment["RUNNER_TEMP"]),
             isDirectory: true
         )
+        let firstProject = scratchRoot.appendingPathComponent(
+            "codex-product-first-\(UUID().uuidString).ngv",
+            isDirectory: true
+        )
+        let secondProject = scratchRoot.appendingPathComponent(
+            "codex-product-second-\(UUID().uuidString).ngv",
+            isDirectory: true
+        )
+        let firstTimeline = Fixtures.timeline(tracks: [
+            Fixtures.videoTrack(clips: [Fixtures.clip(start: 0, duration: 73)]),
+        ])
+        let secondTimeline = Fixtures.timeline(tracks: [
+            Fixtures.videoTrack(clips: [Fixtures.clip(start: 0, duration: 211)]),
+        ])
+        try Fixtures.prepareProjectPackage(at: firstProject, timeline: firstTimeline)
+        try Fixtures.prepareProjectPackage(at: secondProject, timeline: secondTimeline)
+        defer {
+            try? FileManager.default.removeItem(at: firstProject)
+            try? FileManager.default.removeItem(at: secondProject)
+        }
+
         var productDrivers: [CodexAppServerJSONRPCDriver] = []
+        var productAdapters: [RecordingLiveRuntimeAdapter] = []
         let service = AgentService(
             backend: .codexAppServer,
             refreshBackendStatusOnInit: false,
             runtimeAdapterFactory: { _ in
-                let driver = CodexAppServerJSONRPCDriver()
-                productDrivers.append(driver)
-                return CodexAppServerRuntimeAdapter(
-                    driverFactory: { driver },
+                let runtime = CodexAppServerRuntimeAdapter(
+                    driverFactory: {
+                        let driver = CodexAppServerJSONRPCDriver()
+                        productDrivers.append(driver)
+                        return driver
+                    },
                     runtimeLocations: { request in
                         (home, scratchRoot.appendingPathComponent(request.runtimeGenerationID.uuidString))
                     }
                 )
+                let recording = RecordingLiveRuntimeAdapter(runtime)
+                productAdapters.append(recording)
+                return recording
             },
             runtimeReadinessOverride: { nil }
         )
-        let editor = EditorViewModel(agentService: service)
-        service.editor = editor
-        service.loadSessions(from: nil)
+        let firstEditor = EditorViewModel(agentService: service)
+        firstEditor.projectURL = firstProject
+        firstEditor.timeline = firstTimeline
+        service.editor = firstEditor
+        let firstRoot = try #require(firstEditor.workingRoot)
+        service.loadSessions(from: firstRoot)
         let firstChatID = try #require(service.currentSessionId)
+
+        #expect(service.send(
+            text: "Call show_dialog exactly once with title Choose and one single-choice section whose options are Continue and Revise. After the host returns the selection, reply with dialog-result followed by the selected label and do not call another tool.",
+            mentions: []
+        ))
+        #expect(await waitForServiceIdle(service, timeout: .seconds(300)))
+        #expect(service.streamError == nil)
+        let dialog = try #require(service.pendingDialog)
+        #expect(dialog.title == "Choose")
+        service.submitDialog(
+            dialog,
+            result: AgentDialogResult(
+                selectedLabels: ["choice": ["Continue"]],
+                toggles: [:],
+                direction: ""
+            )
+        )
+        #expect(await waitForServiceIdle(service, timeout: .seconds(300)))
+        #expect(service.streamError == nil)
+        let dialogToolUses = service.messages.flatMap(\.blocks).filter {
+            guard case .toolUse(_, let name, _) = $0 else { return false }
+            return name == ToolName.showDialog.rawValue
+        }
+        let dialogueFollowUpSucceeded = dialogToolUses.count == 1
+            && service.messages.contains { message in
+                message.role == .assistant && message.blocks.contains {
+                    guard case .text(let value) = $0 else { return false }
+                    return value.localizedCaseInsensitiveContains("dialog-result")
+                        && value.localizedCaseInsensitiveContains("continue")
+                }
+            }
+        #expect(dialogueFollowUpSucceeded)
 
         #expect(service.send(
             text: "Call get_timeline exactly once with no arguments. Report only its totalFrames value.",
             mentions: []
         ))
-        for _ in 0..<900 where service.isStreaming {
-            try await Task.sleep(for: .seconds(1))
-        }
-        #expect(!service.isStreaming)
+        #expect(await waitForServiceIdle(service, timeout: .seconds(300)))
         #expect(service.streamError == nil)
         let usedTimeline = service.messages.contains { message in
             message.blocks.contains { block in
@@ -318,50 +462,68 @@ struct CodexAppServerLiveAcceptanceTests {
                 return name == ToolName.getTimeline.rawValue
             }
         }
-        let receivedTimeline = service.messages.contains { message in
-            message.blocks.contains { block in
-                guard case .toolResult(_, _, let isError) = block else { return false }
-                return !isError
-            }
-        }
+        let receivedFirstTimeline = transcriptContainsTimeline(service.messages, totalFrames: 73)
         #expect(usedTimeline)
-        #expect(receivedTimeline)
+        #expect(receivedFirstTimeline)
+        let staleSession = try #require(productAdapters.first?.latestSession)
+        let driverCountBeforeProjectSwitch = productDrivers.count
 
-        let secondProject = scratchRoot.appendingPathComponent(
-            "codex-product-boundary-\(UUID().uuidString).ngv",
-            isDirectory: true
-        )
-        service.loadSessions(from: secondProject)
+        let secondEditor = EditorViewModel(agentService: service)
+        secondEditor.projectURL = secondProject
+        secondEditor.timeline = secondTimeline
+        service.editor = secondEditor
+        let secondRoot = try #require(secondEditor.workingRoot)
+        service.loadSessions(from: secondRoot)
         let secondChatID = try #require(service.currentSessionId)
         #expect(secondChatID != firstChatID)
+        #expect(firstEditor !== secondEditor)
+        #expect(firstRoot.standardizedFileURL != secondRoot.standardizedFileURL)
+        let staleResult = await staleSession.executeTool(
+            "stale-project-call",
+            ToolName.getTimeline.rawValue,
+            "{}"
+        )
+        let staleGenerationWasRejected = staleResult.isError
+            && staleResult.content.contains {
+                guard case .text(let value) = $0 else { return false }
+                return value.contains("originating chat session is no longer active")
+            }
+        #expect(staleGenerationWasRejected)
         #expect(service.send(
             text: "Call get_timeline exactly once with no arguments. Report only its totalFrames value.",
             mentions: []
         ))
-        for _ in 0..<900 where service.isStreaming {
-            try await Task.sleep(for: .seconds(1))
-        }
-        #expect(!service.isStreaming)
+        #expect(await waitForServiceIdle(service, timeout: .seconds(300)))
         #expect(service.streamError == nil)
-        let secondProjectToolResult = service.messages.contains { message in
-            message.blocks.contains { block in
-                guard case .toolResult(_, _, let isError) = block else { return false }
-                return !isError
-            }
+        let receivedSecondTimeline = transcriptContainsTimeline(service.messages, totalFrames: 211)
+        #expect(receivedSecondTimeline)
+        let secondProjectDrivers = productDrivers.dropFirst(driverCountBeforeProjectSwitch)
+        let firstChatWasNotInjected = !secondProjectDrivers.contains {
+            $0.requestedMethods.contains("thread/injectItems")
         }
-        #expect(secondProjectToolResult)
+        #expect(firstChatWasNotInjected)
         service.cancel()
         for driver in productDrivers { await driver.waitForTermination() }
+        firstEditor.releaseWorkingCopy()
+        secondEditor.releaseWorkingCopy()
         let crossedChatAndProjectBoundary = secondChatID != firstChatID
-            && productDrivers.count >= 2
-            && receivedTimeline
-            && secondProjectToolResult
+            && firstEditor !== secondEditor
+            && firstRoot.standardizedFileURL != secondRoot.standardizedFileURL
+            && receivedFirstTimeline
+            && receivedSecondTimeline
+            && staleGenerationWasRejected
+            && firstChatWasNotInjected
 
         if let evidencePath = environment["NGV_CODEX_ACCEPTANCE_EVIDENCE"] {
             try mergeLiveEvidence([
-                "agent_service_consumer_exercised": usedTimeline && receivedTimeline,
-                "real_tool_executor_exercised": receivedTimeline && secondProjectToolResult,
-                "two_chats_and_project_boundary": crossedChatAndProjectBoundary,
+                "agent_service_consumer_exercised": usedTimeline
+                    && receivedFirstTimeline
+                    && receivedSecondTimeline,
+                "real_tool_executor_exercised": receivedFirstTimeline && receivedSecondTimeline,
+                "dialog_consumer_follow_up": dialogueFollowUpSucceeded,
+                "distinct_project_roots_and_editors": crossedChatAndProjectBoundary,
+                "stale_project_generation_rejected": staleGenerationWasRejected,
+                "first_chat_not_injected_into_second_project": firstChatWasNotInjected,
             ], at: evidencePath)
         }
     }
@@ -371,7 +533,9 @@ struct CodexAppServerLiveAcceptanceTests {
         providerSessionID: String? = nil,
         interfaceLanguage: AgentInterfaceLanguage = .init(identifier: "en", displayName: "English"),
         phase: String = "smoke",
-        phaseInstructions: String = "Call acceptance_echo when requested."
+        phaseInstructions: String = "Call acceptance_echo when requested.",
+        expectedEchoValue: String? = nil,
+        toolOutputImage: AgentRuntimeImage? = nil
     ) -> AgentRuntimeSessionRequest {
         let tool = AgentRuntimeToolSchema(
             name: "acceptance_echo",
@@ -405,15 +569,22 @@ struct CodexAppServerLiveAcceptanceTests {
                 guard name == "acceptance_echo",
                       let data = input.data(using: .utf8),
                       let arguments = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      arguments["value"] as? String == "light" else {
+                      let value = arguments["value"] as? String else {
                     return .error("unexpected acceptance call")
                 }
+                if let expectedEchoValue, value != expectedEchoValue {
+                    return .error("unexpected acceptance call")
+                }
+                let returnedImage = toolOutputImage ?? AgentRuntimeImage(
+                    mediaType: "image/png",
+                    base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nE4AAAAASUVORK5CYII="
+                )
                 return ToolResult(
                     content: [
                         .text("controlled-result"),
                         .image(
-                            base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nE4AAAAASUVORK5CYII=",
-                            mediaType: "image/png"
+                            base64: returnedImage.base64,
+                            mediaType: returnedImage.mediaType
                         ),
                     ],
                     isError: false
@@ -421,6 +592,145 @@ struct CodexAppServerLiveAcceptanceTests {
             }
         )
     }
+}
+
+@MainActor
+private final class RecordingLiveRuntimeAdapter: AgentRuntimeAdapter {
+    private let runtime: CodexAppServerRuntimeAdapter
+    private(set) var latestSession: AgentRuntimeSessionRequest?
+
+    init(_ runtime: CodexAppServerRuntimeAdapter) {
+        self.runtime = runtime
+    }
+
+    var descriptor: AgentRuntimeDescriptor { runtime.descriptor }
+    var state: AgentRuntimeState { runtime.state }
+
+    func start(_ request: AgentRuntimeSessionRequest) throws {
+        latestSession = request
+        try runtime.start(request)
+    }
+
+    func resume(_ request: AgentRuntimeSessionRequest) throws {
+        latestSession = request
+        try runtime.resume(request)
+    }
+
+    func send(_ request: AgentRuntimeTurnRequest) throws -> AsyncStream<AgentRuntimeEventEnvelope> {
+        try runtime.send(request)
+    }
+
+    func cancel(sessionID: UUID) {
+        runtime.cancel(sessionID: sessionID)
+    }
+
+    func end(sessionID: UUID) {
+        runtime.end(sessionID: sessionID)
+    }
+}
+
+@MainActor
+private func waitForProviderTurn(
+    _ adapter: CodexAppServerRuntimeAdapter,
+    timeout: Duration
+) async -> String? {
+    let deadline = ContinuousClock.now.advanced(by: timeout)
+    while ContinuousClock.now < deadline {
+        if let turnID = adapter.activeProviderTurnIdentifier { return turnID }
+        try? await Task.sleep(for: .milliseconds(20))
+    }
+    return nil
+}
+
+@MainActor
+private func waitForServiceIdle(
+    _ service: AgentService,
+    timeout: Duration
+) async -> Bool {
+    let deadline = ContinuousClock.now.advanced(by: timeout)
+    while service.isStreaming, ContinuousClock.now < deadline {
+        try? await Task.sleep(for: .milliseconds(50))
+    }
+    return !service.isStreaming
+}
+
+private func transcriptContainsTimeline(
+    _ messages: [AgentMessage],
+    totalFrames: Int
+) -> Bool {
+    messages.contains { message in
+        message.blocks.contains { block in
+            guard case .toolResult(_, let content, let isError) = block, !isError else {
+                return false
+            }
+            return content.contains { resultBlock in
+                guard case .text(let value) = resultBlock,
+                      let data = value.data(using: .utf8),
+                      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                else { return false }
+                return (object["totalFrames"] as? NSNumber)?.intValue == totalFrames
+            }
+        }
+    }
+}
+
+private func randomAcceptanceCode() -> String {
+    String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8)).uppercased()
+}
+
+private func renderedAcceptanceImage(code: String) throws -> AgentRuntimeImage {
+    let width = 720
+    let height = 240
+    guard let bitmap = NSBitmapImageRep(
+        bitmapDataPlanes: nil,
+        pixelsWide: width,
+        pixelsHigh: height,
+        bitsPerSample: 8,
+        samplesPerPixel: 4,
+        hasAlpha: true,
+        isPlanar: false,
+        colorSpaceName: .deviceRGB,
+        bytesPerRow: 0,
+        bitsPerPixel: 0
+    ), let context = NSGraphicsContext(bitmapImageRep: bitmap) else {
+        throw CocoaError(.fileWriteUnknown)
+    }
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = context
+    NSColor(calibratedRed: 0.94, green: 0.96, blue: 1, alpha: 1).setFill()
+    NSBezierPath(
+        rect: NSRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height))
+    ).fill()
+    for (index, scalar) in code.unicodeScalars.enumerated() {
+        let value = CGFloat(Int(scalar.value) % 97) / 96
+        NSColor(
+            calibratedRed: 0.15 + value * 0.45,
+            green: 0.22 + CGFloat(index % 3) * 0.16,
+            blue: 0.72 - value * 0.25,
+            alpha: 0.42
+        ).setFill()
+        NSBezierPath(
+            ovalIn: NSRect(x: CGFloat(22 + index * 84), y: 22, width: 58, height: 58)
+        ).fill()
+    }
+    let attributes: [NSAttributedString.Key: Any] = [
+        .font: NSFont.monospacedSystemFont(ofSize: 92, weight: .bold),
+        .foregroundColor: NSColor.black,
+        .kern: 5,
+    ]
+    NSAttributedString(string: code, attributes: attributes).draw(
+        in: NSRect(x: 42, y: 88, width: CGFloat(width - 84), height: 120)
+    )
+    context.flushGraphics()
+    NSGraphicsContext.restoreGraphicsState()
+    guard let data = bitmap.representation(using: .png, properties: [:]) else {
+        throw CocoaError(.fileWriteUnknown)
+    }
+    return AgentRuntimeImage(mediaType: "image/png", base64: data.base64EncodedString())
+}
+
+private func jsonString(_ object: [String: Any]) throws -> String {
+    String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
 }
 
 @MainActor
@@ -439,7 +749,7 @@ private func liveTerminals(_ events: [AgentRuntimeEventEnvelope]) -> [AgentRunti
     }
 }
 
-private func mergeLiveEvidence(_ values: [String: Any], at path: String) throws {
+func mergeLiveEvidence(_ values: [String: Any], at path: String) throws {
     let url = URL(fileURLWithPath: path)
     var evidence: [String: Any] = [:]
     if FileManager.default.fileExists(atPath: path) {

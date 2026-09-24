@@ -37,7 +37,11 @@ jobs:
     uses: ./.github/workflows/ci.yml
 
   codex-app-server-acceptance:
-    if: inputs.evidence_mode == 'codex-app-server-acceptance'
+    if: >-
+      inputs.evidence_mode == 'codex-app-server-acceptance' &&
+      github.actor == github.repository_owner &&
+      github.triggering_actor == github.repository_owner &&
+      github.run_attempt == 1
     uses: ./.github/workflows/codex-app-server-acceptance.yml
     with:
       source_sha: ${{ inputs.source_sha }}

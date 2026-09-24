@@ -6,8 +6,6 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
     typealias RuntimeLocations = @MainActor (_ session: AgentRuntimeSessionRequest) throws -> (home: URL, scratch: URL)
 
     private struct PendingSuspension {
-        let responseID: Any
-        let result: [String: Any]
         let providerTurnID: String
     }
 
@@ -22,8 +20,11 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
     private var providerTurnID: String?
     private var pendingSuspension: PendingSuspension?
     private var suspensionTimeoutTask: Task<Void, Never>?
+    private var cancellationTask: Task<Void, Never>?
     private var requiresTranscriptReplay = false
     private var invalidated = false
+
+    var activeProviderTurnIdentifier: String? { providerTurnID }
 
     private(set) var descriptor: AgentRuntimeDescriptor
     private(set) var state: AgentRuntimeState = .idle
@@ -78,6 +79,8 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
         pendingSuspension = nil
         suspensionTimeoutTask?.cancel()
         suspensionTimeoutTask = nil
+        cancellationTask?.cancel()
+        cancellationTask = nil
         guard let relay = activeRelay, let activeTurnID else {
             driver?.stop()
             driver = nil
@@ -88,29 +91,8 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
         }
         state = .cancelling(sessionID: sessionID, turnID: activeTurnID)
         relay.yield(.providerSessionInvalidated)
-        guard let driver, let threadID = providerThreadID, let turnID = providerTurnID else {
-            finishCancellation(sessionID: sessionID, relay: relay)
-            return
-        }
-        Task { @MainActor [weak self] in
-            do {
-                _ = try await driver.request(
-                    method: "turn/interrupt",
-                    params: ["threadId": threadID, "turnId": turnID]
-                )
-                guard let self,
-                      self.activeRelay === relay,
-                      self.providerTurnID == turnID,
-                      relay.terminal == nil else { return }
-                try? await Task.sleep(for: .seconds(5))
-                guard self.activeRelay === relay,
-                      self.providerTurnID == turnID,
-                      relay.terminal == nil else { return }
-                self.finishCancellation(sessionID: sessionID, relay: relay)
-            } catch {
-                guard let self, self.activeRelay === relay, relay.terminal == nil else { return }
-                self.finishCancellation(sessionID: sessionID, relay: relay)
-            }
+        cancellationTask = Task { @MainActor [weak self] in
+            await self?.cancelActiveTurn(sessionID: sessionID, relay: relay)
         }
     }
 
@@ -120,6 +102,8 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
         pendingSuspension = nil
         suspensionTimeoutTask?.cancel()
         suspensionTimeoutTask = nil
+        cancellationTask?.cancel()
+        cancellationTask = nil
         activeRelay?.yield(.providerSessionInvalidated)
         activeRelay?.finish(.cancelled)
         activeTask?.cancel()
@@ -149,6 +133,8 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
         pendingSuspension = nil
         suspensionTimeoutTask?.cancel()
         suspensionTimeoutTask = nil
+        cancellationTask?.cancel()
+        cancellationTask = nil
         requiresTranscriptReplay = replayTranscript
         invalidated = false
         descriptor = AgentBackend.codexAppServer.runtimeDescriptor(
@@ -264,6 +250,8 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
             pendingSuspension = nil
             suspensionTimeoutTask?.cancel()
             suspensionTimeoutTask = nil
+            cancellationTask?.cancel()
+            cancellationTask = nil
         }
     }
 
@@ -404,8 +392,6 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
                 return
             }
             pendingSuspension = PendingSuspension(
-                responseID: responseID,
-                result: providerResult,
                 providerTurnID: turnID
             )
             state = .cancelling(sessionID: request.sessionID, turnID: request.turnID)
@@ -538,15 +524,15 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
                 if let pending = pendingSuspension, pending.providerTurnID == providerTurnID {
                     suspensionTimeoutTask?.cancel()
                     suspensionTimeoutTask = nil
-                    do {
-                        try driver.respond(id: pending.responseID, result: pending.result)
-                    } catch {
-                        fail(Self.failure(error), sessionID: request.sessionID, relay: relay)
-                        return
-                    }
                     pendingSuspension = nil
+                    invalidated = true
+                    providerThreadID = nil
+                    providerTurnID = nil
+                    relay.yield(.providerSessionInvalidated)
                     relay.finish(.completed(.toolUse))
-                    setStateIfActive(.ready(sessionID: request.sessionID), relay: relay)
+                    setStateIfActive(.ended(sessionID: request.sessionID), relay: relay)
+                    driver.stop()
+                    if self.driver === driver { self.driver = nil }
                 } else {
                     relay.finish(.cancelled)
                     setStateIfActive(
@@ -614,6 +600,8 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
         pendingSuspension = nil
         suspensionTimeoutTask?.cancel()
         suspensionTimeoutTask = nil
+        cancellationTask?.cancel()
+        cancellationTask = nil
         relay.yield(.providerSessionInvalidated)
         relay.yield(.error(failure))
         relay.finish(.failed)
@@ -633,6 +621,40 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
         providerThreadID = nil
         providerTurnID = nil
         state = .ended(sessionID: sessionID)
+    }
+
+    private func cancelActiveTurn(
+        sessionID: UUID,
+        relay: AgentRuntimeEventRelay
+    ) async {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while activeRelay === relay, relay.terminal == nil {
+            if let driver, let threadID = providerThreadID, let turnID = providerTurnID {
+                do {
+                    _ = try await driver.request(
+                        method: "turn/interrupt",
+                        params: ["threadId": threadID, "turnId": turnID]
+                    )
+                    guard activeRelay === relay,
+                          providerTurnID == turnID,
+                          relay.terminal == nil else { return }
+                    try? await Task.sleep(for: .seconds(5))
+                    guard !Task.isCancelled,
+                          activeRelay === relay,
+                          providerTurnID == turnID,
+                          relay.terminal == nil else { return }
+                } catch {
+                    guard activeRelay === relay, relay.terminal == nil else { return }
+                }
+                finishCancellation(sessionID: sessionID, relay: relay)
+                return
+            }
+            guard ContinuousClock.now < deadline, !Task.isCancelled else {
+                finishCancellation(sessionID: sessionID, relay: relay)
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
     }
 
     private func setStateIfActive(_ value: AgentRuntimeState, relay: AgentRuntimeEventRelay) {
@@ -894,18 +916,40 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
         guard let applicationSupport = manager.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
-        ).first,
-              let caches = manager.urls(for: .cachesDirectory, in: .userDomainMask).first else {
+        ).first else {
             throw CodexAppServerError.launchFailed("Runtime directories are unavailable")
         }
         let home = applicationSupport
             .appendingPathComponent("NexGenVideo", isDirectory: true)
             .appendingPathComponent("CodexRuntime", isDirectory: true)
             .appendingPathComponent("Home", isDirectory: true)
-        let scratch = caches
-            .appendingPathComponent("NexGenVideo", isDirectory: true)
-            .appendingPathComponent("CodexRuntime", isDirectory: true)
-            .appendingPathComponent(session.runtimeGenerationID.uuidString, isDirectory: true)
+        let temporaryRoot = manager.temporaryDirectory
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        try requireUnversionedScratchRoot(temporaryRoot, fileManager: manager)
+        let scratch = temporaryRoot
+            .appendingPathComponent(
+                "NexGenVideo-CodexRuntime-\(session.runtimeGenerationID.uuidString)",
+                isDirectory: true
+            )
         return (home, scratch)
+    }
+
+    static func requireUnversionedScratchRoot(
+        _ root: URL,
+        fileManager: FileManager
+    ) throws {
+        var cursor = root.standardizedFileURL
+        while true {
+            let marker = cursor.appendingPathComponent(".git")
+            if fileManager.fileExists(atPath: marker.path) {
+                throw CodexAppServerError.launchFailed(
+                    "The runtime temporary directory has a Git ancestor; project configuration isolation cannot be proven"
+                )
+            }
+            let parent = cursor.deletingLastPathComponent()
+            if parent.path == cursor.path { return }
+            cursor = parent
+        }
     }
 }
