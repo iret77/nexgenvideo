@@ -10,6 +10,10 @@ on:
     paths:
       - "scripts/bundle.sh"
       - "scripts/NexGenVideo.entitlements"
+      - "Runtime/bpy/*.entitlements"
+      - "Runtime/bpy/NexGenVideoBpyService-Info.plist"
+      - "scripts/bundle_bpy_runtime.sh"
+      - "scripts/verify_bpy_bundle.sh"
       - ".github/workflows/release.yml"
       - ".github/workflows/signing-preflight.yml"
       - "Sources/NexGenVideo/Resources/Info.plist"

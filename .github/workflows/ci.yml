@@ -98,7 +98,7 @@ jobs:
     if: needs.source_gate.outputs.build_required == 'true'
     # Xcode 27 compiles the macOS 26 product and its availability-gated macOS 27 adapter.
     runs-on: xcode-27
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
 
@@ -168,7 +168,10 @@ jobs:
 
       - name: Bundle (debug, ad-hoc signed)
         if: needs.source_gate.outputs.bundle_required == 'true'
-        run: scripts/bundle.sh debug
+        run: |
+          scripts/stage_bpy_runtime.sh "$RUNNER_TEMP/bpy-runtime"
+          NGV_BPY_RUNTIME_ROOT="$RUNNER_TEMP/bpy-runtime" scripts/bundle.sh debug
+          scripts/verify_bpy_bundle.sh .build/NexGenVideo.app
 
       - name: Verify app build did not mutate tracked source
         if: needs.source_gate.outputs.bundle_required == 'true'

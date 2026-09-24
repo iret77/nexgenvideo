@@ -616,6 +616,7 @@ final class VideoProject: NSDocument {
     // MARK: - Close
 
     override func close() {
+        BpyRuntimeHost.shared.unregister(document: self)
         // Clean close (any save/don't-save prompt already resolved) → drop the working copy so the next
         // launch doesn't mistake it for crash-surviving unsaved work.
         if let fileURL,
@@ -686,6 +687,9 @@ final class VideoProject: NSDocument {
         editorViewModel.onPipelineChanged = { [weak self] in
             self?.updateChangeCount(.changeDone)
         }
+        let bpyDocumentID = editorViewModel.openWorkingCopyKey
+            ?? "unsaved-\(ObjectIdentifier(self).hashValue)"
+        BpyRuntimeHost.shared.register(document: self, documentID: bpyDocumentID)
 
         let editorView = EditorWindowContentView()
             .environment(editorViewModel)

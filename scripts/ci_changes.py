@@ -38,6 +38,11 @@ BUNDLE_PATHS = (
     'Sources/HangDiagnostics/**',
     'Sources/HangStackSampler/**',
     'Sources/NexGenVideoDiagnostics/**',
+    'Sources/BpyRuntimeProtocol/**',
+    'Sources/NexGenVideoBpyService/**',
+    'Sources/NexGenVideo/ThreeD/**',
+    'Runtime/bpy/**',
+    '.github/workflows/bpy-runtime-acceptance.yml',
 )
 UI_PATHS = (
     "docs/ui/**",

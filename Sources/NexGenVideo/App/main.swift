@@ -4,6 +4,7 @@ Log.bootstrap()
 ChatHangReplay.runIfRequested()
 HangDiagnosticReplay.runIfRequested()
 AppRelaunchSelfTest.recordBootIfRequested()
+BpyRuntimeSelfTest.runIfRequested()
 
 // CI-only exact-file analysis through the real app and private digest-pinned fixture.
 ExampleAudioAnalysisSelfTest.runIfRequested()

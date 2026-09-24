@@ -119,6 +119,10 @@ jobs:
       - name: Verify private fixture bundle tooling
         run: python3 -m unittest discover -s scripts -p 'test_*.py'
 
+      - name: Block unresolved managed-runtime distribution obligations
+        if: ${{ inputs.dry_run == false }}
+        run: python3 scripts/verify_bpy_runtime.py --distribution
+
       - name: Inspect or resume release publication
         if: ${{ inputs.dry_run == false }}
         id: publication-state
@@ -462,7 +466,10 @@ jobs:
         run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
 
       - name: Build and sign app
-        run: scripts/bundle.sh release --sign
+        run: |
+          scripts/stage_bpy_runtime.sh "$RUNNER_TEMP/bpy-runtime"
+          NGV_BPY_RUNTIME_ROOT="$RUNNER_TEMP/bpy-runtime" scripts/bundle.sh release --sign
+          scripts/verify_bpy_bundle.sh .build/NexGenVideo.app
 
       - name: Verify app bundling did not mutate tracked source
         run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist

@@ -49,6 +49,20 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertNotIn("render_agent_chat_spec.py", build)
         self.assertNotIn("pull_request:", (ROOT / ".github/workflows/bundle.yml").read_text())
 
+    def test_bpy_runtime_changes_require_a_bundle(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import ci_changes
+        for path in (
+            "Runtime/bpy/runtime-lock.json",
+            "Sources/BpyRuntimeProtocol/BpyRuntimeProtocol.swift",
+            "Sources/NexGenVideoBpyService/main.swift",
+            "Sources/NexGenVideo/ThreeD/BpyRuntimeClient.swift",
+        ):
+            with self.subTest(path=path):
+                plan = ci_changes.classify([path])
+                self.assertTrue(plan["build_required"])
+                self.assertTrue(plan["bundle_required"])
+
 
 if __name__ == "__main__":
     unittest.main()

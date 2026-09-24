@@ -1,0 +1,230 @@
+name: Managed bpy Runtime Acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact commit to accept
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bpy-runtime-acceptance-${{ inputs.source_sha }}
+  cancel-in-progress: false
+
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+      - name: Bind source and verify the lock before macOS allocation
+        env:
+          EXPECTED_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [ "$(git rev-parse HEAD)" = "$EXPECTED_SHA" ]
+          python3 scripts/verify_bpy_runtime.py
+          python3 -m unittest \
+            scripts.test_verify_bpy_runtime \
+            scripts.test_bpy_runtime_workflow
+
+  build:
+    needs: source
+    runs-on: xcode-27
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+      - uses: ./.github/actions/setup-xcode-27
+      - uses: ./.github/actions/cache-swiftpm-dependencies
+      - name: Import existing Developer ID identity
+        env:
+          CERT_B64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          CERT_PW: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/bpy-signing.keychain-db"
+          KEYCHAIN_PW="$(openssl rand -base64 24)"
+          printf '%s' "$CERT_B64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -P "$CERT_PW" -A -t cert -f pkcs12 \
+            -k "$KEYCHAIN" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PW" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" \
+            $(security list-keychains -d user | sed 's/"//g')
+          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN" \
+            | awk '/Developer ID Application/{print $2; exit}')"
+          [ -n "$IDENTITY" ]
+          echo "SIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+      - name: Prepare existing notary key
+        env:
+          NOTARY_KEY_B64: ${{ secrets.MACOS_NOTARY_KEY_P8_BASE64 }}
+          NOTARY_KEY_ID_VALUE: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          NOTARY_ISSUER_VALUE: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$NOTARY_KEY_B64" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+          {
+            echo "NOTARY_KEY_FILE=$RUNNER_TEMP/notary.p8"
+            echo "NOTARY_KEY_ID=$NOTARY_KEY_ID_VALUE"
+            echo "NOTARY_ISSUER=$NOTARY_ISSUER_VALUE"
+          } >> "$GITHUB_ENV"
+      - name: Build and unit-test on xcode-27
+        run: |
+          set -euo pipefail
+          swift build --cache-path "$NGV_SWIFTPM_CACHE_PATH" --build-tests
+          scripts/stage_test_runtime.sh debug
+          swift test --cache-path "$NGV_SWIFTPM_CACHE_PATH" --skip-build
+      - name: Assemble and sign the pinned managed runtime
+        run: |
+          set -euo pipefail
+          scripts/stage_bpy_runtime.sh "$RUNNER_TEMP/bpy-runtime"
+          NGV_BPY_RUNTIME_ROOT="$RUNNER_TEMP/bpy-runtime" scripts/bundle.sh release --sign
+          scripts/verify_bpy_bundle.sh .build/NexGenVideo.app
+      - name: Verify nested identities and the OS sandbox contract
+        run: |
+          set -euo pipefail
+          APP=.build/NexGenVideo.app
+          PYTHON="$APP/Contents/Helpers/BpyRuntime/python/bin/python3.13"
+          codesign --verify --strict --verbose=2 "$APP"
+          codesign -d --entitlements :- "$PYTHON" > "$RUNNER_TEMP/python-entitlements.plist"
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.app-sandbox' "$RUNNER_TEMP/python-entitlements.plist")" = true ]
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.inherit' "$RUNNER_TEMP/python-entitlements.plist")" = true ]
+          ! /usr/libexec/PlistBuddy -c 'Print :com.apple.security.network.client' "$RUNNER_TEMP/python-entitlements.plist"
+          for slot in 0 1; do
+            XPC="$APP/Contents/XPCServices/NexGenVideoBpyService$slot.xpc"
+            ENTITLEMENTS="$RUNNER_TEMP/xpc-entitlements-$slot.plist"
+            codesign --verify --strict --verbose=2 "$XPC"
+            codesign -d --entitlements :- "$XPC" > "$ENTITLEMENTS"
+            [ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.app-sandbox' "$ENTITLEMENTS")" = true ]
+            ! /usr/libexec/PlistBuddy -c 'Print :com.apple.security.network.client' "$ENTITLEMENTS"
+          done
+          test ! -e "$APP/Contents/Helpers/BpyRuntime/python/bin/pip"
+          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/NexGenVideo-bpy.zip"
+          scripts/notarize.sh "$RUNNER_TEMP/NexGenVideo-bpy.zip"
+          xcrun stapler staple "$APP"
+          xcrun stapler validate "$APP"
+          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/NexGenVideo-bpy-notarized.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: managed-bpy-notarized-${{ inputs.source_sha }}
+          path: ${{ runner.temp }}/NexGenVideo-bpy-notarized.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  runtime:
+    needs: build
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: managed-bpy-notarized-${{ inputs.source_sha }}
+          path: ${{ runner.temp }}/download
+      - name: Relocate the notarized app and prepare denied resources
+        run: |
+          set -euo pipefail
+          [ "$(sw_vers -productVersion | cut -d. -f1)" = 26 ]
+          [ "$(uname -m)" = arm64 ]
+          mkdir -p "$RUNNER_TEMP/relocated" "$RUNNER_TEMP/denied/foreign-project" \
+            "$RUNNER_TEMP/fake-bin" "$RUNNER_TEMP/approved-input"
+          ditto -x -k "$RUNNER_TEMP/download/NexGenVideo-bpy-notarized.zip" "$RUNNER_TEMP/relocated"
+          APP="$RUNNER_TEMP/relocated/NexGenVideo.app"
+          codesign --verify --strict --verbose=2 "$APP"
+          xcrun stapler validate "$APP"
+          spctl -a -vvv -t exec "$APP"
+          printf 'provider-secret' > "$RUNNER_TEMP/denied/provider-secret"
+          printf 'canonical-project-truth' > "$RUNNER_TEMP/denied/canonical-artifact"
+          printf 'foreign-project' > "$RUNNER_TEMP/denied/foreign-project/scene.blend"
+          printf 'host-home-secret' > "$HOME/ngv-bpy-host-home-secret"
+          printf '{"approved":true}' > "$RUNNER_TEMP/approved-input/fixture.json"
+          ln -s "$RUNNER_TEMP/denied/provider-secret" "$RUNNER_TEMP/approved-input/symlink.json"
+          printf 'hardlink' > "$RUNNER_TEMP/approved-input/hardlink-source"
+          ln "$RUNNER_TEMP/approved-input/hardlink-source" "$RUNNER_TEMP/approved-input/hardlink.json"
+          printf '#!/bin/sh\nexit 99\n' > "$RUNNER_TEMP/fake-bin/python3"
+          printf '#!/bin/sh\nexit 99\n' > "$RUNNER_TEMP/fake-bin/blender"
+          chmod +x "$RUNNER_TEMP/fake-bin/python3" "$RUNNER_TEMP/fake-bin/blender"
+      - name: Run real bpy acceptance without ambient Blender or Python
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/relocated/NexGenVideo.app"
+          EVIDENCE="$RUNNER_TEMP/evidence"
+          mkdir -p "$EVIDENCE"
+          DENIED="$(jq -cn \
+            --arg secret "$RUNNER_TEMP/denied/provider-secret" \
+            --arg canonical "$RUNNER_TEMP/denied/canonical-artifact" \
+            --arg foreign "$RUNNER_TEMP/denied/foreign-project/scene.blend" \
+            --arg home "$HOME/ngv-bpy-host-home-secret" \
+            '[$secret,$canonical,$foreign,$home]')"
+          system_profiler SPHardwareDataType > "$EVIDENCE/hardware.txt"
+          sw_vers > "$EVIDENCE/os.txt"
+          before="$(pgrep -f 'BpyRuntime/python' || true)"
+          [ -z "$before" ]
+          /usr/bin/time -l env \
+            PATH="$RUNNER_TEMP/fake-bin" \
+            BLENDER_USER_CONFIG="$RUNNER_TEMP/denied/foreign-blender" \
+            PYTHONPATH="$RUNNER_TEMP/denied/foreign-python" \
+            NGV_TEST_SECRET="must-not-cross-xpc" \
+            NGV_BPY_DENIED_PATHS="$DENIED" \
+            NGV_BPY_APPROVED_INPUT_DIR="$RUNNER_TEMP/approved-input" \
+            NGV_SELFTEST_BPY="$EVIDENCE" \
+            "$APP/Contents/MacOS/NexGenVideo" \
+            > "$EVIDENCE/runtime.log" 2> "$EVIDENCE/time.txt"
+          grep -q SELFTEST_BPY_OK "$EVIDENCE/runtime.log"
+          jq -e --arg app "$APP" --arg foreign "$RUNNER_TEMP/denied/foreign-blender" '
+            .python == "3.13.15"
+            and .bpy == "5.2.2"
+            and .sandboxed == true
+            and .coldStartSeconds > 0
+            and .warmJobSeconds > 0
+            and .jobMetrics.edit_seconds > 0
+            and .jobMetrics.render_seconds > 0
+            and .jobMetrics.peak_memory_bytes > 0
+            and .jobMetrics.vertices > 8
+            and .jobMetrics.polygons > 6
+            and .duplicateJoined == true
+            and .sessionsClosed == true
+            and .crossSessionDenied == true
+            and .timeoutState == "timedOut"
+            and .cancelState == "cancelled"
+            and .crashState == "crashed"
+            and .workerA != .workerB
+            and .workerEvidence.secret_environment_absent == true
+            and .workerEvidence.approved_input.approved == true
+            and (.workerEvidence.modifiers.NGV_Room | index("BEVEL")) != null
+            and (.workerEvidence.python_executable | startswith($app + "/"))
+            and (.workerEvidence.bpy_module | startswith($app + "/"))
+            and .workerEvidence.blender_user_config != $foreign
+            and (.workerEvidence.session_root as $session | .workerEvidence.blender_user_config | startswith($session + "/"))
+            and (.workerEvidence.network_denied.denied == true)
+            and (.workerEvidence.network_denied.errno == 1 or .workerEvidence.network_denied.errno == 13)
+            and all(.workerEvidence.denied_paths[]; .denied == true and (.errno == 1 or .errno == 13))
+            and (.workerEvidence.renderer.selected == "CYCLES_METAL" or .workerEvidence.renderer.selected == "CYCLES_CPU")
+          ' "$EVIDENCE/result.json"
+          test -s "$EVIDENCE/perspective.png"
+          [ "$(sips -g pixelWidth "$EVIDENCE/perspective.png" | awk '/pixelWidth/{print $2}')" = 640 ]
+          [ "$(sips -g pixelHeight "$EVIDENCE/perspective.png" | awk '/pixelHeight/{print $2}')" = 360 ]
+          sleep 2
+          after="$(pgrep -f 'BpyRuntime/python' || true)"
+          [ -z "$after" ] || { echo "orphan bpy workers: $after"; exit 1; }
+          du -sk "$APP" > "$EVIDENCE/app-size-kib.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: managed-bpy-runtime-evidence-${{ inputs.source_sha }}
+          path: ${{ runner.temp }}/evidence
+          if-no-files-found: error
+          retention-days: 90

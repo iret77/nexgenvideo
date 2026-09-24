@@ -150,7 +150,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         HangDiagnosticUI.delete()
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
+    @MainActor func applicationWillTerminate(_ notification: Notification) {
+        BpyRuntimeHost.shared.shutdown()
         HangDiagnosticRecorder.shared.stop()
     }
 }

@@ -148,7 +148,7 @@ BIN="$BIN_DIRECTORY/NexGenVideo"
 echo "==> Assembling $APP"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
-mkdir -p "$APP/Contents/Helpers"
+mkdir -p "$APP/Contents/Helpers" "$APP/Contents/XPCServices"
 cp "$BIN_DIRECTORY/NexGenVideoDiagnostics" "$APP/Contents/Helpers/NexGenVideoDiagnostics"
 cp "$BIN" "$APP/Contents/MacOS/NexGenVideo"
 cp "$RESOURCES/Info.plist" "$APP/Contents/Info.plist"
@@ -175,6 +175,12 @@ else
 fi
 
 cp "$RESOURCES/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+
+BPY_RUNTIME_ROOT="${NGV_BPY_RUNTIME_ROOT:-$ROOT/.build/bpy-runtime}"
+"$ROOT/scripts/bundle_bpy_runtime.sh" \
+  "$BPY_RUNTIME_ROOT" \
+  "$BIN_DIRECTORY/NexGenVideoBpyService" \
+  "$APP"
 
 "$ROOT/scripts/stage_runtime_dependencies.sh" \
   "$APP/Contents/Frameworks" \
@@ -213,9 +219,22 @@ install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/Mac
 touch "$APP"
 
 if [ "$MODE" = "fast" ]; then
-  echo "==> Codesigning main app with $SIGN_IDENTITY (no timestamp, no helpers)"
+  echo "==> Codesigning fast app with managed runtime"
+  BPY_RUNTIME="$APP/Contents/Helpers/BpyRuntime"
+  codesign --force --deep --sign "$SIGN_IDENTITY" "$APP"
+  codesign --force --sign "$SIGN_IDENTITY" \
+    --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
+    "$BPY_RUNTIME/python/bin/python3.13"
+  for BPY_XPC in "$APP/Contents/XPCServices"/NexGenVideoBpyService*.xpc; do
+    codesign --force --sign "$SIGN_IDENTITY" \
+      --entitlements "$ROOT/Runtime/bpy/NexGenVideoBpyService.entitlements" \
+      "$BPY_XPC/Contents/MacOS/NexGenVideoBpyService"
+    codesign --force --sign "$SIGN_IDENTITY" \
+      --entitlements "$ROOT/Runtime/bpy/NexGenVideoBpyService.entitlements" \
+      "$BPY_XPC"
+  done
   codesign --force --sign "$SIGN_IDENTITY" "$APP"
-  echo "==> Done: $APP (fast mode — stable identity, no dSYM, no nested re-sign)"
+  echo "==> Done: $APP (fast mode — stable identity, no dSYM)"
   exit 0
 fi
 
@@ -228,11 +247,48 @@ dsymutil "$BIN_DIRECTORY/libNexGenEngine.dylib" -o "$ROOT/.build/NexGenEngine.dS
 if [ "$MODE" = "dev" ]; then
   echo "==> Ad-hoc signing dev app"
   codesign --force --deep --sign - "$APP"
+  BPY_RUNTIME="$APP/Contents/Helpers/BpyRuntime"
+  codesign --force --sign - \
+    --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
+    "$BPY_RUNTIME/python/bin/python3.13"
+  for BPY_XPC in "$APP/Contents/XPCServices"/NexGenVideoBpyService*.xpc; do
+    codesign --force --sign - \
+      --entitlements "$ROOT/Runtime/bpy/NexGenVideoBpyService.entitlements" \
+      "$BPY_XPC/Contents/MacOS/NexGenVideoBpyService"
+    codesign --force --sign - \
+      --entitlements "$ROOT/Runtime/bpy/NexGenVideoBpyService.entitlements" \
+      "$BPY_XPC"
+  done
+  codesign --force --sign - "$APP"
   codesign --verify --strict --verbose=2 "$APP"
   upload_dsyms
   echo "==> Done: $APP (ad-hoc signed)"
   exit 0
 fi
+
+BPY_RUNTIME="$APP/Contents/Helpers/BpyRuntime"
+echo "==> Codesigning managed bpy runtime"
+while IFS= read -r -d '' binary; do
+  [ "$binary" = "$BPY_RUNTIME/python/bin/python3.13" ] && continue
+  if file "$binary" | grep -q 'Mach-O'; then
+    codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$binary"
+  fi
+done < <(find "$BPY_RUNTIME" -depth -type f -print0)
+codesign --force --options runtime --timestamp \
+  --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
+  --sign "$SIGN_IDENTITY" \
+  "$BPY_RUNTIME/python/bin/python3.13"
+for BPY_XPC in "$APP/Contents/XPCServices"/NexGenVideoBpyService*.xpc; do
+  codesign --force --options runtime --timestamp \
+    --entitlements "$ROOT/Runtime/bpy/NexGenVideoBpyService.entitlements" \
+    --sign "$SIGN_IDENTITY" \
+    "$BPY_XPC/Contents/MacOS/NexGenVideoBpyService"
+  codesign --force --options runtime --timestamp \
+    --entitlements "$ROOT/Runtime/bpy/NexGenVideoBpyService.entitlements" \
+    --sign "$SIGN_IDENTITY" \
+    "$BPY_XPC"
+  codesign --verify --strict --verbose=2 "$BPY_XPC"
+done
 
 SPARKLE_CURRENT="$APP/Contents/Frameworks/Sparkle.framework/Versions/Current"
 if [ -d "$SPARKLE_CURRENT" ]; then
