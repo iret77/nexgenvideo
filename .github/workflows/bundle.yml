@@ -2,6 +2,21 @@ name: Bundle .app
 
 on:
   workflow_dispatch:
+    inputs:
+      evidence_mode:
+        description: Exact work to run
+        required: true
+        default: bundle
+        type: choice
+        options:
+          - bundle
+          - bpy-source-closure-candidate
+          - bpy-binary-evidence-candidate
+      source_sha:
+        description: Exact 40-character commit for a bpy evidence candidate
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -9,4 +24,19 @@ permissions:
 
 jobs:
   validate:
+    if: inputs.evidence_mode == 'bundle'
     uses: ./.github/workflows/ci.yml
+
+  bpy-source-closure-candidate:
+    if: inputs.evidence_mode == 'bpy-source-closure-candidate'
+    uses: ./.github/workflows/bpy-source-closure-candidate.yml
+    with:
+      source_sha: ${{ inputs.source_sha }}
+      workflow_ref: ${{ github.ref }}
+
+  bpy-binary-evidence-candidate:
+    if: inputs.evidence_mode == 'bpy-binary-evidence-candidate'
+    uses: ./.github/workflows/bpy-binary-evidence-candidate.yml
+    with:
+      source_sha: ${{ inputs.source_sha }}
+      workflow_ref: ${{ github.ref }}

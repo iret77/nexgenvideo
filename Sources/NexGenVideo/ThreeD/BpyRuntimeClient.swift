@@ -232,7 +232,8 @@ final class BpyRuntimeSession: @unchecked Sendable {
         diagnosticDeniedPaths: [String] = [],
         diagnosticAutoexecPositiveControl: Bool = false,
         diagnosticDeferExecutionAuthorization: Bool = false,
-        diagnosticSupervisorIdentityWriteFailure: Bool = false
+        diagnosticSupervisorIdentityWriteFailure: Bool = false,
+        diagnosticSupervisorIdentityCaptureFailure: Bool = false
     ) throws -> BpyRuntimeJobResult {
         submissionLock.lock()
         defer { submissionLock.unlock() }
@@ -249,7 +250,8 @@ final class BpyRuntimeSession: @unchecked Sendable {
             inputs: prepared,
             diagnosticDeniedPaths: diagnosticDeniedPaths,
             diagnosticAutoexecPositiveControl: diagnosticAutoexecPositiveControl,
-            diagnosticSupervisorIdentityWriteFailure: diagnosticSupervisorIdentityWriteFailure
+            diagnosticSupervisorIdentityWriteFailure: diagnosticSupervisorIdentityWriteFailure,
+            diagnosticSupervisorIdentityCaptureFailure: diagnosticSupervisorIdentityCaptureFailure
         )
         lock.lock()
         let knownFingerprint = jobFingerprints[id]
@@ -305,7 +307,8 @@ final class BpyRuntimeSession: @unchecked Sendable {
             fingerprint: fingerprint,
             diagnosticDeniedPaths: diagnosticDeniedPaths,
             diagnosticAutoexecPositiveControl: diagnosticAutoexecPositiveControl,
-            diagnosticSupervisorIdentityWriteFailure: diagnosticSupervisorIdentityWriteFailure
+            diagnosticSupervisorIdentityWriteFailure: diagnosticSupervisorIdentityWriteFailure,
+            diagnosticSupervisorIdentityCaptureFailure: diagnosticSupervisorIdentityCaptureFailure
         )
         let response = try call { service, reply in
             service.runJob(try Self.encode(request), withReply: reply)
@@ -1133,7 +1136,8 @@ final class BpyRuntimeSession: @unchecked Sendable {
         inputs: [PreparedBpyInput],
         diagnosticDeniedPaths: [String],
         diagnosticAutoexecPositiveControl: Bool,
-        diagnosticSupervisorIdentityWriteFailure: Bool
+        diagnosticSupervisorIdentityWriteFailure: Bool,
+        diagnosticSupervisorIdentityCaptureFailure: Bool
     ) -> String {
         var digest = SHA256()
         func add(_ value: String?) {
@@ -1142,7 +1146,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
             withUnsafeBytes(of: &length) { digest.update(data: Data($0)) }
             digest.update(data: data)
         }
-        add("nexgenvideo/bpy-job/3")
+        add("nexgenvideo/bpy-job/4")
         add(expectedRevision)
         add(requestedTimeoutSeconds.map(String.init))
         add(String(effectiveTimeoutSeconds))
@@ -1155,6 +1159,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
         diagnosticDeniedPaths.forEach { add($0) }
         add(diagnosticAutoexecPositiveControl ? "1" : "0")
         add(diagnosticSupervisorIdentityWriteFailure ? "1" : "0")
+        add(diagnosticSupervisorIdentityCaptureFailure ? "1" : "0")
         return digest.finalize().map { String(format: "%02x", $0) }.joined()
     }
 

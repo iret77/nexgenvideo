@@ -512,6 +512,30 @@ enum BpyRuntimeSelfTest {
         try assertRecovered(afterIdentityWriteFailure, label: "supervisor identity-write failure")
         _ = try sessionA.cancel(jobID: afterIdentityWriteFailureID)
 
+        let identityCaptureFailure = try sessionA.runJob(
+            id: UUID(),
+            expectedRevision: "revision-e",
+            source: "import time; time.sleep(120)",
+            timeoutSeconds: 30,
+            diagnosticSupervisorIdentityCaptureFailure: true
+        )
+        guard identityCaptureFailure.response.state == .failed else {
+            throw BpyRuntimeError.invalidOutput(
+                "The injected supervisor identity-capture failure was not reported."
+            )
+        }
+        let afterIdentityCaptureFailureID = UUID()
+        let afterIdentityCaptureFailure = try sessionA.runJob(
+            id: afterIdentityCaptureFailureID,
+            expectedRevision: "revision-e",
+            source: inspectionSource(
+                label: "after-supervisor-identity-capture-failure",
+                requiredObject: "FORK_BLOCKED"
+            )
+        )
+        try assertRecovered(afterIdentityCaptureFailure, label: "supervisor identity-capture failure")
+        _ = try sessionA.cancel(jobID: afterIdentityCaptureFailureID)
+
         let parentDeathID = UUID()
         let parentDeathSource = """
         import os
@@ -766,6 +790,8 @@ enum BpyRuntimeSelfTest {
             "supervisorSignalRecovered": true,
             "supervisorIdentityWriteFailureState": identityWriteFailure.response.state?.rawValue ?? "",
             "supervisorIdentityWriteFailureRecovered": true,
+            "supervisorIdentityCaptureFailureState": identityCaptureFailure.response.state?.rawValue ?? "",
+            "supervisorIdentityCaptureFailureRecovered": true,
             "resourceSupervisorRecovered": true,
             "crashState": crashed.response.state?.rawValue ?? "",
             "duplicateJoined": duplicate.response.joinedExistingJob,

@@ -47,10 +47,12 @@ parent, so an in-place `execve` does not change ownership; it also verifies the 
 and start time and kills/reaps its exact child if that parent dies. On XPC invalidation the service
 terminates the supervisor through its live `Process` handle; the host can independently send SIGTERM
 only after rechecking the in-memory lease's PID, XNU start time, and executable. The supervisor owns
-the only SIGKILL path and validates its unreaped direct child's PID/start identity first. Every
+the only SIGKILL path and uses its unreaped direct child's PID/start identity when observable. Every
 post-launch error unwinds through direct-child cleanup; before a start identity is observable it uses
-the live Foundation `Process` handle it just launched, and afterward it signals only the matching
-PID/start identity. No
+the live Foundation `Process` handle it just launched, gives SIGTERM a bounded interval, and then
+stops and kills that still-running owned child. A failed later identity query uses the same bounded
+handle path; a confirmed mismatched start identity is never signaled. Afterward cleanup signals only
+the matching PID/start identity. No
 worker-writable registry, global process scan, unrelated PID, or app configuration participates, and
 an app restart does not need the lost in-memory lease to reap an old worker.
 
@@ -151,6 +153,11 @@ and release bundles continue to require the runtime; readiness is never synthesi
 
 ## Prepared Actions acceptance
 
+The already default-branch-registered `.github/workflows/bundle.yml` is the pre-merge manual
+entrypoint. Its default `bundle` mode retains the complete existing CI call. Its two explicit bpy
+evidence modes call exactly one same-commit reusable workflow, and each candidate job requires its
+workflow SHA, selected branch ref, checkout SHA, and requested source SHA to agree before work starts.
+
 `.github/workflows/bpy-source-closure-candidate.yml` is a separate manual, SHA-bound Ubuntu path.
 It performs only source/notice assembly, independent source-archive validation, and hash-manifest
 publication. It does not build or run binaries, access providers or generation services, use secrets,
@@ -176,7 +183,8 @@ cancellation, worker crash, service and host kill/reopen cleanup, denied-file ho
 network and cross-container denials, disabled autorun plus isolated positive control, BMesh/modifier
 geometry, package-hidden file counts, aggregate writes outside outputs, resource-scan failure/recovery,
 the exact `signal` denial for probes 0/SIGSTOP/SIGKILL followed by a healthy job, a supervisor failure
-after child start but before identity write followed by a healthy job, and a perspective Cycles render.
+after child start but before identity write followed by a healthy job, an unavailable child identity
+with a TERM-ignoring owned child followed by a healthy job, and a perspective Cycles render.
 
 Evidence separates host-observed open-to-ready and job durations from service-observed cold start,
 worker/verifier wall times, worker/verifier/service footprints, disk/file peaks, and descendant peak.

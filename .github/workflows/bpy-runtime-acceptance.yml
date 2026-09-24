@@ -274,6 +274,8 @@ jobs:
             and .supervisorSignalRecovered == true
             and .supervisorIdentityWriteFailureState == "failed"
             and .supervisorIdentityWriteFailureRecovered == true
+            and .supervisorIdentityCaptureFailureState == "failed"
+            and .supervisorIdentityCaptureFailureRecovered == true
             and .resourceSupervisorRecovered == true
             and .crashState == "crashed"
             and .serviceRecoveryRevision == "revision-e"

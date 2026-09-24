@@ -174,7 +174,7 @@ private func fingerprint(
         withUnsafeBytes(of: &length) { digest.update(data: Data($0)) }
         digest.update(data: data)
     }
-    add("nexgenvideo/bpy-job/3")
+    add("nexgenvideo/bpy-job/4")
     add(request.expectedRevision)
     add(request.timeoutSeconds.map(String.init))
     add(String(timeoutSeconds))
@@ -187,6 +187,7 @@ private func fingerprint(
     request.diagnosticDeniedPaths.forEach { add($0) }
     add(request.diagnosticAutoexecPositiveControl ? "1" : "0")
     add(request.diagnosticSupervisorIdentityWriteFailure ? "1" : "0")
+    add(request.diagnosticSupervisorIdentityCaptureFailure ? "1" : "0")
     return digest.finalize().map { String(format: "%02x", $0) }.joined()
 }
 
@@ -253,6 +254,7 @@ private final class JobRecord: @unchecked Sendable {
     var terminalAt: Date?
     var resultExpired = false
     let diagnosticSupervisorIdentityWriteFailure: Bool
+    let diagnosticSupervisorIdentityCaptureFailure: Bool
 
     init(request: BpyRunJobRequest, timeoutSeconds: Int) {
         id = request.jobID
@@ -264,6 +266,7 @@ private final class JobRecord: @unchecked Sendable {
         diagnosticDeniedPaths = request.diagnosticDeniedPaths
         diagnosticAutoexecPositiveControl = request.diagnosticAutoexecPositiveControl
         diagnosticSupervisorIdentityWriteFailure = request.diagnosticSupervisorIdentityWriteFailure
+        diagnosticSupervisorIdentityCaptureFailure = request.diagnosticSupervisorIdentityCaptureFailure
     }
 
     func expireResult() {
@@ -830,7 +833,8 @@ private final class ServiceSession: @unchecked Sendable {
                 processRoot: writableRoot,
                 deadline: deadline,
                 job: job,
-                injectSupervisorIdentityWriteFailure: job.diagnosticSupervisorIdentityWriteFailure
+                injectSupervisorIdentityWriteFailure: job.diagnosticSupervisorIdentityWriteFailure,
+                injectSupervisorIdentityCaptureFailure: job.diagnosticSupervisorIdentityCaptureFailure
             )
             try requireSuccessful(worker, job: job)
             try enforceStoredResources(job)
@@ -1134,7 +1138,8 @@ private final class ServiceSession: @unchecked Sendable {
         processRoot: URL,
         deadline: Double,
         job: JobRecord?,
-        injectSupervisorIdentityWriteFailure: Bool = false
+        injectSupervisorIdentityWriteFailure: Bool = false,
+        injectSupervisorIdentityCaptureFailure: Bool = false
     ) throws -> ManagedProcessResult {
         guard FileManager.default.isExecutableFile(atPath: pythonURL.path),
               FileManager.default.isExecutableFile(atPath: supervisorURL.path),
@@ -1208,6 +1213,10 @@ private final class ServiceSession: @unchecked Sendable {
         ]
         if injectSupervisorIdentityWriteFailure {
             environment["NGV_BPY_SUPERVISOR_FAIL_AFTER_CHILD_START"] = "1"
+        }
+        if injectSupervisorIdentityCaptureFailure {
+            environment["NGV_BPY_SUPERVISOR_FAIL_CHILD_IDENTITY_CAPTURE"] = "1"
+            environment["NGV_BPY_SUPERVISOR_CHILD_IGNORE_TERM"] = "1"
         }
         process.environment = environment
         let began = ProcessInfo.processInfo.systemUptime

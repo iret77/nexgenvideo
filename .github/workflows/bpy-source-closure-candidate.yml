@@ -7,6 +7,18 @@ on:
         description: Exact commit whose source and notice candidate is assembled
         required: true
         type: string
+      workflow_ref:
+        description: Exact refs/heads workflow ref selected for this run
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      source_sha:
+        required: true
+        type: string
+      workflow_ref:
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -26,9 +38,15 @@ jobs:
       - name: Bind the candidate to one commit
         env:
           EXPECTED_SHA: ${{ inputs.source_sha }}
+          EXPECTED_WORKFLOW_REF: ${{ inputs.workflow_ref }}
+          CALLED_WORKFLOW_REF: ${{ job.workflow_ref }}
+          CALLED_WORKFLOW_SHA: ${{ job.workflow_sha }}
         run: |
           set -euo pipefail
           [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_WORKFLOW_REF" =~ ^refs/heads/[A-Za-z0-9._/-]+$ ]]
+          [ "$CALLED_WORKFLOW_SHA" = "$EXPECTED_SHA" ]
+          [ "$CALLED_WORKFLOW_REF" = "$GITHUB_REPOSITORY/.github/workflows/bpy-source-closure-candidate.yml@$EXPECTED_WORKFLOW_REF" ]
           [ "$(git rev-parse HEAD)" = "$EXPECTED_SHA" ]
       - name: Assemble and independently validate the source and notice candidate
         env:

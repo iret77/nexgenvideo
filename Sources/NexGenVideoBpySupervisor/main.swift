@@ -125,6 +125,13 @@ private func execPython(arguments: [String]) throws -> Never {
           FileManager.default.fileExists(atPath: configuration.path) else {
         throw SupervisorError.invalidArguments
     }
+    if ProcessInfo.processInfo.environment["NGV_BPY_SUPERVISOR_CHILD_IGNORE_TERM"] == "1" {
+        _ = Darwin.signal(SIGTERM, SIG_IGN)
+        try Data().write(
+            to: writeRoot.appendingPathComponent(".ngv-supervisor-child-term-ignored"),
+            options: .atomic
+        )
+    }
     try applyWorkerSandbox(writeRoot: writeRoot)
     let values = [python.path, "-I", "-S", worker.path, arguments[3], configuration.path]
     let allocated = values.map { strdup($0) }
@@ -136,25 +143,49 @@ private func execPython(arguments: [String]) throws -> Never {
     throw POSIXError(.init(rawValue: errno) ?? .EIO)
 }
 
-private func terminateAndReapOwnedChild(_ process: Process, startAbsoluteTime: UInt64?) {
-    guard process.isRunning else {
-        process.waitUntilExit()
-        return
+private func waitForOwnedChildExit(_ process: Process, timeoutNanoseconds: UInt64) -> Bool {
+    let deadline = DispatchTime.now().uptimeNanoseconds &+ timeoutNanoseconds
+    while process.isRunning {
+        if DispatchTime.now().uptimeNanoseconds >= deadline { return false }
+        usleep(5_000)
     }
+    return true
+}
+
+private func terminateOwnedChildThroughProcess(_ process: Process, processIdentifier: pid_t) {
+    process.terminate()
+    if waitForOwnedChildExit(process, timeoutNanoseconds: 250_000_000) { return }
+    guard process.isRunning else { return }
+    _ = Darwin.kill(processIdentifier, SIGSTOP)
+    if process.isRunning {
+        _ = Darwin.kill(processIdentifier, SIGKILL)
+    }
+    _ = waitForOwnedChildExit(process, timeoutNanoseconds: 2_000_000_000)
+}
+
+private func terminateAndReapOwnedChild(_ process: Process, startAbsoluteTime: UInt64?) {
+    guard process.isRunning else { return }
     let processIdentifier = process.processIdentifier
     if let startAbsoluteTime {
-        guard processStartAbsoluteTime(processIdentifier) == startAbsoluteTime else {
-            process.waitUntilExit()
+        guard let currentStart = processStartAbsoluteTime(processIdentifier) else {
+            terminateOwnedChildThroughProcess(process, processIdentifier: processIdentifier)
             return
         }
-        _ = Darwin.kill(processIdentifier, SIGSTOP)
-        if processStartAbsoluteTime(processIdentifier) == startAbsoluteTime {
+        guard currentStart == startAbsoluteTime else {
+            _ = waitForOwnedChildExit(process, timeoutNanoseconds: 10_000_000)
+            return
+        }
+        let stopped = Darwin.kill(processIdentifier, SIGSTOP) == 0
+        let stoppedStart = stopped ? processStartAbsoluteTime(processIdentifier) : nil
+        if stoppedStart == startAbsoluteTime
+            || (stopped && stoppedStart == nil && process.isRunning) {
             _ = Darwin.kill(processIdentifier, SIGKILL)
         }
     } else {
-        process.terminate()
+        terminateOwnedChildThroughProcess(process, processIdentifier: processIdentifier)
+        return
     }
-    process.waitUntilExit()
+    _ = waitForOwnedChildExit(process, timeoutNanoseconds: 2_000_000_000)
 }
 
 private func supervise(arguments: [String]) throws -> Int32 {
@@ -204,8 +235,22 @@ private func supervise(arguments: [String]) throws -> Int32 {
             terminateAndReapOwnedChild(process, startAbsoluteTime: childStart)
         }
     }
+    let failChildIdentityCapture = ProcessInfo.processInfo.environment[
+        "NGV_BPY_SUPERVISOR_FAIL_CHILD_IDENTITY_CAPTURE"
+    ] == "1"
+    if failChildIdentityCapture {
+        let readyURL = writeRoot.appendingPathComponent(".ngv-supervisor-child-term-ignored")
+        for _ in 0..<200 where !FileManager.default.fileExists(atPath: readyURL.path) && process.isRunning {
+            usleep(5_000)
+        }
+        guard FileManager.default.fileExists(atPath: readyURL.path) else {
+            throw SupervisorError.processLaunch
+        }
+    }
     for _ in 0..<20 where childStart == nil && process.isRunning {
-        childStart = processStartAbsoluteTime(childPID)
+        if !failChildIdentityCapture {
+            childStart = processStartAbsoluteTime(childPID)
+        }
         if childStart == nil { usleep(5_000) }
     }
     guard let confirmedChildStart = childStart else { throw SupervisorError.processLaunch }

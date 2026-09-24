@@ -33,6 +33,7 @@ class BpyRuntimeWorkflowTests(unittest.TestCase):
         self.assertIn(".supervisorSignalDenied == true", text)
         self.assertIn(".supervisorSignalRecovered == true", text)
         self.assertIn('.supervisorIdentityWriteFailureState == "failed"', text)
+        self.assertIn('.supervisorIdentityCaptureFailureState == "failed"', text)
         self.assertIn('.trustedVerification.blenderBuildHash == "d13f752e3b9c"', text)
         self.assertIn(".trustedVerification.libraryVersions.openvdb.version", text)
         self.assertIn("NGV_SELFTEST_BPY_HOST_CRASH", text)
@@ -112,6 +113,9 @@ class BpyRuntimeWorkflowTests(unittest.TestCase):
         self.assertIn("parentIsAlive", supervisor)
         self.assertIn("terminateAndReapOwnedChild", supervisor)
         self.assertIn("NGV_BPY_SUPERVISOR_FAIL_AFTER_CHILD_START", supervisor)
+        self.assertIn("NGV_BPY_SUPERVISOR_FAIL_CHILD_IDENTITY_CAPTURE", supervisor)
+        self.assertIn("NGV_BPY_SUPERVISOR_CHILD_IGNORE_TERM", supervisor)
+        self.assertIn("waitForOwnedChildExit", supervisor)
 
     def test_source_candidate_workflow_is_manual_source_only_and_fail_closed(self):
         text = (ROOT / ".github/workflows/bpy-source-closure-candidate.yml").read_text()
@@ -128,6 +132,29 @@ class BpyRuntimeWorkflowTests(unittest.TestCase):
         self.assertNotIn("swift build", text)
         self.assertNotIn("stage_bpy_runtime", text)
         self.assertNotIn("secrets.", text)
+
+    def test_registered_bundle_dispatch_selects_only_one_evidence_job(self):
+        text = (ROOT / ".github/workflows/bundle.yml").read_text()
+        self.assertIn("workflow_dispatch:", text)
+        self.assertIn("default: bundle", text)
+        self.assertIn("bpy-source-closure-candidate", text)
+        self.assertIn("bpy-binary-evidence-candidate", text)
+        self.assertIn("if: inputs.evidence_mode == 'bundle'", text)
+        self.assertIn("if: inputs.evidence_mode == 'bpy-source-closure-candidate'", text)
+        self.assertIn("if: inputs.evidence_mode == 'bpy-binary-evidence-candidate'", text)
+        self.assertIn("workflow_ref: ${{ github.ref }}", text)
+        self.assertNotIn("pull_request:", text.split("permissions:", 1)[0])
+        self.assertNotIn("push:", text.split("permissions:", 1)[0])
+
+        for filename in (
+            "bpy-source-closure-candidate.yml",
+            "bpy-binary-evidence-candidate.yml",
+        ):
+            called = (ROOT / ".github/workflows" / filename).read_text()
+            self.assertIn("workflow_call:", called)
+            self.assertIn("CALLED_WORKFLOW_REF: ${{ job.workflow_ref }}", called)
+            self.assertIn("CALLED_WORKFLOW_SHA: ${{ job.workflow_sha }}", called)
+            self.assertIn('[ "$CALLED_WORKFLOW_SHA" = "$EXPECTED_SHA" ]', called)
 
     def test_binary_evidence_workflow_is_manual_non_distributable_and_build_free(self):
         text = (ROOT / ".github/workflows/bpy-binary-evidence-candidate.yml").read_text()
