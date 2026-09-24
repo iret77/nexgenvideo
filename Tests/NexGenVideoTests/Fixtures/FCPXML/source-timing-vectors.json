@@ -1,0 +1,57 @@
+{
+  "rtmd": [
+    {
+      "name": "sony-29.97-clear-flag-df",
+      "timescale": 30000,
+      "delta": 1001,
+      "hour": 1,
+      "minute": 1,
+      "second": 0,
+      "flag": 0,
+      "frame": 2,
+      "expectedFrame": 109692,
+      "expectedQuanta": 30,
+      "expectedDropFrame": true
+    },
+    {
+      "name": "sony-59.94-clear-flag-df",
+      "timescale": 60000,
+      "delta": 1001,
+      "hour": 0,
+      "minute": 14,
+      "second": 44,
+      "flag": 0,
+      "frame": 0,
+      "expectedFrame": 52988,
+      "expectedQuanta": 60,
+      "expectedDropFrame": true
+    },
+    {
+      "name": "integer-60-clear-flag-ndf",
+      "timescale": 60000,
+      "delta": 1000,
+      "hour": 1,
+      "minute": 2,
+      "second": 3,
+      "flag": 0,
+      "frame": 4,
+      "expectedFrame": 223384,
+      "expectedQuanta": 60,
+      "expectedDropFrame": false
+    }
+  ],
+  "bwf": [
+    {
+      "name": "riff-one-hour",
+      "magic": "RIFF",
+      "sampleRate": 48000,
+      "timeReference": 172800000
+    },
+    {
+      "name": "rf64-zero-origin",
+      "magic": "RF64",
+      "sampleRate": 96000,
+      "timeReference": 0
+    }
+  ]
+}

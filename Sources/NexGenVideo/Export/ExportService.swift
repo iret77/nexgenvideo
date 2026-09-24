@@ -4,11 +4,42 @@ import AppKit
 enum ExportError: LocalizedError {
     case unsupportedPreset
     case invalidFormat
+    case xmlEncodingFailed(format: String)
+    case xmlValidationFailed(version: String, reason: String)
+    case xmlTimingInvalid(reason: String)
+    case xmlInvalidCharacter(context: String, codePoint: String)
+    case xmlWriteFailed(destination: URL, reason: String)
+    case xmlMediaReadFailed(source: URL, reason: String)
 
     var errorDescription: String? {
         switch self {
         case .unsupportedPreset: "Export preset not supported on this system"
         case .invalidFormat: "Invalid export format"
+        case .xmlEncodingFailed(let format):
+            "The timeline couldn't be encoded as \(format). Try the export again."
+        case .xmlValidationFailed(let version, _):
+            "FCPXML \(version) validation failed. Try the export again or select another FCPXML version."
+        case .xmlTimingInvalid(let reason):
+            "The timeline contains a time value FCPXML cannot represent: \(reason)"
+        case .xmlInvalidCharacter(let context, let codePoint):
+            "\(context) contains the XML-incompatible control character \(codePoint). Remove it and export again."
+        case .xmlWriteFailed(let destination, _):
+            "Couldn’t export FCPXML to “\(destination.lastPathComponent)”. Choose another writable location and try again."
+        case .xmlMediaReadFailed(let source, _):
+            "Couldn’t read “\(source.lastPathComponent)” for FCPXML export. Relink the media and try again."
+        }
+    }
+
+    var failureReason: String? {
+        switch self {
+        case .xmlValidationFailed(_, let reason),
+             .xmlTimingInvalid(let reason),
+             .xmlInvalidCharacter(let reason, _),
+             .xmlWriteFailed(_, let reason),
+             .xmlMediaReadFailed(_, let reason):
+            reason
+        case .unsupportedPreset, .invalidFormat, .xmlEncodingFailed(_):
+            nil
         }
     }
 }
@@ -26,6 +57,7 @@ final class ExportService {
     var isExporting = false
     var error: String?
     var lastReport: ExportRunReport?
+    var lastFCPXMLReport: FCPXMLExportReport?
 
     func cancel() {
         cancelRequested = true
@@ -38,17 +70,25 @@ final class ExportService {
         format: ExportFormat,
         resolution: ExportResolution,
         outputURL: URL,
+        projectName: String = "Timeline Export",
+        fcpxmlVersion: FCPXMLVersion = .default,
+        fcpxmlTarget: FCPXMLTarget = .default,
         acquireSlot: Bool = true
     ) async {
         error = nil
         lastReport = nil
+        lastFCPXMLReport = nil
         cancelRequested = false
         isExporting = true
         progress = 0
         defer { isExporting = false }
         let resolver = liveResolver.snapshot()
+        if acquireSlot {
+            await ExportCoordinator.acquireExport()
+        }
+        defer { if acquireSlot { ExportCoordinator.endExport() } }
         var styleReview: TimelineStyleReview.Snapshot?
-        if format != .xml {
+        if format != .xml && format != .fcpxml {
             do {
                 styleReview = try await TimelineStyleReview.capture(timeline: timeline, resolver: resolver)
                 if let review = styleReview {
@@ -57,22 +97,62 @@ final class ExportService {
             } catch { self.error = error.localizedDescription; return }
         }
 
-        if format == .xml {
+        if format == .xml || format == .fcpxml {
+            let formatName = format.fileExtension
             Log.export.notice(
-                "export requested format=xml",
+                "export requested format=\(formatName)",
                 telemetry: "Export started",
-                data: ["format": "xml", "tracks": timeline.tracks.count, "clips": timeline.tracks.reduce(0) { $0 + $1.clips.count }]
+                data: [
+                    "format": formatName,
+                    "tracks": timeline.tracks.count,
+                    "clips": timeline.tracks.reduce(0) { $0 + $1.clips.count },
+                ]
             )
-            XMLExporter.export(timeline: timeline, resolver: resolver, outputURL: outputURL)
-            progress = 1.0
-            Log.export.notice("export ok format=xml", telemetry: "Export finished", data: ["format": "xml"])
+            do {
+                if format == .xml {
+                    try XMLExporter.export(timeline: timeline, resolver: resolver, outputURL: outputURL)
+                } else {
+                    lastFCPXMLReport = try await FCPXMLExporter.export(
+                        timeline: timeline,
+                        resolver: resolver,
+                        projectName: projectName,
+                        version: fcpxmlVersion,
+                        target: fcpxmlTarget,
+                        outputURL: outputURL,
+                        isCancelled: { [weak self] in self?.cancelRequested ?? true },
+                        progress: { [weak self] value in self?.progress = value }
+                    )
+                }
+                progress = 1.0
+                var evidence: [String: Any] = ["format": formatName]
+                if let report = lastFCPXMLReport {
+                    evidence["version"] = report.version.rawValue
+                    evidence["target"] = report.target.rawValue
+                    evidence["schemaProfile"] = report.validation.schemaProfile
+                    evidence["assets"] = report.validation.assetCount
+                    evidence["storyElements"] = report.validation.storyElementCount
+                    evidence["sha256"] = report.outputSHA256
+                    evidence["bytes"] = report.outputByteCount
+                    evidence["mediaBytes"] = report.mediaByteCount
+                    evidence["stagedProjectMedia"] = report.stagedProjectMediaCount
+                    evidence["warnings"] = report.warnings.count
+                }
+                Log.export.notice(
+                    "export ok format=\(formatName)",
+                    telemetry: "Export finished",
+                    data: evidence
+                )
+            } catch {
+                let cancelled = cancelRequested || error is CancellationError
+                self.error = cancelled ? "Export was cancelled" : error.localizedDescription
+                Log.export.error(
+                    "export failed format=\(formatName): \(Log.detail(error))",
+                    telemetry: "Export failed",
+                    data: ["format": formatName, "destination": outputURL.path, "error": Log.detail(error)]
+                )
+            }
             return
         }
-
-        if acquireSlot {
-            await ExportCoordinator.acquireExport()
-        }
-        defer { if acquireSlot { ExportCoordinator.endExport() } }
 
         Log.export.notice(
             "export requested format=\(String(describing: format)) resolution=\(resolution.rawValue)",
@@ -299,8 +379,8 @@ final class ExportService {
             }
         case .prores:
             AVAssetExportPresetAppleProRes422LPCM
-        case .xml:
-            AVAssetExportPresetPassthrough // unreachable — XML returns early
+        case .xml, .fcpxml:
+            AVAssetExportPresetPassthrough // unreachable — interchange exports return early
         }
     }
 

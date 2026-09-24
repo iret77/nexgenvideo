@@ -730,12 +730,14 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .exportProject,
-            description: "Exports from the current project using the same modes as the Export dialog. mode defaults to video. video renders H.264, H.265, or ProRes; xml writes timeline XML; nexgen writes a self-contained .nexgen project package. Omit outputPath to write a unique file to ~/Downloads. Existing direct outputPath files are overwritten by default to match the UI save flow; pass overwrite=false to refuse. video renders in the background and returns status=started with the destination path; the app posts a system notification on completion or failure, so do not expect a final result inline. xml and nexgen finish before returning and report their result inline.",
+            description: "Exports from the current project using the same modes as the Export dialog. mode defaults to video. video renders H.264, H.265, or ProRes; xml writes Premiere-compatible XMEML; fcpxml writes versioned Final Cut Pro XML with validation, warnings, transactional output, and byte provenance; nexgen writes a self-contained .nexgen project package. Use xml for Premiere Pro and fcpxml for Final Cut Pro or DaVinci Resolve. Omit outputPath to write a unique file to ~/Downloads. Existing direct outputPath files are overwritten by default; pass overwrite=false to refuse. video renders in the background and returns status=started. xml, fcpxml, and nexgen finish before returning.",
             inputSchema: objectSchema(
                 properties: [
-                    "mode": ["type": "string", "enum": ["video", "xml", "nexgen"], "description": "Optional. Default video."],
+                    "mode": ["type": "string", "enum": ["video", "xml", "fcpxml", "nexgen"], "description": "Optional. Default video."],
                     "codec": ["type": "string", "enum": ["H.264", "H.265", "ProRes"], "description": "Video mode only. Optional. Default H.264."],
                     "resolution": ["type": "string", "enum": ["720p", "1080p", "2K", "4K", "Match Timeline"], "description": "Video mode only. Optional. Default Match Timeline."],
+                    "version": ["type": "string", "enum": ["1.10", "1.11", "1.12", "1.13", "1.14"], "description": "FCPXML mode only. Optional. Default 1.10 for broad compatibility."],
+                    "target": ["type": "string", "enum": ["final-cut-pro", "resolve"], "description": "FCPXML mode only. Optional. Default final-cut-pro."],
                     "outputPath": ["type": "string", "description": "Optional. Absolute destination path. If omitted, a unique project-named file is written to ~/Downloads. If no extension is provided, the mode's extension is appended."],
                     "overwrite": ["type": "boolean", "description": "Optional. Default true, matching the UI save flow. false refuses when outputPath already exists."],
                 ]
