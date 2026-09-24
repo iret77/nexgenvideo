@@ -48,7 +48,7 @@ extension ToolExecutor {
         resolution: ExportResolution,
         outputURL: URL
     ) throws -> ToolResult {
-        guard ExportCoordinator.beginExportIfIdle() else {
+        guard ExportCoordinator.beginExportIfIdle(projectKey: editor.openWorkingCopyKey) else {
             throw ToolError("export_project: Another export is already in progress.")
         }
 
@@ -120,7 +120,7 @@ extension ToolExecutor {
     }
 
     private func exportProjectPackage(_ editor: EditorViewModel, outputURL: URL) async throws -> ToolResult {
-        guard ExportCoordinator.beginExportIfIdle() else {
+        guard ExportCoordinator.beginExportIfIdle(projectKey: editor.openWorkingCopyKey) else {
             throw ToolError("export_project: Another export is already in progress.")
         }
         defer { ExportCoordinator.endExport() }

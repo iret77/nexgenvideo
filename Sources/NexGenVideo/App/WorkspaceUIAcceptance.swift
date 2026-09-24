@@ -415,7 +415,7 @@ enum WorkspaceUIAcceptance {
             )
             guard await waitUntil(timeout: .seconds(5), {
                       probeValue(identifier: "editor.status.aiJobs", in: window) == "idle"
-                  }), ExportCoordinator.beginExportIfIdle(),
+                  }), ExportCoordinator.beginExportIfIdle(projectKey: editor.openWorkingCopyKey),
                   await waitUntil(timeout: .seconds(5), {
                       probeValue(identifier: "editor.status.exportJobs", in: window) == "active"
                   }),
@@ -474,6 +474,7 @@ enum WorkspaceUIAcceptance {
                 ]
             )
             await captureBudgetCases(
+                document: document,
                 editor: editor,
                 window: window,
                 host: host,
@@ -530,7 +531,7 @@ enum WorkspaceUIAcceptance {
                          warnings: "Planning budget has €0.75 remaining.",
                          transactionState: "Charged")
         case "exceeded":
-            return .init(label: "Budget €12.50 / €10.00",
+            return .init(label: "Budget €12.50 / €10.00 · Stop reached",
                          total: "Reserved + charged total|€12.50",
                          planning: "Planning budget|€10.00 · €2.50 over",
                          hardStop: "Hard stop|€12.00 · €0.50 over",
@@ -540,7 +541,7 @@ enum WorkspaceUIAcceptance {
             let reason: String
             switch name {
             case "unknown-currency": reason = "currency conversion"
-            case "subscription-credits": reason = "subscription/credit monetary cost"
+            case "subscription-credits": reason = "monetary cost for subscription credits"
             default: reason = "provider price"
             }
             return .init(label: "Budget ≥€0.00 / €10.00",
@@ -560,13 +561,13 @@ enum WorkspaceUIAcceptance {
                          total: "Reserved + charged total|€4.00",
                          planning: "Planning budget|€10.00 · €6.00 remaining",
                          hardStop: "Hard stop|€12.00 · €8.00 remaining",
-                         warnings: nil, transactionState: "Submitted · attention")
+                         warnings: nil, transactionState: "Submitted · Check charge")
         case "released":
             return .init(label: "Budget €0.00 / €10.00", total: normalTotal,
                          planning: normalPlanning, hardStop: normalStop,
                          warnings: nil, transactionState: "Released")
         case "exceeded-unknown":
-            return .init(label: "Budget ≥€12.50 / €10.00",
+            return .init(label: "Budget ≥€12.50 / €10.00 · Stop reached",
                          total: "Verified reserved + charged total at least|€12.50",
                          planning: "Planning budget|€10.00 · at least €2.50 over",
                          hardStop: "Hard stop|€12.00 · at least €0.50 over",
@@ -578,6 +579,7 @@ enum WorkspaceUIAcceptance {
     }
 
     private static func captureBudgetCases(
+        document: VideoProject,
         editor: EditorViewModel,
         window: NSWindow,
         host: NSView,
@@ -654,6 +656,7 @@ enum WorkspaceUIAcceptance {
             popoverContent.layoutSubtreeIfNeeded()
             let visible = budgetVisibleExpectations(for: item.name)
             guard probeValue(identifier: "editor.status.budget.label", in: window) == visible.label,
+                  budgetAccessibilityFits(in: window, label: visible.label, scale: scale),
                   probeValueAnywhere(identifier: "editor.status.budget.total", preferredWindow: window)
                     == visible.total,
                   probeValueAnywhere(identifier: "editor.status.budget.planning", preferredWindow: window)
@@ -664,7 +667,13 @@ enum WorkspaceUIAcceptance {
                     == visible.warnings,
                   (visible.transactionState == nil || probeValueAnywhere(
                       identifier: "editor.status.budget.transactionState", preferredWindow: window
-                  ) == visible.transactionState) else {
+                  ) == visible.transactionState),
+                  accessibilityContains(
+                      visible.total.components(separatedBy: "|"), in: popoverContent
+                  ),
+                  accessibilityContains(
+                      visible.hardStop.components(separatedBy: "|"), in: popoverContent
+                  ) else {
                 fail("budget case \(item.name) did not render its expected labels", scale: scale)
             }
             let popoverName = "scale-\(scaleLabel(scale))-budget-\(item.name).png"
@@ -716,12 +725,16 @@ enum WorkspaceUIAcceptance {
                     "reserved": spendSnapshot.openReservationEur,
                     "screenshot": popoverName,
                     "statusValue": expectedPresentation.acceptanceValue,
+                    "accessibilityValue": visible.label,
                 ]
             )
         }
 
         await captureBudgetUnavailableLimits(
             editor: editor, window: window, evidenceURL: evidenceURL, scale: scale
+        )
+        await captureBudgetCombinedStatus(
+            editor: editor, window: window, host: host, evidenceURL: evidenceURL, scale: scale
         )
         await captureBudgetLifecycle(
             editor: editor, window: window, evidenceURL: evidenceURL, scale: scale
@@ -734,6 +747,13 @@ enum WorkspaceUIAcceptance {
             projectURL: projectURL,
             evidenceURL: evidenceURL,
             scale: scale
+        )
+        await captureBudgetLegacyRefresh(editor: editor, projectURL: projectURL, scale: scale)
+        await captureBudgetTwoProjectExports(
+            editor: editor, window: window, scale: scale
+        )
+        await captureBudgetSaveAs(
+            document: document, editor: editor, projectURL: projectURL, scale: scale
         )
     }
 
@@ -1034,7 +1054,7 @@ enum WorkspaceUIAcceptance {
                 money: money(3), note: "Provider outcome requires reconciliation.")
             await captureBudgetLifecycleStage("submitted-failure", editor: editor, window: window,
                 evidenceURL: evidenceURL, scale: scale, label: "Budget €3.00 / €10.00",
-                total: "Reserved + charged total|€3.00", state: "Submitted · attention", eventCount: 2)
+                total: "Reserved + charged total|€3.00", state: "Submitted · Check charge", eventCount: 2)
 
             try editor.recordSpendEvent(authorization: authorization, kind: .charged,
                                         money: money(2.75))
@@ -1120,9 +1140,92 @@ enum WorkspaceUIAcceptance {
             guard editor.projectState?.budgetEur == 10 else {
                 fail("budget fixture limits did not restore", scale: scale)
             }
+            let briefURL = PipelineLayout.url(PipelineLayout.briefFile, in: dataRoot)
+            let validBrief = try Data(contentsOf: briefURL)
+            try Data("budget_stop_eur: [broken".utf8).write(to: briefURL, options: .atomic)
+            do {
+                _ = try GenerationBudgetGuard.budgetStop(dataRoot: dataRoot)
+                fail("invalid brief was accepted by the guard", scale: scale)
+            } catch {}
+            await editor.refreshProjectState()
+            guard editor.projectState == nil,
+                  probeValue(identifier: "editor.status.budget.label", in: window)
+                    == "Budget · No spend · Limits unavailable" else {
+                fail("invalid brief was shown as an absent hard stop", scale: scale)
+            }
+            try validBrief.write(to: briefURL, options: .atomic)
+            await editor.refreshProjectState()
+            guard editor.projectState?.budgetStopEur == 12 else {
+                fail("valid hard stop did not restore", scale: scale)
+            }
             emit("budget-limits-unavailable", scale: scale, fields: ["screenshot": screenshotName])
         } catch {
             fail("unavailable-limit fixture failed: \(error.localizedDescription)", scale: scale)
+        }
+    }
+
+    private static func captureBudgetCombinedStatus(
+        editor: EditorViewModel,
+        window: NSWindow,
+        host: NSView,
+        evidenceURL: URL,
+        scale: Double
+    ) async {
+        guard let root = editor.workingRoot,
+              let dataRoot = DataRootResolver.dataRoot(of: root) else {
+            fail("combined budget status lost the production root", scale: scale)
+        }
+        let marker = dataRoot.appendingPathComponent(PipelineLayout.projectFile)
+        do {
+            try installBudgetLog(budgetLog(transactionEvents(
+                id: "combined-status", money: money(12.5), final: .charged
+            )), in: root, editor: editor)
+            let original = try Data(contentsOf: marker)
+            guard let yaml = String(data: original, encoding: .utf8) else {
+                fail("combined budget status could not read project metadata", scale: scale)
+            }
+            let pattern = try NSRegularExpression(pattern: "(?m)^budget_eur:.*$")
+            let range = NSRange(yaml.startIndex..<yaml.endIndex, in: yaml)
+            guard pattern.numberOfMatches(in: yaml, range: range) == 1 else {
+                fail("combined budget status had no unique planning limit", scale: scale)
+            }
+            let unavailable = pattern.stringByReplacingMatches(
+                in: yaml, range: range, withTemplate: "budget_eur: unavailable"
+            )
+            try Data(unavailable.utf8).write(to: marker, options: .atomic)
+            await editor.refreshProjectState()
+            guard let mutationID = editor.pipelinePhaseRunCoordinator.beginMutation(
+                projectRoot: dataRoot, label: "Budget status acceptance"
+            ), ExportCoordinator.beginExportIfIdle(projectKey: editor.openWorkingCopyKey) else {
+                fail("combined background status could not start", scale: scale)
+            }
+            let label = "Budget €12.50 · Planning limit unavailable · Stop unavailable"
+            guard await waitUntil(timeout: .seconds(5), {
+                host.layoutSubtreeIfNeeded()
+                return editor.projectState == nil
+                    && probeValue(identifier: "editor.status.budget.label", in: window) == label
+                    && probeValue(identifier: "editor.status.aiJobs", in: window) == "active"
+                    && probeValue(identifier: "editor.status.exportJobs", in: window) == "active"
+                    && budgetAccessibilityFits(in: window, label: label, scale: scale)
+                    && accessibilityContains(["AI 1 running", "1 export running"], in: host)
+            }) else {
+                fail("combined budget and background status clipped or lost AX content", scale: scale)
+            }
+            let screenshotName = "scale-\(scaleLabel(scale))-budget-combined-status.png"
+            guard snapshot(host, at: evidenceURL.appendingPathComponent(screenshotName)) else {
+                fail("combined budget status did not render", scale: scale)
+            }
+            ExportCoordinator.endExport()
+            editor.pipelinePhaseRunCoordinator.endMutation(projectRoot: dataRoot, id: mutationID)
+            try original.write(to: marker, options: .atomic)
+            await editor.refreshProjectState()
+            guard editor.projectState?.budgetEur == 10 else {
+                fail("combined budget status did not restore project limits", scale: scale)
+            }
+            emit("budget-combined-status", scale: scale,
+                 fields: ["screenshot": screenshotName, "statusFrames": statusControlFrames(in: window)])
+        } catch {
+            fail("combined budget status failed: \(error.localizedDescription)", scale: scale)
         }
     }
 
@@ -1300,6 +1403,184 @@ enum WorkspaceUIAcceptance {
         )
         if let secondaryKey { ProjectWorkingCopy.discard(key: secondaryKey) }
         try? FileManager.default.removeItem(at: secondary)
+    }
+
+    private static func captureBudgetLegacyRefresh(
+        editor: EditorViewModel,
+        projectURL: URL,
+        scale: Double
+    ) async {
+        guard let root = editor.workingRoot else {
+            fail("legacy refresh lost the working copy", scale: scale)
+        }
+        let logURL = root.appendingPathComponent(Project.generationLogFilename)
+        let packageLogURL = projectURL.appendingPathComponent(Project.generationLogFilename)
+        do {
+            let packageBytes = try Data(contentsOf: packageLogURL)
+            var legacy = GenerationLog()
+            legacy.entries = [GenerationLogEntry(
+                id: "legacy-acceptance", model: "legacy-video", costCredits: 4, createdAt: nil
+            )]
+            editor.generationLog = legacy
+            try FileManager.default.removeItem(at: logURL)
+            try await editor.refreshBudgetStatus()
+            guard editor.generationLog == legacy,
+                  !FileManager.default.fileExists(atPath: logURL.path),
+                  try Data(contentsOf: packageLogURL) == packageBytes else {
+                fail("legacy refresh lost an in-memory journal or changed package bytes", scale: scale)
+            }
+            try editor.persistGenerationLog()
+            emit("budget-legacy-refresh", scale: scale, fields: ["preserved": true])
+        } catch {
+            fail("legacy refresh fixture failed: \(error.localizedDescription)", scale: scale)
+        }
+    }
+
+    private static func captureBudgetTwoProjectExports(
+        editor: EditorViewModel,
+        window: NSWindow,
+        scale: Double
+    ) async {
+        let secondary: URL
+        let secondDocument: VideoProject
+        let secondWindow: NSWindow
+        do {
+            secondary = try makeBareProjectFixture(scale: scale)
+            secondDocument = try await VideoProject.load(from: secondary)
+            secondDocument.makeWindowControllers()
+            guard let opened = secondDocument.windowControllers
+                .compactMap({ $0 as? EditorWindowController }).first?.window else {
+                fail("second project did not create an export status window", scale: scale)
+            }
+            secondWindow = opened
+            secondDocument.showWindows()
+        } catch {
+            fail("two-project export fixture failed: \(error.localizedDescription)", scale: scale)
+        }
+        defer {
+            secondWindow.orderOut(nil)
+            secondDocument.close()
+            if let key = ProjectIdentity.existingKey(for: secondary) {
+                ProjectWorkingCopy.discard(key: key)
+            }
+            try? FileManager.default.removeItem(at: secondary)
+        }
+        let secondKey = secondDocument.editorViewModel.openWorkingCopyKey
+        guard let firstKey = editor.openWorkingCopyKey,
+              let secondKey, firstKey != secondKey,
+              ExportCoordinator.beginExportIfIdle(projectKey: firstKey),
+              await waitUntil(timeout: .seconds(5), {
+                  probeValue(identifier: "editor.status.exportJobs", in: window) == "active"
+                      && probeValue(identifier: "editor.status.exportJobs", in: secondWindow) == "idle"
+                      && secondWindow.contentView.map {
+                          accessibilityContains(["Export in other project"], in: $0)
+                      } == true
+              }) else {
+            fail("export status was not bound to the first project", scale: scale)
+        }
+        let waiting = Task { await ExportCoordinator.acquireExport(projectKey: secondKey) }
+        guard await waitUntil(timeout: .seconds(5), {
+            ExportCoordinator.status(for: secondKey).waiting == 1
+        }) else {
+            fail("waiting export was not visible in the second project", scale: scale)
+        }
+        waiting.cancel()
+        guard await waiting.value == false,
+              ExportCoordinator.status(for: secondKey).waiting == 0 else {
+            fail("cancelled waiting export remained queued", scale: scale)
+        }
+        ExportCoordinator.endExport()
+        guard ExportCoordinator.beginExportIfIdle(projectKey: secondKey),
+              await waitUntil(timeout: .seconds(5), {
+                  probeValue(identifier: "editor.status.exportJobs", in: secondWindow) == "active"
+                      && probeValue(identifier: "editor.status.exportJobs", in: window) == "idle"
+                      && window.contentView.map {
+                          accessibilityContains(["Export in other project"], in: $0)
+                      } == true
+              }) else {
+            fail("export status was not bound to the second project", scale: scale)
+        }
+        ExportCoordinator.endExport()
+        emit("budget-two-project-export", scale: scale, fields: ["projectBound": true])
+    }
+
+    private static func captureBudgetSaveAs(
+        document: VideoProject,
+        editor: EditorViewModel,
+        projectURL: URL,
+        scale: Double
+    ) async {
+        guard let oldKey = editor.openWorkingCopyKey,
+              let root = editor.workingRoot else {
+            fail("Save As had no live working copy", scale: scale)
+        }
+        let saveAsURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "budget-save-as-\(UUID().uuidString).ngv", isDirectory: true
+        )
+        let saveToURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "budget-save-to-\(UUID().uuidString).ngv", isDirectory: true
+        )
+        defer {
+            if let key = ProjectIdentity.existingKey(for: saveAsURL) {
+                ProjectWorkingCopy.discard(key: key)
+            }
+            try? FileManager.default.removeItem(at: saveAsURL)
+            try? FileManager.default.removeItem(at: saveToURL)
+        }
+        do {
+            var log = budgetLog(transactionEvents(
+                id: "save-as-reserved", money: money(3), final: .reserved
+            ))
+            log.entries = [GenerationLogEntry(
+                id: "save-as-legacy", model: "legacy-video", costCredits: 7, createdAt: nil
+            )]
+            try installBudgetLog(log, in: root, editor: editor)
+            let beforeBytes = try Data(contentsOf: root.appendingPathComponent(Project.generationLogFilename))
+            let oldPackageURL = projectURL.appendingPathComponent(Project.generationLogFilename)
+            let oldPackageBytes = try Data(contentsOf: oldPackageURL)
+            try await saveBudgetDocument(document, to: saveAsURL, operation: .saveAsOperation)
+            guard document.fileURL?.standardizedFileURL == saveAsURL.standardizedFileURL,
+                  editor.projectURL?.standardizedFileURL == saveAsURL.standardizedFileURL,
+                  editor.openWorkingCopyKey != oldKey,
+                  editor.generationLog == log,
+                  let newRoot = editor.workingRoot,
+                  try Data(contentsOf: newRoot.appendingPathComponent(Project.generationLogFilename))
+                    == beforeBytes,
+                  try Data(contentsOf: saveAsURL.appendingPathComponent(Project.generationLogFilename))
+                    == beforeBytes,
+                  try Data(contentsOf: oldPackageURL) == oldPackageBytes else {
+                fail("Save As did not preserve all journal bytes", scale: scale)
+            }
+            document.updateChangeCount(.changeDone)
+            guard try Data(contentsOf: newRoot.appendingPathComponent(Project.generationLogFilename))
+                    == beforeBytes else {
+                fail("Save As checkpoint changed the journal", scale: scale)
+            }
+            try await saveBudgetDocument(document, to: saveToURL, operation: .saveToOperation)
+            guard document.fileURL?.standardizedFileURL == saveAsURL.standardizedFileURL,
+                  editor.generationLog == log,
+                  try Data(contentsOf: saveToURL.appendingPathComponent(Project.generationLogFilename))
+                    == beforeBytes else {
+                fail("Save To changed the live journal or its copied bytes", scale: scale)
+            }
+            emit("budget-save-as", scale: scale,
+                 fields: ["liveBytesPreserved": true, "copyBytesPreserved": true])
+        } catch {
+            fail("Save As acceptance failed: \(error.localizedDescription)", scale: scale)
+        }
+    }
+
+    private static func saveBudgetDocument(
+        _ document: VideoProject,
+        to url: URL,
+        operation: NSDocument.SaveOperationType
+    ) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            document.save(to: url, ofType: Project.typeIdentifier, for: operation) { error in
+                if let error { continuation.resume(throwing: error) }
+                else { continuation.resume() }
+            }
+        }
     }
 
     private static func captureInspectorCases(
@@ -1842,6 +2123,75 @@ enum WorkspaceUIAcceptance {
                     (identifier, frameDescription($0.convert($0.bounds, to: root)))
                 }
             })
+    }
+
+    private struct AccessibilityObservation {
+        let label: String?
+        let value: String?
+        let frame: NSRect
+    }
+
+    private static func accessibilityObservations(in root: NSView) -> [AccessibilityObservation] {
+        var observations: [AccessibilityObservation] = []
+        var visited: Set<ObjectIdentifier> = []
+
+        func visit(_ item: Any) {
+            guard let object = item as? NSObject,
+                  visited.insert(ObjectIdentifier(object)).inserted else { return }
+            if let view = item as? NSView {
+                if view.isAccessibilityElement() {
+                    observations.append(AccessibilityObservation(
+                        label: view.accessibilityLabel(),
+                        value: view.accessibilityValue() as? String,
+                        frame: view.accessibilityFrame()
+                    ))
+                }
+                for child in view.accessibilityChildren() ?? [] { visit(child) }
+                for child in view.subviews { visit(child) }
+            } else if let element = item as? NSAccessibilityElement {
+                observations.append(AccessibilityObservation(
+                    label: element.accessibilityLabel(),
+                    value: element.accessibilityValue() as? String,
+                    frame: element.accessibilityFrame()
+                ))
+                for child in element.accessibilityChildren() ?? [] { visit(child) }
+            }
+        }
+
+        visit(root)
+        return observations
+    }
+
+    private static func accessibilityContains(_ strings: [String], in root: NSView) -> Bool {
+        let visible = accessibilityObservations(in: root)
+            .filter { $0.frame.width > 0 && $0.frame.height > 0 }
+            .flatMap { [$0.label, $0.value].compactMap { $0 } }
+            .joined(separator: " ")
+        return strings.allSatisfy { visible.contains($0) }
+    }
+
+    private static func budgetAccessibilityFits(
+        in window: NSWindow,
+        label: String,
+        scale: Double
+    ) -> Bool {
+        guard let root = window.contentView,
+              let probe = findProbe(in: root, identifier: "editor.status.budget") else {
+            return false
+        }
+        let frame = probe.convert(probe.bounds, to: root)
+        let fontSize = AppTheme.Typography.metadata * scale
+        let font = NSFont.systemFont(ofSize: fontSize, weight: .medium)
+        let textWidth = (label as NSString).size(withAttributes: [.font: font]).width
+        let requiredWidth = textWidth + fontSize + AppTheme.Spacing.xs
+            + AppTheme.Spacing.sm * 2
+        let hasAXValue = accessibilityObservations(in: root).contains {
+            $0.label == "Project budget" && $0.value == label
+                && $0.frame.width >= requiredWidth
+                && $0.frame.height > 0
+        }
+        return hasAXValue && frame.width >= requiredWidth
+            && statusControlsAreContained(in: window)
     }
 
     private static func visibleProbe(

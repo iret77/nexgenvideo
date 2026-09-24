@@ -202,9 +202,10 @@ extension EditorViewModel {
     }
 
     func refreshBudgetStatus() async throws {
+        let fallback = generationLog
         try await refreshBudgetStatus { url in
             try await Task.detached(priority: .userInitiated) {
-                try GenerationLogFile.loadIfPresent(from: url) ?? GenerationLog()
+                try GenerationLogFile.loadIfPresent(from: url) ?? fallback
             }.value
         }
     }
@@ -216,7 +217,6 @@ extension EditorViewModel {
         let token = budgetStatusLoadToken
         let requestedJournalGeneration = generationLogRevision
         guard let root = workingRoot else {
-            generationLog = GenerationLog()
             await refreshProjectState()
             return
         }
@@ -226,6 +226,12 @@ extension EditorViewModel {
         guard token == budgetStatusLoadToken,
               requestedJournalGeneration == generationLogRevision,
               workingRoot?.standardizedFileURL.resolvingSymlinksInPath() == requestedRoot else {
+            return
+        }
+        guard refreshed.version >= generationLog.version,
+              refreshed.entries.starts(with: generationLog.entries),
+              refreshed.spendEvents.starts(with: generationLog.spendEvents) else {
+            await refreshProjectState()
             return
         }
         _ = try GenerationBudgetGuard.spendSnapshot(

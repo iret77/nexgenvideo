@@ -107,6 +107,8 @@ def valid_budget_row(row):
         and valid_frame(row.get("popoverFrame"))
         and isinstance(row.get("statusValue"), str)
         and row["statusValue"].endswith(f"items={items}")
+        and isinstance(row.get("accessibilityValue"), str)
+        and row["accessibilityValue"].startswith("Budget")
         and isinstance(row.get("screenshot"), str)
     )
 
@@ -192,7 +194,7 @@ def run_scale(executable, output, scale):
                 "NGV_WORKSPACE_UI_SCALE": str(scale),
                 "NGV_INSPECTOR_UI_ACCEPTANCE": "1",
             },
-            timeout=120,
+            timeout=180,
             check=False,
             text=True,
         )
@@ -230,6 +232,10 @@ def run_scale(executable, output, scale):
     budget = [row for row in rows if row.get("event") == "budget"]
     budget_lifecycle = [row for row in rows if row.get("event") == "budget-lifecycle"]
     unavailable_limits = [row for row in rows if row.get("event") == "budget-limits-unavailable"]
+    combined_status = [row for row in rows if row.get("event") == "budget-combined-status"]
+    legacy_refresh = [row for row in rows if row.get("event") == "budget-legacy-refresh"]
+    two_project_export = [row for row in rows if row.get("event") == "budget-two-project-export"]
+    save_as = [row for row in rows if row.get("event") == "budget-save-as"]
     project_switch = [row for row in rows if row.get("event") == "budget-project-switch"]
     background_status = [row for row in rows if row.get("event") == "background-status"]
     open_keyframes = [row for row in inspector if row.get("keyframes") == "open"]
@@ -243,7 +249,7 @@ def run_scale(executable, output, scale):
         if row.get("keyframes") != "open"
     ]
     screenshots += [row.get("screenshot") for row in budget + project_switch
-                    + budget_lifecycle + unavailable_limits]
+                    + budget_lifecycle + unavailable_limits + combined_status]
     screenshots += [
         layout.get("screenshot")
         for row in open_keyframes
@@ -283,6 +289,15 @@ def run_scale(executable, output, scale):
         and all(row.get("events") == EXPECTED_BUDGET_LIFECYCLE.get(row.get("state"))
                 for row in budget_lifecycle)
         and len(unavailable_limits) == 1
+        and len(combined_status) == 1
+        and valid_status_frames(combined_status[0])
+        and len(legacy_refresh) == 1
+        and legacy_refresh[0].get("preserved") is True
+        and len(two_project_export) == 1
+        and two_project_export[0].get("projectBound") is True
+        and len(save_as) == 1
+        and save_as[0].get("liveBytesPreserved") is True
+        and save_as[0].get("copyBytesPreserved") is True
         and len(project_switch) == 1
         and valid_status_frames(project_switch[0])
         and valid_long_status_context(project_switch[0])
@@ -301,7 +316,7 @@ def run_scale(executable, output, scale):
         and invariants[0].get("workingCopyUnchanged") is True
         and len(screenshots)
         == 9 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES)
-        + len(EXPECTED_BUDGET_CASES) + len(EXPECTED_BUDGET_LIFECYCLE) + 1
+        + len(EXPECTED_BUDGET_CASES) + len(EXPECTED_BUDGET_LIFECYCLE) + 2
         and valid_images
     )
     return {

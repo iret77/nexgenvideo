@@ -210,14 +210,11 @@ enum NativeCockpitReader {
             throw NativeError.notInitialized
         }
         let spend = try projectSpendSnapshot(dataRoot: dataRoot)
-        let brief = try? YAMLArtifactStore(dataRoot: dataRoot).load(
-            Brief.self,
-            at: PipelineLayout.briefFile
-        )
+        let budgetStopEur = try GenerationBudgetGuard.budgetStop(dataRoot: dataRoot)
         return try serialize(stateDictionary(
             snapshot,
             spend: spend,
-            budgetStopEur: brief?.budgetStopEur
+            budgetStopEur: budgetStopEur
         ))
     }
 

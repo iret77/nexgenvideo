@@ -333,7 +333,8 @@ enum PipelineDeliveryStore {
                 resolver: editor.mediaResolver,
                 format: format,
                 resolution: resolution,
-                outputURL: outputURL
+                outputURL: outputURL,
+                projectKey: editor.openWorkingCopyKey
             )
         } onCancel: {
             Task { @MainActor in service.cancel() }

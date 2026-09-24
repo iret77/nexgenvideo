@@ -598,7 +598,7 @@ final class VideoProject: NSDocument {
                     // orphaned copy). A move/rename leaves nothing at oldURL, so existingKey is nil and we
                     // discard nothing — the live copy stays under the unchanged UUID key.
                     let oldKey = ProjectIdentity.existingKey(for: oldURL)
-                    editorViewModel.projectURL = newURL
+                    editorViewModel.retargetSavedDocument(from: oldURL, to: newURL)
                     editorViewModel.agentService.loadSessions(
                         from: editorViewModel.workingCopyHome
                     )

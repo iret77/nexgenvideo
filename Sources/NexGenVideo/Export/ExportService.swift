@@ -38,7 +38,8 @@ final class ExportService {
         format: ExportFormat,
         resolution: ExportResolution,
         outputURL: URL,
-        acquireSlot: Bool = true
+        acquireSlot: Bool = true,
+        projectKey: String? = nil
     ) async {
         error = nil
         lastReport = nil
@@ -70,7 +71,10 @@ final class ExportService {
         }
 
         if acquireSlot {
-            await ExportCoordinator.acquireExport()
+            guard await ExportCoordinator.acquireExport(projectKey: projectKey) else {
+                error = "Export was cancelled"
+                return
+            }
         }
         defer { if acquireSlot { ExportCoordinator.endExport() } }
 
@@ -180,7 +184,8 @@ final class ExportService {
         generationLog: GenerationLog,
         sourceProjectURL: URL?,
         outputURL: URL,
-        acquireSlot: Bool = true
+        acquireSlot: Bool = true,
+        projectKey: String? = nil
     ) async -> ProjectPackageExporter.Report? {
         isExporting = true
         progress = 0
@@ -189,7 +194,10 @@ final class ExportService {
         defer { isExporting = false }
 
         if acquireSlot {
-            await ExportCoordinator.acquireExport()
+            guard await ExportCoordinator.acquireExport(projectKey: projectKey) else {
+                error = "Export was cancelled"
+                return nil
+            }
         }
         defer { if acquireSlot { ExportCoordinator.endExport() } }
 

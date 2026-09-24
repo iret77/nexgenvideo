@@ -278,9 +278,15 @@ final class EditorViewModel {
                 && nextProjectId == projectId
                 && workingCopyHome != nil
                 && activeWorkingCopyKey != nil
-            if !keepsLiveDeclaration {
-                projectStateLoadToken += 1
-                budgetStatusLoadToken &+= 1
+            let retargetsLiveDocument = projectURL != nil
+                && projectURL == pendingLiveDocumentRetarget
+                && workingCopyHome != nil
+                && activeWorkingCopyKey == workingCopyKey
+                && nextProjectId != nil
+            pendingLiveDocumentRetarget = nil
+            projectStateLoadToken += 1
+            budgetStatusLoadToken &+= 1
+            if !keepsLiveDeclaration && !retargetsLiveDocument {
                 projectState = nil
                 generationLog = GenerationLog()
                 capturePluginDeclaration(from: projectURL)
@@ -323,6 +329,18 @@ final class EditorViewModel {
 
     /// The key of the working copy this session actually opened and has been writing into.
     var openWorkingCopyKey: String? { activeWorkingCopyKey }
+
+    func retargetSavedDocument(from oldURL: URL, to newURL: URL) {
+        guard projectURL?.standardizedFileURL == oldURL.standardizedFileURL,
+              workingCopyHome != nil,
+              activeWorkingCopyKey == workingCopyKey,
+              ProjectIdentity.existingUUID(for: newURL) != nil else {
+            projectURL = newURL
+            return
+        }
+        pendingLiveDocumentRetarget = newURL
+        projectURL = newURL
+    }
 
     func adoptWorkingCopy(
         _ result: ProjectWorkingCopy.OpenResult,
@@ -1534,5 +1552,6 @@ final class EditorViewModel {
     @ObservationIgnored private var isRestoringWorkspacePresentation = false
     @ObservationIgnored var budgetStatusLoadToken: UInt64 = 0
     @ObservationIgnored private(set) var generationLogRevision: UInt64 = 0
+    @ObservationIgnored private var pendingLiveDocumentRetarget: URL?
 
 }

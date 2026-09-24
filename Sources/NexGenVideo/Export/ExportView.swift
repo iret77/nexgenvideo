@@ -347,7 +347,8 @@ struct ExportView: View {
                         resolver: editor.mediaResolver,
                         format: format,
                         resolution: resolution,
-                        outputURL: url
+                        outputURL: url,
+                        projectKey: editor.openWorkingCopyKey
                     )
                     if service.error == nil { editor.showExportDialog = false }
                     return
@@ -405,7 +406,8 @@ struct ExportView: View {
                     manifest: editor.mediaManifest,
                     generationLog: editor.generationLog,
                     sourceProjectURL: editor.workingRoot,
-                    outputURL: url
+                    outputURL: url,
+                    projectKey: editor.openWorkingCopyKey
                 )
                 guard let report, service.error == nil else { return }
                 if report.missing.isEmpty {

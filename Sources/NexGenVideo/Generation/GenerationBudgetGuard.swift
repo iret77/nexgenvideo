@@ -386,6 +386,10 @@ enum GenerationBudgetGuard {
             }
         }
         guard let dataRoot else { return nil }
+        return try budgetStop(dataRoot: dataRoot)
+    }
+
+    nonisolated static func budgetStop(dataRoot: URL) throws -> Double? {
         let url = PipelineLayout.url(PipelineLayout.briefFile, in: dataRoot)
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         do {

@@ -48,6 +48,7 @@ struct BudgetStatusTests {
         )
 
         #expect(unavailable.planningBudget == .unavailable)
+        #expect(unavailable.severity == .warning)
         #expect(unavailable.compactLabel == "Budget · No spend · Limits unavailable")
         #expect(unavailable.acceptanceValue.contains("planning=unknown"))
         #expect(notSet.planningBudget == .notSet)
@@ -111,6 +112,7 @@ struct BudgetStatusTests {
         #expect(low.severity == .warning)
         #expect(low.warnings.contains { $0.hasPrefix("Planning budget has") })
         #expect(exceeded.severity == .error)
+        #expect(exceeded.compactLabel == "Budget €12.50 / €10.00 · Stop reached")
         #expect(exceeded.warnings.contains { $0.hasPrefix("Planning budget exceeded") })
         #expect(exceeded.warnings.contains { $0.hasPrefix("Hard stop exceeded") })
     }
@@ -149,7 +151,7 @@ struct BudgetStatusTests {
         #expect(presentation.compactLabel == "Budget ≥€0.00 / €10.00")
         #expect(presentation.warnings.contains { $0.contains("provider price") })
         #expect(presentation.warnings.contains { $0.contains("currency conversion") })
-        #expect(presentation.warnings.contains { $0.contains("subscription/credit") })
+        #expect(presentation.warnings.contains { $0.contains("subscription credits") })
         let statuses = Set(presentation.spend?.lineItems.map(\.pricingStatus) ?? [])
         #expect(statuses == Set([
             .priceUnavailable,
@@ -199,6 +201,72 @@ struct BudgetStatusTests {
 
         #expect(editor.agentService.pendingSpendApproval == approval)
         #expect(try Data(contentsOf: logURL) == beforeBytes)
+    }
+
+    @Test("refresh keeps an in-memory legacy journal when the file is absent")
+    func refreshKeepsMissingDiskJournal() async throws {
+        let project = try package(named: "legacy-refresh")
+        let editor = EditorViewModel()
+        editor.projectURL = project
+        defer {
+            editor.releaseWorkingCopy()
+            if let key = ProjectIdentity.existingKey(for: project) {
+                ProjectWorkingCopy.discard(key: key)
+            }
+            try? FileManager.default.removeItem(at: project)
+        }
+        let root = try #require(editor.workingRoot)
+        let logURL = root.appendingPathComponent(Project.generationLogFilename)
+        try FileManager.default.removeItem(at: logURL)
+        var legacy = GenerationLog()
+        legacy.entries = [GenerationLogEntry(id: "legacy", model: "legacy-model",
+                                              costCredits: 3, createdAt: nil)]
+        editor.generationLog = legacy
+
+        try await editor.refreshBudgetStatus()
+
+        #expect(editor.generationLog == legacy)
+        #expect(!FileManager.default.fileExists(atPath: logURL.path))
+    }
+
+    @Test("refresh never replaces a newer in-memory journal with an older disk snapshot")
+    func refreshKeepsStaleDiskJournal() async throws {
+        let project = try package(named: "stale-refresh")
+        let editor = EditorViewModel()
+        editor.projectURL = project
+        defer {
+            editor.releaseWorkingCopy()
+            if let key = ProjectIdentity.existingKey(for: project) {
+                ProjectWorkingCopy.discard(key: key)
+            }
+            try? FileManager.default.removeItem(at: project)
+        }
+        let root = try #require(editor.workingRoot)
+        let logURL = root.appendingPathComponent(Project.generationLogFilename)
+        let diskBytes = try Data(contentsOf: logURL)
+        let newer = log(transaction(id: "unpersisted", money: money(3), final: .reserved))
+        editor.generationLog = newer
+
+        try await editor.refreshBudgetStatus()
+
+        #expect(editor.generationLog == newer)
+        #expect(try Data(contentsOf: logURL) == diskBytes)
+    }
+
+    @Test("absent stop and invalid brief remain distinct")
+    func strictBudgetStopReader() throws {
+        let dataRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "budget-stop-\(UUID().uuidString)", isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: dataRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dataRoot) }
+        #expect(try GenerationBudgetGuard.budgetStop(dataRoot: dataRoot) == nil)
+        try Data("budget_stop_eur: [broken".utf8).write(
+            to: PipelineLayout.url(PipelineLayout.briefFile, in: dataRoot)
+        )
+        #expect(throws: GenerationBudgetError.self) {
+            try GenerationBudgetGuard.budgetStop(dataRoot: dataRoot)
+        }
     }
 
     @Test("project switch clears the previous journal before asynchronous refresh")
@@ -333,7 +401,7 @@ struct BudgetStatusTests {
         let presentation = ProjectBudgetPresentation.make(log: log(events), generatedInputs: [],
             projectState: try projectState(budget: 10, stop: 12), hasProductionPipeline: true)
         #expect(presentation.severity == .error)
-        #expect(presentation.compactLabel == "Budget ≥€12.50 / €10.00")
+        #expect(presentation.compactLabel == "Budget ≥€12.50 / €10.00 · Stop reached")
         #expect(presentation.warnings.contains("Planning budget exceeded by €2.50."))
         #expect(presentation.warnings.contains("Hard stop exceeded by €0.50."))
     }

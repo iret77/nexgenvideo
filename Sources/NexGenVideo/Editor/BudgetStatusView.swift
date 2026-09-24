@@ -78,8 +78,13 @@ struct ProjectBudgetPresentation: Equatable {
         }
         switch hardStop {
         case .amount(let stop):
-            if case .amount = planningBudget { break }
-            label += " · Stop \(Self.euro(stop))"
+            if spend.verifiedEur >= stop {
+                label += " · Stop reached"
+            } else if case .amount = planningBudget {
+                break
+            } else {
+                label += " · Stop \(Self.euro(stop))"
+            }
         case .unavailable:
             label += " · Stop unavailable"
         default:
@@ -97,6 +102,7 @@ struct ProjectBudgetPresentation: Equatable {
             || limitIsExceeded(hardStop, spend: spend.verifiedEur) {
             return .error
         }
+        if limitsAreUnavailable { return .warning }
         guard spend.isComplete else { return .warning }
         if limitIsLow(planningBudget, spend: spend.verifiedEur)
             || limitIsLow(hardStop, spend: spend.verifiedEur) {
@@ -113,7 +119,7 @@ struct ProjectBudgetPresentation: Equatable {
         if spend.unpricedTransactionCount > 0 {
             appendPricingWarning(.priceUnavailable, label: "provider price", spend: spend, to: &result)
             appendPricingWarning(.currencyUnavailable, label: "currency conversion", spend: spend, to: &result)
-            appendPricingWarning(.subscriptionCredits, label: "subscription/credit monetary cost", spend: spend, to: &result)
+            appendPricingWarning(.subscriptionCredits, label: "monetary cost for subscription credits", spend: spend, to: &result)
         }
         if spend.legacyGenerationCount > 0 {
             result.append(
@@ -267,6 +273,7 @@ private struct BudgetStatusButton: View {
     @State private var isPresented = false
     @State private var isRefreshing = false
     @State private var refreshError: String?
+    @State private var refreshRequest = UUID()
 
     var body: some View {
         let presentation = presentation
@@ -321,6 +328,8 @@ private struct BudgetStatusButton: View {
             )
         }
         .onChange(of: editor.projectURL) { _, _ in
+            refreshRequest = UUID()
+            isRefreshing = false
             isPresented = false
             refreshError = nil
         }
@@ -339,13 +348,20 @@ private struct BudgetStatusButton: View {
         guard !isRefreshing else { return }
         isRefreshing = true
         refreshError = nil
+        let request = UUID()
+        let projectURL = editor.projectURL
+        refreshRequest = request
         Task { @MainActor in
             do {
                 try await editor.refreshBudgetStatus()
             } catch {
-                refreshError = "Budget details could not be refreshed."
+                if refreshRequest == request, editor.projectURL == projectURL {
+                    refreshError = "Budget details could not be refreshed."
+                }
             }
-            isRefreshing = false
+            if refreshRequest == request, editor.projectURL == projectURL {
+                isRefreshing = false
+            }
         }
     }
 
@@ -481,7 +497,7 @@ private struct BudgetDetailPopover: View {
     private func reservationSuffix(_ spend: ProjectSpendSnapshot) -> String? {
         var parts: [String] = []
         if spend.activeReservationCount > 0 {
-            parts.append(String(spend.activeReservationCount))
+            parts.append("\(spend.activeReservationCount) open")
         }
         if spend.unpricedTransactionCount > 0 {
             parts.append("\(spend.unpricedTransactionCount) unpriced")
@@ -602,17 +618,17 @@ private struct BudgetDetailPopover: View {
                         }
                     }
             }
-            Text("\(item.provider.displayName) · \(routeLabel(item.transport)) · \(billingLabel(item.billing))")
+            Text("\(item.provider.displayName) · \(billingLabel(item.billing))")
                 .interfaceFont(size: AppTheme.Typography.metadata)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .lineLimit(1)
                 .truncationMode(.middle)
-            Text(item.endpoint)
-                .interfaceFont(size: AppTheme.Typography.metadata, design: .monospaced)
-                .foregroundStyle(AppTheme.Text.mutedColor)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .textSelection(.enabled)
+            DisclosureGroup("Request details") {
+                Text("\(routeLabel(item.transport)) · \(item.endpoint)")
+                    .interfaceFont(size: AppTheme.Typography.metadata, design: .monospaced)
+                    .foregroundStyle(AppTheme.Text.mutedColor)
+                    .textSelection(.enabled)
+            }
             moneyLabel(item)
         }
         .padding(AppTheme.Spacing.sm)
@@ -636,7 +652,7 @@ private struct BudgetDetailPopover: View {
                 Text(ProjectBudgetPresentation.euro(money.eurAmount))
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                     .monospacedDigit()
-                Text("\(money.nativeCurrency) \(ProjectBudgetPresentation.decimal(money.nativeAmount)) · rate \(money.exchangeRateDate)")
+                Text("\(money.nativeCurrency) \(ProjectBudgetPresentation.decimal(money.nativeAmount)) · converted on \(money.exchangeRateDate)")
                     .foregroundStyle(AppTheme.Text.mutedColor)
                     .lineLimit(1)
             }
@@ -651,7 +667,7 @@ private struct BudgetDetailPopover: View {
         case .priced: "Monetary record unavailable"
         case .priceUnavailable: "Provider price unavailable"
         case .currencyUnavailable: "Currency conversion unavailable"
-        case .subscriptionCredits: "Subscription/credits · monetary project cost unavailable"
+        case .subscriptionCredits: "Subscription credits · price in euros unavailable"
         }
     }
 
@@ -754,7 +770,7 @@ private struct BudgetDetailPopover: View {
     private func stateLabel(_ item: ProjectSpendLineItem) -> String {
         switch item.state {
         case .reserved: "Reserved"
-        case .submitted: item.needsAttention ? "Submitted · attention" : "Submitted"
+        case .submitted: item.needsAttention ? "Submitted · Check charge" : "Submitted"
         case .charged: "Charged"
         case .released: "Released"
         }
@@ -787,24 +803,33 @@ private struct BudgetDetailPopover: View {
 
 private struct AIJobStatusButton: View {
     @Environment(EditorViewModel.self) private var editor
+    @Environment(\.interfaceScale) private var interfaceScale
     @State private var isPresented = false
 
     var body: some View {
         let jobs = currentJobs
+        let needsAttention = editor.generationBatchCoordinator.error != nil
+        let label = needsAttention
+            ? (jobs.isEmpty ? "AI needs attention" : "AI \(jobs.count) running · Check batch")
+            : (jobs.isEmpty ? "AI idle" : "AI \(jobs.count) running")
         statusButton(
             identifier: "editor.status.aiJobs",
-            label: jobs.isEmpty ? "AI" : "AI \(jobs.count)",
-            systemName: jobs.isEmpty ? "sparkles" : "sparkles.rectangle.stack.fill",
+            label: label,
+            systemName: needsAttention ? "exclamationmark.triangle.fill"
+                : (jobs.isEmpty ? "sparkles" : "sparkles.rectangle.stack.fill"),
             active: !jobs.isEmpty,
+            attention: needsAttention,
             presented: isPresented
         ) { isPresented.toggle() }
         .accessibilityLabel("AI background jobs")
-        .accessibilityValue(jobs.isEmpty ? "No active jobs" : "\(jobs.count) active")
+        .accessibilityValue(label)
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             jobPopover(
                 title: "AI Jobs",
                 jobs: jobs,
+                attention: needsAttention ? "Generation batch needs attention" : nil,
                 empty: "No active AI jobs",
+                scale: interfaceScale,
                 closeIdentifier: "editor.status.aiJobs.close",
                 close: { isPresented = false }
             )
@@ -819,36 +844,46 @@ private struct AIJobStatusButton: View {
             jobs.append("Production · \(PhaseDisplay.label(phase))")
         }
         jobs.append(contentsOf: editor.mediaAssets.filter(\.isGenerating).map(\.generatingLabel))
-        if editor.generationBatchCoordinator.error != nil { jobs.append("Generation batch needs attention") }
         return jobs
     }
 }
 
 private struct ExportJobStatusButton: View {
+    @Environment(EditorViewModel.self) private var editor
+    @Environment(\.interfaceScale) private var interfaceScale
     @State private var isPresented = false
-    @State private var isActive = ExportCoordinator.isExportActive
+    @State private var activityRevision = 0
 
     var body: some View {
+        let _ = activityRevision
+        let status = ExportCoordinator.status(for: editor.openWorkingCopyKey)
+        let jobs = (status.running ? ["Export is running"] : [])
+            + Array(repeating: "Export is waiting", count: status.waiting)
+            + (status.otherProjectRunning ? ["Another project is exporting"] : [])
+        let label: String = status.running ? "1 export running"
+            : status.waiting > 0 ? "\(status.waiting) export\(status.waiting == 1 ? "" : "s") waiting"
+            : status.otherProjectRunning ? "Export in other project" : "No exports"
         statusButton(
             identifier: "editor.status.exportJobs",
-            label: isActive ? "Export 1" : "Export",
-            systemName: isActive ? "arrow.up.circle.fill" : "arrow.up.circle",
-            active: isActive,
+            label: label,
+            systemName: status.running || status.waiting > 0 ? "arrow.up.circle.fill" : "arrow.up.circle",
+            active: status.running || status.waiting > 0,
             presented: isPresented
         ) { isPresented.toggle() }
         .accessibilityLabel("Export background jobs")
-        .accessibilityValue(isActive ? "One active export" : "No active exports")
+        .accessibilityValue(label)
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             jobPopover(
                 title: "Export Jobs",
-                jobs: isActive ? ["Export is running"] : [],
+                jobs: jobs,
                 empty: "No active exports",
+                scale: interfaceScale,
                 closeIdentifier: "editor.status.exportJobs.close",
                 close: { isPresented = false }
             )
         }
         .onReceive(NotificationCenter.default.publisher(for: .exportActivityChanged)) { _ in
-            isActive = ExportCoordinator.isExportActive
+            activityRevision &+= 1
         }
     }
 }
@@ -858,13 +893,15 @@ private func statusButton(
     label: String,
     systemName: String,
     active: Bool,
+    attention: Bool = false,
     presented: Bool,
     action: @escaping () -> Void
 ) -> some View {
     Button(action: action) {
         Label(label, systemImage: systemName)
             .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium)
-            .foregroundStyle(active ? AppTheme.Text.primaryColor : AppTheme.Text.mutedColor)
+            .foregroundStyle(attention ? AppTheme.Status.warningColor
+                : (active ? AppTheme.Text.primaryColor : AppTheme.Text.mutedColor))
             .padding(.horizontal, AppTheme.Spacing.sm)
             .frame(minHeight: AppTheme.Control.compactHeight)
             .hoverHighlight(cornerRadius: AppTheme.Radius.xs)
@@ -875,7 +912,7 @@ private func statusButton(
             AppRelaunchClickProbe(
                 identifier: identifier,
                 acceptanceState: presented,
-                acceptanceValue: active ? "active" : "idle"
+                acceptanceValue: attention ? "attention" : (active ? "active" : "idle")
             )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .allowsHitTesting(false)
@@ -886,7 +923,9 @@ private func statusButton(
 private func jobPopover(
     title: String,
     jobs: [String],
+    attention: String? = nil,
     empty: String,
+    scale: Double,
     closeIdentifier: String,
     close: @escaping () -> Void
 ) -> some View {
@@ -909,7 +948,12 @@ private func jobPopover(
                 }
             }
         }
-        if jobs.isEmpty {
+        if let attention {
+            Label(attention, systemImage: "exclamationmark.triangle.fill")
+                .interfaceFont(size: AppTheme.Typography.ui)
+                .foregroundStyle(AppTheme.Status.warningColor)
+        }
+        if jobs.isEmpty && attention == nil {
             Text(empty)
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.mutedColor)
@@ -922,5 +966,5 @@ private func jobPopover(
         }
     }
     .padding(AppTheme.Spacing.mdLg)
-    .frame(width: AppTheme.ComponentSize.backgroundJobsPopoverWidth, alignment: .leading)
+    .frame(width: AppTheme.ComponentSize.backgroundJobsPopoverWidth * scale, alignment: .leading)
 }
