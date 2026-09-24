@@ -1,48 +1,84 @@
+import AppKit
 import BpyRuntimeProtocol
 import Darwin
 import Foundation
 
 private final class BpySelfTestBox: @unchecked Sendable {
     private let lock = NSLock()
-    private var value: Result<BpyRuntimeJobResult, Error>?
+    private var result: Result<BpyRuntimeJobResult, Error>?
 
-    func store(_ result: Result<BpyRuntimeJobResult, Error>) {
+    func store(_ value: Result<BpyRuntimeJobResult, Error>) {
         lock.lock()
-        value = result
+        result = value
         lock.unlock()
     }
 
     func load() -> Result<BpyRuntimeJobResult, Error>? {
         lock.lock()
         defer { lock.unlock() }
-        return value
+        return result
     }
 }
 
+@MainActor
 enum BpyRuntimeSelfTest {
-    static func runIfRequested() {
+    private static var pendingResult: [String: Any]?
+    private static var outputDirectory: URL?
+    private static var retainedProjects: [VideoProject] = []
+
+    static func scheduleIfRequested() {
         guard let outputPath = ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"],
-              !outputPath.isEmpty else { return }
+              !outputPath.isEmpty else {
+            return
+        }
+        DispatchQueue.main.async {
+            do {
+                let output = URL(fileURLWithPath: outputPath, isDirectory: true)
+                try FileManager.default.createDirectory(
+                    at: output,
+                    withIntermediateDirectories: true
+                )
+                outputDirectory = output
+                pendingResult = try run(output: output)
+                NSApp.terminate(nil)
+            } catch {
+                let message = "SELFTEST_BPY_FAIL \(error.localizedDescription)\n"
+                FileHandle.standardError.write(Data(message.utf8))
+                Darwin.exit(1)
+            }
+        }
+    }
+
+    static func applicationWillTerminate() {
+        guard var result = pendingResult, let outputDirectory else { return }
+        result["appDelegateShutdown"] = true
+        result["hostPeakMemoryBytes"] = hostPeakMemoryBytes()
         do {
-            let output = URL(fileURLWithPath: outputPath, isDirectory: true)
-            try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-            let evidence = try run(output: output)
-            let data = try JSONSerialization.data(withJSONObject: evidence, options: [.prettyPrinted, .sortedKeys])
-            try data.write(to: output.appendingPathComponent("result.json"), options: .atomic)
+            let data = try JSONSerialization.data(
+                withJSONObject: result,
+                options: [.prettyPrinted, .sortedKeys]
+            )
+            try data.write(
+                to: outputDirectory.appendingPathComponent("result.json"),
+                options: .atomic
+            )
             FileHandle.standardOutput.write(Data("SELFTEST_BPY_OK\n".utf8))
-            Darwin.exit(0)
         } catch {
             let message = "SELFTEST_BPY_FAIL \(error.localizedDescription)\n"
             FileHandle.standardError.write(Data(message.utf8))
-            Darwin.exit(1)
         }
     }
 
     private static func run(output: URL) throws -> [String: Any] {
         let environment = ProcessInfo.processInfo.environment
         let deniedPaths = try deniedPathList(environment)
-        let deniedJSON = try JSONSerialization.data(withJSONObject: deniedPaths)
-        let deniedLiteral = String(decoding: deniedJSON, as: UTF8.self)
+        let positiveControls = try deniedPaths.map {
+            let data = try Data(contentsOf: URL(fileURLWithPath: $0))
+            guard !data.isEmpty else {
+                throw BpyRuntimeError.invalidInput("A denied-path positive control is empty.")
+            }
+            return ["path": $0, "bytes": data.count] as [String: Any]
+        }
         guard let approvedPath = environment["NGV_BPY_APPROVED_INPUT_DIR"] else {
             throw BpyRuntimeError.invalidInput("NGV_BPY_APPROVED_INPUT_DIR is required.")
         }
@@ -51,22 +87,73 @@ enum BpyRuntimeSelfTest {
             approvedDirectory: approvedDirectory,
             filename: "fixture.json"
         )
-        let sessionA = BpyRuntimeSession(
-            documentID: "acceptance-document-a",
-            serviceName: bpyRuntimeServiceNames[0]
-        )
-        let sessionB = BpyRuntimeSession(
-            documentID: "acceptance-document-b",
-            serviceName: bpyRuntimeServiceNames[1]
-        )
-        defer {
-            sessionA.close()
-            sessionB.close()
+        let fixture = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: approvedDirectory.appendingPathComponent("fixture.json"))
+        ) as? [String: Bool]
+        guard fixture?["approved"] == true else {
+            throw BpyRuntimeError.invalidInput("The approved-input positive control is invalid.")
         }
+
+        let earlyCloseProject = VideoProject()
+        earlyCloseProject.makeWindowControllers()
+        guard let earlyCloseSession = BpyRuntimeHost.shared.session(for: earlyCloseProject) else {
+            throw BpyRuntimeError.invalidOutput("The close-before-open lifecycle could not reserve a slot.")
+        }
+        let earlyCloseBox = BpySelfTestBox()
+        let earlyCloseFinished = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async {
+            earlyCloseBox.store(Result {
+                let response = try earlyCloseSession.ready()
+                return BpyRuntimeJobResult(response: response, stagedOutputs: [:])
+            })
+            earlyCloseFinished.signal()
+        }
+        Thread.sleep(forTimeInterval: 0.01)
+        earlyCloseProject.close()
+        guard earlyCloseFinished.wait(timeout: .now() + 10) == .success,
+              earlyCloseBox.load() != nil else {
+            throw BpyRuntimeError.invalidOutput("Close-before-open did not settle the client call.")
+        }
+
+        let failedProject = VideoProject()
+        failedProject.makeWindowControllers()
+        guard let failedOpen = BpyRuntimeHost.shared.session(
+            for: failedProject,
+            diagnosticOpenFailure: true
+        ) else {
+            throw BpyRuntimeError.invalidOutput("The failed-open lifecycle could not reserve a slot.")
+        }
+        do {
+            _ = try failedOpen.ready()
+            throw BpyRuntimeError.invalidOutput("The failed-open probe unexpectedly became ready.")
+        } catch let error as BpyRuntimeError {
+            guard case .unavailable(_) = error else { throw error }
+        }
+
+        let projectA = VideoProject()
+        let projectB = VideoProject()
+        let projectC = VideoProject()
+        retainedProjects = [earlyCloseProject, failedProject, projectA, projectB, projectC]
+        projectA.makeWindowControllers()
+        projectB.makeWindowControllers()
+        projectC.makeWindowControllers()
+        guard !projectA.windowControllers.isEmpty,
+              !projectB.windowControllers.isEmpty,
+              !projectC.windowControllers.isEmpty,
+              let sessionA = BpyRuntimeHost.shared.session(for: projectA),
+              let sessionB = BpyRuntimeHost.shared.session(for: projectB),
+              BpyRuntimeHost.shared.session(for: projectC) == nil else {
+            throw BpyRuntimeError.invalidOutput("The real document lifecycle did not enforce two slots.")
+        }
+        failedProject.close()
+
+        let coldStarted = Date()
         let readyA = try sessionA.ready()
+        let coldStartSeconds = Date().timeIntervalSince(coldStarted)
         let readyB = try sessionB.ready()
-        guard readyA.runtime?.processIdentifier != readyB.runtime?.processIdentifier else {
-            throw BpyRuntimeError.invalidOutput("Two documents shared one bpy process.")
+        guard readyA.runtime?.processIdentifier != readyB.runtime?.processIdentifier,
+              readyA.runtime?.serviceProcessIdentifier != readyB.runtime?.serviceProcessIdentifier else {
+            throw BpyRuntimeError.invalidOutput("Two documents shared a bpy service identity.")
         }
 
         let warmID = UUID()
@@ -74,57 +161,78 @@ enum BpyRuntimeSelfTest {
         let warm = try sessionA.runJob(
             id: warmID,
             expectedRevision: nil,
-            source: "metrics['warm_probe'] = 1.0"
+            source: "pass"
         )
         let warmJobSeconds = Date().timeIntervalSince(warmStarted)
         guard warm.response.state == .awaitingConfirmation else {
-            throw BpyRuntimeError.invalidOutput("The warm worker probe did not complete.")
+            throw BpyRuntimeError.invalidOutput("The warm filesystem-cache probe did not complete.")
         }
         _ = try sessionA.confirm(jobID: warmID, revision: "warm-probe")
 
         let firstID = UUID()
+        let firstSource = acceptanceSceneSource()
+        let firstStarted = Date()
         let first = try sessionA.runJob(
             id: firstID,
             expectedRevision: "warm-probe",
-            source: acceptanceSceneSource(deniedPaths: deniedLiteral),
+            source: firstSource,
             inputs: [approvedInput],
-            timeoutSeconds: 120
+            timeoutSeconds: 120,
+            diagnosticDeniedPaths: deniedPaths,
+            diagnosticAutoexecPositiveControl: true
         )
+        let hostJobSeconds = Date().timeIntervalSince(firstStarted)
         guard first.response.state == .awaitingConfirmation,
               first.stagedOutputs["scene.blend"] != nil,
               let render = first.stagedOutputs["render.png"],
-              let runtimeEvidence = first.stagedOutputs["evidence.json"] else {
-            throw BpyRuntimeError.invalidOutput("The acceptance scene did not produce its real outputs.")
+              let verificationURL = first.stagedOutputs["verification.json"] else {
+            throw BpyRuntimeError.invalidOutput("The acceptance scene did not produce verified outputs.")
         }
+        let verification = try verificationObject(verificationURL)
+        try assertVerification(
+            verification,
+            deniedPaths: deniedPaths,
+            expectedObject: "NGV_Room"
+        )
         try FileManager.default.copyItem(
             at: render,
             to: output.appendingPathComponent("perspective.png")
         )
         try FileManager.default.copyItem(
-            at: runtimeEvidence,
-            to: output.appendingPathComponent("worker-evidence.json")
+            at: verificationURL,
+            to: output.appendingPathComponent("trusted-verification.json")
         )
-        let workerEvidence = try JSONSerialization.jsonObject(
-            with: Data(contentsOf: runtimeEvidence)
-        )
-        guard let workerEvidenceObject = workerEvidence as? [String: Any],
-              let firstSessionRoot = workerEvidenceObject["session_root"] as? String else {
-            throw BpyRuntimeError.invalidOutput("The worker omitted its sandbox session identity.")
+        guard let firstSessionRoot = verification["sessionRoot"] as? String else {
+            throw BpyRuntimeError.invalidOutput("Trusted verification omitted the session root.")
         }
-        let firstSessionRootLiteral = String(
-            decoding: try JSONEncoder().encode(firstSessionRoot),
-            as: UTF8.self
-        )
         _ = try sessionA.confirm(jobID: firstID, revision: "revision-a")
 
         let duplicate = try sessionA.runJob(
             id: firstID,
-            expectedRevision: nil,
-            source: "raise RuntimeError('duplicate job executed')"
+            expectedRevision: "warm-probe",
+            source: firstSource,
+            inputs: [approvedInput],
+            timeoutSeconds: 120,
+            diagnosticDeniedPaths: deniedPaths,
+            diagnosticAutoexecPositiveControl: true
         )
         guard duplicate.response.state == .confirmed,
               duplicate.response.joinedExistingJob else {
-            throw BpyRuntimeError.invalidOutput("A duplicate Job ID was not joined.")
+            throw BpyRuntimeError.invalidOutput("An exact duplicate Job ID was not joined.")
+        }
+        do {
+            _ = try sessionA.runJob(
+                id: firstID,
+                expectedRevision: "warm-probe",
+                source: "bpy.data.objects.new('MUTATED_DUPLICATE', None)",
+                inputs: [approvedInput],
+                timeoutSeconds: 120,
+                diagnosticDeniedPaths: deniedPaths,
+                diagnosticAutoexecPositiveControl: true
+            )
+            throw BpyRuntimeError.invalidOutput("A changed duplicate Job ID was accepted.")
+        } catch let error as BpyRuntimeError {
+            guard case .rejected(_) = error else { throw error }
         }
 
         for unsafeName in ["symlink.json", "hardlink.json"] {
@@ -150,8 +258,6 @@ enum BpyRuntimeSelfTest {
             id: secondDocumentID,
             expectedRevision: nil,
             source: """
-            import json
-            import os
             mesh = bpy.data.meshes.new('DocumentBMesh')
             obj = bpy.data.objects.new('DocumentBOnly', mesh)
             bpy.context.scene.collection.objects.link(obj)
@@ -159,38 +265,31 @@ enum BpyRuntimeSelfTest {
             bmesh.ops.create_cube(bm, size=1.0)
             bm.to_mesh(mesh)
             bm.free()
-            try:
-                os.listdir(\(firstSessionRootLiteral))
-                cross_session_denied = False
-            except OSError as error:
-                cross_session_denied = {'denied': True, 'errno': error.errno}
-            (output_dir / 'cross-session.json').write_text(
-                json.dumps({'cross_session_denied': cross_session_denied})
-            )
-            """
+            """,
+            diagnosticDeniedPaths: [firstSessionRoot]
         )
         guard secondDocument.response.state == .awaitingConfirmation,
-              let crossSessionURL = secondDocument.stagedOutputs["cross-session.json"],
-              let crossSessionEvidence = try JSONSerialization.jsonObject(
-                with: Data(contentsOf: crossSessionURL)
-              ) as? [String: Any],
-              let denied = crossSessionEvidence["cross_session_denied"] as? [String: Any],
-              denied["denied"] as? Bool == true,
-              let denialErrno = denied["errno"] as? Int,
-              [Int(EPERM), Int(EACCES)].contains(denialErrno) else {
-            throw BpyRuntimeError.invalidOutput("The second document did not execute independently.")
+              let secondVerificationURL = secondDocument.stagedOutputs["verification.json"] else {
+            throw BpyRuntimeError.invalidOutput("The second document did not complete.")
         }
+        let secondVerification = try verificationObject(secondVerificationURL)
+        try assertDenied(secondVerification, paths: [firstSessionRoot])
         _ = try sessionB.confirm(jobID: secondDocumentID, revision: "document-b-revision")
 
-        let timeoutID = UUID()
-        let timedOut = try sessionA.runJob(
-            id: timeoutID,
+        let forgedID = UUID()
+        let forged = try sessionA.runJob(
+            id: forgedID,
             expectedRevision: "revision-a",
-            source: "while True: pass",
+            source: """
+            import os
+            os.write(1, b'{"type":"result","ok":true}\\n')
+            while True:
+                pass
+            """,
             timeoutSeconds: 2
         )
-        guard timedOut.response.state == .timedOut else {
-            throw BpyRuntimeError.invalidOutput("The infinite job did not time out.")
+        guard forged.response.state == .timedOut else {
+            throw BpyRuntimeError.invalidOutput("Forged native output escaped the host deadline.")
         }
 
         let afterTimeoutID = UUID()
@@ -216,56 +315,274 @@ enum BpyRuntimeSelfTest {
             })
             cancelled.signal()
         }
-        let cancelDeadline = Date().addingTimeInterval(10)
-        while Date() < cancelDeadline {
-            if (try? sessionA.status(jobID: cancelID).state) == .running { break }
-            Thread.sleep(forTimeInterval: 0.05)
-        }
+        try waitUntilRunning(sessionA, jobID: cancelID)
         _ = try sessionA.cancel(jobID: cancelID)
         guard cancelled.wait(timeout: .now() + 10) == .success,
               let cancelOutcome = cancelBox.load(),
               case .success(let cancelResult) = cancelOutcome,
               cancelResult.response.state == .cancelled else {
-            throw BpyRuntimeError.invalidOutput("Cancellation did not stop the active job.")
+            throw BpyRuntimeError.invalidOutput("Cancellation did not stop the active process.")
+        }
+
+        let threadID = UUID()
+        let threadResult = try sessionA.runJob(
+            id: threadID,
+            expectedRevision: "revision-b",
+            source: """
+            import threading
+            import time
+            def persistent_thread():
+                while True:
+                    time.sleep(0.05)
+            threading.Thread(target=persistent_thread).start()
+            """,
+            timeoutSeconds: 2
+        )
+        guard threadResult.response.state == .timedOut else {
+            throw BpyRuntimeError.invalidOutput("A persistent Python thread escaped the deadline.")
+        }
+        let afterThreadID = UUID()
+        let afterThread = try sessionA.runJob(
+            id: afterThreadID,
+            expectedRevision: "revision-b",
+            source: inspectionSource(label: "after-thread")
+        )
+        try assertRecovered(afterThread, label: "persistent-thread")
+        _ = try sessionA.confirm(jobID: afterThreadID, revision: "revision-c")
+
+        let nativeOutputID = UUID()
+        let nativeOutput = try sessionA.runJob(
+            id: nativeOutputID,
+            expectedRevision: "revision-c",
+            source: """
+            import ctypes
+            payload = b'native Blender output is not protocol\\n'
+            libc = ctypes.CDLL(None)
+            libc.write.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_size_t]
+            buffer = ctypes.create_string_buffer(payload)
+            if libc.write(1, buffer, len(payload)) != len(payload):
+                raise RuntimeError('native stdout write failed')
+            """
+        )
+        guard nativeOutput.response.state == .awaitingConfirmation else {
+            throw BpyRuntimeError.invalidOutput("Native output corrupted the job control path.")
+        }
+        _ = try sessionA.confirm(jobID: nativeOutputID, revision: "revision-d")
+
+        let forkID = UUID()
+        let forkResult = try sessionA.runJob(
+            id: forkID,
+            expectedRevision: "revision-d",
+            source: """
+            import ctypes
+            import errno
+            libc = ctypes.CDLL(None, use_errno=True)
+            child = libc.fork()
+            if child != -1 or ctypes.get_errno() not in (errno.EAGAIN, errno.EPERM):
+                raise RuntimeError(f'fork was not kernel-blocked: child={child}, errno={ctypes.get_errno()}')
+            bpy.data.objects.new('FORK_BLOCKED', None)
+            """
+        )
+        guard forkResult.response.state == .awaitingConfirmation,
+              forkResult.response.metrics["descendant_peak_count"] == 0 else {
+            throw BpyRuntimeError.invalidOutput("The kernel process limit did not block fork.")
+        }
+        _ = try sessionA.confirm(jobID: forkID, revision: "revision-e")
+
+        let memoryID = UUID()
+        let memory = try sessionA.runJob(
+            id: memoryID,
+            expectedRevision: "revision-e",
+            source: """
+            try:
+                payload = bytearray(7 * 1024 * 1024 * 1024)
+            except MemoryError:
+                bpy.data.objects.new('RLIMIT_AS_ALLOCATION_DENIED', None)
+            else:
+                raise RuntimeError('7 GiB allocation bypassed the 6 GiB address-space limit')
+            """,
+            timeoutSeconds: 30
+        )
+        guard memory.response.state == .awaitingConfirmation,
+              let memoryVerificationURL = memory.stagedOutputs["verification.json"],
+              let memoryNames = try verificationObject(memoryVerificationURL)["objectNames"] as? [String],
+              memoryNames.contains("RLIMIT_AS_ALLOCATION_DENIED") else {
+            throw BpyRuntimeError.invalidOutput("The Darwin RLIMIT_AS probe did not deny the allocation.")
+        }
+        _ = try sessionA.cancel(jobID: memoryID)
+
+        let outOfMemory = try sessionA.runJob(
+            id: UUID(),
+            expectedRevision: "revision-e",
+            source: "payload = bytearray(7 * 1024 * 1024 * 1024)",
+            timeoutSeconds: 30
+        )
+        guard outOfMemory.response.state == .resourceLimited else {
+            throw BpyRuntimeError.invalidOutput("Address-space exhaustion was not resource-limited.")
         }
 
         let crashID = UUID()
         let crashed = try sessionA.runJob(
             id: crashID,
-            expectedRevision: "revision-b",
+            expectedRevision: "revision-e",
             source: "import os; os._exit(91)"
         )
         guard crashed.response.state == .crashed else {
             throw BpyRuntimeError.invalidOutput("The worker crash was not reported.")
         }
 
-        let afterCrashID = UUID()
-        let afterCrash = try sessionA.runJob(
-            id: afterCrashID,
-            expectedRevision: "revision-b",
-            source: inspectionSource(label: "after-crash")
+        let parentDeathID = UUID()
+        let parentDeathSource = "while True: pass"
+        let parentDeathBox = BpySelfTestBox()
+        let parentDeathFinished = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async {
+            parentDeathBox.store(Result {
+                try sessionA.runJob(
+                    id: parentDeathID,
+                    expectedRevision: "revision-e",
+                    source: parentDeathSource,
+                    timeoutSeconds: 30
+                )
+            })
+            parentDeathFinished.signal()
+        }
+        try waitUntilRunning(sessionA, jobID: parentDeathID)
+        guard let servicePID = readyA.runtime?.serviceProcessIdentifier,
+              servicePID > 1, Darwin.kill(servicePID, SIGKILL) == 0,
+              parentDeathFinished.wait(timeout: .now() + 10) == .success,
+              let parentDeathOutcome = parentDeathBox.load(),
+              case .failure = parentDeathOutcome else {
+            throw BpyRuntimeError.invalidOutput("The service-kill recovery probe could not start.")
+        }
+        Thread.sleep(forTimeInterval: 0.5)
+        let reopened = try sessionA.ready()
+        guard reopened.confirmedRevision == "revision-e",
+              reopened.runtime?.serviceProcessIdentifier != servicePID else {
+            throw BpyRuntimeError.invalidOutput("The host checkpoint was not restored after service death.")
+        }
+        do {
+            _ = try sessionA.runJob(
+                id: parentDeathID,
+                expectedRevision: "revision-e",
+                source: parentDeathSource,
+                timeoutSeconds: 30
+            )
+            throw BpyRuntimeError.invalidOutput("An uncertain pre-recovery Job ID ran again.")
+        } catch let error as BpyRuntimeError {
+            guard case .rejected(_) = error else { throw error }
+        }
+        let afterServiceKillID = UUID()
+        let afterServiceKill = try sessionA.runJob(
+            id: afterServiceKillID,
+            expectedRevision: "revision-e",
+            source: inspectionSource(
+                label: "after-service-kill",
+                requiredObject: "FORK_BLOCKED"
+            )
         )
-        try assertRecovered(afterCrash, label: "crash")
+        try assertRecovered(afterServiceKill, label: "service-kill")
 
-        sessionA.close()
-        sessionB.close()
+        let originalSlot = sessionA.serviceName
+        projectA.close()
+
+        let constrained = BpyRuntimeSession(
+            documentID: "acceptance-resource-limits",
+            limits: BpyRuntimeLimits(
+                timeoutSeconds: 30,
+                memoryBytes: 6 * 1_024 * 1_024 * 1_024,
+                inputBytes: 1_024 * 1_024,
+                outputBytes: 1_024 * 1_024,
+                stdoutBytes: 65_536,
+                objects: 1,
+                vertices: 8,
+                polygons: 8,
+                diskBytes: 2 * 1_024 * 1_024,
+                files: 64,
+                renderWidth: 128,
+                renderHeight: 128,
+                renderPixels: 16_384
+            ),
+            serviceName: originalSlot
+        )
+        _ = try constrained.ready()
+        let structuralLimit = try constrained.runJob(
+            id: UUID(),
+            expectedRevision: nil,
+            source: """
+            bpy.ops.mesh.primitive_cube_add(location=(0, 0, 0))
+            bpy.ops.mesh.primitive_cube_add(location=(2, 0, 0))
+            bpy.context.scene.render.resolution_x = 256
+            bpy.context.scene.render.resolution_y = 256
+            """
+        )
+        guard structuralLimit.response.state == .resourceLimited else {
+            throw BpyRuntimeError.invalidOutput("Evaluated geometry/render limits were not terminal.")
+        }
+        let storageLimit = try constrained.runJob(
+            id: UUID(),
+            expectedRevision: nil,
+            source: """
+            bpy.context.scene.render.resolution_x = 64
+            bpy.context.scene.render.resolution_y = 64
+            for index in range(70):
+                (output_dir / f'overflow-{index:02d}.json').write_bytes(b'x' * 40000)
+            """
+        )
+        guard storageLimit.response.state == .resourceLimited else {
+            throw BpyRuntimeError.invalidOutput("Aggregate disk/file limits were not terminal.")
+        }
+        constrained.close()
+
+        guard let reusedSession = BpyRuntimeHost.shared.session(for: projectC),
+              reusedSession.serviceName == originalSlot else {
+            throw BpyRuntimeError.invalidOutput("Closing a real document did not release its slot.")
+        }
+        _ = try reusedSession.ready()
+        projectC.close()
+
+        let shutdownJobID = UUID()
+        DispatchQueue.global(qos: .userInitiated).async {
+            _ = try? sessionB.runJob(
+                id: shutdownJobID,
+                expectedRevision: "document-b-revision",
+                source: "while True: pass",
+                timeoutSeconds: 120
+            )
+        }
+        try waitUntilRunning(sessionB, jobID: shutdownJobID)
+
         return [
-            "schema": "nexgenvideo/bpy-runtime-acceptance/1",
+            "schema": "nexgenvideo/bpy-runtime-acceptance/2",
             "python": readyA.runtime?.pythonVersion ?? "",
             "bpy": readyA.runtime?.bpyVersion ?? "",
-            "sandboxed": readyA.runtime?.sandboxed ?? false,
-            "workerA": readyA.runtime?.processIdentifier ?? -1,
-            "workerB": readyB.runtime?.processIdentifier ?? -1,
-            "coldStartSeconds": readyA.metrics["cold_start_seconds"] ?? -1,
+            "probeA": readyA.runtime?.processIdentifier ?? -1,
+            "probeB": readyB.runtime?.processIdentifier ?? -1,
+            "serviceA": readyA.runtime?.serviceProcessIdentifier ?? -1,
+            "serviceB": readyB.runtime?.serviceProcessIdentifier ?? -1,
+            "coldStartSeconds": coldStartSeconds,
+            "serviceColdStartSeconds": readyA.metrics["cold_start_seconds"] ?? -1,
             "warmJobSeconds": warmJobSeconds,
+            "hostJobSeconds": hostJobSeconds,
             "jobMetrics": first.response.metrics,
-            "timeoutState": timedOut.response.state?.rawValue ?? "",
+            "trustedVerification": verification,
+            "deniedPositiveControls": positiveControls,
+            "forgedResultState": forged.response.state?.rawValue ?? "",
             "cancelState": cancelResult.response.state?.rawValue ?? "",
+            "rlimitASAllocationDenied": true,
+            "outOfMemoryState": outOfMemory.response.state?.rawValue ?? "",
+            "structuralLimitState": structuralLimit.response.state?.rawValue ?? "",
+            "storageLimitState": storageLimit.response.state?.rawValue ?? "",
             "crashState": crashed.response.state?.rawValue ?? "",
             "duplicateJoined": duplicate.response.joinedExistingJob,
-            "sessionsClosed": true,
-            "crossSessionDenied": true,
-            "workerEvidence": workerEvidence,
+            "changedDuplicateRejected": true,
+            "failedOpenReleased": true,
+            "closeBeforeOpenReleased": true,
+            "serviceRecoveryRevision": reopened.confirmedRevision ?? "",
+            "parentDeathJobFailedClosed": true,
+            "threeRealDocuments": true,
+            "thirdDocumentInitiallyDenied": true,
+            "slotReusedAfterClose": true,
+            "appTerminationJobStarted": true,
         ]
     }
 
@@ -274,16 +591,64 @@ enum BpyRuntimeSelfTest {
               let data = raw.data(using: .utf8),
               let paths = try JSONSerialization.jsonObject(with: data) as? [String],
               paths.count >= 3 else {
-            throw BpyRuntimeError.invalidInput("NGV_BPY_DENIED_PATHS requires secret, canonical, and foreign paths.")
+            throw BpyRuntimeError.invalidInput(
+                "NGV_BPY_DENIED_PATHS requires secret, canonical, and foreign paths."
+            )
         }
         return paths
     }
 
-    private static func acceptanceSceneSource(deniedPaths: String) -> String {
+    private static func verificationObject(_ url: URL) throws -> [String: Any] {
+        guard let value = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: url)
+        ) as? [String: Any] else {
+            throw BpyRuntimeError.invalidOutput("Trusted verification is not an object.")
+        }
+        return value
+    }
+
+    private static func assertVerification(
+        _ verification: [String: Any],
+        deniedPaths: [String],
+        expectedObject: String
+    ) throws {
+        guard verification["schema"] as? String == "nexgenvideo/bpy-verification/1",
+              verification["autorunTextPresent"] as? Bool == true,
+              verification["autorunMarkerAbsent"] as? Bool == true,
+              verification["secretEnvironmentAbsent"] as? Bool == true,
+              let names = verification["objectNames"] as? [String],
+              names.contains(expectedObject),
+              let modifiers = verification["modifiers"] as? [String: [String]],
+              modifiers["NGV_Room"]?.contains("BEVEL") == true,
+              let bpyModule = verification["bpyModule"] as? String,
+              bpyModule.hasSuffix("/bpy/__init__.so") else {
+            throw BpyRuntimeError.invalidOutput("The fresh verifier rejected scene identity.")
+        }
+        try assertDenied(verification, paths: deniedPaths)
+        guard let network = verification["networkDenied"] as? [String: Any],
+              network["denied"] as? Bool == true,
+              let value = network["errno"] as? Int,
+              [Int(EPERM), Int(EACCES)].contains(value) else {
+            throw BpyRuntimeError.invalidOutput("The trusted network denial probe failed.")
+        }
+    }
+
+    private static func assertDenied(_ verification: [String: Any], paths: [String]) throws {
+        guard let denied = verification["deniedPaths"] as? [String: [String: Any]] else {
+            throw BpyRuntimeError.invalidOutput("Trusted file-denial evidence is missing.")
+        }
+        for path in paths {
+            guard denied[path]?["denied"] as? Bool == true,
+                  let value = denied[path]?["errno"] as? Int,
+                  [Int(EPERM), Int(EACCES)].contains(value) else {
+                throw BpyRuntimeError.invalidOutput("The trusted file-denial probe failed.")
+            }
+        }
+    }
+
+    private static func acceptanceSceneSource() -> String {
         """
         import json
-        import os
-        import socket
         import time
 
         bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -292,7 +657,7 @@ enum BpyRuntimeSelfTest {
         room = bpy.data.objects.new('NGV_Room', mesh)
         scene.collection.objects.link(room)
         bm = bmesh.new()
-        created = bmesh.ops.create_cube(bm, size=4.0)
+        bmesh.ops.create_cube(bm, size=4.0)
         bmesh.ops.bevel(
             bm,
             geom=[edge for edge in bm.edges],
@@ -308,11 +673,17 @@ enum BpyRuntimeSelfTest {
         modifier.segments = 2
 
         for index in range(6):
-            bpy.ops.mesh.primitive_cube_add(location=(-1.8 + index * 0.45, -0.4, -1.25 + index * 0.22))
+            bpy.ops.mesh.primitive_cube_add(
+                location=(-1.8 + index * 0.45, -0.4, -1.25 + index * 0.22)
+            )
             step = bpy.context.object
             step.name = f'NGV_Stair_{index:02d}'
             step.scale = (0.22, 0.8, 0.11)
-        bpy.ops.mesh.primitive_uv_sphere_add(segments=24, ring_count=12, location=(1.15, 0.55, -0.55))
+        bpy.ops.mesh.primitive_uv_sphere_add(
+            segments=24,
+            ring_count=12,
+            location=(1.15, 0.55, -0.55),
+        )
         bpy.context.object.name = 'NGV_AsymmetricProp'
 
         clay = bpy.data.materials.new('NGV_Clay')
@@ -344,15 +715,10 @@ enum BpyRuntimeSelfTest {
         scene.render.resolution_percentage = 100
         scene.render.image_settings.file_format = 'PNG'
         scene.render.filepath = str(output_dir / 'render.png')
-        renderer = {'requested': 'CYCLES_METAL', 'selected': '', 'devices': [], 'fallback': None}
-        render_started = time.monotonic()
         try:
             cycles = bpy.context.preferences.addons['cycles'].preferences
             cycles.compute_device_type = 'METAL'
             cycles.get_devices()
-            renderer['devices'] = [
-                {'name': item.name, 'type': item.type} for item in cycles.devices
-            ]
             metal = [item for item in cycles.devices if item.type == 'METAL']
             if not metal:
                 raise RuntimeError('no Metal Cycles device')
@@ -361,73 +727,65 @@ enum BpyRuntimeSelfTest {
             scene.render.engine = 'CYCLES'
             scene.cycles.device = 'GPU'
             scene.cycles.samples = 8
-            renderer['selected'] = 'CYCLES_METAL'
             bpy.ops.render.render(write_still=True)
-        except Exception as error:
-            renderer['fallback'] = f'{type(error).__name__}: {error}'
+        except Exception:
             scene.render.engine = 'CYCLES'
             scene.cycles.device = 'CPU'
             scene.cycles.samples = 8
-            renderer['selected'] = 'CYCLES_CPU'
             bpy.ops.render.render(write_still=True)
-        metrics['render_seconds'] = time.monotonic() - render_started
 
-        denied = {}
-        for path in \(deniedPaths):
-            try:
-                with open(path, 'rb') as handle:
-                    handle.read(1)
-                denied[path] = False
-            except OSError as error:
-                denied[path] = {'denied': True, 'errno': error.errno}
-        try:
-            connection = socket.create_connection(('1.1.1.1', 443), timeout=1)
-            connection.close()
-            network_denied = False
-        except OSError as error:
-            network_denied = {'denied': True, 'errno': error.errno}
-
+        approved = json.loads((input_dir / 'fixture.json').read_text())
+        if approved != {'approved': True}:
+            raise RuntimeError('approved input bytes changed')
         autorun = bpy.data.texts.new('NGV_AutorunProbe.py')
         autorun.write("import bpy\\nbpy.data.objects.new('AUTORUN_RAN', None)\\n")
         autorun.use_module = True
-        evidence = {
-            'renderer': renderer,
-            'denied_paths': denied,
-            'network_denied': network_denied,
-            'secret_environment_absent': all(
-                name not in os.environ
-                for name in ('RUNWAY_API_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'NGV_TEST_SECRET')
-            ),
-            'python_executable': os.path.realpath(os.sys.executable),
-            'bpy_module': os.path.realpath(bpy.__file__),
-            'session_root': str(session_root),
-            'blender_user_config': os.environ.get('BLENDER_USER_CONFIG'),
-            'objects': sorted(obj.name for obj in scene.objects),
-            'modifiers': {
-                obj.name: [modifier.type for modifier in obj.modifiers]
-                for obj in scene.objects if obj.modifiers
-            },
-            'approved_input': json.loads((input_dir / 'fixture.json').read_text()),
-        }
-        (output_dir / 'evidence.json').write_text(json.dumps(evidence, sort_keys=True))
         """
     }
 
-    private static func inspectionSource(label: String) -> String {
+    private static func inspectionSource(
+        label: String,
+        requiredObject: String? = nil
+    ) -> String {
+        let requiredCheck = requiredObject.map { " or '\($0)' not in names" } ?? ""
         """
-        import json
-        names = sorted(obj.name for obj in bpy.context.scene.objects)
-        if 'NGV_Room' not in names or 'DocumentBOnly' in names or 'AUTORUN_RAN' in names:
+        names = sorted(obj.name for obj in bpy.data.objects)
+        if 'NGV_Room' not in names or 'DocumentBOnly' in names or 'AUTORUN_RAN' in names\(requiredCheck):
             raise RuntimeError(f'confirmed scene isolation failed: {names}')
-        (output_dir / '\(label).json').write_text(json.dumps({'objects': names}))
+        bpy.context.scene['inspection'] = '\(label)'
         """
     }
 
     private static func assertRecovered(_ result: BpyRuntimeJobResult, label: String) throws {
-        let expectedName = label == "timeout" ? "after-timeout.json" : "after-crash.json"
         guard result.response.state == .awaitingConfirmation,
-              result.stagedOutputs[expectedName] != nil else {
-            throw BpyRuntimeError.invalidOutput("The worker did not restore the confirmed scene after \(label).")
+              result.stagedOutputs["verification.json"] != nil else {
+            throw BpyRuntimeError.invalidOutput(
+                "The worker did not restore the confirmed scene after \(label)."
+            )
         }
+    }
+
+    private static func waitUntilRunning(
+        _ session: BpyRuntimeSession,
+        jobID: UUID
+    ) throws {
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline {
+            if let response = try? session.status(jobID: jobID),
+               response.state == .running,
+               response.activeProcessIdentifier.map({ $0 > 1 }) == true,
+               response.activeProcessStartAbsoluteTime != nil,
+               response.activeProcessExecutable != nil {
+                return
+            }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        throw BpyRuntimeError.timedOut
+    }
+
+    private static func hostPeakMemoryBytes() -> Int64 {
+        var usage = rusage()
+        guard getrusage(RUSAGE_SELF, &usage) == 0 else { return -1 }
+        return Int64(usage.ru_maxrss)
     }
 }

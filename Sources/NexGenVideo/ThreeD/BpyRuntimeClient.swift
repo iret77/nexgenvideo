@@ -3,6 +3,74 @@ import CryptoKit
 import Darwin
 import Foundation
 
+private let bpyHostResultRetentionSeconds: TimeInterval = 15 * 60
+
+@_silgen_name("proc_pid_rusage")
+private func procPIDRusage(
+    _ processIdentifier: pid_t,
+    _ flavor: Int32,
+    _ buffer: UnsafeMutableRawPointer
+) -> Int32
+
+@_silgen_name("proc_pidpath")
+private func procPIDPath(
+    _ processIdentifier: pid_t,
+    _ buffer: UnsafeMutableRawPointer,
+    _ bufferSize: UInt32
+) -> Int32
+
+private struct BpyProcessLease {
+    let transportID: UUID
+    let processIdentifier: pid_t
+    let startAbsoluteTime: UInt64
+    let executable: String
+}
+
+private func processStartAbsoluteTime(_ processIdentifier: pid_t) -> UInt64? {
+    let buffer = UnsafeMutableRawPointer.allocate(byteCount: 1_024, alignment: 8)
+    defer { buffer.deallocate() }
+    buffer.initializeMemory(as: UInt8.self, repeating: 0, count: 1_024)
+    guard procPIDRusage(processIdentifier, 4, buffer) == 0 else { return nil }
+    return buffer.load(fromByteOffset: 80, as: UInt64.self)
+}
+
+private func processExecutable(_ processIdentifier: pid_t) -> String? {
+    var bytes = [UInt8](repeating: 0, count: Int(PROC_PIDPATHINFO_MAXSIZE))
+    let count = bytes.withUnsafeMutableBytes {
+        guard let base = $0.baseAddress else { return Int32(0) }
+        return procPIDPath(processIdentifier, base, UInt32($0.count))
+    }
+    guard count > 0 else { return nil }
+    return bytes.withUnsafeBytes {
+        String(cString: $0.bindMemory(to: CChar.self).baseAddress!)
+    }
+}
+
+private func terminateLeasedProcess(_ lease: BpyProcessLease) -> Bool {
+    guard lease.processIdentifier > 1,
+          processStartAbsoluteTime(lease.processIdentifier) == lease.startAbsoluteTime,
+          processExecutable(lease.processIdentifier) == lease.executable else {
+        return true
+    }
+    _ = Darwin.kill(-lease.processIdentifier, SIGSTOP)
+    _ = Darwin.kill(lease.processIdentifier, SIGSTOP)
+    guard processStartAbsoluteTime(lease.processIdentifier) == lease.startAbsoluteTime,
+          processExecutable(lease.processIdentifier) == lease.executable else {
+        return true
+    }
+    _ = Darwin.kill(-lease.processIdentifier, SIGKILL)
+    _ = Darwin.kill(lease.processIdentifier, SIGKILL)
+    let deadline = Date().addingTimeInterval(5)
+    while Date() < deadline {
+        guard processStartAbsoluteTime(lease.processIdentifier) == lease.startAbsoluteTime,
+              processExecutable(lease.processIdentifier) == lease.executable else {
+            return true
+        }
+        Thread.sleep(forTimeInterval: 0.005)
+    }
+    return false
+}
+
 enum BpyRuntimeError: LocalizedError {
     case unavailable(String)
     case invalidInput(String)
@@ -48,18 +116,25 @@ private final class BpyReplyBox: @unchecked Sendable {
     private var response: Data?
     private var chunk: Data?
     private var error: Error?
+    private var completed = false
 
-    func store(response: Data, chunk: Data? = nil) {
+    func store(response: Data, chunk: Data? = nil) -> Bool {
         lock.lock()
+        defer { lock.unlock() }
+        guard !completed else { return false }
+        completed = true
         self.response = response
         self.chunk = chunk
-        lock.unlock()
+        return true
     }
 
-    func store(error: Error) {
+    func store(error: Error) -> Bool {
         lock.lock()
+        defer { lock.unlock() }
+        guard !completed else { return false }
+        completed = true
         self.error = error
-        lock.unlock()
+        return true
     }
 
     func load() -> (Data?, Data?, Error?) {
@@ -69,45 +144,88 @@ private final class BpyReplyBox: @unchecked Sendable {
     }
 }
 
+private final class PreparedBpyInput {
+    let input: BpyApprovedInputCopy
+    let handle: FileHandle
+    let before: stat
+    let totalBytes: UInt64
+    let sha256: String
+
+    init(
+        input: BpyApprovedInputCopy,
+        handle: FileHandle,
+        before: stat,
+        totalBytes: UInt64,
+        sha256: String
+    ) {
+        self.input = input
+        self.handle = handle
+        self.before = before
+        self.totalBytes = totalBytes
+        self.sha256 = sha256
+    }
+}
+
 final class BpyRuntimeSession: @unchecked Sendable {
-    let sessionID: UUID
+    private(set) var sessionID: UUID
     let documentID: String
     let limits: BpyRuntimeLimits
     let serviceName: String
 
-    private let connection: NSXPCConnection
     private let stagingRoot: URL
+    private let diagnosticOpenFailure: Bool
     private let lock = NSLock()
+    private let openLock = NSLock()
+    private let submissionLock = NSLock()
+    private var connection: NSXPCConnection?
     private var opened = false
+    private var transportInvalidated = false
+    private var transportRecoveryBlocked = false
+    private var closing = false
     private var closed = false
-    private var validatedCandidates: [UUID: String] = [:]
+    private var validatedCandidates: [UUID: (sha256: String, url: URL)] = [:]
+    private var candidateJobIDs = Set<UUID>()
+    private var jobFingerprints: [UUID: String] = [:]
+    private var submittedJobIDs = Set<UUID>()
+    private var submittedTransportIDs: [UUID: UUID] = [:]
+    private var cachedResults: [UUID: BpyRuntimeJobResult] = [:]
+    private var cachedResultOrder: [UUID] = []
+    private var cachedResultDates: [UUID: Date] = [:]
     private var lastReadyResponse: BpyServiceResponse?
+    private var confirmedSceneData: Data?
+    private var activeProcessLease: BpyProcessLease?
     private(set) var confirmedRevision: String?
 
     init(
         documentID: String,
         limits: BpyRuntimeLimits = .init(),
-        serviceName: String = bpyRuntimeServiceNames[0]
+        serviceName: String = bpyRuntimeServiceNames[0],
+        diagnosticOpenFailure: Bool = false
     ) {
         let identifier = UUID()
-        sessionID = identifier
+        sessionID = UUID()
         self.documentID = documentID
         self.confirmedRevision = nil
         self.limits = limits
         self.serviceName = serviceName
+        self.diagnosticOpenFailure = diagnosticOpenFailure
         stagingRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("NexGenVideo/BpyHost/\(identifier.uuidString)", isDirectory: true)
-        connection = NSXPCConnection(serviceName: serviceName)
-        connection.remoteObjectInterface = NSXPCInterface(with: BpyRuntimeServiceProtocol.self)
-        connection.resume()
+        installConnection()
     }
 
     deinit {
         close()
     }
 
+    var occupiesHostSlot: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return !closed && !closing
+    }
+
     func ready() throws -> BpyServiceResponse {
-        try ensureOpen(force: true)
+        try ensureOpen()
     }
 
     func runJob(
@@ -115,26 +233,80 @@ final class BpyRuntimeSession: @unchecked Sendable {
         expectedRevision: String?,
         source: String,
         inputs: [BpyApprovedInputCopy] = [],
-        timeoutSeconds: Int? = nil
+        timeoutSeconds: Int? = nil,
+        diagnosticDeniedPaths: [String] = [],
+        diagnosticAutoexecPositiveControl: Bool = false
     ) throws -> BpyRuntimeJobResult {
+        submissionLock.lock()
+        defer { submissionLock.unlock() }
         _ = try ensureOpen()
-        if !inputs.isEmpty {
-            var existing = try status(jobID: id)
-            if existing.ok, existing.state != nil {
-                existing.joinedExistingJob = true
-                return try finish(jobID: id, response: existing, timeoutSeconds: timeoutSeconds)
+        purgeExpiredHostResults()
+        let prepared = try inputs.map(prepare)
+        let timeout = min(timeoutSeconds ?? limits.timeoutSeconds, limits.timeoutSeconds)
+        let transportID = currentSessionID()
+        let fingerprint = Self.fingerprint(
+            expectedRevision: expectedRevision,
+            source: source,
+            requestedTimeoutSeconds: timeoutSeconds,
+            effectiveTimeoutSeconds: timeout,
+            inputs: prepared,
+            diagnosticDeniedPaths: diagnosticDeniedPaths,
+            diagnosticAutoexecPositiveControl: diagnosticAutoexecPositiveControl
+        )
+        lock.lock()
+        let knownFingerprint = jobFingerprints[id]
+        let cached = cachedResults[id]
+        lock.unlock()
+        if let knownFingerprint {
+            guard knownFingerprint == fingerprint else {
+                throw BpyRuntimeError.rejected("A Job ID cannot be reused with different source, inputs, revision, or options.")
             }
+            if let cached {
+                var response = cached.response
+                response.joinedExistingJob = true
+                return .init(response: response, stagedOutputs: cached.stagedOutputs)
+            }
+            lock.lock()
+            let submittedTransportID = submittedTransportIDs[id]
+            lock.unlock()
+            guard submittedTransportID == nil || submittedTransportID == transportID else {
+                throw BpyRuntimeError.rejected(
+                    "The prior execution outcome is unavailable after 3D transport recovery; the Job ID will not run again."
+                )
+            }
+        } else {
+            lock.lock()
+            guard jobFingerprints.count < 1_024 else {
+                lock.unlock()
+                throw BpyRuntimeError.rejected(
+                    "The document 3D session reached its Job ID limit; rotate only from confirmed state."
+                )
+            }
+            jobFingerprints[id] = fingerprint
+            lock.unlock()
         }
-        for input in inputs {
-            try upload(input, jobID: id)
+        lock.lock()
+        let needsUpload = !submittedJobIDs.contains(id)
+        lock.unlock()
+        if needsUpload {
+            for value in prepared {
+                try upload(value, jobID: id)
+            }
+            lock.lock()
+            submittedJobIDs.insert(id)
+            submittedTransportIDs[id] = transportID
+            lock.unlock()
         }
         let request = BpyRunJobRequest(
-            sessionID: sessionID,
+            sessionID: transportID,
             jobID: id,
             expectedRevision: expectedRevision,
             source: source,
             inputNames: inputs.map(\.filename),
-            timeoutSeconds: timeoutSeconds
+            timeoutSeconds: timeoutSeconds,
+            fingerprint: fingerprint,
+            diagnosticDeniedPaths: diagnosticDeniedPaths,
+            diagnosticAutoexecPositiveControl: diagnosticAutoexecPositiveControl
         )
         let response = try call { service, reply in
             service.runJob(try Self.encode(request), withReply: reply)
@@ -142,26 +314,48 @@ final class BpyRuntimeSession: @unchecked Sendable {
         guard response.ok else {
             throw BpyRuntimeError.rejected(response.message ?? "The 3D job was rejected.")
         }
-        return try finish(jobID: id, response: response, timeoutSeconds: timeoutSeconds)
+        guard response.jobID == id, response.jobFingerprint == fingerprint else {
+            throw BpyRuntimeError.invalidOutput("The 3D service returned the wrong job identity.")
+        }
+        if response.resultExpired {
+            throw BpyRuntimeError.rejected("The retained result for this Job ID has expired; it will not run again.")
+        }
+        let result = try finish(
+            jobID: id,
+            fingerprint: fingerprint,
+            response: response,
+            timeoutSeconds: timeout
+        )
+        cache(result, for: id)
+        return result
     }
 
     private func finish(
         jobID: UUID,
+        fingerprint: String,
         response initialResponse: BpyServiceResponse,
-        timeoutSeconds: Int?
+        timeoutSeconds: Int
     ) throws -> BpyRuntimeJobResult {
         var response = initialResponse
         let joinedExistingJob = response.joinedExistingJob
-        let deadline = Date().addingTimeInterval(TimeInterval((timeoutSeconds ?? limits.timeoutSeconds) + 15))
+        let deadline = Date().addingTimeInterval(
+            TimeInterval(timeoutSeconds + 15)
+        )
         while response.state == .accepted || response.state == .running {
             guard Date() < deadline else { throw BpyRuntimeError.timedOut }
             Thread.sleep(forTimeInterval: 0.05)
             response = try status(jobID: jobID)
-            guard response.ok else {
+            guard response.ok, response.jobID == jobID,
+                  response.jobFingerprint == fingerprint else {
                 throw BpyRuntimeError.rejected(response.message ?? "The 3D job disappeared.")
             }
         }
         response.joinedExistingJob = joinedExistingJob
+        if response.state == .awaitingConfirmation {
+            lock.lock()
+            candidateJobIDs.insert(jobID)
+            lock.unlock()
+        }
         if response.runtime != nil {
             lock.lock()
             lastReadyResponse = response
@@ -169,11 +363,15 @@ final class BpyRuntimeSession: @unchecked Sendable {
         }
         var outputs: [String: URL] = [:]
         if response.state == .awaitingConfirmation || response.state == .confirmed {
+            guard !response.resultExpired else {
+                throw BpyRuntimeError.rejected("The retained 3D result expired before download.")
+            }
             outputs = try downloadOutputs(response.outputs, jobID: jobID)
             if response.state == .awaitingConfirmation,
-               let scene = response.outputs.first(where: { $0.name == "scene.blend" }) {
+               let scene = response.outputs.first(where: { $0.name == "scene.blend" }),
+               let url = outputs["scene.blend"] {
                 lock.lock()
-                validatedCandidates[jobID] = scene.sha256
+                validatedCandidates[jobID] = (scene.sha256, url)
                 lock.unlock()
             }
         }
@@ -181,89 +379,197 @@ final class BpyRuntimeSession: @unchecked Sendable {
     }
 
     func status(jobID: UUID) throws -> BpyServiceResponse {
-        let request = BpyJobReference(sessionID: sessionID, jobID: jobID)
-        return try call { service, reply in
+        let request = BpyJobReference(sessionID: currentSessionID(), jobID: jobID)
+        let response = try call { service, reply in
             service.jobStatus(try Self.encode(request), withReply: reply)
         }
+        if response.ok {
+            lock.lock()
+            let fingerprint = jobFingerprints[jobID]
+            lock.unlock()
+            guard response.jobID == jobID,
+                  response.jobFingerprint == fingerprint else {
+                throw BpyRuntimeError.invalidOutput("The 3D status returned the wrong job identity.")
+            }
+        }
+        return response
     }
 
     func confirm(jobID: UUID, revision: String) throws -> BpyServiceResponse {
+        purgeExpiredHostResults()
         lock.lock()
-        let sceneSHA256 = validatedCandidates[jobID]
+        let candidate = validatedCandidates[jobID]
         lock.unlock()
-        guard let sceneSHA256 else {
+        guard let candidate else {
             throw BpyRuntimeError.invalidOutput("Validate the staged 3D candidate before confirmation.")
         }
+        let data = try Data(contentsOf: candidate.url)
+        guard Self.sha256(data) == candidate.sha256,
+              data.starts(with: Data("BLENDER".utf8)) else {
+            throw BpyRuntimeError.invalidOutput("The staged 3D candidate changed before confirmation.")
+        }
         let request = BpyConfirmJobRequest(
-            sessionID: sessionID,
+            sessionID: currentSessionID(),
             jobID: jobID,
             revision: revision,
-            sceneSHA256: sceneSHA256
+            sceneSHA256: candidate.sha256
         )
         let response = try call(timeout: 180) { service, reply in
             service.confirmJob(try Self.encode(request), withReply: reply)
         }
-        guard response.ok, response.state == .confirmed else {
+        lock.lock()
+        let fingerprint = jobFingerprints[jobID]
+        lock.unlock()
+        guard response.ok, response.jobID == jobID,
+              response.jobFingerprint == fingerprint,
+              response.state == .confirmed else {
             throw BpyRuntimeError.rejected(response.message ?? "The 3D candidate was not confirmed.")
         }
         lock.lock()
         confirmedRevision = revision
+        confirmedSceneData = data
         validatedCandidates.removeValue(forKey: jobID)
+        candidateJobIDs.remove(jobID)
         lastReadyResponse?.confirmedRevision = revision
+        if let cached = cachedResults[jobID] {
+            var confirmedResponse = cached.response
+            confirmedResponse.state = .confirmed
+            confirmedResponse.confirmedRevision = revision
+            cachedResults[jobID] = .init(
+                response: confirmedResponse,
+                stagedOutputs: cached.stagedOutputs
+            )
+        }
         lock.unlock()
         return response
     }
 
     func cancel(jobID: UUID) throws -> BpyServiceResponse {
-        let request = BpyJobReference(sessionID: sessionID, jobID: jobID)
+        let request = BpyJobReference(sessionID: currentSessionID(), jobID: jobID)
         let response = try call { service, reply in
             service.cancelJob(try Self.encode(request), withReply: reply)
         }
-        guard response.ok else {
+        lock.lock()
+        let fingerprint = jobFingerprints[jobID]
+        lock.unlock()
+        guard response.ok, response.jobID == jobID,
+              response.jobFingerprint == fingerprint else {
             throw BpyRuntimeError.rejected(response.message ?? "The 3D job could not be cancelled.")
         }
         lock.lock()
         validatedCandidates.removeValue(forKey: jobID)
+        candidateJobIDs.remove(jobID)
         lock.unlock()
+        return response
+    }
+
+    func rotateFromConfirmedState() throws -> BpyServiceResponse {
+        submissionLock.lock()
+        defer { submissionLock.unlock() }
+        _ = try ensureOpen()
+        lock.lock()
+        guard confirmedRevision != nil, confirmedSceneData != nil else {
+            lock.unlock()
+            throw BpyRuntimeError.rejected(
+                "Confirm a 3D scene before rotating the document session."
+            )
+        }
+        guard candidateJobIDs.isEmpty else {
+            lock.unlock()
+            throw BpyRuntimeError.rejected(
+                "Confirm or reject the current 3D candidate before rotating the session."
+            )
+        }
+        let staged = Array(cachedResults.keys)
+        lock.unlock()
+        rotateTransport()
+        let response = try ensureOpen()
+        lock.lock()
+        jobFingerprints.removeAll()
+        submittedJobIDs.removeAll()
+        submittedTransportIDs.removeAll()
+        cachedResults.removeAll()
+        cachedResultOrder.removeAll()
+        cachedResultDates.removeAll()
+        activeProcessLease = nil
+        lock.unlock()
+        removeStagedResults(staged)
         return response
     }
 
     func close() {
         lock.lock()
-        guard !closed else {
+        guard !closed, !closing else {
             lock.unlock()
             return
         }
-        closed = true
-        let wasOpened = opened
+        closing = true
+        let identifier = sessionID
+        let activeConnection = connection
         lock.unlock()
-        if wasOpened {
-            let request = BpySessionReference(sessionID: sessionID)
+        if activeConnection != nil {
+            let request = BpySessionReference(sessionID: identifier)
             _ = try? call(timeout: 10) { service, reply in
                 service.closeSession(try Self.encode(request), withReply: reply)
             }
         }
-        connection.invalidate()
+        lock.lock()
+        closed = true
+        closing = false
+        connection = nil
+        lock.unlock()
+        activeConnection?.invalidate()
         try? FileManager.default.removeItem(at: stagingRoot)
     }
 
-    private func ensureOpen(force: Bool = false) throws -> BpyServiceResponse {
+    private func ensureOpen() throws -> BpyServiceResponse {
+        openLock.lock()
+        defer { openLock.unlock() }
         lock.lock()
         if closed {
             lock.unlock()
             throw BpyRuntimeError.unavailable("The 3D document session is closed.")
         }
-        if opened, !force {
+        if transportRecoveryBlocked {
+            lock.unlock()
+            throw BpyRuntimeError.unavailable(
+                "The previous 3D worker could not be observed exiting; recovery is blocked."
+            )
+        }
+        if opened, !transportInvalidated {
             let response = lastReadyResponse
             lock.unlock()
             return response ?? .init(ok: true, confirmedRevision: confirmedRevision)
         }
+        let shouldRotate = transportInvalidated
+        lock.unlock()
+        if shouldRotate { rotateTransport() }
+        do {
+            return try openCurrentTransport()
+        } catch {
+            markTransportInvalid(currentSessionID())
+            rotateTransport()
+            do {
+                return try openCurrentTransport()
+            } catch {
+                close()
+                throw error
+            }
+        }
+    }
+
+    private func openCurrentTransport() throws -> BpyServiceResponse {
+        lock.lock()
+        let identifier = sessionID
+        let revision = confirmedRevision
+        let checkpoint = confirmedSceneData
         lock.unlock()
         let request = BpyOpenSessionRequest(
-            sessionID: sessionID,
+            sessionID: identifier,
             documentID: documentID,
-            confirmedRevision: nil,
-            limits: limits
+            confirmedRevision: revision,
+            limits: limits,
+            diagnosticOpenFailure: diagnosticOpenFailure
         )
         let response = try call(timeout: 180) { service, reply in
             service.openSession(try Self.encode(request), withReply: reply)
@@ -274,14 +580,52 @@ final class BpyRuntimeSession: @unchecked Sendable {
                 response.message ?? "The bundled 3D runtime has the wrong identity."
             )
         }
+        if let revision, let checkpoint {
+            try restoreCheckpoint(checkpoint, revision: revision, sessionID: identifier)
+        } else if revision != nil || checkpoint != nil {
+            throw BpyRuntimeError.unavailable("The confirmed 3D checkpoint is incomplete.")
+        }
         lock.lock()
+        guard sessionID == identifier, !closed else {
+            lock.unlock()
+            throw BpyRuntimeError.unavailable("The 3D transport changed while it opened.")
+        }
         opened = true
+        transportInvalidated = false
         lastReadyResponse = response
         lock.unlock()
         return response
     }
 
-    private func upload(_ input: BpyApprovedInputCopy, jobID: UUID) throws {
+    private func restoreCheckpoint(_ data: Data, revision: String, sessionID: UUID) throws {
+        let digest = Self.sha256(data)
+        var offset: UInt64 = 0
+        while offset < UInt64(data.count) || data.isEmpty {
+            let end = min(data.count, Int(offset) + 4 * 1_024 * 1_024)
+            let chunk = data.subdata(in: Int(offset)..<end)
+            let final = end == data.count
+            let request = BpyRestoreCheckpointRequest(
+                sessionID: sessionID,
+                revision: revision,
+                offset: offset,
+                totalBytes: UInt64(data.count),
+                sha256: digest,
+                finalChunk: final
+            )
+            let response = try call { service, reply in
+                service.restoreCheckpoint(try Self.encode(request), chunk: chunk, withReply: reply)
+            }
+            guard response.ok else {
+                throw BpyRuntimeError.unavailable(
+                    response.message ?? "The confirmed 3D checkpoint could not be restored."
+                )
+            }
+            if final { break }
+            offset = UInt64(end)
+        }
+    }
+
+    private func prepare(_ input: BpyApprovedInputCopy) throws -> PreparedBpyInput {
         let directoryFD = Darwin.open(
             input.approvedDirectory.path,
             O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
@@ -329,39 +673,60 @@ final class BpyRuntimeSession: @unchecked Sendable {
               UInt64(before.st_size) <= limits.inputBytes else {
             throw BpyRuntimeError.invalidInput("Approved input must be a bounded single-link file.")
         }
-
         var digest = SHA256()
         while let data = try handle.read(upToCount: 1_048_576), !data.isEmpty {
             digest.update(data: data)
         }
-        let checksum = digest.finalize().map { String(format: "%02x", $0) }.joined()
         try handle.seek(toOffset: 0)
-        let total = UInt64(before.st_size)
+        return PreparedBpyInput(
+            input: input,
+            handle: handle,
+            before: before,
+            totalBytes: UInt64(before.st_size),
+            sha256: digest.finalize().map { String(format: "%02x", $0) }.joined()
+        )
+    }
+
+    private func upload(_ prepared: PreparedBpyInput, jobID: UUID) throws {
+        let total = prepared.totalBytes
         var offset: UInt64 = 0
         if total == 0 {
             try stageChunk(
-                jobID: jobID, name: input.filename, offset: 0, total: 0,
-                sha256: checksum, final: true, data: Data()
+                jobID: jobID,
+                name: prepared.input.filename,
+                offset: 0,
+                total: 0,
+                sha256: prepared.sha256,
+                final: true,
+                data: Data()
             )
         } else {
-            while let data = try handle.read(upToCount: 4 * 1_024 * 1_024), !data.isEmpty {
+            while let data = try prepared.handle.read(upToCount: 4 * 1_024 * 1_024), !data.isEmpty {
                 let final = offset + UInt64(data.count) == total
                 try stageChunk(
-                    jobID: jobID, name: input.filename, offset: offset, total: total,
-                    sha256: checksum, final: final, data: data
+                    jobID: jobID,
+                    name: prepared.input.filename,
+                    offset: offset,
+                    total: total,
+                    sha256: prepared.sha256,
+                    final: final,
+                    data: data
                 )
                 offset += UInt64(data.count)
             }
         }
         var after = stat()
-        guard offset == total, fstat(fileFD, &after) == 0,
-              (after.st_mode & S_IFMT) == S_IFREG, after.st_nlink == 1,
-              before.st_dev == after.st_dev, before.st_ino == after.st_ino,
-              before.st_size == after.st_size,
-              before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec,
-              before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec,
-              before.st_ctimespec.tv_sec == after.st_ctimespec.tv_sec,
-              before.st_ctimespec.tv_nsec == after.st_ctimespec.tv_nsec else {
+        guard offset == total,
+              fstat(prepared.handle.fileDescriptor, &after) == 0,
+              (after.st_mode & S_IFMT) == S_IFREG,
+              after.st_nlink == 1,
+              prepared.before.st_dev == after.st_dev,
+              prepared.before.st_ino == after.st_ino,
+              prepared.before.st_size == after.st_size,
+              prepared.before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec,
+              prepared.before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec,
+              prepared.before.st_ctimespec.tv_sec == after.st_ctimespec.tv_sec,
+              prepared.before.st_ctimespec.tv_nsec == after.st_ctimespec.tv_nsec else {
             throw BpyRuntimeError.invalidInput("Approved input changed while it was copied.")
         }
     }
@@ -376,7 +741,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
         data: Data
     ) throws {
         let request = BpyStageInputRequest(
-            sessionID: sessionID,
+            sessionID: currentSessionID(),
             jobID: jobID,
             name: name,
             offset: offset,
@@ -396,6 +761,12 @@ final class BpyRuntimeSession: @unchecked Sendable {
         _ descriptors: [BpyOutputDescriptor],
         jobID: UUID
     ) throws -> [String: URL] {
+        lock.lock()
+        let expectedFingerprint = jobFingerprints[jobID]
+        lock.unlock()
+        guard let expectedFingerprint else {
+            throw BpyRuntimeError.invalidOutput("The 3D output has no retained job identity.")
+        }
         let root = stagingRoot.appendingPathComponent(jobID.uuidString, isDirectory: true)
         try FileManager.default.createDirectory(
             at: root,
@@ -429,13 +800,16 @@ final class BpyRuntimeSession: @unchecked Sendable {
                 while offset < descriptor.byteCount {
                     let count = min(4 * 1_024 * 1_024, Int(descriptor.byteCount - offset))
                     let request = BpyReadOutputRequest(
-                        sessionID: sessionID,
+                        sessionID: currentSessionID(),
                         jobID: jobID,
                         name: descriptor.name,
                         offset: offset,
                         maximumBytes: count
                     )
-                    let chunk = try callChunk { service, reply in
+                    let chunk = try callChunk(
+                        jobID: jobID,
+                        fingerprint: expectedFingerprint
+                    ) { service, reply in
                         service.readOutput(try Self.encode(request), withReply: reply)
                     }
                     guard !chunk.isEmpty, chunk.count <= count else {
@@ -470,7 +844,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
     private func validateMagic(_ url: URL, mediaType: String) throws {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
-        let prefix = try handle.read(upToCount: 16) ?? Data()
+        let prefix = try handle.read(upToCount: 24) ?? Data()
         let valid: Bool
         switch mediaType {
         case "application/x-blender":
@@ -482,7 +856,123 @@ final class BpyRuntimeSession: @unchecked Sendable {
         default:
             valid = false
         }
-        guard valid else { throw BpyRuntimeError.invalidOutput("The worker output type is invalid.") }
+        guard valid else {
+            throw BpyRuntimeError.invalidOutput("The worker output type is invalid.")
+        }
+    }
+
+    private func cache(_ result: BpyRuntimeJobResult, for id: UUID) {
+        var evicted: [UUID] = []
+        lock.lock()
+        cachedResults[id] = result
+        cachedResultDates[id] = Date()
+        cachedResultOrder.removeAll(where: { $0 == id })
+        cachedResultOrder.append(id)
+        while cachedResultOrder.count > 16 {
+            let removed = cachedResultOrder.removeFirst()
+            cachedResults.removeValue(forKey: removed)
+            cachedResultDates.removeValue(forKey: removed)
+            validatedCandidates.removeValue(forKey: removed)
+            evicted.append(removed)
+        }
+        lock.unlock()
+        removeStagedResults(evicted)
+    }
+
+    private func purgeExpiredHostResults() {
+        let cutoff = Date().addingTimeInterval(-bpyHostResultRetentionSeconds)
+        lock.lock()
+        let expired = cachedResultDates.compactMap { id, date in date < cutoff ? id : nil }
+        expired.forEach {
+            cachedResults.removeValue(forKey: $0)
+            cachedResultDates.removeValue(forKey: $0)
+            validatedCandidates.removeValue(forKey: $0)
+            candidateJobIDs.remove($0)
+        }
+        cachedResultOrder.removeAll(where: { expired.contains($0) })
+        lock.unlock()
+        removeStagedResults(expired)
+    }
+
+    private func removeStagedResults(_ ids: [UUID]) {
+        ids.forEach {
+            try? FileManager.default.removeItem(
+                at: stagingRoot.appendingPathComponent($0.uuidString, isDirectory: true)
+            )
+        }
+    }
+
+    private func installConnection() {
+        let identifier = currentSessionID()
+        let value = NSXPCConnection(serviceName: serviceName)
+        value.remoteObjectInterface = NSXPCInterface(with: BpyRuntimeServiceProtocol.self)
+        value.interruptionHandler = { [weak self] in self?.markTransportInvalid(identifier) }
+        value.invalidationHandler = { [weak self] in self?.markTransportInvalid(identifier) }
+        lock.lock()
+        connection = value
+        lock.unlock()
+        value.resume()
+    }
+
+    private func rotateTransport() {
+        lock.lock()
+        guard !closed else {
+            lock.unlock()
+            return
+        }
+        let previous = connection
+        connection = nil
+        sessionID = UUID()
+        opened = false
+        transportInvalidated = false
+        lastReadyResponse = nil
+        lock.unlock()
+        previous?.invalidate()
+        installConnection()
+    }
+
+    private func markTransportInvalid(_ identifier: UUID) {
+        lock.lock()
+        guard sessionID == identifier else {
+            lock.unlock()
+            return
+        }
+        transportInvalidated = true
+        opened = false
+        validatedCandidates.removeAll()
+        candidateJobIDs.removeAll()
+        let lease = activeProcessLease?.transportID == identifier ? activeProcessLease : nil
+        if lease != nil { activeProcessLease = nil }
+        let unconfirmed = cachedResults.compactMap { key, value in
+            value.response.state == .awaitingConfirmation ? key : nil
+        }
+        unconfirmed.forEach {
+            cachedResults.removeValue(forKey: $0)
+            cachedResultDates.removeValue(forKey: $0)
+        }
+        cachedResultOrder.removeAll(where: { unconfirmed.contains($0) })
+        lock.unlock()
+        if let lease, !terminateLeasedProcess(lease) {
+            lock.lock()
+            if sessionID == identifier { transportRecoveryBlocked = true }
+            lock.unlock()
+        }
+        removeStagedResults(unconfirmed)
+    }
+
+    private func currentSessionID() -> UUID {
+        lock.lock()
+        defer { lock.unlock() }
+        return sessionID
+    }
+
+    private func currentConnection() throws -> (NSXPCConnection, UUID) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !closed, let connection else {
+            throw BpyRuntimeError.unavailable("The 3D XPC service is unavailable.")
+        }
+        return (connection, sessionID)
     }
 
     private func call(
@@ -491,42 +981,52 @@ final class BpyRuntimeSession: @unchecked Sendable {
     ) throws -> BpyServiceResponse {
         let box = BpyReplyBox()
         let semaphore = DispatchSemaphore(value: 0)
-        guard let service = connection.remoteObjectProxyWithErrorHandler({ error in
-            box.store(error: error)
-            semaphore.signal()
+        let (activeConnection, transportID) = try currentConnection()
+        guard let service = activeConnection.remoteObjectProxyWithErrorHandler({ [weak self] error in
+            self?.markTransportInvalid(transportID)
+            if box.store(error: error) { semaphore.signal() }
         }) as? BpyRuntimeServiceProtocol else {
+            markTransportInvalid(transportID)
             throw BpyRuntimeError.unavailable("The 3D XPC service is unavailable.")
         }
         try invoke(service) { data in
-            box.store(response: data)
-            semaphore.signal()
+            if box.store(response: data) { semaphore.signal() }
         }
         guard semaphore.wait(timeout: .now() + timeout) == .success else {
+            markTransportInvalid(transportID)
             throw BpyRuntimeError.timedOut
         }
         let value = box.load()
         if let error = value.2 { throw error }
-        guard let data = value.0 else { throw BpyRuntimeError.unavailable("Empty 3D service reply.") }
-        return try Self.decode(data)
+        guard let data = value.0 else {
+            throw BpyRuntimeError.unavailable("Empty 3D service reply.")
+        }
+        let response = try Self.decode(data)
+        recordProcessLease(response, transportID: transportID)
+        return response
     }
 
     private func callChunk(
         timeout: TimeInterval = 30,
+        jobID: UUID,
+        fingerprint: String?,
         _ invoke: (BpyRuntimeServiceProtocol, @escaping (Data, Data) -> Void) throws -> Void
     ) throws -> Data {
         let box = BpyReplyBox()
         let semaphore = DispatchSemaphore(value: 0)
-        guard let service = connection.remoteObjectProxyWithErrorHandler({ error in
-            box.store(error: error)
-            semaphore.signal()
+        let (activeConnection, transportID) = try currentConnection()
+        guard let service = activeConnection.remoteObjectProxyWithErrorHandler({ [weak self] error in
+            self?.markTransportInvalid(transportID)
+            if box.store(error: error) { semaphore.signal() }
         }) as? BpyRuntimeServiceProtocol else {
+            markTransportInvalid(transportID)
             throw BpyRuntimeError.unavailable("The 3D XPC service is unavailable.")
         }
         try invoke(service) { response, chunk in
-            box.store(response: response, chunk: chunk)
-            semaphore.signal()
+            if box.store(response: response, chunk: chunk) { semaphore.signal() }
         }
         guard semaphore.wait(timeout: .now() + timeout) == .success else {
+            markTransportInvalid(transportID)
             throw BpyRuntimeError.timedOut
         }
         let value = box.load()
@@ -535,10 +1035,72 @@ final class BpyRuntimeSession: @unchecked Sendable {
             throw BpyRuntimeError.unavailable("Empty 3D service reply.")
         }
         let response = try Self.decode(responseData)
+        recordProcessLease(response, transportID: transportID)
         guard response.ok else {
             throw BpyRuntimeError.rejected(response.message ?? "The 3D output was rejected.")
         }
+        guard response.jobID == jobID, response.jobFingerprint == fingerprint else {
+            throw BpyRuntimeError.invalidOutput("The 3D output returned the wrong job identity.")
+        }
         return chunk
+    }
+
+    private func recordProcessLease(_ response: BpyServiceResponse, transportID: UUID) {
+        let expectedExecutable = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Helpers/BpyRuntime/python/bin/python3")
+            .resolvingSymlinksInPath().path
+        lock.lock()
+        defer { lock.unlock() }
+        guard sessionID == transportID else { return }
+        if let processIdentifier = response.activeProcessIdentifier,
+           let startAbsoluteTime = response.activeProcessStartAbsoluteTime,
+           let executable = response.activeProcessExecutable,
+           processIdentifier > 1,
+           URL(fileURLWithPath: executable).resolvingSymlinksInPath().path == expectedExecutable {
+            activeProcessLease = .init(
+                transportID: transportID,
+                processIdentifier: processIdentifier,
+                startAbsoluteTime: startAbsoluteTime,
+                executable: expectedExecutable
+            )
+        } else if response.state?.isTerminal == true || response.state == .awaitingConfirmation {
+            activeProcessLease = nil
+        }
+    }
+
+    private static func fingerprint(
+        expectedRevision: String?,
+        source: String,
+        requestedTimeoutSeconds: Int?,
+        effectiveTimeoutSeconds: Int,
+        inputs: [PreparedBpyInput],
+        diagnosticDeniedPaths: [String],
+        diagnosticAutoexecPositiveControl: Bool
+    ) -> String {
+        var digest = SHA256()
+        func add(_ value: String?) {
+            let data = Data((value ?? "<nil>").utf8)
+            var length = UInt64(data.count).bigEndian
+            withUnsafeBytes(of: &length) { digest.update(data: Data($0)) }
+            digest.update(data: data)
+        }
+        add("nexgenvideo/bpy-job/2")
+        add(expectedRevision)
+        add(requestedTimeoutSeconds.map(String.init))
+        add(String(effectiveTimeoutSeconds))
+        add(source)
+        inputs.forEach {
+            add($0.input.filename)
+            add(String($0.totalBytes))
+            add($0.sha256)
+        }
+        diagnosticDeniedPaths.forEach { add($0) }
+        add(diagnosticAutoexecPositiveControl ? "1" : "0")
+        return digest.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     private static func encode<T: Encodable>(_ value: T) throws -> Data {
@@ -567,25 +1129,29 @@ final class BpyRuntimeHost {
     func register(document: VideoProject, documentID: String) {
         let key = ObjectIdentifier(document)
         guard entries[key] == nil else { return }
-        entries[key] = Entry(
-            document: document,
-            documentID: documentID,
-            session: nil
-        )
+        entries[key] = Entry(document: document, documentID: documentID, session: nil)
         entries = entries.filter { $0.value.document != nil }
     }
 
-    func session(for document: VideoProject) -> BpyRuntimeSession? {
+    func session(
+        for document: VideoProject,
+        diagnosticOpenFailure: Bool = false
+    ) -> BpyRuntimeSession? {
         let key = ObjectIdentifier(document)
         guard var entry = entries[key] else { return nil }
-        if let session = entry.session { return session }
-        let used = Set(entries.values.compactMap { $0.session?.serviceName })
+        if let session = entry.session, session.occupiesHostSlot { return session }
+        entry.session = nil
+        let used = Set(entries.values.compactMap { entry -> String? in
+            guard let session = entry.session, session.occupiesHostSlot else { return nil }
+            return session.serviceName
+        })
         guard let serviceName = bpyRuntimeServiceNames.first(where: { !used.contains($0) }) else {
             return nil
         }
         let session = BpyRuntimeSession(
             documentID: entry.documentID,
-            serviceName: serviceName
+            serviceName: serviceName,
+            diagnosticOpenFailure: diagnosticOpenFailure
         )
         entry.session = session
         entries[key] = entry

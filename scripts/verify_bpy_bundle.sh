@@ -7,13 +7,27 @@ RUNTIME="$APP/Contents/Helpers/BpyRuntime"
 PYTHON="$RUNTIME/python/bin/python3.13"
 
 test -x "$PYTHON"
-test -f "$RUNTIME/site-packages/bpy/__init__.py"
+BPY_ENTRYPOINT="$(jq -r .bpyWheelLayout.entryPoint "$ROOT/Runtime/bpy/runtime-lock.json")"
+test -f "$RUNTIME/site-packages/$BPY_ENTRYPOINT"
 test -f "$RUNTIME/PYTHON.json"
 test ! -e "$RUNTIME/python/bin/pip"
 test ! -e "$RUNTIME/python/bin/pip3"
 test ! -e "$RUNTIME/python/bin/pip3.13"
 cmp -s "$RUNTIME/runtime-lock.json" "$ROOT/Runtime/bpy/runtime-lock.json"
 [ "$(cat "$RUNTIME/.complete")" = "$(shasum -a 256 "$ROOT/Runtime/bpy/runtime-lock.json" | awk '{print $1}')" ]
+if [ "$(jq -r .distributionStatus "$ROOT/Runtime/bpy/runtime-lock.json")" = ready ]; then
+  while IFS=$'\t' read -r filename sha size; do
+    SOURCE="$RUNTIME/corresponding-source/$filename"
+    test -f "$SOURCE"
+    test "$(shasum -a 256 "$SOURCE" | awk '{print $1}')" = "$sha"
+    test "$(stat -f %z "$SOURCE")" = "$size"
+  done < <(jq -r '.distributionClosure.sourceArchives[] | [.filename,.sha256,.size] | @tsv' "$ROOT/Runtime/bpy/runtime-lock.json")
+  while IFS=$'\t' read -r relative sha; do
+    EVIDENCE="$RUNTIME/licenses/distribution/$(basename "$relative")"
+    test -f "$EVIDENCE"
+    test "$(shasum -a 256 "$EVIDENCE" | awk '{print $1}')" = "$sha"
+  done < <(jq -r '[(.distributionClosure.wheelBinaryProvenance), .distributionClosure.noticeFiles[]] | .[] | [.path,.sha256] | @tsv' "$ROOT/Runtime/bpy/runtime-lock.json")
+fi
 
 codesign --verify --strict --verbose=2 "$PYTHON"
 for slot in 0 1; do

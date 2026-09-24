@@ -36,6 +36,17 @@ class BpyRuntimeLockTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cannot retain blockers"):
             MODULE.validate(self.lock)
 
+    def test_ready_status_requires_distribution_closure(self):
+        self.lock["distributionStatus"] = "ready"
+        self.lock["distributionBlockers"] = []
+        with self.assertRaisesRegex(ValueError, "source archive closure"):
+            MODULE.validate(self.lock)
+
+    def test_candidate_manifest_hash_drift_is_rejected(self):
+        self.lock["bpyWheelLayout"]["candidateSourceFamilies"][0]["manifestHash"] = "0"
+        with self.assertRaisesRegex(ValueError, "manifest hash"):
+            MODULE.validate(self.lock)
+
     def test_distribution_mode_fails_closed(self):
         with mock.patch.object(MODULE, "LOCK", MODULE.LOCK), mock.patch(
             "sys.argv", ["verify_bpy_runtime.py", "--distribution"]

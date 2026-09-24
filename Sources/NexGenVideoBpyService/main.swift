@@ -10,8 +10,14 @@ private func procListChildPIDs(
     _ bufferSize: Int32
 ) -> Int32
 
-private let encoder = JSONEncoder()
-private let decoder = JSONDecoder()
+@_silgen_name("proc_pid_rusage")
+private func procPIDRusage(
+    _ processIdentifier: pid_t,
+    _ flavor: Int32,
+    _ buffer: UnsafeMutableRawPointer
+) -> Int32
+
+private let resultRetentionSeconds: TimeInterval = 15 * 60
 
 private extension NSLock {
     func access<T>(_ body: () throws -> T) rethrows -> T {
@@ -22,7 +28,7 @@ private extension NSLock {
 }
 
 private func encoded(_ response: BpyServiceResponse) -> Data {
-    (try? encoder.encode(response)) ?? Data()
+    (try? JSONEncoder().encode(response)) ?? Data()
 }
 
 private func failure(_ message: String) -> Data {
@@ -52,16 +58,33 @@ private func sha256(_ data: Data) -> String {
     SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
 }
 
+private struct ProcessUsage {
+    let physicalFootprint: UInt64
+    let startAbsoluteTime: UInt64
+}
+
+private func processUsage(_ processIdentifier: pid_t) -> ProcessUsage? {
+    let buffer = UnsafeMutableRawPointer.allocate(byteCount: 1_024, alignment: 8)
+    defer { buffer.deallocate() }
+    buffer.initializeMemory(as: UInt8.self, repeating: 0, count: 1_024)
+    guard procPIDRusage(processIdentifier, 4, buffer) == 0 else { return nil }
+    return ProcessUsage(
+        physicalFootprint: buffer.load(fromByteOffset: 72, as: UInt64.self),
+        startAbsoluteTime: buffer.load(fromByteOffset: 80, as: UInt64.self)
+    )
+}
+
 private func processTree(root: pid_t) -> [pid_t] {
     var visited = Set<pid_t>()
     var pending = [root]
     while let parent = pending.popLast() {
         var children = [pid_t](repeating: 0, count: 256)
-        let bytes = children.withUnsafeMutableBytes {
+        let byteCount = children.withUnsafeMutableBytes {
             procListChildPIDs(parent, $0.baseAddress, Int32($0.count))
         }
-        guard bytes > 0 else { continue }
-        for child in children.prefix(Int(bytes))
+        guard byteCount > 0 else { continue }
+        let count = Int(byteCount) / MemoryLayout<pid_t>.size
+        for child in children.prefix(count)
             where child > 1 && visited.insert(child).inserted {
             pending.append(child)
         }
@@ -69,11 +92,92 @@ private func processTree(root: pid_t) -> [pid_t] {
     return Array(visited)
 }
 
+private func stopProcess(_ process: Process) {
+    let processIdentifier = process.processIdentifier
+    guard processIdentifier > 1 else { return }
+    _ = Darwin.kill(-processIdentifier, SIGSTOP)
+    _ = Darwin.kill(processIdentifier, SIGSTOP)
+    let descendants = processTree(root: processIdentifier)
+    descendants.forEach { _ = Darwin.kill($0, SIGSTOP) }
+    descendants.reversed().forEach { _ = Darwin.kill($0, SIGKILL) }
+    _ = Darwin.kill(-processIdentifier, SIGKILL)
+    _ = Darwin.kill(processIdentifier, SIGKILL)
+}
+
+private func directoryUsage(_ root: URL) throws -> (bytes: UInt64, files: Int) {
+    guard let values = FileManager.default.enumerator(
+        at: root,
+        includingPropertiesForKeys: nil,
+        options: [.skipsPackageDescendants]
+    ) else {
+        return (0, 0)
+    }
+    var bytes: UInt64 = 0
+    var files = 0
+    while let url = values.nextObject() as? URL {
+        var status = stat()
+        guard lstat(url.path, &status) == 0 else { continue }
+        files += 1
+        if (status.st_mode & S_IFMT) == S_IFREG, status.st_size > 0 {
+            bytes += UInt64(status.st_size)
+        }
+    }
+    return (bytes, files)
+}
+
+private func fingerprint(
+    request: BpyRunJobRequest,
+    timeoutSeconds: Int,
+    inputs: [String: (UInt64, String)]
+) -> String {
+    var digest = SHA256()
+    func add(_ value: String?) {
+        let data = Data((value ?? "<nil>").utf8)
+        var length = UInt64(data.count).bigEndian
+        withUnsafeBytes(of: &length) { digest.update(data: Data($0)) }
+        digest.update(data: data)
+    }
+    add("nexgenvideo/bpy-job/2")
+    add(request.expectedRevision)
+    add(request.timeoutSeconds.map(String.init))
+    add(String(timeoutSeconds))
+    add(request.source)
+    request.inputNames.forEach {
+        add($0)
+        add(String(inputs[$0]?.0 ?? UInt64.max))
+        add(inputs[$0]?.1)
+    }
+    request.diagnosticDeniedPaths.forEach { add($0) }
+    add(request.diagnosticAutoexecPositiveControl ? "1" : "0")
+    return digest.finalize().map { String(format: "%02x", $0) }.joined()
+}
+
 private final class ResponseCallback: @unchecked Sendable {
     let body: (Data) -> Void
 
     init(_ body: @escaping (Data) -> Void) {
         self.body = body
+    }
+}
+
+private final class BoundedLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private let limit: Int
+    private var data = Data()
+
+    init(limit: Int) {
+        self.limit = limit
+    }
+
+    func append(_ value: Data) {
+        lock.access {
+            let remaining = max(0, limit - data.count)
+            data.append(value.prefix(remaining))
+        }
+    }
+
+    var text: String {
+        lock.access { String(decoding: data, as: UTF8.self) }
     }
 }
 
@@ -98,6 +202,9 @@ private final class JobRecord: @unchecked Sendable {
     let expectedRevision: String?
     let inputNames: [String]
     let timeoutSeconds: Int
+    let fingerprint: String
+    let diagnosticDeniedPaths: [String]
+    let diagnosticAutoexecPositiveControl: Bool
     var state: BpyRuntimeJobState = .accepted
     var message: String?
     var progress: [BpyRuntimeProgress] = []
@@ -105,6 +212,8 @@ private final class JobRecord: @unchecked Sendable {
     var outputData: [String: Data] = [:]
     var stdout: String?
     var metrics: [String: Double] = [:]
+    var terminalAt: Date?
+    var resultExpired = false
 
     init(request: BpyRunJobRequest, timeoutSeconds: Int) {
         id = request.jobID
@@ -112,48 +221,88 @@ private final class JobRecord: @unchecked Sendable {
         expectedRevision = request.expectedRevision
         inputNames = request.inputNames
         self.timeoutSeconds = timeoutSeconds
+        fingerprint = request.fingerprint
+        diagnosticDeniedPaths = request.diagnosticDeniedPaths
+        diagnosticAutoexecPositiveControl = request.diagnosticAutoexecPositiveControl
+    }
+
+    func expireResult() {
+        outputs.removeAll()
+        outputData.removeAll()
+        progress.removeAll()
+        stdout = nil
+        metrics.removeAll()
+        resultExpired = true
     }
 }
 
-private struct WorkerEvent: Decodable {
-    let type: String
-    let jobID: String?
-    let pythonVersion: String?
-    let bpyVersion: String?
-    let executable: String?
-    let pid: Int32?
-    let startupSeconds: Double?
-    let sequence: Int?
-    let stage: String?
-    let fraction: Double?
-    let ok: Bool?
-    let message: String?
-    let stdout: String?
-    let metrics: [String: Double]?
-
-    enum CodingKeys: String, CodingKey {
-        case type, stage, fraction, ok, message, stdout, metrics, pid, sequence
-        case jobID = "job_id"
-        case pythonVersion = "python_version"
-        case bpyVersion = "bpy_version"
-        case executable
-        case startupSeconds = "startup_seconds"
-    }
+private struct ProbeManifest: Decodable {
+    let schema: String
+    let pythonVersion: String
+    let bpyVersion: String
+    let bpyModule: String
+    let executable: String
+    let processIdentifier: Int32
+    let startupSeconds: Double
 }
 
-private struct WorkerJobCommand: Encodable {
-    let type = "job"
+private struct VerificationScene: Codable {
+    let name: String
+    let width: Int
+    let height: Int
+    let percentage: Int
+    let pixels: Int
+    let engine: String
+    let cyclesDevice: String?
+}
+
+private struct DenialResult: Codable {
+    let denied: Bool
+    let errno: Int?
+}
+
+private struct VerificationManifest: Codable {
+    let schema: String
     let jobID: String
-    let source: String
-    let inputDirectory: String
-    let outputDirectory: String
+    let fingerprint: String
+    let pythonVersion: String
+    let bpyVersion: String
+    let executable: String
+    let bpyModule: String
+    let processIdentifier: Int32
+    let verificationSeconds: Double
+    let objects: Int
+    let vertices: Int
+    let polygons: Int
+    let scenes: [VerificationScene]
+    let objectNames: [String]
+    let modifiers: [String: [String]]
+    let autorunTextPresent: Bool
+    let autorunMarkerAbsent: Bool
+    let deniedPaths: [String: DenialResult]
+    let networkDenied: DenialResult
+    let secretEnvironmentAbsent: Bool
+    let blenderUserConfig: String?
+    let sessionRoot: String
+}
 
-    enum CodingKeys: String, CodingKey {
-        case type, source
-        case jobID = "job_id"
-        case inputDirectory = "input_dir"
-        case outputDirectory = "output_dir"
-    }
+private struct AutoexecManifest: Decodable {
+    let schema: String
+    let jobID: String
+    let processIdentifier: Int32
+    let autorunMarkerPresent: Bool
+}
+
+private struct ManagedProcessResult {
+    let processIdentifier: Int32
+    let exitStatus: Int32
+    let duration: Double
+    let peakMemoryBytes: UInt64
+    let peakDiskBytes: UInt64
+    let peakFileCount: Int
+    let peakDescendantCount: Int
+    let limitReason: String?
+    let log: String
 }
 
 private final class ServiceSession: @unchecked Sendable {
@@ -164,20 +313,25 @@ private final class ServiceSession: @unchecked Sendable {
     private let queue: DispatchQueue
     private let lock = NSLock()
     private var uploads: [String: UploadRecord] = [:]
+    private var checkpointUpload: UploadRecord?
     private var completedInputs: [UUID: [String: (UInt64, String)]] = [:]
     private var jobs: [UUID: JobRecord] = [:]
     private var confirmedRevision: String?
     private var confirmedSceneData: Data?
-    private var process: Process?
-    private var stdin: FileHandle?
-    private var stdout: FileHandle?
-    private var stderr: FileHandle?
-    private var stderrBytes = Data()
+    private var activeProcess: Process?
+    private var activeProcessStartAbsoluteTime: UInt64?
+    private var activeProcessExecutable: String?
     private var runtimeIdentity: BpyRuntimeIdentity?
     private var coldStartSeconds: Double?
+    private var servicePeakMemoryBytes: UInt64 = 0
     private var closed = false
 
-    init(request: BpyOpenSessionRequest, root: URL, runtimeRoot: URL, capacity: DispatchSemaphore) {
+    init(
+        request: BpyOpenSessionRequest,
+        root: URL,
+        runtimeRoot: URL,
+        capacity: DispatchSemaphore
+    ) {
         self.request = request
         self.root = root
         self.runtimeRoot = runtimeRoot
@@ -190,17 +344,37 @@ private final class ServiceSession: @unchecked Sendable {
         let callback = ResponseCallback(reply)
         queue.async { [self] in
             do {
-                guard lock.access({ !closed }) else {
-                    throw CocoaError(.fileNoSuchFile)
-                }
+                guard lock.access({ !closed }) else { throw CocoaError(.fileNoSuchFile) }
                 try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-                try startWorker()
+                guard !request.diagnosticOpenFailure else { throw CocoaError(.executableLoad) }
+                let started = ProcessInfo.processInfo.systemUptime
+                let manifest = try probeRuntime()
+                coldStartSeconds = ProcessInfo.processInfo.systemUptime - started
+                guard manifest.schema == "nexgenvideo/bpy-probe/1",
+                      manifest.pythonVersion == "3.13.15",
+                      manifest.bpyVersion == "5.2.2",
+                      URL(fileURLWithPath: manifest.executable).resolvingSymlinksInPath()
+                        == pythonURL.resolvingSymlinksInPath(),
+                      URL(fileURLWithPath: manifest.bpyModule).resolvingSymlinksInPath()
+                        == bpyEntryPointURL.resolvingSymlinksInPath() else {
+                    throw CocoaError(.executableLoad)
+                }
+                let installed = lock.access { () -> Bool in
+                    guard !closed else { return false }
+                    runtimeIdentity = .init(
+                        pythonVersion: manifest.pythonVersion,
+                        bpyVersion: manifest.bpyVersion,
+                        executable: manifest.executable,
+                        processIdentifier: manifest.processIdentifier,
+                        serviceProcessIdentifier: getpid()
+                    )
+                    return true
+                }
+                guard installed else { throw CocoaError(.fileNoSuchFile) }
                 callback.body(encoded(readyResponse()))
             } catch {
-                stopWorker()
-                callback.body(failure(
-                    "worker did not become ready: \(error.localizedDescription)\(stderrDiagnostic())"
-                ))
+                stopActiveProcess()
+                callback.body(failure("worker did not become ready: \(error.localizedDescription)"))
             }
         }
     }
@@ -209,11 +383,63 @@ private final class ServiceSession: @unchecked Sendable {
         request == candidate
     }
 
-    func stage(_ request: BpyStageInputRequest, chunk: Data) throws {
-        guard isSafeName(request.name), isSHA256(request.sha256) else {
-            throw CocoaError(.fileWriteInvalidFileName)
+    func restore(_ request: BpyRestoreCheckpointRequest, chunk: Data) throws {
+        guard let expectedRevision = confirmedRevision,
+              request.revision == expectedRevision,
+              isSafeName(request.revision),
+              isSHA256(request.sha256),
+              request.totalBytes <= self.request.limits.outputBytes,
+              chunk.count <= 4 * 1_024 * 1_024,
+              request.offset <= request.totalBytes,
+              UInt64(chunk.count) <= request.totalBytes - request.offset,
+              request.finalChunk == (
+                  request.offset + UInt64(chunk.count) == request.totalBytes
+              ) else {
+            throw CocoaError(.fileWriteOutOfSpace)
         }
-        guard request.totalBytes <= self.request.limits.inputBytes,
+        try lock.access {
+            guard !closed, confirmedSceneData == nil else {
+                throw CocoaError(.fileWriteFileExists)
+            }
+            let upload: UploadRecord
+            if let existing = checkpointUpload {
+                upload = existing
+                guard upload.totalBytes == request.totalBytes,
+                      upload.expectedSHA256 == request.sha256 else {
+                    throw CocoaError(.fileWriteFileExists)
+                }
+            } else {
+                guard request.offset == 0 else { throw CocoaError(.fileWriteUnknown) }
+                let url = root.appendingPathComponent("host-checkpoint.part")
+                guard FileManager.default.createFile(atPath: url.path, contents: nil) else {
+                    throw CocoaError(.fileWriteUnknown)
+                }
+                upload = UploadRecord(
+                    url: url,
+                    totalBytes: request.totalBytes,
+                    expectedSHA256: request.sha256,
+                    handle: FileHandle(forWritingTo: url)
+                )
+                checkpointUpload = upload
+            }
+            try append(chunk, offset: request.offset, finalChunk: request.finalChunk, to: upload)
+            if request.finalChunk {
+                let data = try Data(contentsOf: upload.url)
+                guard UInt64(data.count) == upload.totalBytes,
+                      sha256(data) == upload.expectedSHA256,
+                      data.starts(with: Data("BLENDER".utf8)) else {
+                    throw CocoaError(.fileReadCorruptFile)
+                }
+                confirmedSceneData = data
+                checkpointUpload = nil
+                try? FileManager.default.removeItem(at: upload.url)
+            }
+        }
+    }
+
+    func stage(_ request: BpyStageInputRequest, chunk: Data) throws {
+        guard isSafeName(request.name), isSHA256(request.sha256),
+              request.totalBytes <= self.request.limits.inputBytes,
               chunk.count <= 4 * 1_024 * 1_024,
               request.offset <= request.totalBytes,
               UInt64(chunk.count) <= request.totalBytes - request.offset,
@@ -254,12 +480,12 @@ private final class ServiceSession: @unchecked Sendable {
                     .values.reduce(UInt64(0)) { $0 + $1.totalBytes }
                 let uploadingCount = uploads.keys.filter { $0.hasPrefix(prefix) }.count
                 guard completedInputs[request.jobID, default: [:]].count + uploadingCount < 64,
-                      completedTotal <= self.request.limits.inputBytes,
                       uploadingTotal <= self.request.limits.inputBytes - completedTotal,
-                      request.totalBytes <= self.request.limits.inputBytes - completedTotal - uploadingTotal else {
+                      request.totalBytes <= self.request.limits.inputBytes
+                        - completedTotal - uploadingTotal else {
                     throw CocoaError(.fileWriteOutOfSpace)
                 }
-                let directory = jobDirectory(request.jobID).appendingPathComponent("inputs", isDirectory: true)
+                let directory = inputDirectory(request.jobID)
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                 let url = directory.appendingPathComponent(request.name + ".part")
                 guard FileManager.default.createFile(atPath: url.path, contents: nil) else {
@@ -273,32 +499,8 @@ private final class ServiceSession: @unchecked Sendable {
                 )
                 uploads[key] = upload
             }
-            if request.offset < upload.receivedBytes {
-                guard request.offset + UInt64(chunk.count) <= upload.receivedBytes else {
-                    throw CocoaError(.fileWriteUnknown)
-                }
-                var existing = Data(count: chunk.count)
-                let count = existing.withUnsafeMutableBytes {
-                    pread(upload.handle.fileDescriptor, $0.baseAddress, chunk.count, off_t(request.offset))
-                }
-                guard count == chunk.count, existing == chunk else {
-                    throw CocoaError(.fileWriteFileExists)
-                }
-                return
-            }
-            guard request.offset == upload.receivedBytes,
-                  upload.receivedBytes + UInt64(chunk.count) <= upload.totalBytes else {
-                throw CocoaError(.fileWriteUnknown)
-            }
-            try upload.handle.write(contentsOf: chunk)
-            upload.receivedBytes += UInt64(chunk.count)
+            try append(chunk, offset: request.offset, finalChunk: request.finalChunk, to: upload)
             if request.finalChunk {
-                try upload.handle.synchronize()
-                try upload.handle.close()
-                guard upload.receivedBytes == upload.totalBytes,
-                      try sha256(upload.url) == upload.expectedSHA256 else {
-                    throw CocoaError(.fileWriteUnknown)
-                }
                 let finalURL = upload.url.deletingPathExtension()
                 try FileManager.default.moveItem(at: upload.url, to: finalURL)
                 uploads.removeValue(forKey: key)
@@ -309,48 +511,90 @@ private final class ServiceSession: @unchecked Sendable {
         }
     }
 
+    private func append(
+        _ chunk: Data,
+        offset: UInt64,
+        finalChunk: Bool,
+        to upload: UploadRecord
+    ) throws {
+        if offset < upload.receivedBytes {
+            guard offset + UInt64(chunk.count) <= upload.receivedBytes else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+            var existing = Data(count: chunk.count)
+            let count = existing.withUnsafeMutableBytes {
+                pread(upload.handle.fileDescriptor, $0.baseAddress, chunk.count, off_t(offset))
+            }
+            guard count == chunk.count, existing == chunk else {
+                throw CocoaError(.fileWriteFileExists)
+            }
+            return
+        }
+        guard offset == upload.receivedBytes,
+              upload.receivedBytes + UInt64(chunk.count) <= upload.totalBytes else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        try upload.handle.write(contentsOf: chunk)
+        upload.receivedBytes += UInt64(chunk.count)
+        if finalChunk {
+            try upload.handle.synchronize()
+            try upload.handle.close()
+            guard upload.receivedBytes == upload.totalBytes,
+                  try sha256(upload.url) == upload.expectedSHA256 else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+        }
+    }
+
     func submit(_ request: BpyRunJobRequest) -> BpyServiceResponse {
         let decision: (JobRecord?, BpyServiceResponse) = lock.access {
+            purgeExpiredResults()
             if closed {
                 return (nil, .init(ok: false, message: "session is closed"))
             }
+            guard isSHA256(request.fingerprint) else {
+                return (nil, .init(ok: false, message: "invalid job fingerprint"))
+            }
             if let existing = jobs[request.jobID] {
+                guard existing.fingerprint == request.fingerprint else {
+                    return (nil, .init(ok: false, message: "job ID payload mismatch"))
+                }
                 var response = response(for: existing)
                 response.joinedExistingJob = true
                 return (nil, response)
             }
             guard jobs.count < 1_024 else {
-                return (nil, .init(ok: false, message: "session job limit reached"))
+                return (nil, .init(ok: false, message: "session job limit reached; rotate the document session"))
             }
-            if jobs.values.contains(where: {
+            guard !jobs.values.contains(where: {
                 [.accepted, .running, .awaitingConfirmation].contains($0.state)
-            }) {
+            }) else {
                 return (nil, .init(ok: false, message: "session already has an active job"))
             }
-            guard request.expectedRevision == confirmedRevision else {
-                return (nil, .init(ok: false, message: "confirmed revision mismatch"))
+            guard request.expectedRevision == confirmedRevision,
+                  confirmedRevision == nil || confirmedSceneData != nil else {
+                return (nil, .init(ok: false, message: "confirmed checkpoint is unavailable"))
             }
             let names = Set(request.inputNames)
+            let inputs = completedInputs[request.jobID, default: [:]]
             guard names.count == request.inputNames.count, names.count <= 64,
                   request.inputNames.allSatisfy(isSafeName),
-                  names == Set(completedInputs[request.jobID, default: [:]].keys) else {
+                  names == Set(inputs.keys) else {
                 return (nil, .init(ok: false, message: "staged inputs do not match the request"))
             }
-            guard request.source.utf8.count <= 4 * 1_024 * 1_024 else {
-                return (nil, .init(ok: false, message: "job source exceeds the runtime limit"))
+            guard request.source.utf8.count <= 4 * 1_024 * 1_024,
+                  request.diagnosticDeniedPaths.count <= 8,
+                  request.diagnosticDeniedPaths.allSatisfy({ $0.utf8.count <= 4_096 }) else {
+                return (nil, .init(ok: false, message: "job payload exceeds the runtime limit"))
             }
-            for previous in jobs.values where previous.state.isTerminal {
-                previous.outputs.removeAll()
-                previous.outputData.removeAll()
-                previous.progress.removeAll()
-                previous.stdout = nil
-                previous.metrics.removeAll()
-                completedInputs.removeValue(forKey: previous.id)
-            }
-            let timeout = min(request.timeoutSeconds ?? self.request.limits.timeoutSeconds,
-                              self.request.limits.timeoutSeconds)
-            guard timeout > 0 else {
-                return (nil, .init(ok: false, message: "invalid timeout"))
+            let timeout = min(
+                request.timeoutSeconds ?? self.request.limits.timeoutSeconds,
+                self.request.limits.timeoutSeconds
+            )
+            guard timeout > 0,
+                  fingerprint(request: request, timeoutSeconds: timeout, inputs: inputs)
+                    == request.fingerprint else {
+                return (nil, .init(ok: false, message: "job fingerprint mismatch"))
             }
             let job = JobRecord(request: request, timeoutSeconds: timeout)
             jobs[request.jobID] = job
@@ -364,6 +608,7 @@ private final class ServiceSession: @unchecked Sendable {
 
     func status(_ jobID: UUID) -> BpyServiceResponse {
         lock.access {
+            purgeExpiredResults()
             guard let job = jobs[jobID] else {
                 return .init(ok: false, message: "unknown job")
             }
@@ -371,24 +616,27 @@ private final class ServiceSession: @unchecked Sendable {
         }
     }
 
-    func output(_ request: BpyReadOutputRequest) throws -> Data {
+    func output(_ request: BpyReadOutputRequest) throws -> (BpyServiceResponse, Data) {
         guard isSafeName(request.name), request.maximumBytes > 0,
               request.maximumBytes <= 4 * 1_024 * 1_024 else {
             throw CocoaError(.fileReadInvalidFileName)
         }
         return try lock.access {
-            guard let job = jobs[request.jobID],
+            purgeExpiredResults()
+            guard let job = jobs[request.jobID], !job.resultExpired,
                   [.awaitingConfirmation, .confirmed].contains(job.state),
                   let output = job.outputs.first(where: { $0.name == request.name }),
                   let data = job.outputData[request.name] else {
                 throw CocoaError(.fileReadNoSuchFile)
             }
-            guard request.offset <= output.byteCount else { throw CocoaError(.fileReadCorruptFile) }
-            let end = min(
-                output.byteCount,
-                request.offset + UInt64(request.maximumBytes)
+            guard request.offset <= output.byteCount else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            let end = min(output.byteCount, request.offset + UInt64(request.maximumBytes))
+            return (
+                response(for: job),
+                data.subdata(in: Int(request.offset)..<Int(end))
             )
-            return data.subdata(in: Int(request.offset)..<Int(end))
         }
     }
 
@@ -397,21 +645,20 @@ private final class ServiceSession: @unchecked Sendable {
             throw CocoaError(.fileWriteInvalidFileName)
         }
         return try lock.access {
-            guard let job = jobs[request.jobID], job.state == .awaitingConfirmation else {
+            purgeExpiredResults()
+            guard let job = jobs[request.jobID], job.state == .awaitingConfirmation,
+                  !job.resultExpired else {
                 throw CocoaError(.fileWriteNoPermission)
             }
-            guard request.revision != confirmedRevision else {
-                throw CocoaError(.fileWriteFileExists)
-            }
-            guard let confirmedData = job.outputData["scene.blend"] else {
-                throw CocoaError(.fileReadNoSuchFile)
-            }
-            guard sha256(confirmedData) == request.sceneSHA256 else {
+            guard request.revision != confirmedRevision,
+                  let confirmedData = job.outputData["scene.blend"],
+                  sha256(confirmedData) == request.sceneSHA256 else {
                 throw CocoaError(.fileReadCorruptFile)
             }
             confirmedRevision = request.revision
             confirmedSceneData = confirmedData
             job.state = .confirmed
+            job.terminalAt = Date()
             return response(for: job)
         }
     }
@@ -424,30 +671,33 @@ private final class ServiceSession: @unchecked Sendable {
                 job.state = .cancelled
                 job.message = "job cancelled"
                 job.source = nil
+                job.terminalAt = Date()
                 completedInputs.removeValue(forKey: jobID)
                 return true
             case .awaitingConfirmation:
                 job.state = .rejected
                 job.message = "candidate rejected"
-                job.outputs.removeAll()
-                job.outputData.removeAll()
+                job.terminalAt = Date()
+                job.expireResult()
                 completedInputs.removeValue(forKey: jobID)
                 return true
             default:
                 return false
             }
         }
-        if shouldStop { stopWorker() }
+        if shouldStop { stopActiveProcess() }
         try? FileManager.default.removeItem(at: jobDirectory(jobID))
         return status(jobID)
     }
 
     func close() {
         lock.access { closed = true }
-        stopWorker()
+        stopActiveProcess()
         lock.access {
             for upload in uploads.values { try? upload.handle.close() }
+            try? checkpointUpload?.handle.close()
             uploads.removeAll()
+            checkpointUpload = nil
         }
         try? FileManager.default.removeItem(at: root)
     }
@@ -455,273 +705,521 @@ private final class ServiceSession: @unchecked Sendable {
     private func execute(_ job: JobRecord) {
         capacity.wait()
         defer { capacity.signal() }
+        let began = ProcessInfo.processInfo.systemUptime
+        let deadline = began + Double(job.timeoutSeconds)
         guard lock.access({ job.state == .accepted && !closed }) else { return }
-        lock.access { job.state = .running }
-        let timeout = DispatchWorkItem { [weak self, weak job] in
-            guard let self, let job else { return }
-            let shouldStop = self.lock.access { () -> Bool in
-                guard job.state == .running else { return false }
-                job.state = .timedOut
-                job.message = "job exceeded \(job.timeoutSeconds) seconds"
-                job.source = nil
-                return true
-            }
-            if shouldStop { self.stopWorker() }
+        lock.access {
+            job.state = .running
+            job.progress = [.init(sequence: 1, stage: "worker", fraction: 0.05)]
         }
-        DispatchQueue.global(qos: .utility).asyncAfter(
-            deadline: .now() + .seconds(job.timeoutSeconds), execute: timeout
-        )
-        defer { timeout.cancel() }
         do {
-            try startWorker()
-            guard lock.access({ job.state == .running && !closed }) else {
-                stopWorker()
-                return
-            }
+            let directory = jobDirectory(job.id)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let sourceURL = directory.appendingPathComponent("source.py")
             guard let source = lock.access({ job.source }) else {
                 throw CocoaError(.fileReadCorruptFile)
             }
-            let command = WorkerJobCommand(
-                jobID: job.id.uuidString,
-                source: source,
-                inputDirectory: inputDirectory(job.id).path,
-                outputDirectory: outputDirectory(job.id).path
+            try Data(source.utf8).write(to: sourceURL, options: .atomic)
+            let confirmedURL = try writeConfirmedCheckpoint(for: job)
+            var jobConfiguration = baseConfiguration(
+                processRoot: directory,
+                cpuSeconds: job.timeoutSeconds
+            ).merging([
+                "jobID": job.id.uuidString,
+                "sessionRoot": root.path,
+                "sourcePath": sourceURL.path,
+                "inputDirectory": inputDirectory(job.id).path,
+                "outputDirectory": outputDirectory(job.id).path,
+            ]) { _, new in new }
+            if let confirmedURL { jobConfiguration["confirmedScene"] = confirmedURL.path }
+            let jobConfig = try writeConfiguration(
+                jobConfiguration,
+                at: directory.appendingPathComponent("job.json")
             )
-            try writeLine(command)
-            while let event = try readEvent() {
-                guard event.jobID == nil || event.jobID == job.id.uuidString else { continue }
-                if event.type == "progress", let sequence = event.sequence,
-                   let stage = event.stage, let fraction = event.fraction {
-                    guard fraction.isFinite, (0...1).contains(fraction),
-                          sequence == lock.access({ job.progress.count + 1 }),
-                          sequence <= 1_024 else {
-                        throw CocoaError(.fileReadCorruptFile)
-                    }
-                    lock.access {
-                        job.progress.append(.init(sequence: sequence, stage: stage, fraction: fraction))
-                    }
-                    continue
-                }
-                if event.type == "result" {
-                    if event.ok == true {
-                        let collected = try collectOutputs(job.id)
-                        lock.access {
-                            guard job.state == .running else { return }
-                            job.outputs = collected.descriptors
-                            job.outputData = collected.data
-                            job.stdout = limited(event.stdout)
-                            job.metrics = event.metrics ?? [:]
-                            job.source = nil
-                            job.state = .awaitingConfirmation
-                        }
-                    } else {
-                        lock.access {
-                            guard job.state == .running else { return }
-                            job.message = event.message ?? "worker rejected the job"
-                            job.stdout = limited(event.stdout)
-                            job.metrics = event.metrics ?? [:]
-                            job.source = nil
-                            job.state = .failed
-                        }
-                        stopWorker()
-                    }
-                    try? FileManager.default.removeItem(at: jobDirectory(job.id))
-                    return
-                }
-                if event.type == "fatal" { throw CocoaError(.executableLoad) }
+            let worker = try runManagedProcess(
+                mode: "job",
+                configuration: jobConfig,
+                processRoot: directory,
+                deadline: deadline,
+                job: job
+            )
+            try requireSuccessful(worker, job: job)
+            try enforceStoredResources(job)
+            try verifyStagedInputs(job.id)
+            lock.access {
+                guard job.state == .running else { return }
+                job.progress.append(.init(sequence: 2, stage: "verification", fraction: 0.75))
             }
-            throw CocoaError(.executableLoad)
+            let verification = try verify(job: job, deadline: deadline)
+            try enforceStoredResources(job)
+            let collected = try collectOutputs(job.id)
+            try enforceServiceMemory(job)
+            let verificationData = try JSONEncoder().encode(verification.manifest)
+            var descriptors = collected.descriptors
+            var outputData = collected.data
+            descriptors.append(.init(
+                name: "verification.json",
+                byteCount: UInt64(verificationData.count),
+                sha256: sha256(verificationData),
+                mediaType: "application/json"
+            ))
+            outputData["verification.json"] = verificationData
+            let wallSeconds = ProcessInfo.processInfo.systemUptime - began
+            lock.access {
+                guard job.state == .running else { return }
+                job.outputs = descriptors
+                job.outputData = outputData
+                job.stdout = String(worker.log.prefix(request.limits.stdoutBytes))
+                job.metrics = [
+                    "job_wall_seconds": wallSeconds,
+                    "worker_wall_seconds": worker.duration,
+                    "verification_seconds": verification.manifest.verificationSeconds,
+                    "worker_peak_memory_bytes": Double(worker.peakMemoryBytes),
+                    "verifier_peak_memory_bytes": Double(verification.process.peakMemoryBytes),
+                    "service_peak_memory_bytes": Double(servicePeakMemoryBytes),
+                    "disk_peak_bytes": Double(max(worker.peakDiskBytes, verification.process.peakDiskBytes)),
+                    "file_peak_count": Double(max(worker.peakFileCount, verification.process.peakFileCount)),
+                    "descendant_peak_count": Double(
+                        max(worker.peakDescendantCount, verification.process.peakDescendantCount)
+                    ),
+                    "worker_process_identifier": Double(worker.processIdentifier),
+                    "verifier_process_identifier": Double(verification.process.processIdentifier),
+                    "objects": Double(verification.manifest.objects),
+                    "vertices": Double(verification.manifest.vertices),
+                    "polygons": Double(verification.manifest.polygons),
+                    "rlimit_as_bytes": Double(request.limits.memoryBytes),
+                ]
+                if verification.autoexecPositive {
+                    job.metrics["autoexec_positive_control"] = 1
+                }
+                job.progress.append(.init(sequence: 3, stage: "complete", fraction: 1))
+                job.source = nil
+                job.state = .awaitingConfirmation
+                job.terminalAt = Date()
+                enforceResultRetentionBudget(retaining: job.id)
+            }
+            try? FileManager.default.removeItem(at: directory)
         } catch {
             lock.access {
                 if job.state == .running {
-                    job.state = .crashed
-                    job.message = "worker crashed: \(error.localizedDescription)"
+                    let code = (error as? CocoaError)?.code
+                    if code == .fileReadTooLarge || code == .fileWriteOutOfSpace {
+                        job.state = .resourceLimited
+                        job.message = "job exceeded a stored-resource limit"
+                    } else {
+                        job.state = .crashed
+                        job.message = "worker failed: \(error.localizedDescription)"
+                    }
                     job.source = nil
-                    job.stdout = String(
-                        decoding: stderrBytes.prefix(request.limits.stdoutBytes),
-                        as: UTF8.self
-                    )
+                    job.terminalAt = Date()
                 }
             }
-            stopWorker()
+            stopActiveProcess()
             try? FileManager.default.removeItem(at: jobDirectory(job.id))
         }
     }
 
-    private func startWorker() throws {
-        if lock.access({ process?.isRunning == true && runtimeIdentity != nil }) { return }
-        stopWorker()
-        let python = runtimeRoot.appendingPathComponent("python/bin/python3")
-        let worker = runtimeRoot.appendingPathComponent("worker.py")
-        let sitePackages = runtimeRoot.appendingPathComponent("site-packages")
-        guard FileManager.default.isExecutableFile(atPath: python.path),
-              FileManager.default.fileExists(atPath: worker.path),
-              FileManager.default.fileExists(atPath: sitePackages.path) else {
+    private func requireSuccessful(_ result: ManagedProcessResult, job: JobRecord) throws {
+        if let reason = result.limitReason {
+            lock.access {
+                guard job.state == .running else { return }
+                job.state = reason == "deadline" ? .timedOut : .resourceLimited
+                job.message = reason == "deadline"
+                    ? "job exceeded \(job.timeoutSeconds) seconds"
+                    : "job exceeded the \(reason) limit"
+                job.stdout = String(result.log.prefix(request.limits.stdoutBytes))
+                job.source = nil
+                job.terminalAt = Date()
+            }
+            throw CocoaError(.executableLoad)
+        }
+        guard lock.access({ job.state == .running }) else {
+            throw CocoaError(.userCancelled)
+        }
+        guard result.exitStatus == 0 else {
+            lock.access {
+                if result.exitStatus == 71 {
+                    job.state = .resourceLimited
+                    job.message = "worker exhausted its address-space limit"
+                } else {
+                    job.state = result.exitStatus == 70 ? .failed : .crashed
+                    job.message = result.exitStatus == 70
+                        ? "worker rejected the job"
+                        : "worker exited with status \(result.exitStatus)"
+                }
+                job.stdout = String(result.log.prefix(request.limits.stdoutBytes))
+                job.source = nil
+                job.terminalAt = Date()
+            }
+            throw CocoaError(.executableLoad)
+        }
+    }
+
+    private func enforceStoredResources(_ job: JobRecord) throws {
+        let usage = try directoryUsage(root)
+        guard usage.bytes <= request.limits.diskBytes,
+              usage.files <= request.limits.files else {
+            lock.access {
+                guard job.state == .running else { return }
+                job.state = .resourceLimited
+                job.message = usage.bytes > request.limits.diskBytes
+                    ? "job exceeded the disk limit"
+                    : "job exceeded the file-count limit"
+                job.terminalAt = Date()
+            }
+            throw CocoaError(.fileWriteOutOfSpace)
+        }
+    }
+
+    private func enforceServiceMemory(_ job: JobRecord) throws {
+        let footprint = processUsage(getpid())?.physicalFootprint ?? 0
+        lock.access { servicePeakMemoryBytes = max(servicePeakMemoryBytes, footprint) }
+        guard footprint <= request.limits.memoryBytes else {
+            lock.access {
+                guard job.state == .running else { return }
+                job.state = .resourceLimited
+                job.message = "job exceeded the service-memory limit"
+                job.terminalAt = Date()
+            }
+            throw CocoaError(.fileReadTooLarge)
+        }
+    }
+
+    private func verify(
+        job: JobRecord,
+        deadline: Double
+    ) throws -> (manifest: VerificationManifest, process: ManagedProcessResult, autoexecPositive: Bool) {
+        let verificationRoot = jobDirectory(job.id).appendingPathComponent("verification", isDirectory: true)
+        try? FileManager.default.removeItem(at: verificationRoot)
+        try FileManager.default.createDirectory(at: verificationRoot, withIntermediateDirectories: true)
+        let manifestURL = verificationRoot.appendingPathComponent("manifest.json")
+        let config = try writeConfiguration(
+            baseConfiguration(processRoot: verificationRoot, cpuSeconds: job.timeoutSeconds)
+                .merging([
+                    "jobID": job.id.uuidString,
+                    "fingerprint": job.fingerprint,
+                    "scenePath": outputDirectory(job.id).appendingPathComponent("scene.blend").path,
+                    "manifest": manifestURL.path,
+                    "sessionRoot": root.path,
+                    "diagnosticDeniedPaths": job.diagnosticDeniedPaths,
+                    "limits": [
+                        "objects": request.limits.objects,
+                        "vertices": request.limits.vertices,
+                        "polygons": request.limits.polygons,
+                        "renderWidth": request.limits.renderWidth,
+                        "renderHeight": request.limits.renderHeight,
+                        "renderPixels": request.limits.renderPixels,
+                    ],
+                ]) { _, new in new },
+            at: verificationRoot.appendingPathComponent("verify.json")
+        )
+        let result = try runManagedProcess(
+            mode: "verify",
+            configuration: config,
+            processRoot: verificationRoot,
+            deadline: deadline,
+            job: job
+        )
+        if let reason = result.limitReason {
+            lock.access {
+                guard job.state == .running else { return }
+                job.state = reason == "deadline" ? .timedOut : .resourceLimited
+                job.message = "verification exceeded the \(reason) limit"
+                job.terminalAt = Date()
+            }
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        if result.exitStatus == 70 {
+            lock.access {
+                guard job.state == .running else { return }
+                job.state = .resourceLimited
+                job.message = "verified scene exceeded a structural limit"
+                job.terminalAt = Date()
+            }
+            throw CocoaError(.fileReadTooLarge)
+        }
+        guard result.exitStatus == 0 else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        let data = try Data(contentsOf: manifestURL)
+        let manifest = try JSONDecoder().decode(VerificationManifest.self, from: data)
+        guard manifest.schema == "nexgenvideo/bpy-verification/1",
+              manifest.jobID == job.id.uuidString,
+              manifest.fingerprint == job.fingerprint,
+              manifest.processIdentifier == result.processIdentifier,
+              manifest.pythonVersion == "3.13.15",
+              manifest.bpyVersion == "5.2.2",
+              URL(fileURLWithPath: manifest.executable).resolvingSymlinksInPath()
+                == pythonURL.resolvingSymlinksInPath(),
+              URL(fileURLWithPath: manifest.bpyModule).resolvingSymlinksInPath()
+                == bpyEntryPointURL.resolvingSymlinksInPath(),
+              manifest.autorunMarkerAbsent else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        var positive = false
+        if job.diagnosticAutoexecPositiveControl {
+            positive = try runAutoexecPositiveControl(job: job, deadline: deadline)
+        }
+        return (manifest, result, positive)
+    }
+
+    private func runAutoexecPositiveControl(job: JobRecord, deadline: Double) throws -> Bool {
+        let controlRoot = jobDirectory(job.id).appendingPathComponent("autoexec-positive", isDirectory: true)
+        try FileManager.default.createDirectory(at: controlRoot, withIntermediateDirectories: true)
+        let manifestURL = controlRoot.appendingPathComponent("manifest.json")
+        let config = try writeConfiguration(
+            baseConfiguration(processRoot: controlRoot, cpuSeconds: job.timeoutSeconds)
+                .merging([
+                    "jobID": job.id.uuidString,
+                    "scenePath": outputDirectory(job.id).appendingPathComponent("scene.blend").path,
+                    "manifest": manifestURL.path,
+                ]) { _, new in new },
+            at: controlRoot.appendingPathComponent("autoexec.json")
+        )
+        let result = try runManagedProcess(
+            mode: "autoexec-positive",
+            configuration: config,
+            processRoot: controlRoot,
+            deadline: deadline,
+            job: job
+        )
+        guard result.limitReason == nil, result.exitStatus == 0 else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        let manifest = try JSONDecoder().decode(
+            AutoexecManifest.self,
+            from: Data(contentsOf: manifestURL)
+        )
+        guard manifest.schema == "nexgenvideo/bpy-autoexec-positive/1",
+              manifest.jobID == job.id.uuidString,
+              manifest.processIdentifier == result.processIdentifier,
+              manifest.autorunMarkerPresent else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        return true
+    }
+
+    private func probeRuntime() throws -> ProbeManifest {
+        let probeRoot = root.appendingPathComponent("probe", isDirectory: true)
+        try? FileManager.default.removeItem(at: probeRoot)
+        try FileManager.default.createDirectory(at: probeRoot, withIntermediateDirectories: true)
+        let manifestURL = probeRoot.appendingPathComponent("manifest.json")
+        let config = try writeConfiguration(
+            baseConfiguration(processRoot: probeRoot, cpuSeconds: 120)
+                .merging(["manifest": manifestURL.path]) { _, new in new },
+            at: probeRoot.appendingPathComponent("probe.json")
+        )
+        let result = try runManagedProcess(
+            mode: "probe",
+            configuration: config,
+            processRoot: probeRoot,
+            deadline: ProcessInfo.processInfo.systemUptime + 120,
+            job: nil
+        )
+        guard result.limitReason == nil, result.exitStatus == 0 else {
+            throw CocoaError(.executableLoad)
+        }
+        let manifest = try JSONDecoder().decode(
+            ProbeManifest.self,
+            from: Data(contentsOf: manifestURL)
+        )
+        guard manifest.processIdentifier == result.processIdentifier else {
+            throw CocoaError(.executableLoad)
+        }
+        try? FileManager.default.removeItem(at: probeRoot)
+        return manifest
+    }
+
+    private func runManagedProcess(
+        mode: String,
+        configuration: URL,
+        processRoot: URL,
+        deadline: Double,
+        job: JobRecord?
+    ) throws -> ManagedProcessResult {
+        guard FileManager.default.isExecutableFile(atPath: pythonURL.path),
+              FileManager.default.fileExists(atPath: workerURL.path),
+              FileManager.default.fileExists(atPath: sitePackagesURL.path) else {
             throw CocoaError(.executableNotLoadable)
         }
         for name in ["tmp", "home", "blender-config", "blender-scripts", "blender-data"] {
             try FileManager.default.createDirectory(
-                at: root.appendingPathComponent(name, isDirectory: true),
+                at: processRoot.appendingPathComponent(name, isDirectory: true),
                 withIntermediateDirectories: true
             )
         }
-        let confirmedData = lock.access { confirmedSceneData }
-        let bootstrap = root.appendingPathComponent("bootstrap", isDirectory: true)
-        try? FileManager.default.removeItem(at: bootstrap)
-        try FileManager.default.createDirectory(at: bootstrap, withIntermediateDirectories: true)
-        let confirmedScene = bootstrap.appendingPathComponent("confirmed.blend")
-        if let confirmedData {
-            try confirmedData.write(to: confirmedScene, options: .atomic)
-        }
-        let input = Pipe()
         let output = Pipe()
         let errors = Pipe()
+        let log = BoundedLog(limit: request.limits.stdoutBytes)
+        output.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if !data.isEmpty { log.append(data) }
+        }
+        errors.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if !data.isEmpty { log.append(data) }
+        }
         let process = Process()
-        process.executableURL = python
-        process.arguments = [
-            "-I", "-S", worker.path, sitePackages.path, root.path,
-            confirmedData == nil ? "-" : confirmedScene.path,
-            String(request.limits.memoryBytes), String(request.limits.objects),
-            String(request.limits.vertices), String(request.limits.polygons),
-            String(request.limits.stdoutBytes), String(request.limits.outputBytes),
-        ]
-        process.currentDirectoryURL = root
-        process.standardInput = input
+        process.executableURL = pythonURL
+        process.arguments = ["-I", "-S", workerURL.path, mode, configuration.path]
+        process.currentDirectoryURL = processRoot
+        process.standardInput = FileHandle.nullDevice
         process.standardOutput = output
         process.standardError = errors
         process.environment = [
-            "HOME": root.appendingPathComponent("home").path,
-            "TMPDIR": root.appendingPathComponent("tmp").path,
+            "HOME": processRoot.appendingPathComponent("home").path,
+            "TMPDIR": processRoot.appendingPathComponent("tmp").path,
             "LANG": "C.UTF-8",
             "LC_ALL": "C.UTF-8",
             "PATH": "",
             "PYTHONNOUSERSITE": "1",
             "PYTHONDONTWRITEBYTECODE": "1",
-            "BLENDER_USER_CONFIG": root.appendingPathComponent("blender-config").path,
-            "BLENDER_USER_SCRIPTS": root.appendingPathComponent("blender-scripts").path,
-            "BLENDER_USER_DATAFILES": root.appendingPathComponent("blender-data").path,
+            "BLENDER_USER_CONFIG": processRoot.appendingPathComponent("blender-config").path,
+            "BLENDER_USER_SCRIPTS": processRoot.appendingPathComponent("blender-scripts").path,
+            "BLENDER_USER_DATAFILES": processRoot.appendingPathComponent("blender-data").path,
         ]
-        lock.access { stderrBytes = Data() }
-        errors.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            guard !data.isEmpty, let self else { return }
-            self.lock.access {
-                let remaining = max(0, self.request.limits.stdoutBytes - self.stderrBytes.count)
-                self.stderrBytes.append(data.prefix(remaining))
-            }
-        }
+        let began = ProcessInfo.processInfo.systemUptime
         try process.run()
         let processIdentifier = process.processIdentifier
-        let readinessTimeout = DispatchWorkItem {
-            _ = Darwin.kill(-processIdentifier, SIGKILL)
-            _ = Darwin.kill(processIdentifier, SIGKILL)
+        lock.access { activeProcess = process }
+        defer {
+            if process.isRunning {
+                stopProcess(process)
+                process.waitUntilExit()
+            }
+            output.fileHandleForReading.readabilityHandler = nil
+            errors.fileHandleForReading.readabilityHandler = nil
+            lock.access {
+                if activeProcess === process {
+                    activeProcess = nil
+                    activeProcessStartAbsoluteTime = nil
+                    activeProcessExecutable = nil
+                }
+            }
         }
-        DispatchQueue.global(qos: .utility).asyncAfter(
-            deadline: .now() + .seconds(120),
-            execute: readinessTimeout
-        )
-        defer { readinessTimeout.cancel() }
-        lock.access {
-            self.process = process
-            stdin = input.fileHandleForWriting
-            stdout = output.fileHandleForReading
-            stderr = errors.fileHandleForReading
+        var initialUsage: ProcessUsage?
+        for _ in 0..<20 where initialUsage == nil && process.isRunning {
+            initialUsage = processUsage(processIdentifier)
+            if initialUsage == nil { Thread.sleep(forTimeInterval: 0.005) }
         }
-        guard let event = try readEvent(), event.type == "ready",
-              let pythonVersion = event.pythonVersion,
-              let bpyVersion = event.bpyVersion,
-              let executable = event.executable,
-              let pid = event.pid,
-              pid == processIdentifier,
-              URL(fileURLWithPath: executable).resolvingSymlinksInPath()
-                == python.resolvingSymlinksInPath() else {
+        guard let initialUsage else {
+            stopProcess(process)
+            process.waitUntilExit()
             throw CocoaError(.executableLoad)
         }
-        let installed = lock.access { () -> Bool in
-            guard !closed, self.process === process else { return false }
-            runtimeIdentity = .init(
-                pythonVersion: pythonVersion,
-                bpyVersion: bpyVersion,
-                executable: executable,
-                sandboxed: true,
-                processIdentifier: pid
-            )
-            coldStartSeconds = event.startupSeconds
-            return true
+        lock.access {
+            guard activeProcess === process else { return }
+            activeProcessStartAbsoluteTime = initialUsage.startAbsoluteTime
+            activeProcessExecutable = pythonURL.resolvingSymlinksInPath().path
         }
-        guard installed else { throw CocoaError(.fileNoSuchFile) }
-    }
-
-    private func stopWorker() {
-        let current = lock.access { () -> (Process?, FileHandle?, FileHandle?, FileHandle?) in
-            let value = (process, stdin, stdout, stderr)
-            process = nil
-            stdin = nil
-            stdout = nil
-            stderr = nil
-            runtimeIdentity = nil
-            return value
+        var peakMemory = initialUsage.physicalFootprint
+        var peakDisk: UInt64 = 0
+        var peakFiles = 0
+        var peakDescendants = 0
+        var limitReason: String?
+        while process.isRunning {
+            let now = ProcessInfo.processInfo.systemUptime
+            let descendants = processTree(root: processIdentifier)
+            peakDescendants = max(peakDescendants, descendants.count)
+            if let usage = processUsage(processIdentifier) {
+                peakMemory = max(peakMemory, usage.physicalFootprint)
+            }
+            let serviceFootprint = processUsage(getpid())?.physicalFootprint ?? 0
+            lock.access {
+                servicePeakMemoryBytes = max(servicePeakMemoryBytes, serviceFootprint)
+            }
+            let disk = try directoryUsage(root)
+            peakDisk = max(peakDisk, disk.bytes)
+            peakFiles = max(peakFiles, disk.files)
+            if lock.access({ closed || activeProcess !== process }) {
+                stopProcess(process)
+            } else if let job, lock.access({ job.state != .running }) {
+                stopProcess(process)
+            } else if now >= deadline {
+                limitReason = "deadline"
+                stopProcess(process)
+            } else if peakMemory > request.limits.memoryBytes {
+                limitReason = "memory"
+                stopProcess(process)
+            } else if serviceFootprint > request.limits.memoryBytes {
+                limitReason = "service-memory"
+                stopProcess(process)
+            } else if peakDisk > request.limits.diskBytes {
+                limitReason = "disk"
+                stopProcess(process)
+            } else if peakFiles > request.limits.files {
+                limitReason = "file-count"
+                stopProcess(process)
+            } else if !descendants.isEmpty {
+                limitReason = "process-count"
+                stopProcess(process)
+            }
+            if process.isRunning { Thread.sleep(forTimeInterval: 0.05) }
         }
-        current.3?.readabilityHandler = nil
-        try? current.1?.close()
-        try? current.2?.close()
-        guard let process = current.0 else { return }
-        let pid = process.processIdentifier
-        if pid > 1 {
-            _ = Darwin.kill(-pid, SIGSTOP)
-            _ = Darwin.kill(pid, SIGSTOP)
-            let descendants = processTree(root: pid)
-            descendants.forEach { _ = Darwin.kill($0, SIGSTOP) }
-            descendants.reversed().forEach { _ = Darwin.kill($0, SIGTERM) }
-            _ = Darwin.kill(-pid, SIGTERM)
-            _ = Darwin.kill(pid, SIGTERM)
-            descendants.forEach { _ = Darwin.kill($0, SIGCONT) }
-            _ = Darwin.kill(-pid, SIGCONT)
-            _ = Darwin.kill(pid, SIGCONT)
-            descendants.reversed().forEach { _ = Darwin.kill($0, SIGKILL) }
-            _ = Darwin.kill(-pid, SIGKILL)
-            _ = Darwin.kill(pid, SIGKILL)
-            process.waitUntilExit()
-        }
-    }
-
-    private func writeLine<T: Encodable>(_ value: T) throws {
-        guard let stdin = lock.access({ stdin }) else { throw CocoaError(.executableLoad) }
-        var data = try encoder.encode(value)
-        data.append(0x0A)
-        try stdin.write(contentsOf: data)
-    }
-
-    private func readEvent() throws -> WorkerEvent? {
-        guard let stdout = lock.access({ stdout }) else { throw CocoaError(.executableLoad) }
-        let protocolLimit = min(
-            32 * 1_024 * 1_024,
-            request.limits.stdoutBytes * 8 + 65_536
+        process.waitUntilExit()
+        output.fileHandleForReading.readabilityHandler = nil
+        errors.fileHandleForReading.readabilityHandler = nil
+        let remainingOutput = output.fileHandleForReading.readDataToEndOfFile()
+        let remainingErrors = errors.fileHandleForReading.readDataToEndOfFile()
+        log.append(remainingOutput)
+        log.append(remainingErrors)
+        return ManagedProcessResult(
+            processIdentifier: processIdentifier,
+            exitStatus: process.terminationStatus,
+            duration: ProcessInfo.processInfo.systemUptime - began,
+            peakMemoryBytes: peakMemory,
+            peakDiskBytes: peakDisk,
+            peakFileCount: peakFiles,
+            peakDescendantCount: peakDescendants,
+            limitReason: limitReason,
+            log: log.text
         )
-        while true {
-            var line = Data()
-            var reachedEnd = false
-            while true {
-                guard let byte = try stdout.read(upToCount: 1), !byte.isEmpty else {
-                    reachedEnd = true
-                    break
-                }
-                if byte[0] == 0x0A { break }
-                line.append(byte)
-                if line.count > protocolLimit {
-                    throw CocoaError(.fileReadTooLarge)
-                }
+    }
+
+    private func stopActiveProcess() {
+        guard let process = lock.access({ activeProcess }) else { return }
+        stopProcess(process)
+        while lock.access({ activeProcess === process }) {
+            Thread.sleep(forTimeInterval: 0.005)
+        }
+    }
+
+    private func baseConfiguration(processRoot: URL, cpuSeconds: Int) -> [String: Any] {
+        [
+            "sitePackages": sitePackagesURL.path,
+            "memoryBytes": request.limits.memoryBytes,
+            "outputBytes": request.limits.outputBytes,
+            "cpuSeconds": max(2, cpuSeconds + 1),
+        ]
+    }
+
+    private func writeConfiguration(_ value: [String: Any], at url: URL) throws -> URL {
+        let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+        try data.write(to: url, options: .atomic)
+        return url
+    }
+
+    private func writeConfirmedCheckpoint(for job: JobRecord) throws -> URL? {
+        guard let data = lock.access({ confirmedSceneData }) else { return nil }
+        let directory = jobDirectory(job.id).appendingPathComponent("bootstrap", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent("confirmed.blend")
+        try data.write(to: url, options: .atomic)
+        return url
+    }
+
+    private func verifyStagedInputs(_ jobID: UUID) throws {
+        let values = lock.access { completedInputs[jobID, default: [:]] }
+        for (name, expected) in values {
+            let url = inputDirectory(jobID).appendingPathComponent(name)
+            var status = stat()
+            guard lstat(url.path, &status) == 0,
+                  (status.st_mode & S_IFMT) == S_IFREG,
+                  status.st_nlink == 1,
+                  UInt64(status.st_size) == expected.0,
+                  try sha256(url) == expected.1 else {
+                throw CocoaError(.fileReadCorruptFile)
             }
-            if !line.isEmpty, let event = try? decoder.decode(WorkerEvent.self, from: line) {
-                return event
-            }
-            if !line.isEmpty {
-                lock.access {
-                    let remaining = max(0, request.limits.stdoutBytes - stderrBytes.count)
-                    stderrBytes.append(contentsOf: line.prefix(remaining))
-                }
-            }
-            if reachedEnd { return nil }
         }
     }
 
@@ -729,34 +1227,40 @@ private final class ServiceSession: @unchecked Sendable {
         _ jobID: UUID
     ) throws -> (descriptors: [BpyOutputDescriptor], data: [String: Data]) {
         let directory = outputDirectory(jobID)
-        let values = try FileManager.default.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey]
-        )
-        guard values.count <= 256 else { throw CocoaError(.fileReadTooLarge) }
+        let values = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+        guard values.count <= min(256, request.limits.files) else {
+            throw CocoaError(.fileReadTooLarge)
+        }
         var total: UInt64 = 0
         var result: [BpyOutputDescriptor] = []
         var outputData: [String: Data] = [:]
         for url in values.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
-            guard isSafeName(url.lastPathComponent) else { throw CocoaError(.fileReadInvalidFileName) }
+            guard isSafeName(url.lastPathComponent),
+                  url.lastPathComponent != "verification.json" else {
+                throw CocoaError(.fileReadInvalidFileName)
+            }
             var status = stat()
             guard lstat(url.path, &status) == 0,
                   (status.st_mode & S_IFMT) == S_IFREG,
-                  status.st_nlink == 1 else { throw CocoaError(.fileReadCorruptFile) }
-            let attributes = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey])
-            guard attributes.isRegularFile == true, attributes.isSymbolicLink != true,
-                  let size = attributes.fileSize else { throw CocoaError(.fileReadCorruptFile) }
-            total += UInt64(size)
-            guard total <= request.limits.outputBytes else { throw CocoaError(.fileReadTooLarge) }
-            guard let mediaType = mediaType(url.pathExtension) else {
-                throw CocoaError(.fileReadUnsupportedScheme)
+                  status.st_nlink == 1,
+                  status.st_size >= 0 else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            total += UInt64(status.st_size)
+            guard total <= request.limits.outputBytes,
+                  let mediaType = mediaType(url.pathExtension) else {
+                throw CocoaError(.fileReadTooLarge)
             }
             let data = try Data(contentsOf: url)
-            guard data.count == size else { throw CocoaError(.fileReadCorruptFile) }
+            guard Int64(data.count) == Int64(status.st_size) else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            try validateMagic(data, mediaType: mediaType)
+            if mediaType == "image/png" { try validatePNGDimensions(data) }
             let digest = sha256(data)
             result.append(.init(
                 name: url.lastPathComponent,
-                byteCount: UInt64(size),
+                byteCount: UInt64(data.count),
                 sha256: digest,
                 mediaType: mediaType
             ))
@@ -768,9 +1272,72 @@ private final class ServiceSession: @unchecked Sendable {
         return (result, outputData)
     }
 
+    private func validateMagic(_ data: Data, mediaType: String) throws {
+        let valid: Bool
+        switch mediaType {
+        case "application/x-blender":
+            valid = data.starts(with: Data("BLENDER".utf8))
+        case "image/png":
+            valid = data.starts(with: Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]))
+        case "application/json":
+            valid = (try? JSONSerialization.jsonObject(with: data)) != nil
+        default:
+            valid = false
+        }
+        guard valid else { throw CocoaError(.fileReadCorruptFile) }
+    }
+
+    private func validatePNGDimensions(_ data: Data) throws {
+        guard data.count >= 24 else { throw CocoaError(.fileReadCorruptFile) }
+        let width = data[16..<20].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+        let height = data[20..<24].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+        guard width > 0, height > 0,
+              width <= request.limits.renderWidth,
+              height <= request.limits.renderHeight,
+              UInt64(width) * UInt64(height) <= UInt64(request.limits.renderPixels) else {
+            throw CocoaError(.fileReadTooLarge)
+        }
+    }
+
+    private func purgeExpiredResults() {
+        let cutoff = Date().addingTimeInterval(-resultRetentionSeconds)
+        for job in jobs.values where job.terminalAt.map({ $0 < cutoff }) == true {
+            if job.state == .awaitingConfirmation {
+                job.state = .rejected
+                job.message = "candidate result expired"
+            }
+            job.expireResult()
+            completedInputs.removeValue(forKey: job.id)
+        }
+    }
+
+    private func enforceResultRetentionBudget(retaining retainedID: UUID) {
+        let budget = min(
+            request.limits.diskBytes,
+            min(request.limits.memoryBytes / 2, request.limits.outputBytes * 4)
+        )
+        var retainedBytes = jobs.values.reduce(UInt64(0)) { partial, job in
+            partial + job.outputs.reduce(UInt64(0)) { $0 + $1.byteCount }
+        }
+        let candidates = jobs.values
+            .filter { $0.id != retainedID && !$0.resultExpired && $0.terminalAt != nil }
+            .sorted { ($0.terminalAt ?? .distantFuture) < ($1.terminalAt ?? .distantFuture) }
+        for candidate in candidates where retainedBytes > budget {
+            let bytes = candidate.outputs.reduce(UInt64(0)) { $0 + $1.byteCount }
+            if candidate.state == .awaitingConfirmation {
+                candidate.state = .rejected
+                candidate.message = "candidate result expired under the session retention budget"
+            }
+            candidate.expireResult()
+            completedInputs.removeValue(forKey: candidate.id)
+            retainedBytes = retainedBytes > bytes ? retainedBytes - bytes : 0
+        }
+    }
+
     private func response(for job: JobRecord) -> BpyServiceResponse {
         .init(
             ok: true,
+            jobID: job.id,
             state: job.state,
             message: job.message,
             runtime: runtimeIdentity,
@@ -778,7 +1345,12 @@ private final class ServiceSession: @unchecked Sendable {
             outputs: job.outputs,
             confirmedRevision: confirmedRevision,
             stdout: job.stdout,
-            metrics: job.metrics
+            metrics: job.metrics,
+            jobFingerprint: job.fingerprint,
+            resultExpired: job.resultExpired,
+            activeProcessIdentifier: activeProcess?.processIdentifier,
+            activeProcessStartAbsoluteTime: activeProcessStartAbsoluteTime,
+            activeProcessExecutable: activeProcessExecutable
         )
     }
 
@@ -788,24 +1360,28 @@ private final class ServiceSession: @unchecked Sendable {
                 ok: true,
                 runtime: runtimeIdentity,
                 confirmedRevision: confirmedRevision,
-                metrics: ["cold_start_seconds": coldStartSeconds ?? 0]
+                metrics: [
+                    "cold_start_seconds": coldStartSeconds ?? 0,
+                    "service_peak_memory_bytes": Double(servicePeakMemoryBytes),
+                ]
             )
         }
     }
 
-    private func limited(_ value: String?) -> String? {
-        guard let value else { return nil }
-        return String(value.prefix(request.limits.stdoutBytes))
+    private var pythonURL: URL {
+        runtimeRoot.appendingPathComponent("python/bin/python3")
     }
 
-    private func stderrDiagnostic() -> String {
-        lock.access {
-            guard !stderrBytes.isEmpty else { return "" }
-            return "\n" + String(
-                decoding: stderrBytes.prefix(request.limits.stdoutBytes),
-                as: UTF8.self
-            )
-        }
+    private var workerURL: URL {
+        runtimeRoot.appendingPathComponent("worker.py")
+    }
+
+    private var sitePackagesURL: URL {
+        runtimeRoot.appendingPathComponent("site-packages")
+    }
+
+    private var bpyEntryPointURL: URL {
+        sitePackagesURL.appendingPathComponent("bpy/__init__.so")
     }
 
     private func jobDirectory(_ jobID: UUID) -> URL {
@@ -852,13 +1428,14 @@ private final class BpyRuntimeService: NSObject, BpyRuntimeServiceProtocol, @unc
 
     func openSession(_ data: Data, withReply reply: @escaping (Data) -> Void) {
         do {
-            let request = try decoder.decode(BpyOpenSessionRequest.self, from: data)
+            let request = try JSONDecoder().decode(BpyOpenSessionRequest.self, from: data)
             guard request.limits.isValid, !request.documentID.isEmpty,
                   request.documentID.count <= 256,
-                  request.confirmedRevision == nil else {
+                  request.confirmedRevision.map(isSafeName) ?? true else {
                 reply(failure("invalid session contract"))
                 return
             }
+            var retired: ServiceSession?
             let session: ServiceSession = try lock.access {
                 if let existing = sessions[request.sessionID] {
                     guard existing.matches(request) else {
@@ -866,26 +1443,62 @@ private final class BpyRuntimeService: NSObject, BpyRuntimeServiceProtocol, @unc
                     }
                     return existing
                 }
-                guard sessions.isEmpty else { throw CocoaError(.fileWriteNoPermission) }
+                if let existing = sessions.values.first {
+                    guard sessions.count == 1,
+                          existing.request.documentID == request.documentID else {
+                        throw CocoaError(.fileWriteNoPermission)
+                    }
+                    retired = existing
+                    sessions.removeAll()
+                }
                 let session = ServiceSession(
                     request: request,
-                    root: sessionsRoot.appendingPathComponent(request.sessionID.uuidString, isDirectory: true),
+                    root: sessionsRoot.appendingPathComponent(
+                        request.sessionID.uuidString,
+                        isDirectory: true
+                    ),
                     runtimeRoot: runtimeRoot,
                     capacity: capacity
                 )
                 sessions[request.sessionID] = session
                 return session
             }
-            session.open(reply: reply)
+            retired?.close()
+            session.open { [weak self, weak session] response in
+                if (try? JSONDecoder().decode(BpyServiceResponse.self, from: response).ok) != true,
+                   let self, let session {
+                    let removed = self.lock.access { () -> ServiceSession? in
+                        guard self.sessions[request.sessionID] === session else { return nil }
+                        return self.sessions.removeValue(forKey: request.sessionID)
+                    }
+                    removed?.close()
+                }
+                reply(response)
+            }
         } catch {
             reply(failure("invalid open request"))
         }
     }
 
+    func restoreCheckpoint(_ data: Data, chunk: Data, withReply reply: @escaping (Data) -> Void) {
+        do {
+            let request = try JSONDecoder().decode(BpyRestoreCheckpointRequest.self, from: data)
+            guard let session = session(request.sessionID) else {
+                throw CocoaError(.fileNoSuchFile)
+            }
+            try session.restore(request, chunk: chunk)
+            reply(encoded(.init(ok: true, confirmedRevision: request.revision)))
+        } catch {
+            reply(failure("checkpoint rejected: \(error.localizedDescription)"))
+        }
+    }
+
     func stageInput(_ data: Data, chunk: Data, withReply reply: @escaping (Data) -> Void) {
         do {
-            let request = try decoder.decode(BpyStageInputRequest.self, from: data)
-            guard let session = session(request.sessionID) else { throw CocoaError(.fileNoSuchFile) }
+            let request = try JSONDecoder().decode(BpyStageInputRequest.self, from: data)
+            guard let session = session(request.sessionID) else {
+                throw CocoaError(.fileNoSuchFile)
+            }
             try session.stage(request, chunk: chunk)
             reply(encoded(.init(ok: true)))
         } catch {
@@ -895,8 +1508,10 @@ private final class BpyRuntimeService: NSObject, BpyRuntimeServiceProtocol, @unc
 
     func runJob(_ data: Data, withReply reply: @escaping (Data) -> Void) {
         do {
-            let request = try decoder.decode(BpyRunJobRequest.self, from: data)
-            guard let session = session(request.sessionID) else { throw CocoaError(.fileNoSuchFile) }
+            let request = try JSONDecoder().decode(BpyRunJobRequest.self, from: data)
+            guard let session = session(request.sessionID) else {
+                throw CocoaError(.fileNoSuchFile)
+            }
             reply(encoded(session.submit(request)))
         } catch {
             reply(failure("invalid job request"))
@@ -905,8 +1520,10 @@ private final class BpyRuntimeService: NSObject, BpyRuntimeServiceProtocol, @unc
 
     func jobStatus(_ data: Data, withReply reply: @escaping (Data) -> Void) {
         do {
-            let request = try decoder.decode(BpyJobReference.self, from: data)
-            guard let session = session(request.sessionID) else { throw CocoaError(.fileNoSuchFile) }
+            let request = try JSONDecoder().decode(BpyJobReference.self, from: data)
+            guard let session = session(request.sessionID) else {
+                throw CocoaError(.fileNoSuchFile)
+            }
             reply(encoded(session.status(request.jobID)))
         } catch {
             reply(failure("invalid status request"))
@@ -915,9 +1532,12 @@ private final class BpyRuntimeService: NSObject, BpyRuntimeServiceProtocol, @unc
 
     func readOutput(_ data: Data, withReply reply: @escaping (Data, Data) -> Void) {
         do {
-            let request = try decoder.decode(BpyReadOutputRequest.self, from: data)
-            guard let session = session(request.sessionID) else { throw CocoaError(.fileNoSuchFile) }
-            reply(encoded(.init(ok: true)), try session.output(request))
+            let request = try JSONDecoder().decode(BpyReadOutputRequest.self, from: data)
+            guard let session = session(request.sessionID) else {
+                throw CocoaError(.fileNoSuchFile)
+            }
+            let result = try session.output(request)
+            reply(encoded(result.0), result.1)
         } catch {
             reply(failure("output rejected: \(error.localizedDescription)"), Data())
         }
@@ -925,8 +1545,10 @@ private final class BpyRuntimeService: NSObject, BpyRuntimeServiceProtocol, @unc
 
     func confirmJob(_ data: Data, withReply reply: @escaping (Data) -> Void) {
         do {
-            let request = try decoder.decode(BpyConfirmJobRequest.self, from: data)
-            guard let session = session(request.sessionID) else { throw CocoaError(.fileNoSuchFile) }
+            let request = try JSONDecoder().decode(BpyConfirmJobRequest.self, from: data)
+            guard let session = session(request.sessionID) else {
+                throw CocoaError(.fileNoSuchFile)
+            }
             reply(encoded(try session.confirm(request)))
         } catch {
             reply(failure("confirmation rejected: \(error.localizedDescription)"))
@@ -935,8 +1557,10 @@ private final class BpyRuntimeService: NSObject, BpyRuntimeServiceProtocol, @unc
 
     func cancelJob(_ data: Data, withReply reply: @escaping (Data) -> Void) {
         do {
-            let request = try decoder.decode(BpyJobReference.self, from: data)
-            guard let session = session(request.sessionID) else { throw CocoaError(.fileNoSuchFile) }
+            let request = try JSONDecoder().decode(BpyJobReference.self, from: data)
+            guard let session = session(request.sessionID) else {
+                throw CocoaError(.fileNoSuchFile)
+            }
             reply(encoded(session.cancel(request.jobID)))
         } catch {
             reply(failure("invalid cancel request"))
@@ -945,7 +1569,7 @@ private final class BpyRuntimeService: NSObject, BpyRuntimeServiceProtocol, @unc
 
     func closeSession(_ data: Data, withReply reply: @escaping (Data) -> Void) {
         do {
-            let request = try decoder.decode(BpySessionReference.self, from: data)
+            let request = try JSONDecoder().decode(BpySessionReference.self, from: data)
             let session = lock.access { sessions.removeValue(forKey: request.sessionID) }
             session?.close()
             reply(encoded(.init(ok: true)))
@@ -967,6 +1591,134 @@ private final class BpyRuntimeService: NSObject, BpyRuntimeServiceProtocol, @unc
     private func session(_ id: UUID) -> ServiceSession? {
         lock.access { sessions[id] }
     }
+
+    func invalidateSessions(_ identifiers: Set<UUID>) {
+        let closing = lock.access { () -> [ServiceSession] in
+            identifiers.compactMap { sessions.removeValue(forKey: $0) }
+        }
+        closing.forEach { $0.close() }
+    }
+}
+
+private final class BpyRuntimeConnection: NSObject, BpyRuntimeServiceProtocol, @unchecked Sendable {
+    private let service: BpyRuntimeService
+    private let lock = NSLock()
+    private var sessionIDs = Set<UUID>()
+    private var invalidated = false
+
+    init(service: BpyRuntimeService) {
+        self.service = service
+    }
+
+    private func owns<T: Decodable>(
+        _ type: T.Type,
+        request: Data,
+        sessionID: (T) -> UUID
+    ) -> Bool {
+        guard let value = try? JSONDecoder().decode(type, from: request) else { return false }
+        return lock.access { !invalidated && sessionIDs.contains(sessionID(value)) }
+    }
+
+    func openSession(_ request: Data, withReply reply: @escaping (Data) -> Void) {
+        guard let value = try? JSONDecoder().decode(BpyOpenSessionRequest.self, from: request),
+              lock.access({ () -> Bool in
+                  guard !invalidated else { return false }
+                  sessionIDs.insert(value.sessionID)
+                  return true
+              }) else {
+            reply(failure("XPC connection is unavailable"))
+            return
+        }
+        service.openSession(request, withReply: reply)
+        if lock.access({ invalidated }) {
+            service.invalidateSessions([value.sessionID])
+        }
+    }
+
+    func restoreCheckpoint(_ request: Data, chunk: Data, withReply reply: @escaping (Data) -> Void) {
+        guard owns(BpyRestoreCheckpointRequest.self, request: request, sessionID: { $0.sessionID }) else {
+            reply(failure("XPC session is unavailable"))
+            return
+        }
+        service.restoreCheckpoint(request, chunk: chunk, withReply: reply)
+    }
+
+    func stageInput(_ request: Data, chunk: Data, withReply reply: @escaping (Data) -> Void) {
+        guard owns(BpyStageInputRequest.self, request: request, sessionID: { $0.sessionID }) else {
+            reply(failure("XPC session is unavailable"))
+            return
+        }
+        service.stageInput(request, chunk: chunk, withReply: reply)
+    }
+
+    func runJob(_ request: Data, withReply reply: @escaping (Data) -> Void) {
+        guard owns(BpyRunJobRequest.self, request: request, sessionID: { $0.sessionID }) else {
+            reply(failure("XPC session is unavailable"))
+            return
+        }
+        service.runJob(request, withReply: reply)
+    }
+
+    func jobStatus(_ request: Data, withReply reply: @escaping (Data) -> Void) {
+        guard owns(BpyJobReference.self, request: request, sessionID: { $0.sessionID }) else {
+            reply(failure("XPC session is unavailable"))
+            return
+        }
+        service.jobStatus(request, withReply: reply)
+    }
+
+    func readOutput(_ request: Data, withReply reply: @escaping (Data, Data) -> Void) {
+        guard owns(BpyReadOutputRequest.self, request: request, sessionID: { $0.sessionID }) else {
+            reply(failure("XPC session is unavailable"), Data())
+            return
+        }
+        service.readOutput(request, withReply: reply)
+    }
+
+    func confirmJob(_ request: Data, withReply reply: @escaping (Data) -> Void) {
+        guard owns(BpyConfirmJobRequest.self, request: request, sessionID: { $0.sessionID }) else {
+            reply(failure("XPC session is unavailable"))
+            return
+        }
+        service.confirmJob(request, withReply: reply)
+    }
+
+    func cancelJob(_ request: Data, withReply reply: @escaping (Data) -> Void) {
+        guard owns(BpyJobReference.self, request: request, sessionID: { $0.sessionID }) else {
+            reply(failure("XPC session is unavailable"))
+            return
+        }
+        service.cancelJob(request, withReply: reply)
+    }
+
+    func closeSession(_ request: Data, withReply reply: @escaping (Data) -> Void) {
+        guard let value = try? JSONDecoder().decode(BpySessionReference.self, from: request),
+              lock.access({ !invalidated && sessionIDs.remove(value.sessionID) != nil }) else {
+            reply(failure("XPC session is unavailable"))
+            return
+        }
+        service.closeSession(request, withReply: reply)
+    }
+
+    func shutdown(_ request: Data, withReply reply: @escaping (Data) -> Void) {
+        let identifiers = lock.access { () -> Set<UUID> in
+            let value = sessionIDs
+            sessionIDs.removeAll()
+            return value
+        }
+        service.invalidateSessions(identifiers)
+        reply(encoded(.init(ok: true)))
+    }
+
+    func invalidate() {
+        let identifiers = lock.access { () -> Set<UUID> in
+            invalidated = true
+            let value = sessionIDs
+            sessionIDs.removeAll()
+            return value
+        }
+        service.invalidateSessions(identifiers)
+    }
 }
 
 private final class ListenerDelegate: NSObject, NSXPCListenerDelegate {
@@ -976,8 +1728,11 @@ private final class ListenerDelegate: NSObject, NSXPCListenerDelegate {
         _ listener: NSXPCListener,
         shouldAcceptNewConnection connection: NSXPCConnection
     ) -> Bool {
+        let exported = BpyRuntimeConnection(service: service)
         connection.exportedInterface = NSXPCInterface(with: BpyRuntimeServiceProtocol.self)
-        connection.exportedObject = service
+        connection.exportedObject = exported
+        connection.interruptionHandler = { [weak exported] in exported?.invalidate() }
+        connection.invalidationHandler = { [weak exported] in exported?.invalidate() }
         connection.resume()
         return true
     }

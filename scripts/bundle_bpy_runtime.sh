@@ -8,7 +8,8 @@ APP="${3:?NexGenVideo app destination required}"
 
 test -f "$RUNTIME_ROOT/.complete"
 test -x "$RUNTIME_ROOT/python/bin/python3"
-test -f "$RUNTIME_ROOT/site-packages/bpy/__init__.py"
+BPY_ENTRYPOINT="$(jq -r .bpyWheelLayout.entryPoint "$ROOT/Runtime/bpy/runtime-lock.json")"
+test -f "$RUNTIME_ROOT/site-packages/$BPY_ENTRYPOINT"
 test -x "$SERVICE_BINARY"
 case "$APP" in
   *.app) ;;

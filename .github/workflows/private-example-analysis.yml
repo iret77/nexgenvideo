@@ -122,7 +122,7 @@ jobs:
       - name: Bundle real app and external pack
         run: |
           set -euo pipefail
-          scripts/bundle.sh debug
+          scripts/bundle.sh debug --without-bpy-runtime-for-ci-transfer
           scripts/assemble_ngvpack.sh plugins/musicvideo.json debug .build/plugins
           tar -czf "$RUNNER_TEMP/runtime-harness.tar.gz" \
             -C .build \
@@ -132,7 +132,7 @@ jobs:
       - name: Transfer runtime harness
         uses: actions/upload-artifact@v4
         with:
-          name: private-analysis-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+          name: private-analysis-runtime-without-bpy-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/runtime-harness.tar.gz
           if-no-files-found: error
           retention-days: 1
@@ -162,7 +162,7 @@ jobs:
       - name: Download runtime harness
         uses: actions/download-artifact@v4
         with:
-          name: private-analysis-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+          name: private-analysis-runtime-without-bpy-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/runtime-harness
 
       - name: Restore runtime harness

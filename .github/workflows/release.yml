@@ -120,7 +120,6 @@ jobs:
         run: python3 -m unittest discover -s scripts -p 'test_*.py'
 
       - name: Block unresolved managed-runtime distribution obligations
-        if: ${{ inputs.dry_run == false }}
         run: python3 scripts/verify_bpy_runtime.py --distribution
 
       - name: Inspect or resume release publication

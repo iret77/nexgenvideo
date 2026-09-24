@@ -24,11 +24,11 @@ jobs:
       - uses: ./.github/actions/cache-swiftpm-dependencies
       - name: Build replay app
         run: |
-          scripts/bundle.sh debug
+          scripts/bundle.sh debug --without-bpy-runtime-for-ci-transfer
           tar -czf "$RUNNER_TEMP/chat-replay.tar.gz" -C .build NexGenVideo.app
       - uses: actions/upload-artifact@v4
         with:
-          name: chat-replay
+          name: chat-replay-without-bpy
           path: ${{ runner.temp }}/chat-replay.tar.gz
           retention-days: 3
 
@@ -40,7 +40,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: chat-replay
+          name: chat-replay-without-bpy
           path: ${{ runner.temp }}/chat-replay
       - name: Require production macOS and stress the real panel
         run: |

@@ -15,6 +15,8 @@ struct BpyRuntimeContractTests {
         #expect(limits.isValid)
         #expect(limits.timeoutSeconds == 120)
         #expect(limits.outputBytes <= 512 * 1_024 * 1_024)
+        #expect(limits.diskBytes >= limits.outputBytes)
+        #expect(limits.renderPixels <= limits.renderWidth * limits.renderHeight)
     }
 
     @Test func invalidLimitsFailClosed() {
@@ -23,6 +25,9 @@ struct BpyRuntimeContractTests {
         #expect(!limits.isValid)
         limits = BpyRuntimeLimits()
         limits.memoryBytes = 64 * 1_024 * 1_024
+        #expect(!limits.isValid)
+        limits = BpyRuntimeLimits()
+        limits.diskBytes = limits.outputBytes - 1
         #expect(!limits.isValid)
     }
 
@@ -42,6 +47,7 @@ struct BpyRuntimeContractTests {
         #expect(BpyRuntimeJobState.confirmed.isTerminal)
         #expect(BpyRuntimeJobState.crashed.isTerminal)
         #expect(BpyRuntimeJobState.timedOut.isTerminal)
+        #expect(BpyRuntimeJobState.resourceLimited.isTerminal)
     }
 
     @Test func requestsRoundTripWithoutPaths() throws {
@@ -51,7 +57,10 @@ struct BpyRuntimeContractTests {
             expectedRevision: "r1",
             source: "import bpy",
             inputNames: ["approved.blend"],
-            timeoutSeconds: 10
+            timeoutSeconds: 10,
+            fingerprint: String(repeating: "a", count: 64),
+            diagnosticDeniedPaths: ["/denied/fixture"],
+            diagnosticAutoexecPositiveControl: true
         )
         let data = try JSONEncoder().encode(request)
         let decoded = try JSONDecoder().decode(BpyRunJobRequest.self, from: data)
@@ -59,5 +68,24 @@ struct BpyRuntimeContractTests {
         let text = String(decoding: data, as: UTF8.self)
         #expect(!text.contains("/Users/"))
         #expect(!text.contains("projectURL"))
+    }
+
+    @Test func serviceResponseRoundTripsTrustedProcessLease() throws {
+        let jobID = UUID()
+        let response = BpyServiceResponse(
+            ok: true,
+            jobID: jobID,
+            state: .running,
+            jobFingerprint: String(repeating: "b", count: 64),
+            activeProcessIdentifier: 321,
+            activeProcessStartAbsoluteTime: 654,
+            activeProcessExecutable: "/Applications/NexGenVideo.app/Contents/Frameworks/Python.framework/Versions/3.13/bin/python3"
+        )
+        let decoded = try JSONDecoder().decode(
+            BpyServiceResponse.self,
+            from: JSONEncoder().encode(response)
+        )
+        #expect(decoded == response)
+        #expect(decoded.jobID == jobID)
     }
 }

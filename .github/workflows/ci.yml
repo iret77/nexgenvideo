@@ -27,6 +27,7 @@ jobs:
       build_required: ${{ steps.classify.outputs.build_required }}
       bundle_required: ${{ steps.classify.outputs.bundle_required }}
       ui_required: ${{ steps.classify.outputs.ui_required }}
+      bpy_distribution_ready: ${{ steps.bpy_distribution.outputs.ready }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -73,6 +74,14 @@ jobs:
       - name: Verify CI and fixture tooling
         if: steps.classify.outputs.build_required == 'true' || steps.classify.outputs.ui_required == 'true'
         run: python3 -m unittest discover -s scripts -p 'test_*.py'
+
+      - name: Resolve managed-runtime distribution status
+        id: bpy_distribution
+        run: |
+          python3 scripts/verify_bpy_runtime.py
+          [ "$(jq -r .distributionStatus Runtime/bpy/runtime-lock.json)" = ready ] \
+            && echo "ready=true" >> "$GITHUB_OUTPUT" \
+            || echo "ready=false" >> "$GITHUB_OUTPUT"
 
   ui_render:
     name: Agent UI Evidence
@@ -288,11 +297,11 @@ jobs:
         run: scripts/verify_tracked_source_state.sh
 
       - name: Zip .app
-        if: needs.source_gate.outputs.bundle_required == 'true'
+        if: needs.source_gate.outputs.bundle_required == 'true' && needs.source_gate.outputs.bpy_distribution_ready == 'true'
         run: ditto -c -k --keepParent .build/NexGenVideo.app .build/NexGenVideo.zip
 
       - name: Upload .app artifact
-        if: needs.source_gate.outputs.bundle_required == 'true'
+        if: needs.source_gate.outputs.bundle_required == 'true' && needs.source_gate.outputs.bpy_distribution_ready == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: NexGenVideo-app
@@ -303,7 +312,7 @@ jobs:
 
   diagnostic-startup:
     needs: [source_gate, build_test]
-    if: needs.source_gate.outputs.bundle_required == 'true'
+    if: needs.source_gate.outputs.bundle_required == 'true' && needs.source_gate.outputs.bpy_distribution_ready == 'true'
     runs-on: macos-26
     timeout-minutes: 10
     permissions:
@@ -352,11 +361,20 @@ jobs:
           if needs["source_gate"]["result"] != "success":
               raise SystemExit("Source Gate did not succeed")
           plan = needs["source_gate"]["outputs"]
-          for job, key in (("build_test", "build_required"), ("ui_render", "ui_required"), ("diagnostic-startup", "bundle_required")):
+          for job, key in (("build_test", "build_required"), ("ui_render", "ui_required")):
               if plan.get(key) not in ("true", "false"):
                   raise SystemExit(f"Invalid CI plan: {key}")
               expected = "success" if plan[key] == "true" else "skipped"
               if needs[job]["result"] != expected:
                   raise SystemExit(f"{job}: expected {expected}, got {needs[job]['result']}")
+          diagnostic_expected = "success" if (
+              plan["bundle_required"] == "true"
+              and plan["bpy_distribution_ready"] == "true"
+          ) else "skipped"
+          if needs["diagnostic-startup"]["result"] != diagnostic_expected:
+              raise SystemExit(
+                  f"diagnostic-startup: expected {diagnostic_expected}, "
+                  f"got {needs['diagnostic-startup']['result']}"
+              )
           print("All applicable CI checks succeeded.")
           PYTHON

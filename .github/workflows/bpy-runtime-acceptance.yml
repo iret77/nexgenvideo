@@ -23,14 +23,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_sha }}
-      - name: Bind source and verify the lock before macOS allocation
+      - name: Bind source and require distributable runtime before macOS allocation
         env:
           EXPECTED_SHA: ${{ inputs.source_sha }}
         run: |
           set -euo pipefail
           [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
           [ "$(git rev-parse HEAD)" = "$EXPECTED_SHA" ]
-          python3 scripts/verify_bpy_runtime.py
+          python3 scripts/verify_bpy_runtime.py --distribution
           python3 -m unittest \
             scripts.test_verify_bpy_runtime \
             scripts.test_bpy_runtime_workflow
@@ -185,34 +185,61 @@ jobs:
             > "$EVIDENCE/runtime.log" 2> "$EVIDENCE/time.txt"
           grep -q SELFTEST_BPY_OK "$EVIDENCE/runtime.log"
           jq -e --arg app "$APP" --arg foreign "$RUNNER_TEMP/denied/foreign-blender" '
-            .python == "3.13.15"
+            .schema == "nexgenvideo/bpy-runtime-acceptance/2"
+            and .python == "3.13.15"
             and .bpy == "5.2.2"
-            and .sandboxed == true
             and .coldStartSeconds > 0
+            and .serviceColdStartSeconds > 0
             and .warmJobSeconds > 0
-            and .jobMetrics.edit_seconds > 0
-            and .jobMetrics.render_seconds > 0
-            and .jobMetrics.peak_memory_bytes > 0
+            and .hostJobSeconds > 0
+            and .hostPeakMemoryBytes > 0
+            and .jobMetrics.job_wall_seconds > 0
+            and .jobMetrics.worker_wall_seconds > 0
+            and .jobMetrics.verification_seconds > 0
+            and .jobMetrics.worker_peak_memory_bytes > 0
+            and .jobMetrics.verifier_peak_memory_bytes > 0
+            and .jobMetrics.service_peak_memory_bytes > 0
+            and .jobMetrics.disk_peak_bytes > 0
+            and .jobMetrics.file_peak_count > 0
+            and .jobMetrics.descendant_peak_count == 0
+            and .jobMetrics.worker_process_identifier != .jobMetrics.verifier_process_identifier
+            and .jobMetrics.autoexec_positive_control == 1
             and .jobMetrics.vertices > 8
             and .jobMetrics.polygons > 6
             and .duplicateJoined == true
-            and .sessionsClosed == true
-            and .crossSessionDenied == true
-            and .timeoutState == "timedOut"
+            and .changedDuplicateRejected == true
+            and .failedOpenReleased == true
+            and .closeBeforeOpenReleased == true
+            and .forgedResultState == "timedOut"
             and .cancelState == "cancelled"
+            and .rlimitASAllocationDenied == true
+            and .outOfMemoryState == "resourceLimited"
+            and .structuralLimitState == "resourceLimited"
+            and .storageLimitState == "resourceLimited"
             and .crashState == "crashed"
-            and .workerA != .workerB
-            and .workerEvidence.secret_environment_absent == true
-            and .workerEvidence.approved_input.approved == true
-            and (.workerEvidence.modifiers.NGV_Room | index("BEVEL")) != null
-            and (.workerEvidence.python_executable | startswith($app + "/"))
-            and (.workerEvidence.bpy_module | startswith($app + "/"))
-            and .workerEvidence.blender_user_config != $foreign
-            and (.workerEvidence.session_root as $session | .workerEvidence.blender_user_config | startswith($session + "/"))
-            and (.workerEvidence.network_denied.denied == true)
-            and (.workerEvidence.network_denied.errno == 1 or .workerEvidence.network_denied.errno == 13)
-            and all(.workerEvidence.denied_paths[]; .denied == true and (.errno == 1 or .errno == 13))
-            and (.workerEvidence.renderer.selected == "CYCLES_METAL" or .workerEvidence.renderer.selected == "CYCLES_CPU")
+            and .serviceRecoveryRevision == "revision-e"
+            and .parentDeathJobFailedClosed == true
+            and .threeRealDocuments == true
+            and .thirdDocumentInitiallyDenied == true
+            and .slotReusedAfterClose == true
+            and .appTerminationJobStarted == true
+            and .appDelegateShutdown == true
+            and .probeA != .probeB
+            and .serviceA != .serviceB
+            and (.deniedPositiveControls | length) >= 3
+            and all(.deniedPositiveControls[]; .bytes > 0)
+            and .trustedVerification.secretEnvironmentAbsent == true
+            and .trustedVerification.autorunTextPresent == true
+            and .trustedVerification.autorunMarkerAbsent == true
+            and (.trustedVerification.modifiers.NGV_Room | index("BEVEL")) != null
+            and (.trustedVerification.executable | startswith($app + "/"))
+            and (.trustedVerification.bpyModule | startswith($app + "/"))
+            and .trustedVerification.blenderUserConfig != $foreign
+            and (.trustedVerification.sessionRoot as $session | .trustedVerification.blenderUserConfig | startswith($session + "/"))
+            and (.trustedVerification.networkDenied.denied == true)
+            and (.trustedVerification.networkDenied.errno == 1 or .trustedVerification.networkDenied.errno == 13)
+            and all(.trustedVerification.deniedPaths[]; .denied == true and (.errno == 1 or .errno == 13))
+            and any(.trustedVerification.scenes[]; .engine == "CYCLES" and (.cyclesDevice == "GPU" or .cyclesDevice == "CPU"))
           ' "$EVIDENCE/result.json"
           test -s "$EVIDENCE/perspective.png"
           [ "$(sips -g pixelWidth "$EVIDENCE/perspective.png" | awk '/pixelWidth/{print $2}')" = 640 ]

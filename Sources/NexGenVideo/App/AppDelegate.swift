@@ -152,6 +152,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @MainActor func applicationWillTerminate(_ notification: Notification) {
         BpyRuntimeHost.shared.shutdown()
+        BpyRuntimeSelfTest.applicationWillTerminate()
         HangDiagnosticRecorder.shared.stop()
     }
 }

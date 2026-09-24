@@ -15,7 +15,7 @@ cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
 
 fetch() {
-  local url="$1" expected="$2" output="$3"
+  local url="$1" expected="$2" output="$3" expected_size="${4:-}"
   curl --fail --location --retry 3 --output "$output" "$url"
   local actual
   actual="$(shasum -a 256 "$output" | awk '{print $1}')"
@@ -23,6 +23,10 @@ fetch() {
     echo "checksum mismatch for $(basename "$output"): $actual" >&2
     exit 1
   }
+  if [ -n "$expected_size" ] && [ "$(stat -f %z "$output")" != "$expected_size" ]; then
+    echo "size mismatch for $(basename "$output")" >&2
+    exit 1
+  fi
 }
 
 rm -rf "$DESTINATION"
@@ -73,6 +77,41 @@ while IFS=$'\t' read -r name filename url sha; do
   cp -R "$wheel_root/." "$DESTINATION/site-packages/"
 done < <(jq -r '.wheels[] | [.name,.filename,.url,.sha256] | @tsv' "$LOCK")
 
+python3 - "$LOCK" "$DESTINATION/site-packages" <<'PY'
+import base64
+import csv
+import hashlib
+import json
+import pathlib
+import sys
+
+lock_path, site_path = map(pathlib.Path, sys.argv[1:])
+lock = json.loads(lock_path.read_text())
+layout = lock["bpyWheelLayout"]
+record_path = site_path / layout["recordPath"]
+with record_path.open(newline="") as handle:
+    records = {row[0]: row[1:] for row in csv.reader(handle)}
+declared = set(layout["nativeLibraries"])
+discovered = {
+    path.relative_to(site_path).as_posix()
+    for path in (site_path / "bpy/lib").glob("*.dylib")
+}
+if discovered != declared:
+    raise SystemExit(f"bpy native-library inventory drift: {sorted(discovered ^ declared)}")
+for relative in [layout["entryPoint"], *layout["nativeLibraries"]]:
+    fields = records.get(relative)
+    path = site_path / relative
+    if not fields or len(fields) != 2 or not fields[0].startswith("sha256=") or not fields[1]:
+        raise SystemExit(f"missing hashed RECORD entry: {relative}")
+    checksum = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            checksum.update(chunk)
+    digest = base64.urlsafe_b64encode(checksum.digest()).decode().rstrip("=")
+    if fields[0] != f"sha256={digest}" or int(fields[1]) != path.stat().st_size:
+        raise SystemExit(f"RECORD mismatch: {relative}")
+PY
+
 find "$DESTINATION/python" -type d \( -name pip -o -name 'pip-*.dist-info' -o -name ensurepip \) \
   -prune -exec rm -rf {} +
 rm -f "$DESTINATION/python/bin/pip" \
@@ -80,10 +119,20 @@ rm -f "$DESTINATION/python/bin/pip" \
   "$DESTINATION/python/bin/pip3.13"
 cp "$LOCK" "$DESTINATION/runtime-lock.json"
 cp "$ROOT/Runtime/bpy/NOTICE.md" "$DESTINATION/NOTICE.md"
+if [ "$(jq -r .distributionStatus "$LOCK")" = ready ]; then
+  mkdir -p "$DESTINATION/corresponding-source" "$DESTINATION/licenses/distribution"
+  while IFS=$'\t' read -r filename url sha size; do
+    fetch "$url" "$sha" "$DESTINATION/corresponding-source/$filename" "$size"
+  done < <(jq -r '.distributionClosure.sourceArchives[] | [.filename,.url,.sha256,.size] | @tsv' "$LOCK")
+  while IFS= read -r relative; do
+    cp "$ROOT/$relative" "$DESTINATION/licenses/distribution/$(basename "$relative")"
+  done < <(jq -r '[.distributionClosure.wheelBinaryProvenance.path] + [.distributionClosure.noticeFiles[].path] | .[]' "$LOCK")
+fi
 printf '%s\n' "$(shasum -a 256 "$LOCK" | awk '{print $1}')" > "$DESTINATION/.complete"
 
 test -x "$DESTINATION/python/bin/python3"
-test -f "$DESTINATION/site-packages/bpy/__init__.py"
+BPY_ENTRYPOINT="$(jq -r .bpyWheelLayout.entryPoint "$LOCK")"
+test -f "$DESTINATION/site-packages/$BPY_ENTRYPOINT"
 test ! -e "$DESTINATION/python/bin/pip"
 test ! -e "$DESTINATION/python/bin/pip3"
 test ! -e "$DESTINATION/python/bin/pip3.13"

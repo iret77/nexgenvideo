@@ -7,6 +7,7 @@ public let bpyRuntimeServiceNames = [
 
 @objc public protocol BpyRuntimeServiceProtocol {
     func openSession(_ request: Data, withReply reply: @escaping (Data) -> Void)
+    func restoreCheckpoint(_ request: Data, chunk: Data, withReply reply: @escaping (Data) -> Void)
     func stageInput(_ request: Data, chunk: Data, withReply reply: @escaping (Data) -> Void)
     func runJob(_ request: Data, withReply reply: @escaping (Data) -> Void)
     func jobStatus(_ request: Data, withReply reply: @escaping (Data) -> Void)
@@ -26,6 +27,11 @@ public struct BpyRuntimeLimits: Codable, Sendable, Equatable {
     public var objects: Int
     public var vertices: Int
     public var polygons: Int
+    public var diskBytes: UInt64
+    public var files: Int
+    public var renderWidth: Int
+    public var renderHeight: Int
+    public var renderPixels: Int
 
     public init(
         timeoutSeconds: Int = 120,
@@ -35,7 +41,12 @@ public struct BpyRuntimeLimits: Codable, Sendable, Equatable {
         stdoutBytes: Int = 1_048_576,
         objects: Int = 20_000,
         vertices: Int = 20_000_000,
-        polygons: Int = 20_000_000
+        polygons: Int = 20_000_000,
+        diskBytes: UInt64 = 2 * 1_024 * 1_024 * 1_024,
+        files: Int = 4_096,
+        renderWidth: Int = 8_192,
+        renderHeight: Int = 8_192,
+        renderPixels: Int = 33_177_600
     ) {
         self.timeoutSeconds = timeoutSeconds
         self.memoryBytes = memoryBytes
@@ -45,6 +56,11 @@ public struct BpyRuntimeLimits: Codable, Sendable, Equatable {
         self.objects = objects
         self.vertices = vertices
         self.polygons = polygons
+        self.diskBytes = diskBytes
+        self.files = files
+        self.renderWidth = renderWidth
+        self.renderHeight = renderHeight
+        self.renderPixels = renderPixels
     }
 
     public var isValid: Bool {
@@ -52,8 +68,14 @@ public struct BpyRuntimeLimits: Codable, Sendable, Equatable {
             && (256 * 1_024 * 1_024...32 * 1_024 * 1_024 * 1_024).contains(memoryBytes)
             && inputBytes > 0 && inputBytes <= 512 * 1_024 * 1_024
             && outputBytes > 0 && outputBytes <= 512 * 1_024 * 1_024
+            && outputBytes <= memoryBytes / 2
             && (1...16 * 1_024 * 1_024).contains(stdoutBytes)
             && objects > 0 && vertices > 0 && polygons > 0
+            && diskBytes >= outputBytes && diskBytes <= 8 * 1_024 * 1_024 * 1_024
+            && (64...65_536).contains(files)
+            && (64...16_384).contains(renderWidth)
+            && (64...16_384).contains(renderHeight)
+            && renderPixels > 0 && renderPixels <= 67_108_864
     }
 }
 
@@ -62,17 +84,45 @@ public struct BpyOpenSessionRequest: Codable, Sendable, Equatable {
     public let documentID: String
     public let confirmedRevision: String?
     public let limits: BpyRuntimeLimits
+    public let diagnosticOpenFailure: Bool
 
     public init(
         sessionID: UUID,
         documentID: String,
         confirmedRevision: String? = nil,
-        limits: BpyRuntimeLimits = .init()
+        limits: BpyRuntimeLimits = .init(),
+        diagnosticOpenFailure: Bool = false
     ) {
         self.sessionID = sessionID
         self.documentID = documentID
         self.confirmedRevision = confirmedRevision
         self.limits = limits
+        self.diagnosticOpenFailure = diagnosticOpenFailure
+    }
+}
+
+public struct BpyRestoreCheckpointRequest: Codable, Sendable, Equatable {
+    public let sessionID: UUID
+    public let revision: String
+    public let offset: UInt64
+    public let totalBytes: UInt64
+    public let sha256: String
+    public let finalChunk: Bool
+
+    public init(
+        sessionID: UUID,
+        revision: String,
+        offset: UInt64,
+        totalBytes: UInt64,
+        sha256: String,
+        finalChunk: Bool
+    ) {
+        self.sessionID = sessionID
+        self.revision = revision
+        self.offset = offset
+        self.totalBytes = totalBytes
+        self.sha256 = sha256
+        self.finalChunk = finalChunk
     }
 }
 
@@ -111,6 +161,9 @@ public struct BpyRunJobRequest: Codable, Sendable, Equatable {
     public let source: String
     public let inputNames: [String]
     public let timeoutSeconds: Int?
+    public let fingerprint: String
+    public let diagnosticDeniedPaths: [String]
+    public let diagnosticAutoexecPositiveControl: Bool
 
     public init(
         sessionID: UUID,
@@ -118,7 +171,10 @@ public struct BpyRunJobRequest: Codable, Sendable, Equatable {
         expectedRevision: String?,
         source: String,
         inputNames: [String] = [],
-        timeoutSeconds: Int? = nil
+        timeoutSeconds: Int? = nil,
+        fingerprint: String,
+        diagnosticDeniedPaths: [String] = [],
+        diagnosticAutoexecPositiveControl: Bool = false
     ) {
         self.sessionID = sessionID
         self.jobID = jobID
@@ -126,6 +182,9 @@ public struct BpyRunJobRequest: Codable, Sendable, Equatable {
         self.source = source
         self.inputNames = inputNames
         self.timeoutSeconds = timeoutSeconds
+        self.fingerprint = fingerprint
+        self.diagnosticDeniedPaths = diagnosticDeniedPaths
+        self.diagnosticAutoexecPositiveControl = diagnosticAutoexecPositiveControl
     }
 }
 
@@ -193,10 +252,12 @@ public enum BpyRuntimeJobState: String, Codable, Sendable, Equatable {
     case cancelled
     case timedOut
     case crashed
+    case resourceLimited
 
     public var isTerminal: Bool {
         switch self {
-        case .confirmed, .rejected, .failed, .cancelled, .timedOut, .crashed:
+        case .confirmed, .rejected, .failed, .cancelled, .timedOut, .crashed,
+             .resourceLimited:
             true
         case .accepted, .running, .awaitingConfirmation:
             false
@@ -208,21 +269,21 @@ public struct BpyRuntimeIdentity: Codable, Sendable, Equatable {
     public let pythonVersion: String
     public let bpyVersion: String
     public let executable: String
-    public let sandboxed: Bool
     public let processIdentifier: Int32
+    public let serviceProcessIdentifier: Int32
 
     public init(
         pythonVersion: String,
         bpyVersion: String,
         executable: String,
-        sandboxed: Bool,
-        processIdentifier: Int32
+        processIdentifier: Int32,
+        serviceProcessIdentifier: Int32
     ) {
         self.pythonVersion = pythonVersion
         self.bpyVersion = bpyVersion
         self.executable = executable
-        self.sandboxed = sandboxed
         self.processIdentifier = processIdentifier
+        self.serviceProcessIdentifier = serviceProcessIdentifier
     }
 }
 
@@ -254,6 +315,7 @@ public struct BpyOutputDescriptor: Codable, Sendable, Equatable {
 
 public struct BpyServiceResponse: Codable, Sendable, Equatable {
     public var ok: Bool
+    public var jobID: UUID?
     public var state: BpyRuntimeJobState?
     public var message: String?
     public var runtime: BpyRuntimeIdentity?
@@ -263,9 +325,15 @@ public struct BpyServiceResponse: Codable, Sendable, Equatable {
     public var joinedExistingJob: Bool
     public var stdout: String?
     public var metrics: [String: Double]
+    public var jobFingerprint: String?
+    public var resultExpired: Bool
+    public var activeProcessIdentifier: Int32?
+    public var activeProcessStartAbsoluteTime: UInt64?
+    public var activeProcessExecutable: String?
 
     public init(
         ok: Bool,
+        jobID: UUID? = nil,
         state: BpyRuntimeJobState? = nil,
         message: String? = nil,
         runtime: BpyRuntimeIdentity? = nil,
@@ -274,9 +342,15 @@ public struct BpyServiceResponse: Codable, Sendable, Equatable {
         confirmedRevision: String? = nil,
         joinedExistingJob: Bool = false,
         stdout: String? = nil,
-        metrics: [String: Double] = [:]
+        metrics: [String: Double] = [:],
+        jobFingerprint: String? = nil,
+        resultExpired: Bool = false,
+        activeProcessIdentifier: Int32? = nil,
+        activeProcessStartAbsoluteTime: UInt64? = nil,
+        activeProcessExecutable: String? = nil
     ) {
         self.ok = ok
+        self.jobID = jobID
         self.state = state
         self.message = message
         self.runtime = runtime
@@ -286,5 +360,10 @@ public struct BpyServiceResponse: Codable, Sendable, Equatable {
         self.joinedExistingJob = joinedExistingJob
         self.stdout = stdout
         self.metrics = metrics
+        self.jobFingerprint = jobFingerprint
+        self.resultExpired = resultExpired
+        self.activeProcessIdentifier = activeProcessIdentifier
+        self.activeProcessStartAbsoluteTime = activeProcessStartAbsoluteTime
+        self.activeProcessExecutable = activeProcessExecutable
     }
 }
