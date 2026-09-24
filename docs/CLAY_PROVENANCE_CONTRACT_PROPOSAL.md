@@ -19,6 +19,8 @@ Adopt four optional Core artifact families, expressed by five new schema IDs, an
    inspection camera and binds `scene_rest`; a final proof binds current Shot List camera and state
    plans.
 4. Shot List owns `shot-clay-bindings/v1` through the existing `PipelineShotlistWriter` transaction.
+   `write_shotlist` with a spatial payload is the sole final-Clay producer and runs its local worker
+   inside that existing project/phase execution identity and lease; it adds no supporting capability.
 
 Every Bible and Shot spatial binding must match the exact current approved Production Design index
 entry, revision, and manifest hash. Selecting an older revision is forbidden; changing the current
@@ -133,10 +135,17 @@ state, interval, sampling, and cut ownership. `CameraSetupPlanV1`, `ShotGenerati
 `state.kind = state_ladder`.
 
 The transaction must bind the exact current approved scene-index hash and its exact revision and
-manifest hash. It cannot choose a historical revision. On `write_shotlist`, the host validates the
-current draft and scene index, seals the matching result, and atomically writes the Shot List,
-spatial proof/output, `shot-clay-bindings/v1`, extension references, and cumulative lineage. A Bible
-proof cannot be relabeled as a final-shot proof.
+manifest hash. It cannot choose a historical revision. `write_shotlist` with a spatial payload is
+the producer: inside its one existing project/phase execution identity and mutation lease, it binds
+the current draft's exact project-local scene-index, `CameraSetupPlanV1`, `StateLadderV1`, Shot List,
+and cut bytes into the immutable worker request and starts the local worker internally. Immediately
+before commit, the writer revalidates that the same bytes are the transaction's actual final bytes,
+then atomically writes the Shot List, spatial proof/output, `shot-clay-bindings/v1`, extension
+references, and cumulative lineage. Parallel calls and identical retry/reconnect requests join that
+host job; a different payload fails closed. Cancellation or crash discards staging and preserves the
+previous canonical bytes. Gate-state mutation and approval remain unavailable until the complete
+transaction passes the independent structural gate. A cache preview is never an input or proof
+source, and a Bible proof cannot be relabeled as a final-shot proof.
 
 ## Canonical paths
 
@@ -524,22 +533,33 @@ decoded media within declared tolerances; hashes always bind the exact bytes use
 ## Host sealing boundary
 
 The worker receives only a read-only materialization of exact scene/resources, a job-local writable
-staging directory, and a schema-validated envelope containing the expected project, scene index,
-revision, camera, state, time, renderer contract, and output limits. It receives no project package
-path, canonical pipeline write access, network, Keychain, provider/LLM credential, prompt secret,
-gate state, or lineage authority.
+staging directory, and a schema-validated envelope containing the expected project, scene-index or
+base state, revision, camera, state, time, renderer contract, and output limits. It receives no
+project package path, canonical pipeline write access, network, Keychain, provider/LLM credential,
+prompt secret, gate state, or lineage authority.
 
-The host accepts a result only when:
+The host applies these common bounds to every result:
 
 1. job identity and immutable request bytes match the active host job;
-2. the bound scene index bytes are still the approved current index and the named entry still equals
-   revision plus manifest hash;
-3. a clean auto-execution-disabled scan reports exactly the manifest resource closure;
-4. all inputs and outputs are regular files under their allowed roots and independently hashed;
-5. camera, state variant, evaluated frame/time, renderer contract/settings, dimensions, frame count,
-   and codec match the request and decoded result;
-6. no undeclared output or partial success exists; and
-7. the canonical writer remains current and holds the project/phase mutation lease.
+2. all inputs and outputs are regular files under their allowed roots and independently hashed;
+3. camera, state variant, evaluated frame/time, renderer contract/settings, dimensions, frame count,
+   and codec match the request and decoded result where those fields apply;
+4. no undeclared output or partial success exists; and
+5. the canonical writer remains current and holds the project/phase mutation lease.
+
+It then applies the rule for the candidate kind:
+
+- A Production Design scene candidate is accepted only in the active, unapproved Production Design
+  phase job. Its expected current base revision, or explicit expected absence for the first scene,
+  must equal the current index state; its new manifest must declare the complete resource closure,
+  and a clean untrusted, auto-execution-disabled scan must verify exactly that closure. The host
+  performs the base compare-and-swap again immediately before the canonical index/revision write. A
+  missing first index is therefore valid only when absence was expected; a stale concurrent base
+  fails closed.
+- A Bible or Shot List derivation candidate is accepted only when its bound scene-index bytes remain
+  the approved current Production Design index, the named entry still equals its revision and
+  manifest hash, and a clean auto-execution-disabled scan reports exactly that approved manifest's
+  complete resource closure.
 
 Only then may the writer copy bytes to canonical paths and encode the proof. A worker result is never
 itself a proof. Cancellation, crash, reconnect, conflicting retry, stale index/revision, or failed
@@ -557,7 +577,7 @@ These tool names describe the contract; they do not authorize implementation.
 | `derive_clay_reference` | supporting | No | Yes | No | No | Sealed Recovery candidate only |
 | `write_production_design` spatial payload | existing writer | Yes | — | — | Existing still rules only | Atomic |
 | `write_bible` spatial payload | existing writer | — | Yes | — | Existing still rules only | Atomic |
-| `write_shotlist` spatial payload | existing writer | — | — | Yes | No | Atomic |
+| `write_shotlist` spatial payload | existing writer/internal local render | — | — | Yes | No | Atomic |
 
 No spatial tool calls `generate_image`, `generate_video`, `run_provider_tool`,
 `prepare_generation_batch`, or the Render runner.
@@ -680,9 +700,11 @@ The six locked specs are unchanged on this branch.
 3. Add the camera/state discriminators and required/forbidden fields; keep `BlockoutProofV1` intact.
 4. Replace the Bible “two classes” invariant with the three-class table and forbid Clay paths/bytes
    in `location.sheets` and `scene3d.panorama`.
-5. Add only the four new supporting spatial tools and three existing-writer spatial payloads. For
-   packless calls, require `coreGatePhases` current-phase guards without intake; for pack calls,
-   enforce only resolved manifest Hard Steps/capabilities.
+5. Add only the four new supporting spatial tools and three existing-writer spatial payloads.
+   `write_shotlist` is the sole producer for final Clay and runs its worker internally in the
+   existing host job/lease; add no Shot List supporting capability. For packless calls, require
+   `coreGatePhases` current-phase guards without intake; for pack calls, enforce only resolved
+   manifest Hard Steps/capabilities.
 6. Add conditioning and release evidence for stale index/revision, invalid state/camera union,
    purpose collision, worker canonical write, phase bypass, and provider bytes differing from the
    approved Reference Plan.
@@ -741,10 +763,16 @@ probe, or CI dispatch is part of this proposal branch.
 
 - Production Design proves it never writes Bible IDs; Bible mapping proves every Bible ID and
   scene-local object ID independently.
+- A first Production Design scene candidate succeeds with an explicitly absent base index; a stale
+  or concurrently replaced base revision fails the final compare-and-swap before canonical write.
 - Writer failure restores Bible plus inventory/proofs/outputs and Shot List plus bindings/proofs/
   outputs. Supporting tools cannot capture lineage or mutate canonical artifacts.
 - Concurrent writes, retry, reconnect, cancellation, crash, and stale-index candidates prove one
   project/phase execution identity and no last-writer-wins loss.
+- Concurrent or reconnected identical spatial `write_shotlist` calls join one host job; a different
+  payload fails closed. The worker request and commit revalidate identical project-local index,
+  camera plan, State Ladder, Shot List, and cut bytes; cancellation/crash preserves prior canonical
+  bytes, previews cannot supply proof, and approval waits for transaction plus structural gate.
 - A PD revision change requires a PD rewind; neither Bible nor Shot List can bind a historical or
   invalidated revision.
 
