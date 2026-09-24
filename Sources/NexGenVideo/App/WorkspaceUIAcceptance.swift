@@ -267,10 +267,17 @@ enum WorkspaceUIAcceptance {
                               MediaPanelItemKey.folder("acceptance-folder-0")
                           )
                   }),
+                  click(identifier: "media.folder.row.acceptance-folder-0", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.mediaCommandFocus == .folderTree
+                          && editor.selectedFolderIds == ["acceptance-folder-0"]
+                          && editor.mediaPanelCurrentFolderId == nil
+                  }),
                   click(identifier: "media.browser.folder.acceptance-folder-0", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
                       editor.mediaCommandFocus == .browser
                           && editor.selectedFolderIds == ["acceptance-folder-0"]
+                          && editor.focusedPanel == .preview
                   }),
                   pressKey(keyCode: 36, characters: "\r", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
