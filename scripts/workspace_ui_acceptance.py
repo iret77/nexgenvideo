@@ -236,8 +236,14 @@ def run_scale(executable, output, scale):
         and len(media_picker) == 1
         and len(media_keyboard) == 1
         and media_keyboard[0].get("browserArrowSelected") == "selection-secondary"
+        and media_keyboard[0].get("hiddenSidebarBrowserCommands") is True
+        and media_keyboard[0].get("browserLayoutPanel") == "preview"
+        and media_keyboard[0].get("browserMaximizePreservedSurface") is True
+        and media_keyboard[0].get("browserRestorePreservedSurface") is True
+        and media_keyboard[0].get("sourcePreviewCommandsIsolated") is True
         and media_keyboard[0].get("treeDeletePreservedAsset") is True
         and media_keyboard[0].get("treeDeleteRequestedConfirmation") is True
+        and media_keyboard[0].get("folderCommandsIsolated") is True
         and 0 < media_picker[0].get("renderedRows", 0) < media_picker[0].get("eligibleRows", 0)
         and media_picker[0].get("activeAsset") == "acceptance-bulk-0"
         and media_picker[0].get("folder") == "acceptance-folder-0"

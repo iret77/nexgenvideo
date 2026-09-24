@@ -55,6 +55,7 @@ final class EditorViewModel {
     enum MediaCommandFocus: Equatable, Sendable {
         case folderTree
         case browser
+        case sourcePreview
     }
 
     /// The top-level workspace. Workspaces rearrange canonical panels without changing project data.
@@ -1317,7 +1318,7 @@ final class EditorViewModel {
         theaterActive = false
         mediaPanelVisible = true
         maximizedPanel = nil
-        focusedPanel = .media
+        focusedPanel = .preview
         mediaCommandFocus = .browser
         showMediaPanelMediaTab()
         selectMediaAsset(asset, for: .workspace)
@@ -1338,7 +1339,8 @@ final class EditorViewModel {
         theaterActive = false
         mediaPanelVisible = true
         maximizedPanel = nil
-        focusedPanel = .media
+        focusedPanel = workspaceFocus == .media ? .preview : .media
+        mediaCommandFocus = .browser
         showMediaPanelMediaTab()
     }
 

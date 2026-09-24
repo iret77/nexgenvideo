@@ -131,7 +131,7 @@ final class EditorWindowController: NSWindowController {
             return false
 
         case 36: // Return / Enter
-            if canHandleMediaShortcut(),
+            if canHandleMediaFolderShortcut(),
                editorViewModel.selectedFolderIds.count == 1,
                let folderId = editorViewModel.selectedFolderIds.first {
                 editorViewModel.mediaPanelOpenFolderId = folderId
@@ -291,11 +291,25 @@ extension EditorWindowController: EditorActions {
     }
 
     private func canHandleMediaShortcut() -> Bool {
-        !isTextInputFocused
-            && (editorViewModel.workspaceFocus == .media || editorViewModel.workspaceFocus == .edit)
-            && editorViewModel.focusedPanel == .media
-            && editorViewModel.mediaCommandFocus != nil
-            && editorViewModel.isSidebarPresented
+        guard !isTextInputFocused, !editorViewModel.theaterActive else { return false }
+        switch (editorViewModel.workspaceFocus, editorViewModel.mediaCommandFocus) {
+        case (.media, .some(.folderTree)):
+            return editorViewModel.focusedPanel == .media
+                && editorViewModel.isSidebarPresented
+        case (.media, .some(.browser)):
+            return editorViewModel.focusedPanel == .preview
+                && (editorViewModel.maximizedPanel == nil
+                    || editorViewModel.maximizedPanel == .preview)
+        case (.edit, .some(.browser)):
+            return editorViewModel.focusedPanel == .media
+                && editorViewModel.isSidebarPresented
+        default:
+            return false
+        }
+    }
+
+    private func canHandleMediaFolderShortcut() -> Bool {
+        canHandleMediaShortcut() && editorViewModel.mediaCommandFocus == .folderTree
     }
 
     private func canHandleMediaBrowserShortcut() -> Bool {

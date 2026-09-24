@@ -261,7 +261,21 @@ struct WorkspaceFocusTests {
         #expect(editor.workspaceFocus == .media)
         #expect(editor.mediaPanelVisible)
         #expect(editor.maximizedPanel == nil)
+        #expect(editor.focusedPanel == .preview)
+        #expect(editor.mediaCommandFocus == .browser)
+        #expect(editor.mediaPanelTab == .assets)
+
+        editor.setWorkspaceFocus(.edit)
+        editor.mediaPanelVisible = false
+        editor.maximizedPanel = .preview
+
+        editor.revealMediaTools()
+
+        #expect(editor.workspaceFocus == .edit)
+        #expect(editor.mediaPanelVisible)
+        #expect(editor.maximizedPanel == nil)
         #expect(editor.focusedPanel == .media)
+        #expect(editor.mediaCommandFocus == .browser)
         #expect(editor.mediaPanelTab == .assets)
     }
 

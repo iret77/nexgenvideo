@@ -157,7 +157,7 @@ struct MediaTab: View {
         .background(KeyCommandSink(onNewFolder: createNewFolderInCurrent, onNavigateUp: navigateUp))
         .simultaneousGesture(TapGesture().onEnded {
             guard workspace == editor.workspaceFocus else { return }
-            editor.focusedPanel = .media
+            editor.focusedPanel = workspace == .media ? .preview : .media
             editor.mediaCommandFocus = .browser
         })
         .background {

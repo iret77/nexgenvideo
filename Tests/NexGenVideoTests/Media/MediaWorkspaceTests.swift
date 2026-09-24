@@ -195,6 +195,8 @@ struct MediaWorkspaceTests {
         #expect(editor.workspaceFocus == .media)
         #expect(editor.activeSourceAsset?.id == source.id)
         #expect(editor.selectedMediaAssetIds == [source.id])
+        #expect(editor.focusedPanel == .preview)
+        #expect(editor.mediaCommandFocus == .browser)
         #expect(session.folderID == folderID)
         #expect(session.scrollAnchorID == source.id)
     }

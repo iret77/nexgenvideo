@@ -109,15 +109,81 @@ enum WorkspaceUIAcceptance {
             guard visiblePanelFrames(in: host) == preparedMediaFrames else {
                 fail("large media layout did not settle", scale: scale)
             }
+            guard click(identifier: "editor.panel.sidebar", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      host.layoutSubtreeIfNeeded()
+                      return !editor.isSidebarPresented
+                          && visiblePanelIDs(in: host) == ["previewPanel", "inspectorPanel"]
+                          && probeFrame("media.workspace.folderTree", in: host) == nil
+                          && probeFrame("media.workspace.browser", in: host) != nil
+                          && probeFrame("media.workspace.sourcePreview", in: host) != nil
+                  }) else {
+                fail("media folder sidebar did not hide independently", scale: scale)
+            }
             guard click(identifier: "selection.asset.selection-source", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
                       editor.activeSourceAsset?.id == "selection-source"
                           && editor.mediaCommandFocus == .browser
-                          && editor.focusedPanel == .media
+                          && editor.focusedPanel == .preview
                   }),
                   pressKey(keyCode: 124, characters: "\u{F703}", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
                       editor.selectedMediaAssetIds == ["selection-secondary"]
+                  }) else {
+                fail("hidden-sidebar media browser did not keep its commands", scale: scale)
+            }
+            guard click(identifier: "selection.asset.selection-source", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.activeSourceAsset?.id == "selection-source"
+                          && editor.mediaCommandFocus == .browser
+                  }) else {
+                fail("could not restore the browser source selection", scale: scale)
+            }
+            let sourceFrameBeforePreviewArrow = editor.sourcePlayheadFrame
+            guard click(identifier: "media.workspace.sourcePreview", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.focusedPanel == .preview
+                          && editor.mediaCommandFocus == .sourcePreview
+                  }),
+                  pressKey(keyCode: 124, characters: "\u{F703}", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.sourcePlayheadFrame == sourceFrameBeforePreviewArrow + 1
+                          && editor.mediaCommandFocus == .sourcePreview
+                  }) else {
+                fail("source preview did not keep its own arrow command", scale: scale)
+            }
+            guard click(identifier: "selection.asset.selection-source", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.focusedPanel == .preview
+                          && editor.mediaCommandFocus == .browser
+                  }),
+                  pressKey(keyCode: 50, characters: "`", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      host.layoutSubtreeIfNeeded()
+                      return editor.maximizedPanel == .preview
+                          && visiblePanelIDs(in: host) == ["previewPanel"]
+                          && probeFrame("media.workspace.folderTree", in: host) == nil
+                          && probeFrame("media.workspace.browser", in: host) != nil
+                          && probeFrame("media.workspace.sourcePreview", in: host) != nil
+                  }),
+                  pressKey(keyCode: 50, characters: "`", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      host.layoutSubtreeIfNeeded()
+                      return editor.maximizedPanel == nil
+                          && !editor.isSidebarPresented
+                          && visiblePanelIDs(in: host) == ["previewPanel", "inspectorPanel"]
+                          && probeFrame("media.workspace.folderTree", in: host) == nil
+                          && probeFrame("media.workspace.browser", in: host) != nil
+                          && probeFrame("media.workspace.sourcePreview", in: host) != nil
+                  }) else {
+                fail("media browser maximize or restore targeted the wrong panel", scale: scale)
+            }
+            guard click(identifier: "editor.panel.sidebar", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      host.layoutSubtreeIfNeeded()
+                      return editor.isSidebarPresented
+                          && visiblePanelIDs(in: host) == expectedPanels(for: .media)
+                          && mediaWorkspaceSurfaceIsValid(in: host)
                   }),
                   click(identifier: "selection.asset.selection-source", in: window) == nil,
                   click(identifier: "media.folder.row.acceptance-folder-0", in: window) == nil,
@@ -153,8 +219,14 @@ enum WorkspaceUIAcceptance {
                 scale: scale,
                 fields: [
                     "browserArrowSelected": "selection-secondary",
+                    "hiddenSidebarBrowserCommands": true,
+                    "browserLayoutPanel": "preview",
+                    "browserMaximizePreservedSurface": true,
+                    "browserRestorePreservedSurface": true,
+                    "sourcePreviewCommandsIsolated": true,
                     "treeDeletePreservedAsset": editor.mediaAssets.contains { $0.id == "selection-source" },
                     "treeDeleteRequestedConfirmation": editor.folder(id: "acceptance-folder-0") != nil,
+                    "folderCommandsIsolated": editor.mediaCommandFocus == .folderTree,
                 ]
             )
             resetSplitAutosaveDefaults()

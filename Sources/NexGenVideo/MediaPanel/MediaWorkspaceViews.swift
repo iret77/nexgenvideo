@@ -20,7 +20,7 @@ struct MediaWorkspaceCenterView: View {
                         }
                     }
                     .simultaneousGesture(TapGesture().onEnded {
-                        editor.focusedPanel = .media
+                        editor.focusedPanel = .preview
                         editor.mediaCommandFocus = .browser
                     })
                 PreviewContainerView()
@@ -35,7 +35,7 @@ struct MediaWorkspaceCenterView: View {
                     }
                     .simultaneousGesture(TapGesture().onEnded {
                         editor.focusedPanel = .preview
-                        editor.mediaCommandFocus = nil
+                        editor.mediaCommandFocus = .sourcePreview
                     })
             }
         }
