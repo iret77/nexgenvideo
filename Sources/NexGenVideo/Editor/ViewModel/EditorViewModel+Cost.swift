@@ -65,6 +65,25 @@ struct GenerationLogEntry: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
+enum GenerationLogFile {
+    private static let accessLock = NSLock()
+
+    nonisolated static func loadIfPresent(from url: URL) throws -> GenerationLog? {
+        accessLock.lock()
+        defer { accessLock.unlock() }
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return try JSONDecoder().decode(GenerationLog.self, from: Data(contentsOf: url))
+    }
+
+    nonisolated static func write(_ log: GenerationLog, to url: URL) throws {
+        accessLock.lock()
+        defer { accessLock.unlock() }
+        try JSONEncoder().encode(log).write(to: url, options: .atomic)
+    }
+}
+
+typealias BudgetStatusLogLoader = @Sendable (URL) async throws -> GenerationLog
+
 @MainActor
 extension GenerationLogEntry {
     var modelDisplayName: String {
@@ -175,17 +194,27 @@ extension EditorViewModel {
             throw CocoaError(.fileWriteUnknown)
         }
         try ProjectWorkingCopy.markDirty(key: key)
-        let data = try JSONEncoder().encode(generationLog)
-        try data.write(
-            to: workingRoot.appendingPathComponent(Project.generationLogFilename),
-            options: .atomic
+        try GenerationLogFile.write(
+            generationLog,
+            to: workingRoot.appendingPathComponent(Project.generationLogFilename)
         )
         onPipelineChanged?()
     }
 
     func refreshBudgetStatus() async throws {
+        try await refreshBudgetStatus { url in
+            try await Task.detached(priority: .userInitiated) {
+                try GenerationLogFile.loadIfPresent(from: url) ?? GenerationLog()
+            }.value
+        }
+    }
+
+    func refreshBudgetStatus(
+        loadGenerationLog: @escaping BudgetStatusLogLoader
+    ) async throws {
         budgetStatusLoadToken &+= 1
         let token = budgetStatusLoadToken
+        let requestedJournalGeneration = generationLogRevision
         guard let root = workingRoot else {
             generationLog = GenerationLog()
             await refreshProjectState()
@@ -193,13 +222,9 @@ extension EditorViewModel {
         }
         let requestedRoot = root.standardizedFileURL.resolvingSymlinksInPath()
         let url = requestedRoot.appendingPathComponent(Project.generationLogFilename)
-        let refreshed = try await Task.detached(priority: .userInitiated) {
-            guard FileManager.default.fileExists(atPath: url.path) else {
-                return GenerationLog()
-            }
-            return try JSONDecoder().decode(GenerationLog.self, from: Data(contentsOf: url))
-        }.value
+        let refreshed = try await loadGenerationLog(url)
         guard token == budgetStatusLoadToken,
+              requestedJournalGeneration == generationLogRevision,
               workingRoot?.standardizedFileURL.resolvingSymlinksInPath() == requestedRoot else {
             return
         }

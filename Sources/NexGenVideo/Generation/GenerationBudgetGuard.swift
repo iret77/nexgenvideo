@@ -404,9 +404,8 @@ enum GenerationBudgetGuard {
 
     private static func loadGenerationLog(from workingRoot: URL) throws -> GenerationLog? {
         let url = workingRoot.appendingPathComponent(Project.generationLogFilename)
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         do {
-            return try JSONDecoder().decode(GenerationLog.self, from: Data(contentsOf: url))
+            return try GenerationLogFile.loadIfPresent(from: url)
         } catch {
             throw corrupt("generation-log.json is unreadable")
         }

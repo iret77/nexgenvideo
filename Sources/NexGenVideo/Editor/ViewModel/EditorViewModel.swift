@@ -35,7 +35,9 @@ final class EditorViewModel {
         didSet { timelineRenderRevision &+= 1 }
     }
     var mediaManifest = MediaManifest()
-    var generationLog = GenerationLog()
+    var generationLog = GenerationLog() {
+        didSet { generationLogRevision &+= 1 }
+    }
 
     // MARK: - Panel focus
 
@@ -1531,5 +1533,6 @@ final class EditorViewModel {
     private var workspacePresentationStates = EditorViewModel.initialWorkspacePresentations()
     @ObservationIgnored private var isRestoringWorkspacePresentation = false
     @ObservationIgnored var budgetStatusLoadToken: UInt64 = 0
+    @ObservationIgnored private(set) var generationLogRevision: UInt64 = 0
 
 }

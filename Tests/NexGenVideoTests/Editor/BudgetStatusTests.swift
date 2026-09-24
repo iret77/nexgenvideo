@@ -48,9 +48,22 @@ struct BudgetStatusTests {
         )
 
         #expect(unavailable.planningBudget == .unavailable)
+        #expect(unavailable.compactLabel == "Budget · No spend · Limits unavailable")
         #expect(unavailable.acceptanceValue.contains("planning=unknown"))
         #expect(notSet.planningBudget == .notSet)
+        #expect(notSet.compactLabel == "Budget · No spend")
         #expect(notSet.acceptanceValue.contains("planning=none"))
+
+        let charged = log(transaction(id: "known", money: money(2), final: .charged))
+        #expect(ProjectBudgetPresentation.make(log: charged, generatedInputs: [],
+            projectState: missingState, hasProductionPipeline: true).compactLabel
+            == "Budget €2.00 · Planning limit unavailable")
+        #expect(ProjectBudgetPresentation.make(log: charged, generatedInputs: [],
+            projectState: nil, hasProductionPipeline: true).compactLabel
+            == "Budget €2.00 · Planning limit unavailable · Stop unavailable")
+        #expect(ProjectBudgetPresentation.make(log: charged, generatedInputs: [],
+            projectState: nil, hasProductionPipeline: false).compactLabel
+            == "Budget €2.00 · No limit")
     }
 
     @Test("guard snapshot owns charged, reserved, released, route, and billing truth")
@@ -133,7 +146,7 @@ struct BudgetStatusTests {
 
         #expect(presentation.spend?.verifiedEur == 0)
         #expect(presentation.spend?.isComplete == false)
-        #expect(presentation.compactLabel == "Budget ≥€0.00")
+        #expect(presentation.compactLabel == "Budget ≥€0.00 / €10.00")
         #expect(presentation.warnings.contains { $0.contains("provider price") })
         #expect(presentation.warnings.contains { $0.contains("currency conversion") })
         #expect(presentation.warnings.contains { $0.contains("subscription/credit") })
@@ -217,6 +230,112 @@ struct BudgetStatusTests {
         #expect(editor.projectState == nil)
         try await editor.refreshBudgetStatus()
         #expect(editor.generationLog == GenerationLog())
+    }
+
+    @Test("a paused refresh cannot replace a reservation written after its read")
+    func refreshKeepsConcurrentReservation() async throws {
+        let project = try package(named: "race")
+        let editor = EditorViewModel()
+        editor.projectURL = project
+        defer {
+            editor.releaseWorkingCopy()
+            if let key = ProjectIdentity.existingKey(for: project) {
+                ProjectWorkingCopy.discard(key: key)
+            }
+            try? FileManager.default.removeItem(at: project)
+        }
+        let gate = PausedBudgetLoad()
+        let refresh = Task {
+            try await editor.refreshBudgetStatus(loadGenerationLog: { url in
+                try await gate.load(url)
+            })
+        }
+        await gate.waitForRead()
+        let root = try #require(editor.workingRoot)
+        let authorization = GenerationAuthorization(
+            transactionId: "concurrent-reservation",
+            target: target(transport: .api, billing: .perCall),
+            estimate: money(3),
+            projectMutationScope: try GenerationProjectMutationScope(
+                projectHome: root, editor: editor
+            )
+        )
+        try editor.recordSpendEvent(authorization: authorization, kind: .reserved,
+                                    money: money(3), pricingStatus: .priced)
+        let expected = editor.generationLog
+        await gate.resume()
+        try await refresh.value
+
+        #expect(editor.generationLog == expected)
+        let persisted = try #require(GenerationLogFile.loadIfPresent(
+            from: root.appendingPathComponent(Project.generationLogFilename)
+        ))
+        #expect(persisted == expected)
+        #expect(try GenerationBudgetGuard.spendSnapshot(log: editor.generationLog,
+            generatedInputs: []).openReservationEur == 3)
+
+        try editor.recordSpendEvent(authorization: authorization, kind: .submitted,
+                                    providerRequestId: "request-concurrent", money: money(3))
+        let chargeGate = PausedBudgetLoad()
+        let chargeRefresh = Task {
+            try await editor.refreshBudgetStatus(loadGenerationLog: { url in
+                try await chargeGate.load(url)
+            })
+        }
+        await chargeGate.waitForRead()
+        try editor.recordSpendEvent(authorization: authorization, kind: .charged, money: money(2))
+        let chargedLog = editor.generationLog
+        await chargeGate.resume()
+        try await chargeRefresh.value
+        #expect(editor.generationLog == chargedLog)
+        #expect(try GenerationLogFile.loadIfPresent(from:
+            root.appendingPathComponent(Project.generationLogFilename)) == chargedLog)
+        #expect(try GenerationBudgetGuard.spendSnapshot(log: editor.generationLog,
+            generatedInputs: []).chargedEur == 2)
+    }
+
+    @Test("a paused refresh from a prior visit cannot replace the same project's new session")
+    func refreshRejectsProjectABA() async throws {
+        let first = try package(named: "aba-first")
+        let second = try package(named: "aba-second")
+        let editor = EditorViewModel()
+        editor.projectURL = first
+        defer {
+            editor.releaseWorkingCopy()
+            for project in [first, second] {
+                if let key = ProjectIdentity.existingKey(for: project) {
+                    ProjectWorkingCopy.discard(key: key)
+                }
+                try? FileManager.default.removeItem(at: project)
+            }
+        }
+        let gate = PausedBudgetLoad()
+        let refresh = Task {
+            try await editor.refreshBudgetStatus(loadGenerationLog: { url in
+                try await gate.load(url)
+            })
+        }
+        await gate.waitForRead()
+        let oldToken = editor.budgetStatusLoadToken
+        editor.projectURL = second
+        editor.projectURL = first
+        #expect(editor.budgetStatusLoadToken > oldToken)
+        await gate.resume()
+        try await refresh.value
+        #expect(editor.generationLog == GenerationLog())
+    }
+
+    @Test("known excess remains an error with an additional unpriced reservation")
+    func knownExcessSurvivesUnknownCost() throws {
+        var events = transaction(id: "known", money: money(12.5), final: .charged)
+        events += transaction(id: "unknown", money: nil, final: .reserved,
+                              pricingStatus: .priceUnavailable)
+        let presentation = ProjectBudgetPresentation.make(log: log(events), generatedInputs: [],
+            projectState: try projectState(budget: 10, stop: 12), hasProductionPipeline: true)
+        #expect(presentation.severity == .error)
+        #expect(presentation.compactLabel == "Budget ≥€12.50 / €10.00")
+        #expect(presentation.warnings.contains("Planning budget exceeded by €2.50."))
+        #expect(presentation.warnings.contains("Hard stop exceeded by €0.50."))
     }
 
     private func package(named name: String) throws -> URL {
@@ -354,5 +473,30 @@ struct BudgetStatusTests {
         var log = GenerationLog()
         log.spendEvents = events
         return log
+    }
+}
+
+private actor PausedBudgetLoad {
+    private var read = false
+    private var readWaiter: CheckedContinuation<Void, Never>?
+    private var releaseWaiter: CheckedContinuation<Void, Never>?
+
+    func load(_ url: URL) async throws -> GenerationLog {
+        let log = try GenerationLogFile.loadIfPresent(from: url) ?? GenerationLog()
+        read = true
+        readWaiter?.resume()
+        readWaiter = nil
+        await withCheckedContinuation { releaseWaiter = $0 }
+        return log
+    }
+
+    func waitForRead() async {
+        if read { return }
+        await withCheckedContinuation { readWaiter = $0 }
+    }
+
+    func resume() {
+        releaseWaiter?.resume()
+        releaseWaiter = nil
     }
 }

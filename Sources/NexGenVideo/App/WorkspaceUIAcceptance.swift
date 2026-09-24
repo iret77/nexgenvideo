@@ -500,6 +500,83 @@ enum WorkspaceUIAcceptance {
         let items: Int
     }
 
+    private struct BudgetVisibleExpectation {
+        let label: String
+        let total: String
+        let planning: String
+        let hardStop: String
+        let warnings: String?
+        let transactionState: String?
+    }
+
+    private static func budgetVisibleExpectations(for name: String) -> BudgetVisibleExpectation {
+        let normalPlanning = "Planning budget|€10.00 · €10.00 remaining"
+        let normalStop = "Hard stop|€12.00 · €12.00 remaining"
+        let normalTotal = "Reserved + charged total|€0.00"
+        switch name {
+        case "empty":
+            return .init(label: "Budget · No spend", total: normalTotal,
+                         planning: normalPlanning, hardStop: normalStop,
+                         warnings: nil, transactionState: nil)
+        case "zero":
+            return .init(label: "Budget €0.00 / €10.00", total: normalTotal,
+                         planning: normalPlanning, hardStop: normalStop,
+                         warnings: nil, transactionState: "Charged")
+        case "low":
+            return .init(label: "Budget €9.25 / €10.00",
+                         total: "Reserved + charged total|€9.25",
+                         planning: "Planning budget|€10.00 · €0.75 remaining",
+                         hardStop: "Hard stop|€12.00 · €2.75 remaining",
+                         warnings: "Planning budget has €0.75 remaining.",
+                         transactionState: "Charged")
+        case "exceeded":
+            return .init(label: "Budget €12.50 / €10.00",
+                         total: "Reserved + charged total|€12.50",
+                         planning: "Planning budget|€10.00 · €2.50 over",
+                         hardStop: "Hard stop|€12.00 · €0.50 over",
+                         warnings: "Planning budget exceeded by €2.50.\nHard stop exceeded by €0.50.",
+                         transactionState: "Charged")
+        case "unknown-price", "unknown-currency", "subscription-credits":
+            let reason: String
+            switch name {
+            case "unknown-currency": reason = "currency conversion"
+            case "subscription-credits": reason = "subscription/credit monetary cost"
+            default: reason = "provider price"
+            }
+            return .init(label: "Budget ≥€0.00 / €10.00",
+                         total: "Verified reserved + charged total at least|€0.00",
+                         planning: "Planning budget|€10.00 · remaining unavailable",
+                         hardStop: "Hard stop|€12.00 · remaining unavailable",
+                         warnings: "1 open transaction has no verified \(reason).",
+                         transactionState: "Reserved")
+        case "reserved":
+            return .init(label: "Budget €3.25 / €10.00",
+                         total: "Reserved + charged total|€3.25",
+                         planning: "Planning budget|€10.00 · €6.75 remaining",
+                         hardStop: "Hard stop|€12.00 · €8.75 remaining",
+                         warnings: nil, transactionState: "Reserved")
+        case "submitted-failure":
+            return .init(label: "Budget €4.00 / €10.00",
+                         total: "Reserved + charged total|€4.00",
+                         planning: "Planning budget|€10.00 · €6.00 remaining",
+                         hardStop: "Hard stop|€12.00 · €8.00 remaining",
+                         warnings: nil, transactionState: "Submitted · attention")
+        case "released":
+            return .init(label: "Budget €0.00 / €10.00", total: normalTotal,
+                         planning: normalPlanning, hardStop: normalStop,
+                         warnings: nil, transactionState: "Released")
+        case "exceeded-unknown":
+            return .init(label: "Budget ≥€12.50 / €10.00",
+                         total: "Verified reserved + charged total at least|€12.50",
+                         planning: "Planning budget|€10.00 · at least €2.50 over",
+                         hardStop: "Hard stop|€12.00 · at least €0.50 over",
+                         warnings: "1 open transaction has no verified provider price.\nPlanning budget exceeded by €2.50.\nHard stop exceeded by €0.50.",
+                         transactionState: nil)
+        default:
+            fatalError("Unknown budget acceptance case: \(name)")
+        }
+    }
+
     private static func captureBudgetCases(
         editor: EditorViewModel,
         window: NSWindow,
@@ -523,22 +600,22 @@ enum WorkspaceUIAcceptance {
             } catch {
                 fail("could not install budget case \(item.name): \(error.localizedDescription)", scale: scale)
             }
-            let snapshot: ProjectSpendSnapshot
+            let spendSnapshot: ProjectSpendSnapshot
             do {
-                snapshot = try GenerationBudgetGuard.spendSnapshot(
+                spendSnapshot = try GenerationBudgetGuard.spendSnapshot(
                     log: item.log,
                     generatedInputs: editor.mediaAssets.compactMap(\.generationInput)
                 )
             } catch {
                 fail("budget case \(item.name) was rejected by the guard", scale: scale)
             }
-            guard snapshot.chargedEur == item.charged,
-                  snapshot.openReservationEur == item.reserved,
-                  snapshot.verifiedEur == item.charged + item.reserved,
-                  snapshot.activeReservationCount == item.active,
-                  snapshot.unpricedTransactionCount == item.unpriced,
-                  snapshot.isComplete == item.complete,
-                  snapshot.lineItems.count == item.items else {
+            guard spendSnapshot.chargedEur == item.charged,
+                  spendSnapshot.openReservationEur == item.reserved,
+                  spendSnapshot.verifiedEur == item.charged + item.reserved,
+                  spendSnapshot.activeReservationCount == item.active,
+                  spendSnapshot.unpricedTransactionCount == item.unpriced,
+                  spendSnapshot.isComplete == item.complete,
+                  spendSnapshot.lineItems.count == item.items else {
                 fail("budget case \(item.name) did not match guard truth", scale: scale)
             }
             let expectedPresentation = ProjectBudgetPresentation.make(
@@ -575,10 +652,25 @@ enum WorkspaceUIAcceptance {
                 fail("budget case \(item.name) did not open its detail popover", scale: scale)
             }
             popoverContent.layoutSubtreeIfNeeded()
+            let visible = budgetVisibleExpectations(for: item.name)
+            guard probeValue(identifier: "editor.status.budget.label", in: window) == visible.label,
+                  probeValueAnywhere(identifier: "editor.status.budget.total", preferredWindow: window)
+                    == visible.total,
+                  probeValueAnywhere(identifier: "editor.status.budget.planning", preferredWindow: window)
+                    == visible.planning,
+                  probeValueAnywhere(identifier: "editor.status.budget.hardStop", preferredWindow: window)
+                    == visible.hardStop,
+                  probeValueAnywhere(identifier: "editor.status.budget.warnings", preferredWindow: window)
+                    == visible.warnings,
+                  (visible.transactionState == nil || probeValueAnywhere(
+                      identifier: "editor.status.budget.transactionState", preferredWindow: window
+                  ) == visible.transactionState) else {
+                fail("budget case \(item.name) did not render its expected labels", scale: scale)
+            }
             let popoverName = "scale-\(scaleLabel(scale))-budget-\(item.name).png"
             guard popoverContent.bounds.width > 0,
                   popoverContent.bounds.height > 0,
-                  snapshot(popoverContent, at: evidenceURL.appendingPathComponent(popoverName)) else {
+                  Self.snapshot(popoverContent, at: evidenceURL.appendingPathComponent(popoverName)) else {
                 fail("budget case \(item.name) popover geometry was unavailable", scale: scale)
             }
 
@@ -617,16 +709,23 @@ enum WorkspaceUIAcceptance {
                 scale: scale,
                 fields: [
                     "case": item.name,
-                    "charged": snapshot.chargedEur,
-                    "complete": snapshot.isComplete,
-                    "items": snapshot.lineItems.count,
+                    "charged": spendSnapshot.chargedEur,
+                    "complete": spendSnapshot.isComplete,
+                    "items": spendSnapshot.lineItems.count,
                     "popoverFrame": frameDescription(popoverContent.bounds),
-                    "reserved": snapshot.openReservationEur,
+                    "reserved": spendSnapshot.openReservationEur,
                     "screenshot": popoverName,
                     "statusValue": expectedPresentation.acceptanceValue,
                 ]
             )
         }
+
+        await captureBudgetUnavailableLimits(
+            editor: editor, window: window, evidenceURL: evidenceURL, scale: scale
+        )
+        await captureBudgetLifecycle(
+            editor: editor, window: window, evidenceURL: evidenceURL, scale: scale
+        )
 
         await captureBudgetProjectSwitch(
             editor: editor,
@@ -685,6 +784,18 @@ enum WorkspaceUIAcceptance {
                 unpriced: 0,
                 complete: true,
                 items: 1
+            ),
+            BudgetAcceptanceCase(
+                name: "exceeded-unknown",
+                log: budgetLog(transactionEvents(id: "exceeded", money: exceeded, final: .charged)
+                    + transactionEvents(id: "unknown", money: nil, final: .reserved,
+                        pricingStatus: .priceUnavailable)),
+                charged: 12.5,
+                reserved: 0,
+                active: 1,
+                unpriced: 1,
+                complete: false,
+                items: 2
             ),
             BudgetAcceptanceCase(
                 name: "unknown-price",
@@ -888,6 +999,176 @@ enum WorkspaceUIAcceptance {
         try editor.persistGenerationLog()
     }
 
+    private static func captureBudgetLifecycle(
+        editor: EditorViewModel,
+        window: NSWindow,
+        evidenceURL: URL,
+        scale: Double
+    ) async {
+        guard let root = editor.workingRoot else {
+            fail("budget lifecycle lost its working copy", scale: scale)
+        }
+        do {
+            try installBudgetLog(GenerationLog(), in: root, editor: editor)
+            let scope = try GenerationProjectMutationScope(projectHome: root, editor: editor)
+            let target = ResolvedGenerationTarget(
+                modelId: "higgsfield/acceptance-video",
+                provider: .higgsfield,
+                endpoint: "video/generate",
+                binding: ProviderBinding(provider: .higgsfield, transport: .api,
+                                         kind: .generation, providerRef: "video/generate",
+                                         billing: .perCall)
+            )
+            let authorization = GenerationAuthorization(
+                transactionId: "budget-lifecycle-charge", target: target,
+                estimate: money(3), projectMutationScope: scope
+            )
+            try editor.recordSpendEvent(authorization: authorization, kind: .reserved,
+                                        money: money(3), pricingStatus: .priced)
+            await captureBudgetLifecycleStage("reserved", editor: editor, window: window,
+                evidenceURL: evidenceURL, scale: scale, label: "Budget €3.00 / €10.00",
+                total: "Reserved + charged total|€3.00", state: "Reserved", eventCount: 1)
+
+            try editor.recordSpendEvent(authorization: authorization, kind: .submitted,
+                providerRequestId: "acceptance-request", providerRequestResumable: true,
+                money: money(3), note: "Provider outcome requires reconciliation.")
+            await captureBudgetLifecycleStage("submitted-failure", editor: editor, window: window,
+                evidenceURL: evidenceURL, scale: scale, label: "Budget €3.00 / €10.00",
+                total: "Reserved + charged total|€3.00", state: "Submitted · attention", eventCount: 2)
+
+            try editor.recordSpendEvent(authorization: authorization, kind: .charged,
+                                        money: money(2.75))
+            await captureBudgetLifecycleStage("charged", editor: editor, window: window,
+                evidenceURL: evidenceURL, scale: scale, label: "Budget €2.75 / €10.00",
+                total: "Reserved + charged total|€2.75", state: "Charged", eventCount: 3)
+
+            try installBudgetLog(GenerationLog(), in: root, editor: editor)
+            let released = GenerationAuthorization(
+                transactionId: "budget-lifecycle-release", target: target,
+                estimate: money(5), projectMutationScope: scope
+            )
+            try editor.recordSpendEvent(authorization: released, kind: .reserved,
+                                        money: money(5), pricingStatus: .priced)
+            try editor.recordSpendEvent(authorization: released, kind: .released,
+                                        note: "Released before provider submission.")
+            await captureBudgetLifecycleStage("released", editor: editor, window: window,
+                evidenceURL: evidenceURL, scale: scale, label: "Budget €0.00 / €10.00",
+                total: "Reserved + charged total|€0.00", state: "Released", eventCount: 2)
+        } catch {
+            fail("budget lifecycle could not persist its canonical events: \(error.localizedDescription)", scale: scale)
+        }
+    }
+
+    private static func captureBudgetUnavailableLimits(
+        editor: EditorViewModel,
+        window: NSWindow,
+        evidenceURL: URL,
+        scale: Double
+    ) async {
+        guard let root = editor.workingRoot,
+              let dataRoot = DataRootResolver.dataRoot(of: root) else {
+            fail("unavailable-limit fixture had no production root", scale: scale)
+        }
+        let marker = dataRoot.appendingPathComponent(PipelineLayout.projectFile)
+        do {
+            try installBudgetLog(GenerationLog(), in: root, editor: editor)
+            let original = try Data(contentsOf: marker)
+            guard let yaml = String(data: original, encoding: .utf8) else {
+                fail("unavailable-limit fixture could not read project metadata", scale: scale)
+            }
+            let pattern = try NSRegularExpression(pattern: "(?m)^budget_eur:.*$")
+            let range = NSRange(yaml.startIndex..<yaml.endIndex, in: yaml)
+            guard pattern.numberOfMatches(in: yaml, range: range) == 1 else {
+                fail("unavailable-limit fixture did not find one budget field", scale: scale)
+            }
+            let unavailable = pattern.stringByReplacingMatches(
+                in: yaml, range: range, withTemplate: "budget_eur: unavailable"
+            )
+            try Data(unavailable.utf8).write(to: marker, options: .atomic)
+            await editor.refreshProjectState()
+            guard editor.hasProductionPipeline,
+                  editor.projectState == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      probeValue(identifier: "editor.status.budget.label", in: window)
+                          == "Budget · No spend · Limits unavailable"
+                  }),
+                  click(identifier: "editor.status.budget", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      probeExistsAnywhere(identifier: "editor.status.budget.close", preferredWindow: window)
+                  }),
+                  probeValueAnywhere(identifier: "editor.status.budget.planning", preferredWindow: window)
+                      == "Planning budget|Unavailable",
+                  probeValueAnywhere(identifier: "editor.status.budget.hardStop", preferredWindow: window)
+                      == "Hard stop|Unavailable",
+                  probeValueAnywhere(identifier: "editor.status.budget.warnings", preferredWindow: window)
+                      == "Project limits are still loading or unavailable.",
+                  let (popoverWindow, _) = probeWindow(
+                      identifier: "editor.status.budget.close", preferredWindow: window
+                  ), let content = popoverWindow.contentView else {
+                fail("unavailable limits were not visible", scale: scale)
+            }
+            let screenshotName = "scale-\(scaleLabel(scale))-budget-limits-unavailable.png"
+            guard Self.snapshot(content, at: evidenceURL.appendingPathComponent(screenshotName)),
+                  clickAnywhere(identifier: "editor.status.budget.close", preferredWindow: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      probeState(identifier: "editor.status.budget", in: window) == false
+                  }) else {
+                fail("unavailable-limit details did not close", scale: scale)
+            }
+            try original.write(to: marker, options: .atomic)
+            await editor.refreshProjectState()
+            guard editor.projectState?.budgetEur == 10 else {
+                fail("budget fixture limits did not restore", scale: scale)
+            }
+            emit("budget-limits-unavailable", scale: scale, fields: ["screenshot": screenshotName])
+        } catch {
+            fail("unavailable-limit fixture failed: \(error.localizedDescription)", scale: scale)
+        }
+    }
+
+    private static func captureBudgetLifecycleStage(
+        _ name: String,
+        editor: EditorViewModel,
+        window: NSWindow,
+        evidenceURL: URL,
+        scale: Double,
+        label: String,
+        total: String,
+        state: String,
+        eventCount: Int
+    ) async {
+        guard let root = editor.workingRoot,
+              let persisted = try? GenerationLogFile.loadIfPresent(
+                  from: root.appendingPathComponent(Project.generationLogFilename)
+              ),
+              persisted == editor.generationLog,
+              persisted.spendEvents.count == eventCount,
+              await waitUntil(timeout: .seconds(5), {
+                  probeValue(identifier: "editor.status.budget.label", in: window) == label
+              }),
+              click(identifier: "editor.status.budget", in: window) == nil,
+              await waitUntil(timeout: .seconds(5), {
+                  probeExistsAnywhere(identifier: "editor.status.budget.close", preferredWindow: window)
+              }),
+              probeValueAnywhere(identifier: "editor.status.budget.total", preferredWindow: window) == total,
+              probeValueAnywhere(identifier: "editor.status.budget.transactionState", preferredWindow: window) == state,
+              let (popoverWindow, _) = probeWindow(
+                  identifier: "editor.status.budget.close", preferredWindow: window
+              ), let content = popoverWindow.contentView else {
+            fail("budget lifecycle \(name) did not render persisted state", scale: scale)
+        }
+        let screenshotName = "scale-\(scaleLabel(scale))-budget-lifecycle-\(name).png"
+        guard Self.snapshot(content, at: evidenceURL.appendingPathComponent(screenshotName)),
+              clickAnywhere(identifier: "editor.status.budget.close", preferredWindow: window) == nil,
+              await waitUntil(timeout: .seconds(5), {
+                  probeState(identifier: "editor.status.budget", in: window) == false
+              }) else {
+            fail("budget lifecycle \(name) did not close after capture", scale: scale)
+        }
+        emit("budget-lifecycle", scale: scale,
+             fields: ["state": name, "screenshot": screenshotName, "events": eventCount])
+    }
+
     private static func captureBudgetProjectSwitch(
         editor: EditorViewModel,
         window: NSWindow,
@@ -954,6 +1235,13 @@ enum WorkspaceUIAcceptance {
             fail("switched project budget details did not open", scale: scale)
         }
         content.layoutSubtreeIfNeeded()
+        guard probeValue(identifier: "editor.status.budget.label", in: window) == "Budget · No spend",
+              probeValueAnywhere(identifier: "editor.status.budget.planning", preferredWindow: window)
+                  == "Planning budget|Not set",
+              probeValueAnywhere(identifier: "editor.status.budget.hardStop", preferredWindow: window)
+                  == "Hard stop|Not set" else {
+            fail("switched project did not render unset limits", scale: scale)
+        }
         let screenshotName = "scale-\(scaleLabel(scale))-budget-project-switch.png"
         let refreshToken = editor.budgetStatusLoadToken
         guard snapshot(content, at: evidenceURL.appendingPathComponent(screenshotName)),
@@ -2087,6 +2375,17 @@ enum WorkspaceUIAcceptance {
             preferredWindow: preferredWindow
         ) else { return nil }
         return (probe as? AppRelaunchClickProbeView)?.acceptanceState
+    }
+
+    private static func probeValueAnywhere(
+        identifier: String,
+        preferredWindow: NSWindow
+    ) -> String? {
+        guard let (_, probe) = probeWindow(
+            identifier: identifier,
+            preferredWindow: preferredWindow
+        ) else { return nil }
+        return (probe as? AppRelaunchClickProbeView)?.acceptanceValue
     }
 
     private static func probeWindow(

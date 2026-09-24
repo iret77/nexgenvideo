@@ -30,12 +30,19 @@ EXPECTED_BUDGET_CASES = {
     "zero": (0, 0, True, 1),
     "low": (9.25, 0, True, 1),
     "exceeded": (12.5, 0, True, 1),
+    "exceeded-unknown": (12.5, 0, False, 2),
     "unknown-price": (0, 0, False, 1),
     "unknown-currency": (0, 0, False, 1),
     "subscription-credits": (0, 0, False, 1),
     "reserved": (0, 3.25, True, 1),
     "submitted-failure": (0, 4, True, 1),
     "released": (0, 0, True, 1),
+}
+EXPECTED_BUDGET_LIFECYCLE = {
+    "reserved": 1,
+    "submitted-failure": 2,
+    "charged": 3,
+    "released": 2,
 }
 STATUS_IDENTIFIERS = {
     "editor.statusBar",
@@ -185,7 +192,7 @@ def run_scale(executable, output, scale):
                 "NGV_WORKSPACE_UI_SCALE": str(scale),
                 "NGV_INSPECTOR_UI_ACCEPTANCE": "1",
             },
-            timeout=90,
+            timeout=120,
             check=False,
             text=True,
         )
@@ -221,6 +228,8 @@ def run_scale(executable, output, scale):
     invariants = [row for row in rows if row.get("event") == "invariants"]
     inspector = [row for row in rows if row.get("event") == "inspector"]
     budget = [row for row in rows if row.get("event") == "budget"]
+    budget_lifecycle = [row for row in rows if row.get("event") == "budget-lifecycle"]
+    unavailable_limits = [row for row in rows if row.get("event") == "budget-limits-unavailable"]
     project_switch = [row for row in rows if row.get("event") == "budget-project-switch"]
     background_status = [row for row in rows if row.get("event") == "background-status"]
     open_keyframes = [row for row in inspector if row.get("keyframes") == "open"]
@@ -233,7 +242,8 @@ def run_scale(executable, output, scale):
         for row in inspector
         if row.get("keyframes") != "open"
     ]
-    screenshots += [row.get("screenshot") for row in budget + project_switch]
+    screenshots += [row.get("screenshot") for row in budget + project_switch
+                    + budget_lifecycle + unavailable_limits]
     screenshots += [
         layout.get("screenshot")
         for row in open_keyframes
@@ -268,6 +278,11 @@ def run_scale(executable, output, scale):
         and {row.get("case") for row in budget} == set(EXPECTED_BUDGET_CASES)
         and len(budget) == len(EXPECTED_BUDGET_CASES)
         and all(valid_budget_row(row) for row in budget)
+        and len(budget_lifecycle) == len(EXPECTED_BUDGET_LIFECYCLE)
+        and {row.get("state") for row in budget_lifecycle} == set(EXPECTED_BUDGET_LIFECYCLE)
+        and all(row.get("events") == EXPECTED_BUDGET_LIFECYCLE.get(row.get("state"))
+                for row in budget_lifecycle)
+        and len(unavailable_limits) == 1
         and len(project_switch) == 1
         and valid_status_frames(project_switch[0])
         and valid_long_status_context(project_switch[0])
@@ -286,7 +301,7 @@ def run_scale(executable, output, scale):
         and invariants[0].get("workingCopyUnchanged") is True
         and len(screenshots)
         == 9 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES)
-        + len(EXPECTED_BUDGET_CASES)
+        + len(EXPECTED_BUDGET_CASES) + len(EXPECTED_BUDGET_LIFECYCLE) + 1
         and valid_images
     )
     return {

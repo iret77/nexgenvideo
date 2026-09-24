@@ -63,25 +63,41 @@ struct ProjectBudgetPresentation: Equatable {
     var compactLabel: String {
         guard let spend else { return "Budget unavailable" }
         if !hasRecords {
-            return "Budget · No spend"
+            return limitsAreUnavailable ? "Budget · No spend · Limits unavailable" : "Budget · No spend"
         }
         let amount = Self.euro(spend.verifiedEur)
-        if !spend.isComplete {
-            return "Budget ≥\(amount)"
+        let prefix = spend.isComplete ? "" : "≥"
+        var label = "Budget \(prefix)\(amount)"
+        switch planningBudget {
+        case .amount(let budget):
+            label += " / \(Self.euro(budget))"
+        case .unavailable:
+            label += " · Planning limit unavailable"
+        case .notSet:
+            break
         }
-        if case .amount(let budget) = planningBudget {
-            return "Budget \(amount) / \(Self.euro(budget))"
+        switch hardStop {
+        case .amount(let stop):
+            if case .amount = planningBudget { break }
+            label += " · Stop \(Self.euro(stop))"
+        case .unavailable:
+            label += " · Stop unavailable"
+        default:
+            break
         }
-        return "Budget \(amount) · No limit"
+        if planningBudget == .notSet && hardStop == .notSet {
+            label += " · No limit"
+        }
+        return label
     }
 
     var severity: Severity {
         guard let spend else { return .error }
-        guard spend.isComplete else { return .warning }
         if limitIsExceeded(planningBudget, spend: spend.verifiedEur)
             || limitIsExceeded(hardStop, spend: spend.verifiedEur) {
             return .error
         }
+        guard spend.isComplete else { return .warning }
         if limitIsLow(planningBudget, spend: spend.verifiedEur)
             || limitIsLow(hardStop, spend: spend.verifiedEur) {
             return .warning
@@ -115,6 +131,10 @@ struct ProjectBudgetPresentation: Equatable {
     var hasRecords: Bool {
         guard let spend else { return false }
         return !spend.lineItems.isEmpty || spend.legacyGenerationCount > 0
+    }
+
+    private var limitsAreUnavailable: Bool {
+        planningBudget == .unavailable || hardStop == .unavailable
     }
 
     var acceptanceValue: String {
@@ -260,6 +280,15 @@ private struct BudgetStatusButton: View {
                     .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium)
                     .monospacedDigit()
                     .lineLimit(1)
+                    .background {
+                        if WorkspaceUIAcceptance.isRequested {
+                            AppRelaunchClickProbe(
+                                identifier: "editor.status.budget.label",
+                                acceptanceValue: presentation.compactLabel
+                            )
+                            .allowsHitTesting(false)
+                        }
+                    }
             }
             .foregroundStyle(budgetColor(presentation.severity))
             .padding(.horizontal, AppTheme.Spacing.sm)
@@ -416,13 +445,26 @@ private struct BudgetDetailPopover: View {
                 suffix: reservationSuffix(spend)
             )
             amountRow(
-                spend.isComplete ? "Guard total" : "Verified guard total at least",
+                spend.isComplete
+                    ? "Reserved + charged total"
+                    : "Verified reserved + charged total at least",
                 amount: spend.verifiedEur,
-                emphasized: true
+                emphasized: true,
+                acceptanceIdentifier: "editor.status.budget.total"
             )
             budgetProgress(spend)
-            limitRow("Planning budget", limit: presentation.planningBudget, spend: spend)
-            limitRow("Hard stop", limit: presentation.hardStop, spend: spend)
+            limitRow(
+                "Planning budget",
+                limit: presentation.planningBudget,
+                spend: spend,
+                acceptanceIdentifier: "editor.status.budget.planning"
+            )
+            limitRow(
+                "Hard stop",
+                limit: presentation.hardStop,
+                spend: spend,
+                acceptanceIdentifier: "editor.status.budget.hardStop"
+            )
             if let nextPhaseName = presentation.nextPhaseName {
                 HStack(spacing: AppTheme.Spacing.sm) {
                     Text("Next phase")
@@ -465,14 +507,21 @@ private struct BudgetDetailPopover: View {
 
     @ViewBuilder
     private var warnings: some View {
-        if !presentation.warnings.isEmpty || refreshError != nil {
+        let displayedWarnings = presentation.warnings + (refreshError.map { [$0] } ?? [])
+        if !displayedWarnings.isEmpty {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                 sectionTitle("Attention")
-                ForEach(presentation.warnings, id: \.self) { warning in
+                ForEach(displayedWarnings, id: \.self) { warning in
                     warningRow(warning)
                 }
-                if let refreshError {
-                    warningRow(refreshError)
+            }
+            .background {
+                if WorkspaceUIAcceptance.isRequested {
+                    AppRelaunchClickProbe(
+                        identifier: "editor.status.budget.warnings",
+                        acceptanceValue: displayedWarnings.joined(separator: "\n")
+                    )
+                    .allowsHitTesting(false)
                 }
             }
         }
@@ -512,7 +561,7 @@ private struct BudgetDetailPopover: View {
                     .interfaceFont(size: AppTheme.Typography.metadata)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
                 }
-                Text("Legacy credits are not treated as money or added to the guard total.")
+                Text("Legacy credits are not treated as money or included in the reserved and charged total.")
                     .interfaceFont(size: AppTheme.Typography.metadata)
                     .foregroundStyle(AppTheme.Text.mutedColor)
                     .fixedSize(horizontal: false, vertical: true)
@@ -543,6 +592,15 @@ private struct BudgetDetailPopover: View {
                 Text(stateLabel(item))
                     .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
                     .foregroundStyle(stateColor(item))
+                    .background {
+                        if WorkspaceUIAcceptance.isRequested {
+                            AppRelaunchClickProbe(
+                                identifier: "editor.status.budget.transactionState",
+                                acceptanceValue: stateLabel(item)
+                            )
+                            .allowsHitTesting(false)
+                        }
+                    }
             }
             Text("\(item.provider.displayName) · \(routeLabel(item.transport)) · \(billingLabel(item.billing))")
                 .interfaceFont(size: AppTheme.Typography.metadata)
@@ -601,12 +659,14 @@ private struct BudgetDetailPopover: View {
         _ label: String,
         amount: Double,
         suffix: String? = nil,
-        emphasized: Bool = false
+        emphasized: Bool = false,
+        acceptanceIdentifier: String? = nil
     ) -> some View {
+        let amountText = ProjectBudgetPresentation.euro(amount) + (suffix ?? "")
         HStack(spacing: AppTheme.Spacing.sm) {
             Text(label)
             Spacer(minLength: AppTheme.Spacing.sm)
-            Text(ProjectBudgetPresentation.euro(amount) + (suffix ?? ""))
+            Text(amountText)
                 .monospacedDigit()
                 .foregroundStyle(emphasized ? AppTheme.Text.primaryColor : AppTheme.Text.secondaryColor)
         }
@@ -615,22 +675,42 @@ private struct BudgetDetailPopover: View {
             weight: emphasized ? AppTheme.FontWeight.semibold : AppTheme.FontWeight.regular
         )
         .foregroundStyle(AppTheme.Text.tertiaryColor)
+        .background {
+            if WorkspaceUIAcceptance.isRequested, let acceptanceIdentifier {
+                AppRelaunchClickProbe(
+                    identifier: acceptanceIdentifier,
+                    acceptanceValue: "\(label)|\(amountText)"
+                )
+                .allowsHitTesting(false)
+            }
+        }
     }
 
     private func limitRow(
         _ label: String,
         limit: ProjectBudgetLimit,
-        spend: ProjectSpendSnapshot
+        spend: ProjectSpendSnapshot,
+        acceptanceIdentifier: String
     ) -> some View {
+        let description = limitDescription(limit, spend: spend)
         HStack(spacing: AppTheme.Spacing.sm) {
             Text(label)
             Spacer(minLength: AppTheme.Spacing.sm)
-            Text(limitDescription(limit, spend: spend))
+            Text(description)
                 .monospacedDigit()
                 .foregroundStyle(limitColor(limit, spend: spend))
         }
         .interfaceFont(size: AppTheme.Typography.ui)
         .foregroundStyle(AppTheme.Text.tertiaryColor)
+        .background {
+            if WorkspaceUIAcceptance.isRequested {
+                AppRelaunchClickProbe(
+                    identifier: acceptanceIdentifier,
+                    acceptanceValue: "\(label)|\(description)"
+                )
+                .allowsHitTesting(false)
+            }
+        }
     }
 
     private func limitDescription(_ limit: ProjectBudgetLimit, spend: ProjectSpendSnapshot) -> String {
@@ -640,17 +720,18 @@ private struct BudgetDetailPopover: View {
         case .unavailable:
             "Unavailable"
         case .amount(let amount):
-            guard spend.isComplete else { return "\(ProjectBudgetPresentation.euro(amount)) · remaining unavailable" }
             let remaining = amount - spend.verifiedEur
             if remaining < 0 {
-                return "\(ProjectBudgetPresentation.euro(amount)) · \(ProjectBudgetPresentation.euro(-remaining)) over"
+                let qualifier = spend.isComplete ? "" : "at least "
+                return "\(ProjectBudgetPresentation.euro(amount)) · \(qualifier)\(ProjectBudgetPresentation.euro(-remaining)) over"
             }
+            guard spend.isComplete else { return "\(ProjectBudgetPresentation.euro(amount)) · remaining unavailable" }
             return "\(ProjectBudgetPresentation.euro(amount)) · \(ProjectBudgetPresentation.euro(remaining)) remaining"
         }
     }
 
     private func limitColor(_ limit: ProjectBudgetLimit, spend: ProjectSpendSnapshot) -> Color {
-        guard case .amount(let amount) = limit, spend.isComplete else {
+        guard case .amount(let amount) = limit else {
             return limit == .unavailable ? AppTheme.Status.warningColor : AppTheme.Text.secondaryColor
         }
         return spend.verifiedEur >= amount ? AppTheme.Status.errorColor : AppTheme.Text.secondaryColor
